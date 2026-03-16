@@ -181,11 +181,11 @@ export class SongStorage {
     const songStore = tx.objectStore(this.storeName);
 
     songsToImport.forEach((s: any) => {
-      // ตรวจสอบว่ามี Metadata พื้นฐานครบไหม
       if (s.metadata && s.metadata.id) {
+        // xmlData อาจเป็น URL (จาก Cloud) หรือ XML string (จาก Local)
         songStore.put(s);
       } else if (s.id && s.title) {
-        // กรณีเป็นไฟล์รูปแบบเก่าที่ metadata อยู่ชั้นนอก
+        // Legacy format — metadata อยู่ชั้นนอก, xmlData อาจเป็น URL
         songStore.put({ metadata: s, xmlData: s.xmlData || '' });
       }
     });

@@ -134,6 +134,27 @@ const App: React.FC = () => {
     const owned = userSongs.find(s => s.metadata.id === song.id);
     if (!finalXml) finalXml = owned?.xmlData || '';
 
+    // ── LAZY FETCH: If xmlData is a URL, fetch the actual XML content ──
+    if (finalXml && finalXml.startsWith('http')) {
+      try {
+        console.log('[Neural] Lazy-fetching XML from:', finalXml);
+        const resp = await fetch(finalXml);
+        if (resp.ok) {
+          finalXml = await resp.text();
+          // Cache it back to IndexedDB so we don't fetch again
+          if (owned) {
+            await songStorage.saveSong(owned.metadata, finalXml);
+          }
+        } else {
+          console.warn('[Neural] XML fetch failed:', resp.status);
+          finalXml = '';
+        }
+      } catch (e) {
+        console.warn('[Neural] XML fetch error:', e);
+        finalXml = '';
+      }
+    }
+
     setSelectedSong(song);
     setUploadedMusicXml(finalXml);
 
