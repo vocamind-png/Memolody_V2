@@ -54,6 +54,26 @@ const PlayerPage: React.FC<{
   const localSong = song || { title: 'Untitled', artist: 'Unknown', bpm: 120, key: 'Bb', duration: 180 } as any;
   const parsedData = useMemo(() => musicEngine.parseMusicXml(musicXml || ''), [musicXml]);
 
+  // ── SONG CHANGE → Full engine reset ────────────────────────────────────────
+  // When user selects a different song, purge ALL previous song data from memory
+  useEffect(() => {
+    // Stop and clear all audio from the previous song
+    musicEngine.stopAndClear();
+
+    // Reset all UI states to defaults
+    setIsPlaying(false);
+    setCurrentTime(0);
+    setTranspose(0);
+    setIsAudioLoading(false);
+    setIsMetronomeOn(false);
+    setShowMixer(false);
+    setShowVolumeSlider(false);
+    setShowLoopMatrix(false);
+
+    console.log(`[PlayerPage] 🎵 Song changed → engine cleared, ready for: ${song?.title || 'none'}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [song?.id]);
+
   // Auto-sync BPM from XML metadata whenever a new song is loaded
   useEffect(() => {
     const xmlBpm = parsedData.metadata.bpm;

@@ -618,5 +618,67 @@ export class MusicEngine {
       });
     });
   }
+
+  /**
+   * FULL RESET — stops transport, disposes Part + all samplers,
+   * clears caches. Call this when switching to a different song.
+   */
+  stopAndClear() {
+    // 1. Stop transport completely
+    Tone.Transport.stop();
+    Tone.Transport.cancel(); // Cancel all scheduled events
+
+    // 2. Dispose the current Part (scheduled note events)
+    if (this.currentPart) {
+      this.currentPart.dispose();
+      this.currentPart = null;
+    }
+
+    // 3. Dispose all track samplers, channels, meters
+    this.trackSamplers.forEach((sampler, id) => {
+      try { (sampler as any).releaseAll?.(); } catch (e) { }
+      try { sampler.disconnect(); sampler.dispose(); } catch (e) { }
+    });
+    this.trackSamplers.clear();
+
+    this.trackChannels.forEach((channel) => {
+      try { channel.disconnect(); channel.dispose(); } catch (e) { }
+    });
+    this.trackChannels.clear();
+
+    this.trackMeters.forEach((meter) => {
+      try { meter.disconnect(); meter.dispose(); } catch (e) { }
+    });
+    this.trackMeters.clear();
+
+    // 4. Dispose all vocal layers
+    this.trackVocalLayers.forEach(layers => {
+      layers.forEach(player => {
+        if (player.state === 'started') player.stop();
+        try { player.dispose(); } catch (e) { }
+      });
+    });
+    this.trackVocalLayers.clear();
+    this.trackModes.clear();
+
+    // 5. Clear cache hash so next loadSong will rebuild everything
+    this.loadedSongHash = '';
+
+    // 6. Reset position trackers
+    this.baseStartTime = 0;
+    this.currentNoteId = '';
+    this.currentNoteTime = 0;
+    this.currentMeasure = '';
+    this.countInDuration = 0;
+    this.countInTicks = 0;
+
+    // 7. Clear loop
+    this.clearLoop();
+
+    // 8. Reset transport position
+    Tone.Transport.seconds = 0;
+
+    console.log('[MusicEngine] 🧹 stopAndClear — all song data purged');
+  }
 }
 export const musicEngine = new MusicEngine();
