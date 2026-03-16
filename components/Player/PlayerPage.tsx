@@ -87,16 +87,19 @@ const PlayerPage: React.FC<{
     musicEngine.pause();
     setIsPlaying(false);
 
-    if (wasPlaying && parsedData.notes.length > 0) {
+    // Reload for BOTH playing and paused states
+    if (parsedData.notes.length > 0) {
       setIsAudioLoading(true);
       musicEngine.ensureInitialized()
         .then(() => musicEngine.loadSong(parsedData.notes, tracks, transpose, parsedData.timeSignature, isMetronomeOn))
-        .then(() => { musicEngine.setTransportSeconds(savedPos); return musicEngine.start(); })
-        .then(() => setIsPlaying(true))
+        .then(() => {
+          musicEngine.setTransportSeconds(savedPos);
+          if (wasPlaying) return musicEngine.start();
+        })
+        .then(() => { if (wasPlaying) setIsPlaying(true); })
         .catch(e => console.error('Transpose reload failed:', e))
         .finally(() => setIsAudioLoading(false));
     }
-    // if was paused → leave stopped; next Play will reload with new transpose
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transpose]);
 
