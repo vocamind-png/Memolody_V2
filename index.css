@@ -10,8 +10,13 @@
   --bg: #0A0A0B;
   --panel: #111113;
   --text-main: #F5F5F7;
-  --text-muted: #71717A;
+  --text-muted: #9CA3AF;
   --border: rgba(255, 255, 255, 0.06);
+}
+
+/* ═══ GLOBAL FONT SCALE +25% ═══ */
+html {
+  font-size: 125%;
 }
 
 /* ═══ RESET ═══ */
@@ -23,10 +28,20 @@ body {
   color: var(--text-main);
   font-family: 'Outfit', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: 'kern' 1;
   overflow: hidden;
   height: 100vh;
   height: 100dvh;
 }
+
+/* ═══ BRIGHTENED TEXT UTILITIES ═══ */
+/* Boost zinc text colors for better readability */
+.text-zinc-500 { color: #9CA3AF !important; }
+.text-zinc-600 { color: #8B95A5 !important; }
+.text-zinc-700 { color: #7B8494 !important; }
+.text-zinc-800 { color: #6B7280 !important; }
 
 .h-svh { height: 100svh; }
 .h-dvh { height: 100dvh; }
