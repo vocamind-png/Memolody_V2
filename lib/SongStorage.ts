@@ -1,5 +1,5 @@
 
-import { Song, MusicalMemo } from '../types';
+import { Song, MusicalMemo, SongFolder } from '../types';
 
 interface StoredSong {
   metadata: Song;
@@ -20,12 +20,13 @@ export class SongStorage {
   private favoritesStore = 'favorites';
   private memoStore = 'musical_memos';
   private statsStore = 'usage_stats';
+  private foldersStore = 'song_folders';
   private db: IDBDatabase | null = null;
 
   async init(): Promise<IDBDatabase> {
     if (this.db) return this.db;
     return new Promise((resolve, reject) => {
-      const request = indexedDB.open(this.dbName, 5);
+      const request = indexedDB.open(this.dbName, 6);
       request.onupgradeneeded = (e: any) => {
         const db = e.target.result;
         if (!db.objectStoreNames.contains(this.storeName)) {
@@ -42,6 +43,9 @@ export class SongStorage {
         }
         if (!db.objectStoreNames.contains(this.statsStore)) {
           db.createObjectStore(this.statsStore, { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains(this.foldersStore)) {
+          db.createObjectStore(this.foldersStore, { keyPath: 'id' });
         }
       };
       request.onsuccess = (e: any) => {
@@ -129,6 +133,81 @@ export class SongStorage {
     tx.objectStore(this.storeName).clear();
     tx.objectStore(this.favoritesStore).clear();
     tx.objectStore(this.memoStore).clear();
+  }
+
+  // ── Favorite Management ──────────────────────────────────────────
+  async toggleFavorite(songId: string): Promise<boolean> {
+    const db = await this.init();
+    const tx = db.transaction([this.storeName], 'readwrite');
+    const store = tx.objectStore(this.storeName);
+    return new Promise((resolve) => {
+      const request = store.get(songId);
+      request.onsuccess = () => {
+        const song = request.result;
+        if (song) {
+          song.metadata.isFavorite = !song.metadata.isFavorite;
+          store.put(song);
+          resolve(song.metadata.isFavorite);
+        } else resolve(false);
+      };
+    });
+  }
+
+  // ── Folder Management ──────────────────────────────────────────────
+  async getFolders(): Promise<SongFolder[]> {
+    const db = await this.init();
+    return new Promise((resolve) => {
+      const tx = db.transaction([this.foldersStore], 'readonly');
+      const request = tx.objectStore(this.foldersStore).getAll();
+      request.onsuccess = () => resolve(request.result || []);
+    });
+  }
+
+  async saveFolder(folder: SongFolder): Promise<void> {
+    const db = await this.init();
+    const tx = db.transaction([this.foldersStore], 'readwrite');
+    tx.objectStore(this.foldersStore).put(folder);
+  }
+
+  async deleteFolder(id: string): Promise<void> {
+    const db = await this.init();
+    const tx = db.transaction([this.foldersStore], 'readwrite');
+    tx.objectStore(this.foldersStore).delete(id);
+  }
+
+  async assignSongToFolder(songId: string, folderId: string | undefined): Promise<void> {
+    const db = await this.init();
+    const tx = db.transaction([this.storeName], 'readwrite');
+    const store = tx.objectStore(this.storeName);
+    return new Promise((resolve) => {
+      const request = store.get(songId);
+      request.onsuccess = () => {
+        const song = request.result;
+        if (song) {
+          song.metadata.folderId = folderId;
+          store.put(song);
+        }
+        resolve();
+      };
+    });
+  }
+
+  // ── Update Song Metadata (partial) ───────────────────────────────
+  async updateSongMetadata(songId: string, updates: Partial<Song>): Promise<void> {
+    const db = await this.init();
+    const tx = db.transaction([this.storeName], 'readwrite');
+    const store = tx.objectStore(this.storeName);
+    return new Promise((resolve) => {
+      const request = store.get(songId);
+      request.onsuccess = () => {
+        const song = request.result;
+        if (song) {
+          song.metadata = { ...song.metadata, ...updates };
+          store.put(song);
+        }
+        resolve();
+      };
+    });
   }
 
   async exportNeuralCore(): Promise<string> {

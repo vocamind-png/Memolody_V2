@@ -46,10 +46,19 @@ export interface Song {
   salePrice?: number;
   origin?: 'create' | 'load' | 'bought';
   isDeleted?: boolean;
+  isFavorite?: boolean;
+  folderId?: string;
   views?: number;
   likes?: number;
   commentCount?: number;
   isLiked?: boolean;
+}
+
+export interface SongFolder {
+  id: string;
+  name: string;
+  color: string;
+  createdAt: string;
 }
 
 export interface TrackState {

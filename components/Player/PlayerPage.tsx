@@ -204,7 +204,7 @@ const PlayerPage: React.FC<{
 
       // 🛑 Auto-stop logic: Stop precisely at the end of the song (0.3s buffer)
       if (musicEngine.transportState === 'started' && totalDurationSeconds > 0) {
-        if (currentTransportSeconds >= totalDurationSeconds + 0.3 && !musicEngine.isLoopActive) {
+        if (currentTransportSeconds >= totalDurationSeconds + 0.3 && !(musicEngine as any).isLoopActive) {
           musicEngine.pause();
           setIsPlaying(false);
         }
