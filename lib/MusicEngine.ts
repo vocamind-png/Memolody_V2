@@ -118,11 +118,20 @@ export class MusicEngine {
 
     const fifthsNode = xmlDoc.querySelector("fifths");
     const fifths = fifthsNode ? parseInt(fifthsNode.textContent || "0") : 0;
-    const FIFTHS_TO_KEY: Record<number, string> = {
-      [-6]: "Gb", [-5]: "Db", [-4]: "Ab", [-3]: "Eb", [-2]: "Bb", [-1]: "F",
-      0: "C", 1: "G", 2: "D", 3: "A", 4: "E", 5: "B", 6: "F#"
+    const modeNode = xmlDoc.querySelector("key mode");
+    const isMinor = modeNode?.textContent?.toLowerCase() === 'minor';
+    
+    const FIFTHS_TO_MAJOR: Record<number, string> = {
+      [-7]: "Cb", [-6]: "Gb", [-5]: "Db", [-4]: "Ab", [-3]: "Eb", [-2]: "Bb", [-1]: "F",
+      0: "C", 1: "G", 2: "D", 3: "A", 4: "E", 5: "B", 6: "F#", 7: "C#"
     };
-    const key = FIFTHS_TO_KEY[fifths] || defaultMeta.key;
+    const FIFTHS_TO_MINOR: Record<number, string> = {
+      [-7]: "Abm", [-6]: "Ebm", [-5]: "Bbm", [-4]: "Fm", [-3]: "Cm", [-2]: "Gm", [-1]: "Dm",
+      0: "Am", 1: "Em", 2: "Bm", 3: "F#m", 4: "C#m", 5: "G#m", 6: "D#m", 7: "A#m"
+    };
+    const key = isMinor
+      ? (FIFTHS_TO_MINOR[fifths] || defaultMeta.key)
+      : (FIFTHS_TO_MAJOR[fifths] || defaultMeta.key);
 
     // Parse Notes
     const notes: ParsedNote[] = [];
