@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { Home, User, Database, Music2, Settings, Zap, RefreshCcw } from 'lucide-react';
+import JSZip from 'jszip';
 import { musicEngine } from './lib/MusicEngine';
 import { songStorage } from './lib/SongStorage';
 import { CloudSyncService } from './lib/CloudSyncService';
@@ -137,20 +138,47 @@ const App: React.FC = () => {
     // ── LAZY FETCH: If xmlData is a URL, fetch the actual XML content ──
     if (finalXml && finalXml.startsWith('http')) {
       try {
-        console.log('[Neural] Lazy-fetching XML from:', finalXml);
-        const resp = await fetch(finalXml);
+        const url = finalXml;
+        console.log('[Neural] Lazy-fetching from:', url);
+        const isMxl = url.endsWith('.mxl');
+        const resp = await fetch(url);
         if (resp.ok) {
-          finalXml = await resp.text();
+          if (isMxl) {
+            // .mxl = ZIP containing MusicXML
+            const blob = await resp.blob();
+            const zip = await JSZip.loadAsync(blob);
+            // Find the .xml file inside the zip (usually META-INF/rootfile or *.xml)
+            let xmlContent = '';
+            for (const [name, file] of Object.entries(zip.files)) {
+              if (name.endsWith('.xml') && !name.startsWith('META-INF')) {
+                xmlContent = await (file as any).async('string');
+                break;
+              }
+            }
+            if (!xmlContent) {
+              // Fallback: try any .xml file
+              for (const [name, file] of Object.entries(zip.files)) {
+                if (name.endsWith('.xml')) {
+                  xmlContent = await (file as any).async('string');
+                  break;
+                }
+              }
+            }
+            finalXml = xmlContent || '';
+            console.log('[Neural] MXL decompressed:', finalXml.length, 'chars');
+          } else {
+            finalXml = await resp.text();
+          }
           // Cache it back to IndexedDB so we don't fetch again
-          if (owned) {
+          if (owned && finalXml) {
             await songStorage.saveSong(owned.metadata, finalXml);
           }
         } else {
-          console.warn('[Neural] XML fetch failed:', resp.status);
+          console.warn('[Neural] Fetch failed:', resp.status);
           finalXml = '';
         }
       } catch (e) {
-        console.warn('[Neural] XML fetch error:', e);
+        console.warn('[Neural] Fetch error:', e);
         finalXml = '';
       }
     }
