@@ -1,0 +1,509 @@
+import React, { useState } from 'react';
+import * as Tone from 'tone';
+import { Settings2, Volume2, Cpu, Mic, Activity, Keyboard, MonitorSpeaker, Command, Monitor, Zap, Bot, Play } from 'lucide-react';
+
+interface SettingsPageProps {
+    onBack?: () => void;
+    performanceMode: boolean;
+    onTogglePerformanceMode: (enabled: boolean) => void;
+    nimoEnabled: boolean;
+    onToggleNimoEnabled: (enabled: boolean) => void;
+    nimoVoice: 'teen_girl' | 'adult_woman' | 'teen_boy' | 'adult_man';
+    onChangeNimoVoice: (voice: 'teen_girl' | 'adult_woman' | 'teen_boy' | 'adult_man') => void;
+}
+
+const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, onTogglePerformanceMode, nimoEnabled, onToggleNimoEnabled, nimoVoice, onChangeNimoVoice }) => {
+    const [activeTab, setActiveTab] = useState<'audio' | 'midi' | 'shortcuts' | 'visual' | 'ai'>('audio');
+
+    // Audio Settings State
+    const [audioInput, setAudioInput] = useState('default');
+    const [audioOutput, setAudioOutput] = useState('default');
+    const [sampleRate, setSampleRate] = useState('auto');
+    const [bufferSize, setBufferSize] = useState('256');
+
+    // Dynamic Device Lists
+    const [deviceList, setDeviceList] = useState<MediaDeviceInfo[]>([]);
+    const [permissionStatus, setPermissionStatus] = useState<'prompt' | 'granted' | 'denied'>('prompt');
+
+    const refreshDevices = async () => {
+        try {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            setDeviceList(devices);
+
+            // Check if we have labels (meaning permission granted)
+            if (devices.some(d => d.label !== "")) {
+                setPermissionStatus('granted');
+            } else {
+                // Proactive check for already granted permissions
+                if (navigator.permissions && (navigator.permissions as any).query) {
+                    try {
+                        const result = await navigator.permissions.query({ name: 'microphone' as any });
+                        if (result.state === 'granted') {
+                            setPermissionStatus('granted');
+                            const updated = await navigator.mediaDevices.enumerateDevices();
+                            setDeviceList(updated);
+                        } else {
+                            setPermissionStatus(result.state);
+                        }
+                    } catch (e) { /* fallback if query fails */ }
+                }
+            }
+        } catch (err) {
+            console.error("Device Enum Error:", err);
+        }
+    };
+
+    const requestPermission = async () => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            stream.getTracks().forEach(track => track.stop());
+            setPermissionStatus('granted');
+            await refreshDevices();
+        } catch (err) {
+            setPermissionStatus('denied');
+            console.error("Permission Denied:", err);
+        }
+    };
+
+    React.useEffect(() => {
+        // Initial auto-scan on mount
+        refreshDevices();
+
+        // Auto-scan on hardware change (USB/HDMI)
+        navigator.mediaDevices.addEventListener('devicechange', refreshDevices);
+        return () => navigator.mediaDevices.removeEventListener('devicechange', refreshDevices);
+    }, []);
+
+    const inputDevices = deviceList.filter(d => d.kind === 'audioinput');
+    const outputDevices = deviceList.filter(d => d.kind === 'audiooutput');
+
+    // MIDI Settings State
+    const [midiInput, setMidiInput] = useState('all');
+
+    return (
+        <div className="w-full min-h-full bg-black text-white p-4 md:p-8 flex flex-col pt-[20px] pb-32">
+            <div className="max-w-4xl mx-auto w-full relative z-10 flex-col flex h-full">
+                {/* Header */}
+                <div className="flex items-center gap-4 mb-8">
+                    <div className="w-12 h-12 rounded-full bg-cyan-500/10 flex items-center justify-center border border-cyan-500/30">
+                        <Settings2 className="text-cyan-400" size={24} />
+                    </div>
+                    <div>
+                        <h1 className="text-2xl font-black uppercase tracking-[0.2em] text-transparent bg-clip-text bg-gradient-to-r from-white to-zinc-500">
+                            System Setup
+                        </h1>
+                        <p className="text-zinc-500 text-xs uppercase tracking-widest mt-1">Configure your creative environment</p>
+                    </div>
+                </div>
+
+                {/* Tabs */}
+                <div className="flex bg-[#0a0a0f] p-1 rounded-2xl border border-white/5 mb-8 overflow-x-auto no-scrollbar shrink-0">
+                    {[
+                        { id: 'audio', label: 'Audio Engine', icon: Volume2 },
+                        { id: 'midi', label: 'MIDI Devices', icon: Activity },
+                        { id: 'visual', label: 'Visuals', icon: Monitor },
+                        { id: 'ai', label: 'AI Assistant', icon: Bot },
+                        { id: 'shortcuts', label: 'Key Commands', icon: Keyboard },
+                    ].map(tab => (
+                        <button
+                            key={tab.id}
+                            onClick={() => setActiveTab(tab.id as any)}
+                            className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === tab.id
+                                ? 'bg-gradient-to-r from-cyan-500/20 to-blue-500/20 text-cyan-400 border border-cyan-500/30 shadow-[0_0_20px_rgba(6,182,212,0.15)]'
+                                : 'text-zinc-500 hover:text-white hover:bg-white/5 border border-transparent'
+                                }`}
+                        >
+                            <tab.icon size={14} />
+                            {tab.label}
+                        </button>
+                    ))}
+                </div>
+
+                {/* Content Area */}
+                <div className="flex-1 bg-[#0a0a0f]/80 backdrop-blur-xl rounded-3xl border border-white/5 p-6 md:p-10 shadow-2xl relative overflow-hidden">
+                    {/* Subtle glow effect */}
+                    <div className="absolute top-0 right-0 w-96 h-96 bg-cyan-500/5 rounded-full blur-[100px] pointer-events-none" />
+
+                    {activeTab === 'audio' && (
+                        <div className="space-y-8 relative z-10">
+                            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-6 bg-cyan-500/5 border border-cyan-500/20 rounded-[28px] mb-8">
+                                <div className="flex items-center gap-4">
+                                    <div className="w-12 h-12 rounded-full bg-cyan-500/10 flex items-center justify-center shrink-0">
+                                        <MonitorSpeaker size={24} className="text-cyan-400" />
+                                    </div>
+                                    <div>
+                                        <h2 className="text-sm font-black uppercase tracking-widest text-white">Device Connectivity</h2>
+                                        <p className="text-[10px] text-zinc-500 uppercase tracking-widest mt-1">
+                                            {permissionStatus === 'granted'
+                                                ? "All hardware identified and ready for use"
+                                                : "Browser is protecting device names (Privacy Mode)"}
+                                        </p>
+                                    </div>
+                                </div>
+                                {permissionStatus !== 'granted' ? (
+                                    <button
+                                        onClick={requestPermission}
+                                        className="px-6 py-2.5 bg-cyan-400 text-black text-[10px] font-black uppercase tracking-[0.2em] rounded-xl hover:bg-white transition-all shadow-[0_0_20px_rgba(6,182,212,0.3)] active:scale-95"
+                                    >
+                                        Unlock Device Names
+                                    </button>
+                                ) : (
+                                    <button
+                                        onClick={refreshDevices}
+                                        className="px-6 py-2.5 bg-white/5 border border-white/10 text-zinc-300 text-[10px] font-black uppercase tracking-[0.2em] rounded-xl hover:bg-white/10 transition-all"
+                                    >
+                                        Re-Scan Hardware
+                                    </button>
+                                )}
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                <div className="group space-y-3">
+                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-cyan-500/70 ml-1 flex items-center gap-2">
+                                        <Mic size={12} /> Audio Input
+                                    </label>
+                                    <div className="relative">
+                                        <select
+                                            value={audioInput}
+                                            onChange={e => setAudioInput(e.target.value)}
+                                            className="w-full bg-black border border-white/10 rounded-2xl px-5 py-4 text-sm text-zinc-300 focus:outline-none focus:border-cyan-500/50 transition-all appearance-none cursor-pointer hover:bg-white/[0.02]"
+                                        >
+                                            <option value="default">System Default Input</option>
+                                            {inputDevices.map(d => (
+                                                <option key={d.deviceId} value={d.deviceId}>{d.label || `Unknown Input (${d.deviceId.slice(0, 5)}...)`}</option>
+                                            ))}
+                                        </select>
+                                        <div className="absolute right-5 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-600">
+                                            <Monitor size={14} />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="group space-y-3">
+                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-cyan-500/70 ml-1 flex items-center gap-2">
+                                        <Volume2 size={12} /> Audio Output
+                                    </label>
+                                    <div className="relative">
+                                        <select
+                                            value={audioOutput}
+                                            onChange={e => {
+                                                const val = e.target.value;
+                                                setAudioOutput(val);
+                                                if ((Tone.getContext().rawContext as any).setSinkId) {
+                                                    (Tone.getContext().rawContext as any).setSinkId(val === 'default' ? '' : val);
+                                                }
+                                            }}
+                                            className="w-full bg-black border border-white/10 rounded-2xl px-5 py-4 text-sm text-zinc-300 focus:outline-none focus:border-cyan-500/50 transition-all appearance-none cursor-pointer hover:bg-white/[0.02]"
+                                        >
+                                            <option value="default">System Default Output</option>
+                                            {outputDevices.map(d => (
+                                                <option key={d.deviceId} value={d.deviceId}>{d.label || `Unknown Output (${d.deviceId.slice(0, 5)}...)`}</option>
+                                            ))}
+                                        </select>
+                                        <div className="absolute right-5 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-600">
+                                            <MonitorSpeaker size={14} />
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {permissionStatus !== 'granted' && (
+                                <p className="text-[9px] text-zinc-600 uppercase tracking-widest mt-4 leading-relaxed bg-black/40 p-4 rounded-2xl border border-white/5 italic">
+                                    <strong className="text-zinc-400 not-italic mr-1">Pro Tip:</strong>
+                                    To see device names (like "Apple TV" or "HDMI"), click "Unlock Device Names". This allows the browser to identify your hardware.
+                                </p>
+                            )}
+
+                            <div className="h-[1px] w-full bg-gradient-to-r from-transparent via-white/10 to-transparent my-8" />
+
+                            <h2 className="text-lg font-black uppercase tracking-widest text-zinc-300 flex items-center gap-3">
+                                <Cpu size={20} className="text-cyan-400" /> Engine Quality
+                            </h2>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div>
+                                    <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2 block">Sample Rate</label>
+                                    <select
+                                        value={sampleRate}
+                                        onChange={e => setSampleRate(e.target.value)}
+                                        className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-sm text-zinc-300 focus:outline-none focus:border-cyan-500/50 transition-all appearance-none"
+                                    >
+                                        <option value="auto">Auto (System Default)</option>
+                                        <option value="44100">44.1 kHz (CD Quality)</option>
+                                        <option value="48000">48.0 kHz (Studio Default)</option>
+                                        <option value="96000">96.0 kHz (High-Res)</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2 block">Bit Depth</label>
+                                    <select disabled className="w-full bg-black border border-white/5 rounded-xl px-4 py-3 text-sm text-zinc-600 appearance-none opacity-50 cursor-not-allowed">
+                                        <option>32-bit float (Engine Default)</option>
+                                    </select>
+                                    <p className="text-[9px] text-zinc-600 mt-2 uppercase tracking-wide">Fixed internal processing resolution</p>
+                                </div>
+                            </div>
+
+                            <div className="h-[1px] w-full bg-gradient-to-r from-transparent via-white/10 to-transparent my-8" />
+
+                            <h2 className="text-lg font-black uppercase tracking-widest text-zinc-300 flex items-center gap-3">
+                                <Activity size={20} className="text-cyan-400" /> Performance
+                            </h2>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div>
+                                    <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2 block">Audio Buffer Size</label>
+                                    <select
+                                        value={bufferSize}
+                                        onChange={e => setBufferSize(e.target.value)}
+                                        className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-sm text-zinc-300 focus:outline-none focus:border-cyan-500/50 transition-all appearance-none"
+                                    >
+                                        <option value="64">64 Samples (Lowest Latency)</option>
+                                        <option value="128">128 Samples</option>
+                                        <option value="256">256 Samples (Recommended)</option>
+                                        <option value="512">512 Samples</option>
+                                        <option value="1024">1024 Samples (Safest for CPU)</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2 block">Estimated Latency</label>
+                                    <div className="w-full bg-black/50 border border-white/5 rounded-xl px-4 py-3 text-sm text-cyan-400 font-mono flex items-center justify-between">
+                                        <span>Round-trip:</span>
+                                        <span className="font-bold">
+                                            {bufferSize === '64' ? '~2.9ms' :
+                                                bufferSize === '128' ? '~5.8ms' :
+                                                    bufferSize === '256' ? '~11.6ms' :
+                                                        bufferSize === '512' ? '~23.2ms' : '~46.4ms'}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {activeTab === 'visual' && (
+                        <div className="space-y-8 relative z-10 animate-fade-in">
+                            <h2 className="text-lg font-black uppercase tracking-widest text-zinc-300 flex items-center gap-3">
+                                <Monitor size={20} className="text-cyan-400" /> Visual Engine
+                            </h2>
+
+                            <div className="flex flex-col gap-6">
+                                <div className={`p-6 rounded-[28px] border transition-all ${performanceMode ? 'bg-cyan-500/10 border-cyan-500/30' : 'bg-white/5 border-white/10'}`}>
+                                    <div className="flex items-start justify-between gap-4">
+                                        <div className="flex-1">
+                                            <div className="flex items-center gap-2 mb-2">
+                                                <Zap size={16} className={performanceMode ? 'text-cyan-400' : 'text-zinc-500'} />
+                                                <h3 className="text-sm font-black uppercase tracking-widest text-white">Performance Mode</h3>
+                                            </div>
+                                            <p className="text-[10px] text-zinc-500 uppercase tracking-widest leading-relaxed">
+                                                {performanceMode
+                                                    ? "Mobile optimization active: Blur effects disabled, simplified animations, and power-saving UI."
+                                                    : "Normal mode: Full visual fidelity with glassmorphism and real-time animations."}
+                                            </p>
+                                        </div>
+                                        <button
+                                            onClick={() => onTogglePerformanceMode(!performanceMode)}
+                                            className={`relative w-14 h-7 rounded-full transition-all flex items-center p-1 ${performanceMode ? 'bg-cyan-500' : 'bg-white/10'}`}
+                                        >
+                                            <div className={`w-5 h-5 bg-white rounded-full shadow-lg transform transition-transform ${performanceMode ? 'translate-x-7' : 'translate-x-0'}`} />
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="p-5 border border-white/5 rounded-2xl bg-black/40">
+                                        <h4 className="text-[9px] font-black text-zinc-500 uppercase tracking-widest mb-3">UI Effects</h4>
+                                        <div className="space-y-2">
+                                            <div className="flex items-center justify-between opacity-50">
+                                                <span className="text-[10px] uppercase font-bold">Backdrop Blur</span>
+                                                <span className="text-[8px] uppercase font-black px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400">{performanceMode ? 'OFF' : 'ON'}</span>
+                                            </div>
+                                            <div className="flex items-center justify-between opacity-50">
+                                                <span className="text-[10px] uppercase font-bold">Glassmorphism</span>
+                                                <span className="text-[8px] uppercase font-black px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400">{performanceMode ? 'OFF' : 'ON'}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="p-5 border border-white/5 rounded-2xl bg-black/40">
+                                        <h4 className="text-[9px] font-black text-zinc-500 uppercase tracking-widest mb-3">Score Engine</h4>
+                                        <div className="space-y-2">
+                                            <div className="flex items-center justify-between opacity-50">
+                                                <span className="text-[10px] uppercase font-bold">Real-time Laser Tail</span>
+                                                <span className="text-[8px] uppercase font-black px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400">{performanceMode ? 'SIMPLIFIED' : 'HIGH-RES'}</span>
+                                            </div>
+                                            <div className="flex items-center justify-between opacity-50">
+                                                <span className="text-[10px] uppercase font-bold">Note Glow Effect</span>
+                                                <span className="text-[8px] uppercase font-black px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400">{performanceMode ? 'SUBTLE' : 'VIVID'}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <p className="text-[10px] text-zinc-600 uppercase tracking-widest leading-relaxed italic bg-white/5 p-4 rounded-xl border border-white/5">
+                                    <strong className="text-cyan-400/80 not-italic mr-1">Mobile Note:</strong>
+                                    If you experience stuttering playback or slow loading on mid-range devices (e.g. nubia, Moto, Pixel a-series), we strongly recommend enabling Performance Mode.
+                                </p>
+                            </div>
+                        </div>
+                    )}
+
+                    {activeTab === 'midi' && (
+                        <div className="space-y-8 relative z-10">
+                            <h2 className="text-lg font-black uppercase tracking-widest text-zinc-300 flex items-center gap-3">
+                                <Keyboard size={20} className="text-cyan-400" /> MIDI Inputs
+                            </h2>
+                            <div>
+                                <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2 block">Available Devices</label>
+                                <select
+                                    value={midiInput}
+                                    onChange={e => setMidiInput(e.target.value)}
+                                    className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-sm text-zinc-300 focus:outline-none focus:border-cyan-500/50 transition-all appearance-none"
+                                >
+                                    <option value="all">Listen to ALL connected devices (Omni)</option>
+                                    <option value="none">None (Disabled)</option>
+                                </select>
+                                <p className="text-[10px] text-zinc-500 mt-4 leading-relaxed bg-white/5 p-4 rounded-xl border border-white/5">
+                                    <strong className="text-cyan-400">Note:</strong> Memolody AI Studio automatically detects connected USB MIDI keyboards. Ensure your device is connected before launching the browser. Chrome/Edge natively supports Web MIDI API.
+                                </p>
+                            </div>
+                        </div>
+                    )}
+
+                    {activeTab === 'shortcuts' && (
+                        <div className="space-y-6 relative z-10 w-full h-full flex flex-col">
+                            <div className="flex items-center justify-between">
+                                <h2 className="text-lg font-black uppercase tracking-widest text-zinc-300 flex items-center gap-3">
+                                    <Command size={20} className="text-cyan-400" /> Key Commands
+                                </h2>
+                                <div className="flex gap-2">
+                                    <div className="px-3 py-1 bg-white/10 text-[9px] font-black tracking-widest uppercase rounded-lg border border-white/10">Mac</div>
+                                    <div className="px-3 py-1 bg-transparent text-zinc-500 text-[9px] font-black tracking-widest uppercase rounded-lg border border-transparent">Win</div>
+                                </div>
+                            </div>
+
+                            <div className="flex-1 overflow-auto pr-2 custom-scrollbar space-y-2">
+                                {[
+                                    { action: 'Play / Pause', keys: ['Space'] },
+                                    { action: 'Return to Start', keys: ['Return'] },
+                                    { action: 'Zoom In', keys: ['⌘', '↑', 'or', '→'] },
+                                    { action: 'Zoom Out', keys: ['⌘', '↓', 'or', '←'] },
+                                    { action: 'Save Project', keys: ['⌘', 'S'] },
+                                    { action: 'Undo', keys: ['⌘', 'Z'] },
+                                    { action: 'Redo', keys: ['⌘', '⇧', 'Z'] },
+                                    { action: 'Delete Selected Note', keys: ['⌫'] },
+                                    { action: 'Select All', keys: ['⌘', 'A'] },
+                                    { action: 'Copy', keys: ['⌘', 'C'] },
+                                    { action: 'Paste', keys: ['⌘', 'V'] },
+                                    { action: 'Toggle Loop', keys: ['L'] },
+                                ].map((sc, i) => (
+                                    <div key={i} className="flex items-center justify-between p-3 bg-black/40 rounded-xl border border-white/5 hover:border-white/10 transition-colors">
+                                        <span className="text-sm font-medium text-zinc-300">{sc.action}</span>
+                                        <div className="flex items-center gap-1.5">
+                                            {sc.keys.map((k, j) => (
+                                                <span key={j} className={`
+                          ${k === 'or' ? 'text-zinc-600 text-[10px] px-1 font-black uppercase mx-1' : 'px-2 py-1 bg-white/10 border border-white/20 rounded shadow-sm text-xs font-mono text-zinc-200 min-w-[24px] text-center'}
+                        `}>
+                                                    {k}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {activeTab === 'ai' && (
+                        <div className="space-y-8 relative z-10 animate-fade-in">
+                            <h2 className="text-lg font-black uppercase tracking-widest text-zinc-300 flex items-center gap-3">
+                                <Bot size={20} className="text-cyan-400" /> Nimo AI Co-Pilot
+                            </h2>
+
+                            <div className="flex flex-col gap-6">
+                                <div className={`p-6 rounded-[28px] border transition-all ${nimoEnabled ? 'bg-cyan-500/10 border-cyan-500/30' : 'bg-white/5 border-white/10'}`}>
+                                    <div className="flex items-start justify-between gap-4">
+                                        <div className="flex-1">
+                                            <div className="flex items-center gap-2 mb-2">
+                                                <Bot size={16} className={nimoEnabled ? 'text-cyan-400' : 'text-zinc-500'} />
+                                                <h3 className="text-sm font-black uppercase tracking-widest text-white">Nimo AI Enabled</h3>
+                                            </div>
+                                            <p className="text-[10px] text-zinc-500 uppercase tracking-widest leading-relaxed">
+                                                {nimoEnabled
+                                                    ? "Nimo is active and ready to assist you. Disabling this will remove Nimo from the interface entirely."
+                                                    : "Nimo is currently disabled. Toggle to enable AI musical assistance."}
+                                            </p>
+                                        </div>
+                                        <button
+                                            onClick={() => onToggleNimoEnabled(!nimoEnabled)}
+                                            className={`relative w-14 h-7 rounded-full transition-all flex items-center p-1 ${nimoEnabled ? 'bg-cyan-500' : 'bg-white/10'}`}
+                                        >
+                                            <div className={`w-5 h-5 bg-white rounded-full shadow-lg transform transition-transform ${nimoEnabled ? 'translate-x-7' : 'translate-x-0'}`} />
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className={`transition-all duration-300 ${!nimoEnabled ? 'opacity-50 pointer-events-none grayscale' : ''}`}>
+                                    <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2 block">Voice Identity & Personality</label>
+                                    <select
+                                        value={nimoVoice}
+                                        onChange={e => onChangeNimoVoice(e.target.value as any)}
+                                        className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-sm text-zinc-300 focus:outline-none focus:border-cyan-500/50 transition-all appearance-none"
+                                    >
+                                        <option value="teen_girl">วัยรุ่นหญิง (Teen Girl - สดใส ร่าเริง)</option>
+                                        <option value="adult_woman">ผู้ใหญ่หญิง (Adult Woman - สุขุม มืออาชีพ)</option>
+                                        <option value="teen_boy">วัยรุ่นชาย (Teen Boy - เป็นกันเอง สนุกสนาน)</option>
+                                        <option value="adult_man">ผู้ชายผู้ใหญ่ (Adult Man - เป็นทางการ มั่นคง)</option>
+                                    </select>
+
+                                    <button
+                                        onClick={() => {
+                                            if ('speechSynthesis' in window) {
+                                                window.speechSynthesis.cancel();
+                                                let text = '';
+                                                let pitch = 1.0;
+                                                let rate = 1.0;
+                                                let voiceTypeSearch = '';
+                                                let fallbackSearch = '';
+
+                                                switch (nimoVoice) {
+                                                    case 'teen_girl':
+                                                        text = "สวัสดีค่ะ Nimo พร้อมช่วยแล้วค่ะ";
+                                                        pitch = 1.3; rate = 1.05; voiceTypeSearch = 'Female'; fallbackSearch = 'หญิง';
+                                                        break;
+                                                    case 'adult_woman':
+                                                        text = "สวัสดีค่ะ ผู้ช่วยอัจฉริยะพร้อมให้บริการค่ะ";
+                                                        pitch = 1.0; rate = 0.95; voiceTypeSearch = 'Female'; fallbackSearch = 'หญิง';
+                                                        break;
+                                                    case 'teen_boy':
+                                                        text = "สวัสดีครับ มีอะไรให้ผมช่วยไหมครับ";
+                                                        pitch = 1.2; rate = 1.05; voiceTypeSearch = 'Male'; fallbackSearch = 'ชาย';
+                                                        break;
+                                                    case 'adult_man':
+                                                        text = "สวัสดีครับ ระบบ AI พร้อมให้คำแนะนำครับ";
+                                                        pitch = 0.9; rate = 0.95; voiceTypeSearch = 'Male'; fallbackSearch = 'ชาย';
+                                                        break;
+                                                }
+                                                const utterance = new SpeechSynthesisUtterance(text);
+                                                utterance.lang = 'th-TH';
+                                                utterance.pitch = pitch;
+                                                utterance.rate = rate;
+
+                                                const voices = window.speechSynthesis.getVoices();
+                                                let thaiVoice = voices.find(v => v.lang.includes('th') && (v.name.includes(voiceTypeSearch) || v.name.includes(fallbackSearch)));
+                                                if (!thaiVoice) thaiVoice = voices.find(v => v.lang.includes('th'));
+                                                if (thaiVoice) utterance.voice = thaiVoice;
+                                                window.speechSynthesis.speak(utterance);
+                                            }
+                                        }}
+                                        className="mt-4 px-6 py-2.5 bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 text-[10px] font-black uppercase tracking-[0.2em] rounded-xl hover:bg-cyan-500 hover:text-black transition-all shadow-[0_0_20px_rgba(6,182,212,0.1)] flex items-center justify-center gap-2 w-full sm:w-auto"
+                                    >
+                                        <Play size={12} /> Test Voice Sample
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+};
+
+export default SettingsPage;

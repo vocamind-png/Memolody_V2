@@ -1,0 +1,7 @@
+{
+  "name": "Memolody — Play by Ear, Hear by Eye",
+  "description": "Play by Ear, Hear by Eye. A high-performance AI music education platform featuring a professional score player with chromatic solfege, piano roll, memo practice loops, and a 250k+ song library.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
