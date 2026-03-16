@@ -10,6 +10,7 @@ import { musicEngine } from '../../lib/MusicEngine';
 
 interface BarMap {
   measureNumber: number;
+  measureId: string;        // raw SVG .measure[n] attribute value e.g. "1","9"
   startRelX: number;
   endRelX: number;
   startTime: number;
@@ -79,6 +80,127 @@ export interface ProScoreEditorRef {
   exportToImage: (format: 'png' | 'jpeg') => Promise<void>;
 }
 
+// ═══════════════════════════════════════════════════════════════════
+//  Auto Chord Detection — inject <harmony> from simultaneous notes
+// ═══════════════════════════════════════════════════════════════════
+function detectAndInjectChords(xml: string): string {
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(xml, 'text/xml');
+    if (doc.querySelector('parsererror')) return xml;
+
+    // Note name → semitone (C=0)
+    const STEP_TO_SEMI: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+    const NOTE_NAMES = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'];
+
+    // Chord interval patterns (sorted ascending from root)
+    const PATTERNS: Array<{ ivs: number[]; text: string; kind: string }> = [
+      { ivs: [0, 4, 7, 11], text: 'maj7', kind: 'major-seventh' },
+      { ivs: [0, 4, 7, 10], text: '7', kind: 'dominant' },
+      { ivs: [0, 3, 7, 10], text: 'm7', kind: 'minor-seventh' },
+      { ivs: [0, 3, 6, 9], text: 'dim7', kind: 'diminished-seventh' },
+      { ivs: [0, 3, 6], text: 'dim', kind: 'diminished' },
+      { ivs: [0, 4, 8], text: 'aug', kind: 'augmented' },
+      { ivs: [0, 2, 7], text: 'sus2', kind: 'suspended-second' },
+      { ivs: [0, 5, 7], text: 'sus4', kind: 'suspended-fourth' },
+      { ivs: [0, 4, 7], text: '', kind: 'major' },
+      { ivs: [0, 3, 7], text: 'm', kind: 'minor' },
+    ];
+
+    const measures = Array.from(doc.querySelectorAll('measure'));
+
+    for (const measure of measures) {
+      let divisions = 1;
+      const divEl = measure.querySelector('attributes > divisions');
+      if (divEl) divisions = Math.max(1, parseInt(divEl.textContent || '1'));
+
+      // Map onset (in divisions) → [semitone pitch]
+      const onsetMap = new Map<number, number[]>();
+      // Map onset → first non-chord note element at that onset
+      const onsetFirstNote = new Map<number, Element>();
+
+      let cursor = 0;
+      let lastOnset = 0;
+
+      for (const child of Array.from(measure.children)) {
+        const tag = child.tagName;
+        if (tag === 'note') {
+          const isChordNote = child.querySelector('chord') !== null;
+          const stepEl = child.querySelector('pitch > step');
+          const alterEl = child.querySelector('pitch > alter');
+          const octEl = child.querySelector('pitch > octave');
+          const durEl = child.querySelector('duration');
+          const dur = durEl ? parseInt(durEl.textContent || '1') : 1;
+
+          if (!isChordNote) {
+            lastOnset = cursor;
+            cursor += dur;
+          }
+
+          if (stepEl) {
+            const step = stepEl.textContent?.trim() || 'C';
+            const alter = alterEl ? parseInt(alterEl.textContent || '0') : 0;
+            const octave = octEl ? parseInt(octEl.textContent || '4') : 4;
+            const semi = (STEP_TO_SEMI[step] ?? 0) + alter + (octave + 1) * 12;
+            const onset = isChordNote ? lastOnset : cursor - dur;
+
+            if (!onsetMap.has(onset)) onsetMap.set(onset, []);
+            onsetMap.get(onset)!.push(semi);
+
+            if (!isChordNote && !onsetFirstNote.has(onset)) {
+              onsetFirstNote.set(onset, child);
+            }
+          }
+        } else if (tag === 'backup') {
+          const d = child.querySelector('duration');
+          if (d) cursor = Math.max(0, cursor - parseInt(d.textContent || '0'));
+        } else if (tag === 'forward') {
+          const d = child.querySelector('duration');
+          if (d) cursor += parseInt(d.textContent || '0');
+        }
+      }
+
+      // Try to detect chord at each onset with ≥ 2 distinct pitch classes
+      for (const [onset, semitones] of Array.from(onsetMap.entries())) {
+        const pcs = [...new Set(semitones.map(s => ((s % 12) + 12) % 12))].sort((a, b) => a - b);
+        if (pcs.length < 2) continue;
+
+        let bestRoot = -1, bestPattern: typeof PATTERNS[0] | null = null;
+
+        outer: for (const root of pcs) {
+          const ivs = pcs.map(pc => ((pc - root + 12) % 12)).sort((a, b) => a - b);
+          for (const pat of PATTERNS) {
+            if (pat.ivs.every(i => ivs.includes(i))) {
+              bestRoot = root; bestPattern = pat;
+              break outer;
+            }
+          }
+        }
+
+        if (bestRoot < 0 || !bestPattern) continue;
+
+        const rootName = NOTE_NAMES[bestRoot];
+        const rootStep = rootName.replace(/[#b]/g, '');
+        const rootAlter = rootName.includes('#') ? 1 : rootName.includes('b') ? -1 : 0;
+
+        const harmXml = `<harmony><root><root-step>${rootStep}</root-step>${rootAlter !== 0 ? `<root-alter>${rootAlter}</root-alter>` : ''
+          }</root><kind text="${bestPattern.text}">${bestPattern.kind}</kind></harmony>`;
+
+        const harmDoc = parser.parseFromString(harmXml, 'text/xml');
+        const harmEl = doc.importNode(harmDoc.documentElement, true);
+
+        const refNote = onsetFirstNote.get(onset);
+        if (refNote) measure.insertBefore(harmEl, refNote);
+      }
+    }
+
+    const serializer = new XMLSerializer();
+    return serializer.serializeToString(doc);
+  } catch {
+    return xml; // on any error, return original
+  }
+}
+
 const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
   xmlData, currentTime, isPlaying, songMetadata, zoom: externalZoom = 1.0, setZoom: setExternalZoom, lyricMode = 'Movable Do',
   transpose = 0, layoutMode, isLoupeEnabled, pageFormat = 'A4', showBorders = true,
@@ -101,9 +223,11 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const vrvToolkitRef = useRef<any>(null);
-  const starCanvasRef = useRef<HTMLCanvasElement>(null);
   const starAnimFrameRef = useRef<number>(0);
   const prevTimeRef = useRef<number>(0);
+  // Laser
+  const laserRafRef = useRef<number>(0);
+  const laserPrevPageRef = useRef<number>(-1);
 
   const [localZoom, setLocalZoom] = useState(1.0);
   const initialDistanceRef = useRef<number | null>(null);
@@ -202,7 +326,9 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
     // ================================================================
     const qstampById = new Map<string, number>();
     const durationById = new Map<string, number>();
-    let scoreEndTime = 0; // max offQstamp from Verovio = true end of score (before repeats)
+    // Maps Verovio measure element hash id → MusicXML measure number string
+    const measureNumByVrvId = new Map<string, string>();
+    let scoreEndTime = 0;
 
     try {
       const timemapRaw = vrvToolkitRef.current.renderToTimemap({ includeMeasures: true });
@@ -218,8 +344,22 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
         onIds.forEach((id: string) => {
           if (id) { qstampById.set(id, qstamp); durationById.set(id, dur); }
         });
+
+        // Build measureNumByVrvId: maps Verovio measure hash → MusicXML n number
+        // timemap entries with includeMeasures have 'measureOn'/'measureOff' arrays
+        // each containing { id: "verovio-hash", n: "1" } objects
+        if (Array.isArray(entry.measureOn)) {
+          entry.measureOn.forEach((m: any) => {
+            if (m?.id && m?.n != null) measureNumByVrvId.set(String(m.id), String(m.n));
+          });
+        }
+        if (Array.isArray(entry.measureOff)) {
+          entry.measureOff.forEach((m: any) => {
+            if (m?.id && m?.n != null) measureNumByVrvId.set(String(m.id), String(m.n));
+          });
+        }
       });
-      console.log('[Memolody] 🎯 Timemap: entries =', timemap.length, '| IDs mapped =', qstampById.size, '| scoreEnd =', scoreEndTime.toFixed(1));
+      console.log('[Memolody] 🎯 Timemap: entries =', timemap.length, '| IDs mapped =', qstampById.size, '| scoreEnd =', scoreEndTime.toFixed(1), '| measures=', measureNumByVrvId.size);
     } catch (e) {
       console.warn('[Memolody] renderToTimemap failed:', e);
     }
@@ -353,6 +493,7 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
         const baseRect = mEl.getBoundingClientRect();
         realBars.push({
           measureNumber: parseInt(mId) || 0,
+          measureId: measureNumByVrvId.get(mId) || mId, // prefer MusicXML number, fallback to Verovio hash
           startRelX: (baseRect.left - pageDivRect.left) / pageDivRect.width,
           endRelX: (baseRect.right - pageDivRect.left) / pageDivRect.width,
           startTime: n.startTime,
@@ -370,6 +511,35 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
       realBars[i].duration = Math.max(0.1, realBars[i + 1].startTime - realBars[i].startTime);
     }
     if (realBars.length > 0) realBars[realBars.length - 1].duration = 4;
+
+    // ── FIX: assign correct measureId from MusicXML by crossreferencing startTime ──
+    // The Verovio n-attribute on .measure elements is a hash, not a number.
+    // But every note has startTime (qstamp) and a measure number from MusicXML.
+    // Build startTime → measureNumber map from the engine, then tag each bar.
+    try {
+      const parsed = musicEngine.parseMusicXml(xmlData || '');
+      // Map: first occurrence of each measure's startTime → measure number
+      const measureFirstT = new Map<string, number>(); // measureNum → min startTime
+      parsed.notes.forEach(n => {
+        if (!n.measure) return;
+        const cur = measureFirstT.get(n.measure);
+        if (cur === undefined || n.startTime < cur) measureFirstT.set(n.measure, n.startTime);
+      });
+      // For each bar, find the measure whose first note startTime is closest
+      realBars.forEach(bar => {
+        let bestMeasure = '';
+        let bestDiff = 9999;
+        measureFirstT.forEach((t, mNum) => {
+          const diff = Math.abs(t - bar.startTime);
+          if (diff < bestDiff) { bestDiff = diff; bestMeasure = mNum; }
+        });
+        if (bestMeasure && bestDiff < 2) bar.measureId = bestMeasure;
+      });
+      console.log('[Memolody] ✅ barMaps measureId fixed via parseMusicXml. Sample:', realBars.slice(0, 5).map(b => `${b.measureId}@${b.startTime.toFixed(1)}`).join(' '));
+    } catch (e) {
+      console.warn('[Memolody] measureId fix failed:', e);
+    }
+
     barMapsRef.current = realBars;
 
     // Build first-pass syncPoints (Verovio DOM = written score, no repeats)
@@ -565,6 +735,18 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
         finalXml = injectSolfegeToXml(finalXml, lyricMode as any);
       }
 
+      // ── Ensure harmony/chord symbols are visible ────────────────────────
+      // PDMX files often have print-frame="no" on <harmony> which can suppress rendering.
+      // Remove that attribute so Verovio always shows chord names above the staff.
+      if (finalXml.includes('<harmony')) {
+        finalXml = finalXml
+          .replace(/(<harmony[^>]*)\s+print-frame="no"/g, '$1')   // remove print-frame="no"
+          .replace(/(<harmony[^>]*)\s+print-object="no"/g, '$1'); // remove print-object="no"
+      } else {
+        // ── Auto-detect chords from simultaneous notes ──────────────────
+        finalXml = detectAndInjectChords(finalXml);
+      }
+
       vrvToolkit.setOptions({
         scale: 45,
         font: musicFont,
@@ -594,10 +776,44 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
       const pageCount = vrvToolkit.getPageCount();
       if (onPageCountChange) onPageCountChange(pageCount);
 
+      // scaleHarmText: multiply font-size attributes inside g.harm groups by 'factor'
+      // (must operate on SVG string, not CSS px, because Verovio uses SVG user-unit space)
+      const scaleHarmText = (svg: string, factor: number): string => {
+        let result = '';
+        let pos = 0;
+        const HARM_CLASS = 'class="harm"';
+        while (pos < svg.length) {
+          const harmIdx = svg.indexOf(HARM_CLASS, pos);
+          if (harmIdx === -1) { result += svg.slice(pos); break; }
+          // Walk back to find opening <g
+          let gStart = harmIdx;
+          while (gStart > 0 && svg[gStart] !== '<') gStart--;
+          // Find matching </g>
+          let depth = 0, gEnd = gStart;
+          for (let k = gStart; k < svg.length - 1; k++) {
+            if (svg[k] === '<' && svg[k + 1] !== '/') depth++;
+            else if (svg[k] === '<' && svg[k + 1] === '/') { depth--; if (depth === 0) { gEnd = svg.indexOf('>', k) + 1; break; } }
+          }
+          result += svg.slice(pos, gStart);
+          const harmGroup = svg.slice(gStart, gEnd);
+          // Multiply font-size and force black bold on all text inside harm group
+          result += harmGroup
+            .replace(/font-size="([\d.]+)"/g, (_, sz) =>
+              `font-size="${(parseFloat(sz) * factor).toFixed(1)}"`)
+            .replace(/<text /g, '<text fill="#000000" font-weight="900" ')
+            .replace(/<tspan /g, '<tspan fill="#000000" font-weight="900" ');
+          pos = gEnd;
+        }
+        return result;
+      };
+
       const pages = [];
       for (let i = 1; i <= Math.min(pageCount, 100); i++) {
-        pages.push(vrvToolkit.renderToSVG(i, {}));
+        let svg = vrvToolkit.renderToSVG(i, {});
+        svg = scaleHarmText(svg, 12.5); // 10× + 25% = 12.5× native Verovio size, black+900w
+        pages.push(svg);
       }
+
 
       setSvgPages(pages);
       setLoadingStep("");
@@ -629,549 +845,109 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
     }
   }, [renderScore, xmlData]);
 
-
-
-
-  // ============ STARDUST CONSTELLATION EFFECT ============
-  // Color played notes via CSS classes for high performance.
-  const PLAYED_COLOR = '#00e5ff';         // Pass 1: Signature Cyan
-  const PLAYED_TEXT_COLOR = '#0ea5e9';    // Pass 1: Sky blue for text
-  const PLAYED2_COLOR = '#f472b6';        // Pass 2: Rose/Pink
-  const PLAYED2_TEXT_COLOR = '#e879f9';   // Pass 2: Magenta for text
-  const playedStyleRef = useRef<HTMLStyleElement | null>(null);
-
-  // Initial style setup - only runs once
-  useEffect(() => {
-    if (!playedStyleRef.current) {
-      playedStyleRef.current = document.createElement('style');
-      playedStyleRef.current.setAttribute('data-stardust-base', 'true');
-
-      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-      const shouldDisableFilter = performanceMode || isMobile;
-
-      playedStyleRef.current.textContent = `
-        /* ── Pass 1 (Cyan) ── */
-        g.note.played use { fill: ${PLAYED_COLOR} !important; }
-        g.note.played .stem path { stroke: ${PLAYED_COLOR} !important; }
-        g.note.played text { fill: ${PLAYED_TEXT_COLOR} !important; }
-        g.note.played {
-          ${shouldDisableFilter ? '' : `filter: drop-shadow(0 0 6px rgba(0,229,255,0.6)); transition: filter 0.3s ease;`}
-        }
-        /* ── Pass 2 (Rose/Pink) ── */
-        g.note.played-2 use { fill: ${PLAYED2_COLOR} !important; }
-        g.note.played-2 .stem path { stroke: ${PLAYED2_COLOR} !important; }
-        g.note.played-2 text { fill: ${PLAYED2_TEXT_COLOR} !important; }
-        g.note.played-2 {
-          ${shouldDisableFilter ? '' : `filter: drop-shadow(0 0 6px rgba(244,114,182,0.7)); transition: filter 0.3s ease;`}
-        }
-      `;
-      document.head.appendChild(playedStyleRef.current);
-    }
-    return () => {
-      if (playedStyleRef.current) {
-        playedStyleRef.current.remove();
-        playedStyleRef.current = null;
-      }
-    };
-  }, [performanceMode]);
-
-  // Handle case where music restarts or jumps (including Back button → reset to 0)
-  useEffect(() => {
-    prevTimeRef.current = currentTime;
-
-    const noteMap = svgNoteMapRef.current;
-    if (noteMap.length === 0) return;
-
-    if (!isPlaying) {
-      // Reset ALL notes when seeking back to start
-      if (currentTime < 0.05) {
-        noteMap.forEach(n => {
-          n.containerElement?.classList.remove('played', 'played-2');
-        });
-        return;
-      }
-
-      // Time-based coloring when paused/seeking — use cycleLength for wrapping
-      const cycleLen = cycleLengthRef.current;
-      const pts = syncPointsRef.current;
-      // Fallback: if no cycle detected, no wrapping needed
-      const effectiveCycle = cycleLen > 1 ? cycleLen
-        : (pts.length > 0 ? pts[pts.length - 1].time + 9999 : 9999);
-
-      const pass = effectiveCycle > 1 ? Math.floor(currentTime / effectiveCycle) : 0;
-      const wrappedT = cycleLen > 1 ? currentTime % cycleLen : currentTime;
-
-      noteMap.forEach(n => {
-        if (!n.containerElement) return;
-        const isPlayed = n.startTime <= wrappedT + 0.05;
-        if (isPlayed) {
-          if (pass === 0) {
-            n.containerElement.classList.add('played');
-            n.containerElement.classList.remove('played-2');
-          } else {
-            n.containerElement.classList.add('played-2');
-            n.containerElement.classList.remove('played');
-          }
-        } else {
-          n.containerElement.classList.remove('played', 'played-2');
-        }
-      });
-    }
-  }, [currentTime, isPlaying]);
-
-
-  // Stardust particle canvas animation
-  useEffect(() => {
-    const canvas = starCanvasRef.current;
-    if (!canvas || !containerRef.current) return;
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    // Particle & Falling Shadow pool
-    interface Star {
-      x: number; y: number; tx: number; ty: number;
-      size: number; alpha: number; speed: number;
-      hue: number; life: number; maxLife: number;
-      type?: 'star' | 'falling_note';
-    }
-    let stars: Star[] = [];
-    const MAX_STARS = performanceMode ? 100 : 600;
-
-    const resizeCanvas = () => {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-    };
-    resizeCanvas();
-    window.addEventListener('resize', resizeCanvas);
-
-    const animate = () => {
-      starAnimFrameRef.current = requestAnimationFrame(animate);
-      if (!ctx) return;
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      const noteMap = svgNoteMapRef.current;
-      if (noteMap.length === 0) return;
-
-      // USE GENUINE REAL-TIME for star spawning to avoid "clumping" jitter
-      const ctRaw = isPlaying ? musicEngine.transportMusicalTime : prevTimeRef.current;
-      // Wrap transport time using cycleLength (not scoreEnd) for particle positioning
-      const cycleLen = cycleLengthRef.current;
-      const ct = cycleLen > 1 ? ctRaw % cycleLen : ctRaw;
-      const playing = isPlaying;
-
-      // Spawn new particles/falling shadows toward upcoming and active notes
-      if (playing && containerRef.current) {
-        const LOOK_AHEAD = 1.0;
-        const currentStaves = new Map<number, { x: number; y: number; staffLevel: number; timeDiff: number }>();
-
-        // BINARY SEARCH for startIdx to avoid O(N) iteration from beginning every frame
-        let startIdx = 0;
-        let low = 0, high = noteMap.length - 1;
-        while (low <= high) {
-          let mid = Math.floor((low + high) / 2);
-          if (noteMap[mid].startTime < ct - 0.5) low = mid + 1;
-          else high = mid - 1;
-        }
-        startIdx = low;
-
-        for (let i = startIdx; i < noteMap.length; i++) {
-          const noteEl = noteMap[i];
-          const timeUntilNote = noteEl.startTime - ct;
-
-          if (timeUntilNote > LOOK_AHEAD) break;
-
-          // 1. Upcoming Notes -> "Waterfall" (STRICTLY DISABLE HEAVY PARTICLES ON MOBILE)
-          if (!isMobile && timeUntilNote > 0 && noteEl.noteheadElement) {
-            const targetX = noteEl.x;
-            const targetY = noteEl.y;
-
-            // Track aircraft hover position (Grouped roughly by 150px vertical sections)
-            const staffLevel = Math.round(targetY / 150) * 150;
-            const prev = currentStaves.get(staffLevel);
-            if (!prev || Math.abs(timeUntilNote) < Math.abs(prev.timeDiff)) {
-              const interpX = targetX - (timeUntilNote > 0 ? (timeUntilNote * 80) : 0);
-              currentStaves.set(staffLevel, { x: interpX, y: targetY - 160, staffLevel, timeDiff: timeUntilNote });
-            }
-
-            if (Math.random() > 0.85) {
-              const progress = 1 - (timeUntilNote / LOOK_AHEAD);
-              const currentY = (targetY - 160) + (160 * progress);
-              stars.push({
-                x: targetX, y: currentY, tx: targetX, ty: targetY,
-                size: 4 + Math.random() * 4, alpha: 0.3 + (progress * 0.5),
-                speed: 0.2, hue: 190, life: 0, maxLife: 8, type: 'falling_note'
-              });
-            }
-          }
-
-          // 2. Active Notes -> "Impact Sparks"
-          const isActive = ct >= noteEl.startTime && ct < (noteEl.startTime + noteEl.duration);
-          if (isActive && noteEl.noteheadElement) {
-            // Further reduce spawn rate on mobile
-            const spawnRate = (performanceMode || isMobile) ? 0.95 : 0.4;
-            if (Math.random() > spawnRate) {
-              const noteX = noteEl.x;
-              const noteY = noteEl.y;
-              const angle = Math.random() * Math.PI * 2;
-              const dist = 10 + Math.random() * 20;
-              stars.push({
-                x: noteX, y: noteY, tx: noteX + Math.cos(angle) * dist, ty: noteY + Math.sin(angle) * dist,
-                size: 1 + Math.random() * 2, alpha: 0.7, speed: 0.1, hue: 185, life: 0, maxLife: 20, type: 'star'
-              });
-            }
-          }
-        }
-      }
-
-      // Update and draw stars
-      const nextStars: Star[] = [];
-      for (const star of stars) {
-        star.life++;
-        if (star.life > star.maxLife) continue;
-
-        // Move toward target
-        star.x += (star.tx - star.x) * star.speed;
-        star.y += (star.ty - star.y) * star.speed;
-
-        // Fade in then out
-        const lifeFrac = star.life / star.maxLife;
-        const fadeAlpha = lifeFrac < 0.3 ? (lifeFrac / 0.3) : (1 - (lifeFrac - 0.3) / 0.7);
-        const drawAlpha = star.alpha * fadeAlpha;
-
-        // Draw star with glow
-        ctx.save();
-        if (star.type === 'falling_note') {
-          // Drawing the "Falling Copy" as a glowing drop shadow
-          ctx.shadowBlur = 15;
-          ctx.shadowColor = `hsla(${star.hue}, 100%, 50%, 0.8)`;
-          ctx.globalAlpha = drawAlpha;
-          ctx.beginPath();
-          ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
-          ctx.fillStyle = `hsla(${star.hue}, 90%, 70%, 1)`;
-          ctx.fill();
-        } else {
-          // Regular Particle
-          ctx.globalAlpha = drawAlpha * 0.3;
-          ctx.beginPath();
-          ctx.arc(star.x, star.y, star.size * 3, 0, Math.PI * 2);
-          ctx.fillStyle = `hsla(${star.hue}, 80%, 70%, 1)`;
-          ctx.fill();
-
-          ctx.globalAlpha = drawAlpha;
-          ctx.beginPath();
-          ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
-          ctx.fillStyle = `hsla(${star.hue}, 90%, 85%, 1)`;
-          ctx.fill();
-
-          // Tiny bright core
-          ctx.globalAlpha = drawAlpha * 0.8;
-          ctx.beginPath();
-          ctx.arc(star.x, star.y, star.size * 0.4, 0, Math.PI * 2);
-          ctx.fillStyle = '#fff';
-          ctx.fill();
-        }
-        ctx.restore();
-
-        nextStars.push(star);
-      }
-      stars = nextStars;
-    };
-
-    starAnimFrameRef.current = requestAnimationFrame(animate);
-
-    return () => {
-      cancelAnimationFrame(starAnimFrameRef.current);
-      window.removeEventListener('resize', resizeCanvas);
-    };
-  }, [isPlaying]);
-
-  // ---- 60fps Laser Loop ----
-  // Source of truth: musicEngine.currentMeasure (= written bar number, same as Transport)
+  // ══════════════════════════════════════════════════════════════
+  //  INDIGO BAR LASER — real-time sweep via Tone.Transport.seconds
+  //  - Uses musicEngine.currentMeasure to know WHICH bar
+  //  - Uses Tone.Transport.seconds to know WHERE in the bar (exact timing)
+  //  - progress = elapsed_seconds / barDurationSeconds  → perfectly synced
+  //  - Never sweeps backward, never overshoots beat 1 of next bar
+  // ══════════════════════════════════════════════════════════════
   useEffect(() => {
     if (!showLaser) return;
-    let rid: number;
-    let prevMeasureNum = 0;
-    let passCount = 0;
-    let frameCount = 0;
-    let wasReset = false;
-    let prevRawT = 0;
-    let lastKnownMeasure = '';  // last non-empty currentMeasure
-    let lastKnownNum = 0;
 
-    const animateLaser = () => {
-      rid = requestAnimationFrame(animateLaser);
-      frameCount++;
+    let currentBarKey = '';
+    let barStartSeconds = 0;   // Tone.Transport.seconds when current bar began
+    let barDurSeconds = 2.0;   // duration of current bar in real seconds
+    let sweepFromX = 0;
+    let sweepToX = 0;
+    let sweepPage = 0;
+    let sweepTop = 0;
+    let sweepHeight = 0;
 
-      // Wait until syncPoints are ready (baseline requirement)
-      const pts = syncPointsRef.current;
-      if (pts.length === 0) return;
+    const tick = () => {
+      laserRafRef.current = requestAnimationFrame(tick);
 
-      // ── Timing ──────────────────────────────────────────────────────────
-      const visualDelay = isMobile ? 0.15 : 0.05;
-      const latencyBeats = visualDelay * (Tone.Transport.bpm.value / 60);
-      const rawT = musicEngine.transportMusicalTime;
-      const t = Math.max(0, rawT - latencyBeats);
-
-      // Prefer unrolled timeline (precise); fall back to syncPoints (written)
-      const tl = unrolledTimelineRef.current;
-      const useUnrolled = tl.length > 0;
-
-      // Debug log once per 120 frames
-      if (frameCount % 120 === 1) {
-        console.log(`[Laser] t=${t.toFixed(2)} tl=${tl.length} pts=${pts.length} mode=${useUnrolled ? 'unrolled' : 'syncPts'}`);
-      }
-
-      // ── Detect Back button (transport reset to 0) ───────────────────────
-      if (rawT < 0.2) {
-        if (!wasReset) {
-          wasReset = true;
-          svgNoteMapRef.current.forEach(n => {
-            n.containerElement?.classList.remove('played', 'played-2');
-          });
-          prevPageRef.current = -1;
-          const firstPage = containerRef.current?.children[0] as HTMLElement;
-          if (firstPage) firstPage.scrollIntoView({ behavior: 'auto', block: 'start' });
-        }
-      } else {
-        wasReset = false;
-      }
-
-      // ── Detect transport jump backward (repeat or seek-back) ─────────────
-      // When rawT drops by more than 0.5 beats vs last frame → user seeked or
-      // a repeat sign fired. Reset lastKnownMeasure so stale value is not used.
-      if (rawT < prevRawT - 0.5) {
-        lastKnownMeasure = '';
-      }
-      prevRawT = rawT;
-
-      // ── Determine current measure ─────────────────────────────────────────
-      //
-      //  We use THREE sources merged by priority:
-      //   A. barMaps time lookup  (always computes a bar, instant on seek/repeat)
-      //   B. musicEngine.currentMeasure  (authoritative from Tone.Part callback)
-      //   C. lastKnownMeasure  (holds last good value while paused)
-      //
-      //  barMaps uses WRITTEN score timings (qstamp beats from Verovio, 0-based).
-      //  Transport time is in beats from start of audio.
-      //  When no count-in: they align. We use scoreEnd to wrap for repeats.
-
-      const measureCache = measurePosRef.current;
       const bars = barMapsRef.current;
-      const scoreEnd = scoreEndTimeRef.current;
+      if (bars.length === 0) return;
 
-      // Wrap transport time into written score domain
-      const transportBeats = Math.max(0, t);
-      const writtenT = (scoreEnd > 0.5) ? transportBeats % scoreEnd : transportBeats;
+      const barKey = musicEngine.currentMeasure;
+      if (!barKey) return;
 
-      // Source A: bar from barMaps (binary search on startTime)
-      let timeDerivedMeasure = '';
-      let timeDerivedNum = 0;
-      if (bars.length > 0) {
-        let lo = 0, hi = bars.length - 1;
-        while (lo <= hi) {
-          const mid = Math.floor((lo + hi) / 2);
-          if (bars[mid].startTime <= writtenT) lo = mid + 1;
-          else hi = mid - 1;
-        }
-        const barIdx = Math.max(0, hi);
-        const b = bars[barIdx];
-        if (b) {
-          timeDerivedNum = b.measureNumber;
-          timeDerivedMeasure = String(timeDerivedNum);
-        }
+      // ── Bar changed → record start time and set sweep targets ──
+      if (barKey !== currentBarKey) {
+        const bar = bars.find(b => b.measureId === barKey || String(b.measureNumber) === barKey);
+        if (!bar) return;
+
+        const barIdx = bars.indexOf(bar);
+        const nextBar = bars[barIdx + 1];
+
+        // Only sweep to next bar if same system row AND forward direction
+        const sameSysNext = nextBar &&
+          nextBar.systemId === bar.systemId &&
+          nextBar.startRelX > bar.startRelX;
+
+        currentBarKey = barKey;
+        barStartSeconds = Tone.Transport.seconds;   // real clock: when this bar started
+        const bpm = Tone.Transport.bpm.value || 120;
+        barDurSeconds = Math.max(0.1, bar.duration * (60 / bpm)); // bar duration in seconds
+
+        sweepFromX = bar.startRelX;
+        sweepToX = sameSysNext ? nextBar.startRelX : bar.endRelX;
+        sweepPage = bar.pageIndex;
+        sweepTop = bar.y;
+        sweepHeight = bar.height;
       }
 
-      // Source B: from Tone.Part callback (set when note fires)
-      const liveMeasure = musicEngine.currentMeasure;
-      if (liveMeasure) lastKnownMeasure = liveMeasure;
+      // ── Compute progress from REAL elapsed seconds ──────────────
+      const elapsed = Math.max(0, Tone.Transport.seconds - barStartSeconds);
+      const progress = Math.min(1, elapsed / barDurSeconds);   // 0.0 → 1.0, never > 1
+      const relX = sweepFromX + (sweepToX - sweepFromX) * progress;
 
-      // Merge: prefer timeDerived (instant), fall back to liveMeasure/lastKnown
-      const curMeasure = timeDerivedMeasure || liveMeasure || lastKnownMeasure;
-      const curNum = timeDerivedNum || parseInt(liveMeasure || lastKnownMeasure) || 0;
-
-      // Debug once per 120 frames
-      if (frameCount % 120 === 1) {
-        console.log(`[Laser] rawT=${rawT.toFixed(2)} writtenT=${writtenT.toFixed(2)} bar=${curMeasure} live="${liveMeasure}" scoreEnd=${scoreEnd.toFixed(1)}`);
-      }
-
-      // Laser visual variables
-      let pageIndex = 0;
-      let relX = 0;
-      let barY = 0;
-      let barH = 1;
-
-      if (curMeasure && measureCache.has(curMeasure)) {
-        // PRIMARY: jump to the DOM position of the current measure
-        const mPos = measureCache.get(curMeasure)!;
-        pageIndex = mPos.pageIndex;
-        relX = mPos.relX;          // measure start, refined below
-
-
-
-
-        // REFINE: interpolate X within the measure using syncPoints
-        // Notes in this measure span from their qstamp down to next measure start
-        const measureNotes = svgNoteMapRef.current.filter(n =>
-          n.containerElement?.closest('.measure')?.getAttribute('n') === curMeasure
-        );
-        if (measureNotes.length > 0 && pts.length > 0) {
-          // Find best matching syncPoint for writtenT (beats) within this measure
-          const mStartQ = Math.min(...measureNotes.map(n => n.startTime));
-          const mEndQ = Math.max(...measureNotes.map(n => n.startTime + n.duration));
-          const mPts = pts.filter(p => p.time >= mStartQ - 0.05 && p.time <= mEndQ + 0.05);
-          if (mPts.length > 0) {
-            let bestIdx = 0, bestDist = 9999;
-            for (let i = 0; i < mPts.length; i++) {
-              const d = Math.abs(mPts[i].time - writtenT);
-              if (d < bestDist) { bestDist = d; bestIdx = i; }
-            }
-            if (bestDist < 8) {   // close enough to use
-              if (bestIdx < mPts.length - 1) {
-                const p0 = mPts[bestIdx], p1 = mPts[bestIdx + 1];
-                if (p0.pageIndex === p1.pageIndex && p1.time > p0.time) {
-                  const prog = Math.max(0, Math.min(1, (writtenT - p0.time) / (p1.time - p0.time)));
-                  relX = p0.relX + (p1.relX - p0.relX) * prog;
-                } else {
-                  relX = mPts[bestIdx].relX;
-                }
-              } else {
-                relX = mPts[bestIdx].relX;
-              }
-            }
-          }
-        }
-
-        // Bar Y from barMaps by measure number
-        const bar = bars.find(b => b.measureNumber === curNum);
-        if (bar) {
-          barY = bar.y;
-          barH = bar.height;
-          pageIndex = bar.pageIndex;    // authoritative page from bar data
-        }
-      } else {
-        // FALLBACK: count-in / not started yet → pure syncPoints binary search
-        let lo = 0, hi = pts.length - 1;
-        while (lo <= hi) {
-          const mid = Math.floor((lo + hi) / 2);
-          if (pts[mid].time < writtenT) lo = mid + 1;
-          else hi = mid - 1;
-        }
-        const pIdx = lo;
-        if (pIdx === 0) {
-          relX = pts[0].relX; pageIndex = pts[0].pageIndex;
-        } else if (pIdx >= pts.length) {
-          relX = pts[pts.length - 1].relX; pageIndex = pts[pts.length - 1].pageIndex;
-        } else {
-          const prev = pts[pIdx - 1], next = pts[pIdx];
-          pageIndex = prev.pageIndex;
-          if (prev.pageIndex === next.pageIndex && next.time > prev.time) {
-            const prog = Math.min(1, (writtenT - prev.time) / (next.time - prev.time));
-            relX = prev.relX + (next.relX - prev.relX) * prog;
-          } else {
-            relX = prev.relX;
-          }
-        }
-        // Bar Y fallback
-        if (bars.length > 0) {
-          let lo2 = 0, hi2 = bars.length - 1;
-          while (lo2 <= hi2) {
-            const mid = Math.floor((lo2 + hi2) / 2);
-            if (bars[mid].startTime <= writtenT) lo2 = mid + 1;
-            else hi2 = mid - 1;
-          }
-          const bar = bars[Math.max(0, hi2)] || bars[0];
-          if (bar) { barY = bar.y; barH = bar.height; }
-        }
-      }
-
-
-      if (pageIndex < 0) pageIndex = 0;
-      if (relX < 0) relX = 0;
-
-      // ── Note coloring (Exact Time-Based) ─────────────────
-      const finalScoreEnd = scoreEndTimeRef.current;
-      const cycleLen = cycleLengthRef.current;
-      let inferredPass = 0;
-      let effectiveT = t;
-
-      if (cycleLen > 1 && t >= cycleLen) {
-        inferredPass = Math.floor(t / cycleLen);
-        effectiveT = t % cycleLen;
-      } else if (t > finalScoreEnd) {
-        inferredPass = 1;
-      }
-
-      const isActuallyPlaying = Tone.Transport.state === 'started';
-      if (isActuallyPlaying && t > 0.1) {
-        const volta1 = volta1MeasuresRef.current;
-        svgNoteMapRef.current.forEach(n => {
-          if (!n.containerElement) return;
-          const mn = n.containerElement.closest('.measure')?.getAttribute('n') || '';
-
-          if (inferredPass > 0 && volta1.size > 0 && volta1.has(mn)) {
-            n.containerElement.classList.remove('played', 'played-2');
-            return;
-          }
-
-          // Note is coloured if its physical written startTime <= effectiveT
-          const isPlayed = n.startTime <= effectiveT + 0.1;
-          if (isPlayed) {
-            n.containerElement.classList.add(inferredPass === 0 ? 'played' : 'played-2');
-            n.containerElement.classList.remove(inferredPass === 0 ? 'played-2' : 'played');
-          } else {
-            n.containerElement.classList.remove('played', 'played-2');
-          }
-        });
-      }
-
-      // 7. Update laser DOM elements
-      const isPass2 = inferredPass > 0;
-
+      // Update laser DOM on correct page
       for (let i = 0; i < svgPages.length; i++) {
-        const el = document.getElementById(`neural-laser-${i}`);
+        const el = document.getElementById(`bar-laser-${i}`);
         if (!el) continue;
-        if (pageIndex === i) {
+        if (i === sweepPage) {
           el.style.display = 'block';
-
-          if (isPass2) {
-            // Pink laser for 2nd pass (repeat)
-            el.style.background = 'rgba(244, 114, 182, 0.2)';
-            el.style.boxShadow = '0 0 20px 6px rgba(244, 114, 182, 0.4), 0 0 40px 12px rgba(244, 114, 182, 0.2)';
-          } else {
-            // Restore original Indigo format from CSS
-            el.style.background = '';
-            el.style.boxShadow = '';
-          }
-
           el.style.left = `${relX * 100}%`;
-          if (layoutMode === 'linear') {
-            el.style.top = '0%';
-            el.style.height = '100%';
-            el.classList.remove('paginated-laser');
-          } else {
-            el.style.top = `${barY * 100}%`;
-            el.style.height = `${barH * 100}%`;
-            el.classList.add('paginated-laser');
-          }
-          // Auto-scroll to active page
-          if (prevPageRef.current !== pageIndex) {
-            const pageEl = containerRef.current?.children[pageIndex] as HTMLElement;
-            if (pageEl) {
-              const mobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-              pageEl.scrollIntoView({ behavior: mobile ? 'auto' : 'smooth', block: 'start' });
-            }
-            prevPageRef.current = pageIndex;
-          }
+          el.style.top = `${sweepTop * 100}%`;
+          el.style.height = `${sweepHeight * 100}%`;
         } else {
           el.style.display = 'none';
         }
       }
+
+      // Auto-scroll when page changes
+      if (laserPrevPageRef.current !== sweepPage) {
+        const pageEl = containerRef.current?.children[sweepPage] as HTMLElement | undefined;
+        if (pageEl) pageEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        laserPrevPageRef.current = sweepPage;
+      }
     };
 
-    rid = requestAnimationFrame(animateLaser);
-    return () => cancelAnimationFrame(rid);
-  }, [isPlaying, showLaser, layoutMode, svgPages.length]);
+    const hideAll = () => {
+      currentBarKey = '';
+      laserPrevPageRef.current = -1;
+      for (let i = 0; i < svgPages.length; i++) {
+        const el = document.getElementById(`bar-laser-${i}`);
+        if (el) el.style.display = 'none';
+      }
+    };
+
+    if (!isPlaying) { hideAll(); return; }
+
+    laserRafRef.current = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(laserRafRef.current);
+      hideAll();
+    };
+  }, [isPlaying, showLaser, svgPages.length]);
+
+
+
+
+
+
 
   const exportToPdf = useCallback(async () => {
     if (!svgPages.length) return;
@@ -1257,29 +1033,56 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
             transition: filter 0.3s; 
         }
         .xml-overlay-container { position: relative; width: 100%; height: auto; }
-        .neural-playback-laser {
+        g.harm { overflow: visible; }
+        /* ── Indigo Bar Laser — subtle magnifying glass lens ── */
+        .bar-laser {
           position: absolute;
-          width: 4px;
-          border-radius: 4px;
-          margin-left: -2px;
-          background: rgba(99, 102, 241, 0.15); /* Transparent core */
-          box-shadow: 0 0 20px 6px rgba(99, 102, 241, 0.3), 0 0 40px 12px rgba(99, 102, 241, 0.15); /* Diffuse aura */
-          z-index: 50;
+          width: 36px;
+          margin-left: -18px;
+
+          /* Lens: transparent center, soft glowing rims */
+          background: linear-gradient(
+            to right,
+            rgba(99, 102, 241, 0.35)  0%,
+            rgba(99, 102, 241, 0.10) 16%,
+            rgba(99, 102, 241, 0.02) 30%,
+            transparent              42%,
+            transparent              58%,
+            rgba(99, 102, 241, 0.02) 70%,
+            rgba(99, 102, 241, 0.10) 84%,
+            rgba(99, 102, 241, 0.35) 100%
+          );
+
+          /* Soft rim lines */
+          border-left:  2px solid rgba(148, 130, 255, 0.55);
+          border-right: 2px solid rgba(148, 130, 255, 0.55);
+
+          /* Gentle multi-layer glow */
+          box-shadow:
+            /* Inner shimmer */
+            inset  3px 0 10px rgba(99, 102, 241, 0.25),
+            inset -3px 0 10px rgba(99, 102, 241, 0.25),
+            /* Tight outer corona */
+             0 0  6px  4px  rgba(118, 100, 255, 0.35),
+            /* Mid atmospheric glow */
+             0 0 22px 10px  rgba(99,  102, 241, 0.12),
+            /* Wide soft aura */
+             0 0 55px 20px  rgba(99,  102, 241, 0.05);
+
+          border-radius: 6px;
+
+          /* Light lens effect */
+          backdrop-filter: brightness(1.06) saturate(1.15);
+          -webkit-backdrop-filter: brightness(1.06) saturate(1.15);
+
+          z-index: 60;
           pointer-events: none;
-          will-change: left, top, height;
-          transition: left 0.05s linear, top 0.15s ease-out, height 0.15s ease-out;
+          transition: left 0.10s linear, top 0.12s ease-out, height 0.12s ease-out;
         }
-        .neural-playback-laser.paginated-laser {
-          border: none;
-          background: rgba(99, 102, 241, 0.15);
-          box-shadow: 0 0 20px 6px rgba(99, 102, 241, 0.3), 0 0 40px 12px rgba(99, 102, 241, 0.15);
-        }
+
       `}</style>
-      <canvas ref={starCanvasRef} className="fixed top-0 left-0 w-screen h-screen pointer-events-none z-[10000]" />
-      {/* DEBUG BADGE - temporarily re-enabled to diagnose sync */}
-      <div className="absolute top-16 right-4 z-[20000] bg-black/60 backdrop-blur text-white text-[8px] font-mono px-3 py-1 rounded-full border border-white/10 shadow-lg pointer-events-none">
-        SYNC: {currentTime.toFixed(2)}s | NOTES: {svgNoteMapRef.current.length}
-      </div>
+
+
       <div
         ref={scrollAreaRef}
         className="flex-1 w-full overflow-auto memolody-scrollbar scroll-smooth p-3 sm:p-6 flex flex-col items-center"
@@ -1310,7 +1113,8 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
               }}
             >
               <div className="absolute inset-0 z-50 pointer-events-none">
-                <div id={`neural-laser-${i}`} className="neural-playback-laser" style={{ display: 'none' }} />
+                {/* Indigo Laser */}
+                <div id={`bar-laser-${i}`} className="bar-laser" style={{ display: 'none' }} />
 
                 {/* Loop Overlays */}
                 {activeLoop && barMapsRef.current

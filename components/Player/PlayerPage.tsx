@@ -5,12 +5,14 @@ import {
   Play, Pause, SlidersHorizontal,
   X, Volume2, SkipBack,
   RefreshCw, Repeat, Music,
-  VolumeX, Bell, BellOff, Eye, EyeOff
+  VolumeX, Bell, BellOff, Eye, EyeOff, Lock,
+  ChevronDown, Library, Languages
 } from 'lucide-react';
 import ProScoreEditor from './ProScoreEditor';
 import { KeyTransposeDisplay, BpmDisplay, BarBeatPositionDisplay, TimeSigDisplay } from './LCDDisplay';
 import MixerPanel from './MixerPanel';
 import PerformanceScore from './PerformanceScore';
+import TrackView from './TrackView';
 import LoopMatrixModal, { LoopPreset } from './LoopMatrixModal';
 import PluginBrowserModal from './PluginBrowserModal';
 import FXPluginModal from './FXPluginModal';
@@ -19,7 +21,7 @@ import ChordPage from '../Chord/ChordPage';
 import { musicEngine } from '../../lib/MusicEngine';
 import { Song, TrackState, EffectInstance, LyricMode } from '../../types';
 
-export type PlayerCardType = 'score' | 'pianoroll' | 'trackview' | 'memochord' | 'kodaly' | 'practice';
+export type PlayerCardType = 'score' | 'pianoroll' | 'trackview' | 'memochord' | 'practice';
 
 const PlayerPage: React.FC<{
   song: Song | null; musicXml?: string | null; tracks: TrackState[]; setTracks: any;
@@ -41,6 +43,7 @@ const PlayerPage: React.FC<{
 
   // Card Navigation State
   const [activeCard, setActiveCard] = useState<PlayerCardType>('score');
+  const [isNavMenuVisible, setIsNavMenuVisible] = useState(false);
 
   const [pluginBrowserTarget, setPluginBrowserTarget] = useState<{ trackId: string; slotIndex: number } | null>(null);
   const [editingPlugin, setEditingPlugin] = useState<{ trackId: string; slotIndex: number; plugin: EffectInstance } | null>(null);
@@ -72,6 +75,30 @@ const PlayerPage: React.FC<{
   useEffect(() => {
     musicEngine.updateTrackStates(tracks);
   }, [tracks]);
+
+  // ── Transpose change → reload engine with new semitone shift ──────────────
+  useEffect(() => {
+    const state = musicEngine.transportState;
+    if (state === 'stopped') return; // next Play will pick up transpose automatically
+
+    const wasPlaying = state === 'started';
+    const savedPos = musicEngine.transportSeconds;
+
+    musicEngine.pause();
+    setIsPlaying(false);
+
+    if (wasPlaying && parsedData.notes.length > 0) {
+      setIsAudioLoading(true);
+      musicEngine.ensureInitialized()
+        .then(() => musicEngine.loadSong(parsedData.notes, tracks, transpose, parsedData.timeSignature, isMetronomeOn))
+        .then(() => { musicEngine.setTransportSeconds(savedPos); return musicEngine.start(); })
+        .then(() => setIsPlaying(true))
+        .catch(e => console.error('Transpose reload failed:', e))
+        .finally(() => setIsAudioLoading(false));
+    }
+    // if was paused → leave stopped; next Play will reload with new transpose
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [transpose]);
 
   const musicalTimeRef = useRef(0);
 
@@ -172,48 +199,117 @@ const PlayerPage: React.FC<{
     // Only trigger React re-renders for the time display at ~5fps (200ms)
     // This prevents React's reconciliation from competing with the audio thread
     if (time - lastRenderTime.current > 200) {
-      setCurrentTime(musicEngine.transportSeconds);
+      const currentTransportSeconds = musicEngine.transportSeconds;
+      setCurrentTime(currentTransportSeconds);
+
+      // 🛑 Auto-stop logic: Stop precisely at the end of the song (0.3s buffer)
+      if (musicEngine.transportState === 'started' && totalDurationSeconds > 0) {
+        if (currentTransportSeconds >= totalDurationSeconds + 0.3 && !musicEngine.isLoopActive) {
+          musicEngine.pause();
+          setIsPlaying(false);
+        }
+      }
+
       lastRenderTime.current = time;
     }
     rafId.current = requestAnimationFrame(animate);
-  }, []);
+  }, [totalDurationSeconds, isPlaying]);
 
   useEffect(() => {
     rafId.current = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(rafId.current);
   }, [animate]);
 
+  useEffect(() => {
+    if (song?.previewLimit && song.previewLimit > 0 && isPlaying) {
+      const limitSeconds = song.previewLimit * beatsPerMeasure * (60 / originalBpm);
+      if (currentTime >= limitSeconds) {
+        musicEngine.pause();
+        setIsPlaying(false);
+        musicEngine.setTransportSeconds(limitSeconds);
+        alert(`This is a restricted preview limited to ${song.previewLimit} Bars.`);
+      }
+    }
+  }, [currentTime, song?.previewLimit, isPlaying, beatsPerMeasure, originalBpm]);
+
   return (
     <div className="flex flex-col h-full w-full bg-[#050507] relative overflow-hidden unselectable">
 
-      {/* ── PLAYER CARD NAVIGATOR ── */}
-      <div className="w-full flex justify-center py-3 bg-[#0c0c0e]/80 border-b border-white/5 backdrop-blur-xl shrink-0 z-50">
-        <div className="flex bg-black/50 p-1.5 rounded-full border border-white/10 shadow-inner overflow-x-auto no-scrollbar max-w-full">
-          {(['score', 'pianoroll', 'trackview', 'memochord', 'kodaly', 'practice'] as PlayerCardType[]).map(card => {
-            const labels: Record<PlayerCardType, string> = {
-              'score': 'Score Sheet', 'pianoroll': 'Piano Roll', 'trackview': 'Trackview',
-              'memochord': 'Chord Ring', 'kodaly': 'Kodály', 'practice': 'Memo Practice'
-            };
-            return (
-              <button
-                key={card}
-                onClick={() => setActiveCard(card)}
-                className={`px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap
-                  ${activeCard === card ? 'bg-cyan-500 text-black shadow-[0_0_15px_rgba(0,229,255,0.4)]' : 'text-zinc-500 hover:text-white hover:bg-white/5'}`}
-              >
-                {labels[card]}
-              </button>
-            );
-          })}
-        </div>
+      {/* ── PLAYER OPTIONS MENU (FIXED VERTICAL DROPDOWN) ── */}
+      <div className="fixed top-[72px] left-1/2 -translate-x-1/2 z-[4000] flex flex-col items-center mt-2">
+        <button
+          onClick={() => setIsNavMenuVisible(!isNavMenuVisible)}
+          className="bg-[#0c0c0e]/90 backdrop-blur-xl border border-white/10 px-5 py-2.5 rounded-full text-[10px] font-black uppercase tracking-widest text-[#00e5ff] hover:text-white shadow-[0_10px_30px_rgba(0,0,0,0.5)] flex items-center gap-2 transition-all active:scale-95 group"
+        >
+          <Library size={13} className="text-[#00e5ff] group-hover:text-white transition-colors" />
+          PLAYER OPTIONS
+          <ChevronDown size={14} className={`transition-transform duration-300 ${isNavMenuVisible ? 'rotate-180' : ''}`} />
+        </button>
+
+        {isNavMenuVisible && (
+          <div className="mt-3 bg-[#0c0c0e]/95 backdrop-blur-3xl border border-white/10 p-4 rounded-3xl shadow-[0_20px_60px_rgba(0,0,0,0.9)] flex flex-col gap-3 w-[260px] animate-in fade-in slide-in-from-top-4 origin-top">
+
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[8px] font-black text-white/40 uppercase tracking-widest pl-2 mb-1 flex items-center gap-1.5"><Library size={9} /> Visual Modes</span>
+              {(['score', 'pianoroll', 'trackview', 'memochord', 'practice'] as PlayerCardType[]).map(card => {
+                const labels: Record<PlayerCardType, string> = {
+                  'score': 'Score Sheet', 'pianoroll': 'Piano Roll', 'trackview': 'Trackview',
+                  'memochord': 'Chord Ring', 'practice': 'Memo Practice'
+                };
+                return (
+                  <button
+                    key={card}
+                    onClick={() => { setActiveCard(card); setIsNavMenuVisible(false); }}
+                    className={`px-4 py-2.5 rounded-2xl text-[10px] sm:text-[11px] font-black uppercase tracking-widest transition-all text-left flex items-center justify-between
+                      ${activeCard === card ? 'bg-[#00e5ff] text-black shadow-[0_0_15px_rgba(0,229,255,0.4)]' : 'bg-white/5 text-zinc-400 hover:text-white hover:bg-white/10'}`}
+                  >
+                    <span>{labels[card]}</span>
+                    {activeCard === card && <span className="w-1.5 h-1.5 rounded-full bg-black/60" />}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="h-px bg-white/10 w-full my-0.5" />
+
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[8px] font-black text-white/40 uppercase tracking-widest pl-2 mb-1 flex items-center gap-1.5"><Languages size={9} /> Lyric Target</span>
+              {(['Movable Do', 'Fixed Do', 'Jianpu', 'Words', 'Kodaly', 'Kodaly Rhythm'] as LyricMode[]).map(mode => {
+                const isActive = tracks.length > 0 && tracks[0].lyricMode === mode;
+                return (
+                  <button
+                    key={mode}
+                    onClick={() => {
+                      setTracks((prevTracks: any) => prevTracks.map((t: any) => ({ ...t, lyricMode: mode })));
+                      setIsNavMenuVisible(false);
+                    }}
+                    className={`px-4 py-2.5 rounded-2xl text-[10px] sm:text-[11px] font-black uppercase tracking-widest transition-all text-left flex items-center justify-between
+                      ${isActive ? 'bg-indigo-500 text-white shadow-[0_0_15px_rgba(99,102,241,0.5)]' : 'bg-white/5 text-zinc-400 hover:text-white hover:bg-white/10'}`}
+                  >
+                    <span>{mode}</span>
+                    {isActive && <span className="w-1.5 h-1.5 rounded-full bg-white/80 animate-pulse" />}
+                  </button>
+                );
+              })}
+            </div>
+
+          </div>
+        )}
       </div>
 
-      <div className={`flex-1 flex flex-col relative items-center w-full ${activeCard === 'score' || activeCard === 'memochord' || activeCard === 'kodaly' ? 'pt-2 pb-48 overflow-y-auto no-scrollbar' : 'overflow-hidden'}`}>
+      {song?.previewLimit && song.previewLimit > 0 && (
+        <div className="absolute top-[80px] left-1/2 -translate-x-1/2 z-[100] bg-rose-500/10 backdrop-blur-xl border border-rose-500/30 text-rose-200 px-5 py-2 rounded-full shadow-2xl flex items-center gap-2 pointer-events-none">
+          <Lock size={14} className="text-rose-400" />
+          <span className="text-[8px] sm:text-[9px] font-black uppercase tracking-widest">Preview Restricted to {song.previewLimit} Bars</span>
+        </div>
+      )}
 
-        {/* ProScoreEditor: Handles Score, MemoChord, Kodaly */}
+      <div className={`flex-1 flex flex-col relative items-center w-full ${activeCard === 'score' || activeCard === 'memochord' ? 'pt-2 pb-48 overflow-y-auto no-scrollbar' : 'overflow-hidden'}`}>
+
+        {/* ProScoreEditor: Handles Score, MemoChord */}
         <div
           style={{
-            display: (activeCard === 'score' || activeCard === 'kodaly') ? 'contents' : 'none',
+            display: (activeCard === 'score') ? 'contents' : 'none',
             width: '100%', height: '100%'
           }}
         >
@@ -227,7 +323,7 @@ const PlayerPage: React.FC<{
             layoutMode={'paginated'}
             isLoupeEnabled={false}
             showLaser={true}
-            lyricMode={activeCard === 'kodaly' ? 'Kodaly' : activeLyricMode}
+            lyricMode={activeLyricMode}
             activeLoop={activeLoop}
             performanceMode={performanceMode}
           />
@@ -250,12 +346,18 @@ const PlayerPage: React.FC<{
           </div>
         )}
 
-        {/* Placeholder: Trackview */}
+        {/* Trackview: Full DAW timeline */}
         {activeCard === 'trackview' && (
-          <div className="w-full h-full flex flex-col items-center justify-center text-zinc-500 pb-32">
-            <SlidersHorizontal size={48} className="opacity-20 mb-4" />
-            <p className="font-bold uppercase tracking-widest text-xs">Trackview Layout Mode</p>
-            <p className="text-[10px] mt-2 max-w-sm text-center opacity-70">กำลังเตรียม Data Visualization สำหรับมุมมองแบบ Trackview (Multitrack Timeline) แยกตามชิ้นดนตรีครับ</p>
+          <div className="w-full h-full relative z-40 bg-[#050507] flex flex-col">
+            <TrackView
+              song={localSong}
+              musicXml={musicXml || null}
+              tracks={tracks}
+              setTracks={setTracks}
+              loopPresets={loopPresets}
+              setLoopPresets={setLoopPresets}
+              onExitTrackView={(card) => setActiveCard(card as any)}
+            />
           </div>
         )}
 
@@ -287,8 +389,8 @@ const PlayerPage: React.FC<{
         )}
       </div>
 
-      {/* Render transport controls ONLY if a song is loaded */}
-      {song && (
+      {/* Render transport controls ONLY if a song is loaded AND not in Trackview (has its own) */}
+      {song && activeCard !== 'trackview' && (
         <>
           {/* Floating Translucent Eye - Shows ONLY when transport is completely hidden */}
           <button
@@ -379,22 +481,24 @@ const PlayerPage: React.FC<{
               </div>
 
               <div className="flex-[2.5] flex items-center justify-end gap-1 pl-1 relative">
-                <button
-                  onClick={() => {
-                    const modes: LyricMode[] = ['Movable Do', 'Fixed Do', 'Words', 'Jianpu', 'Kodaly', 'Closed'];
-                    const nextMode = modes[(modes.indexOf(activeLyricMode) + 1) % modes.length];
-
-                    // [PLAY STORE COMPLIANCE CHECK]
-                    import('../../lib/ComplianceGuard').then(m => m.checkNamingCompliance(nextMode));
-
-                    setTracks(tracks.map(t => ({ ...t, lyricMode: nextMode })));
-                  }}
-                  className={`w-9 h-9 border rounded-full flex flex-col items-center justify-center group active:scale-95 transition-all ${(activeCard === 'score' || activeCard === 'kodaly' || activeCard === 'memochord') ? 'bg-[#fbfbfb] border-zinc-100 text-zinc-300' : 'bg-[#0c0c0e] border-white/5 text-zinc-400'}`}
-                  title="Toggle Lyric Mode"
-                >
-                  <div className="font-bold text-[8px] leading-none mb-0.5 text-indigo-500">Aa</div>
-                  <span className={`text-[4px] font-black uppercase mt-0.5 ${(activeCard === 'score' || activeCard === 'kodaly' || activeCard === 'memochord') ? 'text-zinc-400' : 'text-zinc-500'}`}>LYR</span>
-                </button>
+                <div className="flex bg-indigo-500/5 p-0.5 rounded-full border border-white/10 gap-0.5 shadow-inner">
+                  {(['Movable Do', 'Fixed Do', 'Jianpu', 'Words', 'Kodaly', 'Kodaly Rhythm'] as LyricMode[]).map(mode => {
+                    const isActive = activeLyricMode === mode;
+                    const labels: Record<string, string> = {
+                      'Movable Do': 'M.DO', 'Fixed Do': 'F.DO', 'Jianpu': 'JIAN', 'Words': 'WORD', 'Kodaly': 'KOD', 'Kodaly Rhythm': 'K.RHY'
+                    };
+                    return (
+                      <button
+                        key={mode}
+                        onClick={() => setTracks(tracks.map(t => ({ ...t, lyricMode: mode })))}
+                        className={`h-9 px-1.5 sm:px-2.5 rounded-full flex items-center justify-center transition-all ${isActive ? 'bg-indigo-500 text-white shadow-[0_0_10px_rgba(99,102,241,0.5)]' : 'text-zinc-500 hover:text-white'}`}
+                        title={mode}
+                      >
+                        <span className="text-[7px] sm:text-[8px] font-black uppercase tracking-tight">{labels[mode]}</span>
+                      </button>
+                    );
+                  })}
+                </div>
                 <button onClick={() => setActiveCard(activeCard === 'score' ? 'pianoroll' : 'score')} className={`w-9 h-9 border rounded-full flex flex-col items-center justify-center group active:scale-95 transition-all ${activeCard === 'score' ? 'bg-[#fbfbfb] border-zinc-100 text-zinc-300' : 'bg-cyan-50 border-cyan-100 text-cyan-500'}`}>
                   <Music size={13} className={activeCard === 'score' ? 'text-zinc-300' : 'text-cyan-500'} />
                   <span className={`text-[6px] font-black uppercase mt-0.5 ${activeCard === 'score' ? 'text-zinc-400' : 'text-cyan-600'}`}>SCR</span>

@@ -27,6 +27,7 @@ interface TrackViewProps {
   onTrackDoubleClick?: () => void;
   loopPresets: LoopPreset[];
   setLoopPresets: any;
+  onExitTrackView?: (card: string) => void;
 }
 
 const MIDIClip: React.FC<{ notes: ParsedNote[]; pixelsPerSecond: number; isMuted: boolean, trackHeight: number, onDoubleClick?: () => void }> = ({ notes, pixelsPerSecond, isMuted, trackHeight, onDoubleClick }) => {
@@ -95,7 +96,7 @@ const MiniRotaryPan = ({ value, onChange }: { value: number; onChange: (val: num
   );
 };
 
-const TrackView: React.FC<TrackViewProps> = ({ song, musicXml, tracks, setTracks, onTrackDoubleClick, loopPresets, setLoopPresets }) => {
+const TrackView: React.FC<TrackViewProps> = ({ song, musicXml, tracks, setTracks, onTrackDoubleClick, loopPresets, setLoopPresets, onExitTrackView }) => {
   const [pixelsPerSecond, setPixelsPerSecond] = useState(60);
   const [trackHeight, setTrackHeight] = useState(220); // 👈 changed to 220 to fit channel strip items
   const [currentTime, setCurrentTime] = useState(0);
@@ -279,7 +280,7 @@ const TrackView: React.FC<TrackViewProps> = ({ song, musicXml, tracks, setTracks
     let nextMode: 'instrument' | 'vocal' = 'vocal';
     let nextPluginId: 'memolody-sampler' | 'svs-vocal' | null = 'svs-vocal';
 
-    // การ Cycle: Vocal(M.DO) -> Vocal(F.DO) -> Vocal(Words) -> Instrument(OFF)
+    // การ Cycle: Vocal(M.DO) -> Vocal(F.DO) -> Vocal(Words) -> Vocal(Kodaly) -> Vocal(Kodaly Rhythm) -> Instrument(OFF)
     if (track.mode === 'instrument' || track.lyricMode === 'Closed') {
       nextLyricMode = 'Movable Do';
       nextMode = 'vocal';
@@ -293,6 +294,14 @@ const TrackView: React.FC<TrackViewProps> = ({ song, musicXml, tracks, setTracks
       nextMode = 'vocal';
       nextPluginId = 'svs-vocal';
     } else if (track.lyricMode === 'Words') {
+      nextLyricMode = 'Kodaly';
+      nextMode = 'vocal';
+      nextPluginId = 'svs-vocal';
+    } else if (track.lyricMode === 'Kodaly') {
+      nextLyricMode = 'Kodaly Rhythm';
+      nextMode = 'vocal';
+      nextPluginId = 'svs-vocal';
+    } else if (track.lyricMode === 'Kodaly Rhythm') {
       nextLyricMode = 'Closed';
       nextMode = 'instrument';
       nextPluginId = 'memolody-sampler';
@@ -351,28 +360,47 @@ const TrackView: React.FC<TrackViewProps> = ({ song, musicXml, tracks, setTracks
       `}</style>
 
       {/* HEADER CONSOLE */}
-      <header className="h-12 border-b border-white/10 bg-[#0c0c0e] flex items-center justify-between px-6 z-[2000] shrink-0">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <div
-              onClick={() => {
-                const targetWidth = isMixerOpen ? 0 : 200;
-                setMixerWidth(targetWidth);
-                setIsMixerOpen(!isMixerOpen);
-              }}
-              className={`p-1.5 rounded-lg cursor-pointer transition-all hover:scale-110 active:scale-95 ${isMixerOpen ? 'bg-[#6366f1] text-white shadow-[0_0_15px_rgba(99,102,241,0.4)]' : 'bg-white/5 text-zinc-400'}`}
-            >
-              {isMixerOpen ? <ChevronFirst size={14} /> : <ChevronLast size={14} />}
-            </div>
-            <div className="flex flex-col">
-              <span className="text-[9px] font-black text-white uppercase italic tracking-tight leading-tight">STUDIO MATRIX</span>
-              <span className="text-[5px] font-bold text-zinc-500 uppercase tracking-widest leading-none">NEURAL CONSOLE V5.5</span>
-            </div>
+      <header className="h-12 border-b border-white/10 bg-[#0c0c0e] flex items-center justify-between px-3 sm:px-6 z-[2000] shrink-0 gap-2">
+        {/* Left: Mixer toggle + Title */}
+        <div className="flex items-center gap-2 sm:gap-4 shrink-0">
+          <div
+            onClick={() => { const targetWidth = isMixerOpen ? 0 : 200; setMixerWidth(targetWidth); setIsMixerOpen(!isMixerOpen); }}
+            className={`p-1.5 rounded-lg cursor-pointer transition-all hover:scale-110 active:scale-95 ${isMixerOpen ? 'bg-[#6366f1] text-white shadow-[0_0_15px_rgba(99,102,241,0.4)]' : 'bg-white/5 text-zinc-400'}`}
+          >
+            {isMixerOpen ? <ChevronFirst size={14} /> : <ChevronLast size={14} />}
+          </div>
+          <div className="flex flex-col hidden sm:flex">
+            <span className="text-[9px] font-black text-white uppercase italic tracking-tight leading-tight">STUDIO MATRIX</span>
+            <span className="text-[5px] font-bold text-zinc-500 uppercase tracking-widest leading-none">NEURAL CONSOLE V5.5</span>
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
-          <div className="flex bg-black/40 p-0.5 rounded-lg border border-white/5 gap-2 items-center px-3">
+        {/* Center: Card Switcher tabs */}
+        {onExitTrackView && (
+          <div className="flex-1 flex items-center justify-center overflow-x-auto no-scrollbar">
+            <div className="flex bg-black/40 p-1 rounded-full border border-white/10 gap-0.5">
+              {[
+                { id: 'score', label: 'SCORE' },
+                { id: 'pianoroll', label: 'PIANO' },
+                { id: 'trackview', label: 'TRACK', active: true },
+                { id: 'memochord', label: 'CHORD' },
+                { id: 'practice', label: 'MEMO' },
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => !tab.active && onExitTrackView(tab.id)}
+                  className={`px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${tab.active ? 'bg-indigo-600 text-white shadow-[0_0_10px_rgba(99,102,241,0.4)]' : 'text-zinc-600 hover:text-white hover:bg-white/5'}`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Right: Zoom display + Follow toggle */}
+        <div className="flex items-center gap-2 sm:gap-4 shrink-0">
+          <div className="flex bg-black/40 p-0.5 rounded-lg border border-white/5 gap-2 items-center px-2 sm:px-3 hidden sm:flex">
             <div className="flex flex-col items-center">
               <span className="text-[5px] font-black text-zinc-600 uppercase tracking-widest">H-SCL</span>
               <span className="text-[8px] font-black text-indigo-400 lcd-font">{Math.round(pixelsPerSecond)}</span>
@@ -386,9 +414,9 @@ const TrackView: React.FC<TrackViewProps> = ({ song, musicXml, tracks, setTracks
 
           <button
             onClick={() => setFollowPlayhead(!followPlayhead)}
-            className={`px-3 h-8 rounded-full border text-[9px] font-black flex items-center gap-2 transition-all ${followPlayhead ? 'bg-[#6366f1] border-indigo-400 text-white shadow-[0_0_15px_rgba(99,102,241,0.3)]' : 'bg-white/5 border-white/10 text-zinc-500'}`}
+            className={`px-2 sm:px-3 h-8 rounded-full border text-[8px] sm:text-[9px] font-black flex items-center gap-1.5 sm:gap-2 transition-all ${followPlayhead ? 'bg-[#6366f1] border-indigo-400 text-white shadow-[0_0_15px_rgba(99,102,241,0.3)]' : 'bg-white/5 border-white/10 text-zinc-500'}`}
           >
-            <Target size={12} /> {followPlayhead ? 'FOLLOW ON' : 'PAGING ON'}
+            <Target size={12} /> <span className="hidden sm:inline">{followPlayhead ? 'FOLLOW ON' : 'PAGING ON'}</span>
           </button>
         </div>
       </header>
@@ -410,6 +438,8 @@ const TrackView: React.FC<TrackViewProps> = ({ song, musicXml, tracks, setTracks
                 'Movable Do': { label: 'M.DO', color: 'bg-indigo-600', icon: Languages },
                 'Fixed Do': { label: 'F.DO', color: 'bg-emerald-600', icon: Languages },
                 'Words': { label: 'WORD', color: 'bg-sky-500', icon: FileText },
+                'Kodaly': { label: 'KOD', color: 'bg-fuchsia-600', icon: Languages },
+                'Kodaly Rhythm': { label: 'K.RHY', color: 'bg-purple-600', icon: Languages },
                 'Closed': { label: 'INST', color: 'bg-zinc-800', icon: Music }
               };
               const currentCfg = modeConfig[track.mode === 'instrument' ? 'Closed' : track.lyricMode] || modeConfig['Movable Do'];
