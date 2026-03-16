@@ -565,26 +565,22 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
         finalXml = injectSolfegeToXml(finalXml, lyricMode as any);
       }
 
-      const containerWidth = containerRef.current?.clientWidth || 2100;
-      const isTinyMobile = window.innerWidth < 600;
-
       vrvToolkit.setOptions({
-        scale: isTinyMobile ? 35 : 45, // Smaller scale for mobile
+        scale: 45,
         font: musicFont,
         header: "none",
         footer: "none",
-        adjustPageHeight: true,
-        adjustPageWidth: true,
-        pageWidth: isTinyMobile ? Math.min(2100, window.innerWidth * 5) : 2100, // Dynamic width for mobile
+        adjustPageHeight: false,
+        pageWidth: 2100,
         pageHeight: 2970,
-        pageMarginTop: isTinyMobile ? 80 : 150,
-        pageMarginBottom: 80,
-        pageMarginLeft: isTinyMobile ? 40 : 80,
-        pageMarginRight: isTinyMobile ? 40 : 80,
-        spacingSystem: isTinyMobile ? 12 : systemSpacing,
-        spacingStaff: isTinyMobile ? 12 : 18,
-        lyricTopMinMargin: 4.0,
-        lyricSize: isTinyMobile ? 2.5 : 3.0,
+        pageMarginTop: 150,
+        pageMarginBottom: 100,
+        pageMarginLeft: 80,
+        pageMarginRight: 80,
+        spacingSystem: systemSpacing,
+        spacingStaff: 18,
+        lyricTopMinMargin: 4.0, // Replaced spacingLyricTop with standard lyricTopMinMargin
+        lyricSize: 3.0,
         stemWidth: stemThickness,
         barLineWidth: barlineThickness,
         staffLineWidth: stafflineThickness,

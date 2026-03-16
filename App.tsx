@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
-import { Home, User, Database, Music2, Settings, Zap, RefreshCcw } from 'lucide-react';
+import { Home, User, Database, Music2, Play, Settings, Zap, RefreshCcw } from 'lucide-react';
 import JSZip from 'jszip';
 import { musicEngine } from './lib/MusicEngine';
 import { songStorage } from './lib/SongStorage';
@@ -40,7 +40,8 @@ const INITIAL_LOOP_PRESETS: LoopPreset[] = [
 
 const NAV_ITEMS: { id: ViewId; icon: typeof Home; label: string }[] = [
   { id: 'home', icon: Home, label: 'MATRIX' },
-  { id: 'forge', icon: Music2, label: 'STUDIO' },
+  { id: 'player', icon: Play, label: 'PLAYER' },
+  { id: 'forge', icon: Music2, label: 'EDIT' },
   { id: 'profile', icon: User, label: 'ME' },
   { id: 'settings', icon: Settings, label: 'CFG' },
 ];
