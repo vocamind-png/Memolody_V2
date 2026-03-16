@@ -107,91 +107,136 @@ function detectAndInjectChords(xml: string): string {
       { ivs: [0, 3, 7], text: 'm', kind: 'minor' },
     ];
 
-    const measures = Array.from(doc.querySelectorAll('measure'));
-
-    for (const measure of measures) {
-      let divisions = 1;
-      const divEl = measure.querySelector('attributes > divisions');
-      if (divEl) divisions = Math.max(1, parseInt(divEl.textContent || '1'));
-
-      // Map onset (in divisions) → [semitone pitch]
-      const onsetMap = new Map<number, number[]>();
-      // Map onset → first non-chord note element at that onset
-      const onsetFirstNote = new Map<number, Element>();
-
-      let cursor = 0;
-      let lastOnset = 0;
-
-      for (const child of Array.from(measure.children)) {
-        const tag = child.tagName;
-        if (tag === 'note') {
-          const isChordNote = child.querySelector('chord') !== null;
-          const stepEl = child.querySelector('pitch > step');
-          const alterEl = child.querySelector('pitch > alter');
-          const octEl = child.querySelector('pitch > octave');
-          const durEl = child.querySelector('duration');
-          const dur = durEl ? parseInt(durEl.textContent || '1') : 1;
-
-          if (!isChordNote) {
-            lastOnset = cursor;
-            cursor += dur;
-          }
-
-          if (stepEl) {
-            const step = stepEl.textContent?.trim() || 'C';
-            const alter = alterEl ? parseInt(alterEl.textContent || '0') : 0;
-            const octave = octEl ? parseInt(octEl.textContent || '4') : 4;
-            const semi = (STEP_TO_SEMI[step] ?? 0) + alter + (octave + 1) * 12;
-            const onset = isChordNote ? lastOnset : cursor - dur;
-
-            if (!onsetMap.has(onset)) onsetMap.set(onset, []);
-            onsetMap.get(onset)!.push(semi);
-
-            if (!isChordNote && !onsetFirstNote.has(onset)) {
-              onsetFirstNote.set(onset, child);
-            }
-          }
-        } else if (tag === 'backup') {
-          const d = child.querySelector('duration');
-          if (d) cursor = Math.max(0, cursor - parseInt(d.textContent || '0'));
-        } else if (tag === 'forward') {
-          const d = child.querySelector('duration');
-          if (d) cursor += parseInt(d.textContent || '0');
-        }
-      }
-
-      // Try to detect chord at each onset with ≥ 2 distinct pitch classes
-      for (const [onset, semitones] of Array.from(onsetMap.entries())) {
-        const pcs = [...new Set(semitones.map(s => ((s % 12) + 12) % 12))].sort((a, b) => a - b);
-        if (pcs.length < 2) continue;
-
-        let bestRoot = -1, bestPattern: typeof PATTERNS[0] | null = null;
-
-        outer: for (const root of pcs) {
-          const ivs = pcs.map(pc => ((pc - root + 12) % 12)).sort((a, b) => a - b);
-          for (const pat of PATTERNS) {
-            if (pat.ivs.every(i => ivs.includes(i))) {
-              bestRoot = root; bestPattern = pat;
-              break outer;
-            }
+    const matchChord = (pcs: number[]): { root: number; pattern: typeof PATTERNS[0] } | null => {
+      for (const root of pcs) {
+        const ivs = pcs.map(pc => ((pc - root + 12) % 12)).sort((a, b) => a - b);
+        for (const pat of PATTERNS) {
+          if (pat.ivs.every(i => ivs.includes(i))) {
+            return { root, pattern: pat };
           }
         }
-
-        if (bestRoot < 0 || !bestPattern) continue;
-
-        const rootName = NOTE_NAMES[bestRoot];
-        const rootStep = rootName.replace(/[#b]/g, '');
-        const rootAlter = rootName.includes('#') ? 1 : rootName.includes('b') ? -1 : 0;
-
-        const harmXml = `<harmony><root><root-step>${rootStep}</root-step>${rootAlter !== 0 ? `<root-alter>${rootAlter}</root-alter>` : ''
-          }</root><kind text="${bestPattern.text}">${bestPattern.kind}</kind></harmony>`;
-
-        const harmDoc = parser.parseFromString(harmXml, 'text/xml');
-        const harmEl = doc.importNode(harmDoc.documentElement, true);
-
-        const refNote = onsetFirstNote.get(onset);
-        if (refNote) measure.insertBefore(harmEl, refNote);
       }
+      return null;
+    };
+
+    const createHarmonyXml = (rootPc: number, pattern: typeof PATTERNS[0]): string => {
+      const rootName = NOTE_NAMES[rootPc];
+      const rootStep = rootName.replace(/[#b]/g, '');
+      const rootAlter = rootName.includes('#') ? 1 : rootName.includes('b') ? -1 : 0;
+      return `<harmony><root><root-step>${rootStep}</root-step>${rootAlter !== 0 ? `<root-alter>${rootAlter}</root-alter>` : ''
+        }</root><kind text="${pattern.text}">${pattern.kind}</kind></harmony>`;
+    };
+
+    let totalChordsInjected = 0;
+    const parts = Array.from(doc.querySelectorAll('part'));
+
+    for (const part of parts) {
+      const measures = Array.from(part.querySelectorAll('measure'));
+
+      for (const measure of measures) {
+        // Skip measures that already have harmony
+        if (measure.querySelector('harmony')) continue;
+
+        let divisions = 1;
+        const divEl = measure.querySelector('attributes > divisions');
+        if (divEl) divisions = Math.max(1, parseInt(divEl.textContent || '1'));
+
+        // Collect all notes with their onset positions
+        const onsetMap = new Map<number, number[]>();
+        const onsetFirstNote = new Map<number, Element>();
+        let cursor = 0;
+        let lastOnset = 0;
+
+        for (const child of Array.from(measure.children)) {
+          const tag = child.tagName;
+          if (tag === 'note') {
+            const isChordNote = child.querySelector('chord') !== null;
+            const stepEl = child.querySelector('pitch > step');
+            const alterEl = child.querySelector('pitch > alter');
+            const octEl = child.querySelector('pitch > octave');
+            const durEl = child.querySelector('duration');
+            const dur = durEl ? parseInt(durEl.textContent || '1') : 1;
+
+            if (!isChordNote) {
+              lastOnset = cursor;
+              cursor += dur;
+            }
+
+            if (stepEl) {
+              const step = stepEl.textContent?.trim() || 'C';
+              const alter = alterEl ? parseInt(alterEl.textContent || '0') : 0;
+              const octave = octEl ? parseInt(octEl.textContent || '4') : 4;
+              const semi = (STEP_TO_SEMI[step] ?? 0) + alter + (octave + 1) * 12;
+              const onset = isChordNote ? lastOnset : cursor - dur;
+
+              if (!onsetMap.has(onset)) onsetMap.set(onset, []);
+              onsetMap.get(onset)!.push(semi);
+
+              if (!isChordNote && !onsetFirstNote.has(onset)) {
+                onsetFirstNote.set(onset, child);
+              }
+            }
+          } else if (tag === 'backup') {
+            const d = child.querySelector('duration');
+            if (d) cursor = Math.max(0, cursor - parseInt(d.textContent || '0'));
+          } else if (tag === 'forward') {
+            const d = child.querySelector('duration');
+            if (d) cursor += parseInt(d.textContent || '0');
+          }
+        }
+
+        // ── Strategy 1: Simultaneous notes (original logic) ──────────────
+        let foundSimultaneous = false;
+        for (const [onset, semitones] of Array.from(onsetMap.entries())) {
+          const pcs = [...new Set(semitones.map(s => ((s % 12) + 12) % 12))].sort((a, b) => a - b);
+          if (pcs.length < 2) continue;
+
+          const match = matchChord(pcs);
+          if (!match) continue;
+
+          const harmXml = createHarmonyXml(match.root, match.pattern);
+          const harmDoc = parser.parseFromString(harmXml, 'text/xml');
+          const harmEl = doc.importNode(harmDoc.documentElement, true);
+
+          const refNote = onsetFirstNote.get(onset);
+          if (refNote) {
+            measure.insertBefore(harmEl, refNote);
+            totalChordsInjected++;
+            foundSimultaneous = true;
+          }
+        }
+
+        // ── Strategy 2: Melody-only fallback (beat-window grouping) ──────
+        // If no simultaneous chords found, group all notes in the entire measure
+        // and try to detect a chord from the combined pitch classes
+        if (!foundSimultaneous && onsetMap.size > 0) {
+          const allPcs = new Set<number>();
+          for (const semitones of onsetMap.values()) {
+            semitones.forEach(s => allPcs.add(((s % 12) + 12) % 12));
+          }
+          const pcsArr = [...allPcs].sort((a, b) => a - b);
+          if (pcsArr.length >= 3) {
+            const match = matchChord(pcsArr);
+            if (match) {
+              const harmXml = createHarmonyXml(match.root, match.pattern);
+              const harmDoc = parser.parseFromString(harmXml, 'text/xml');
+              const harmEl = doc.importNode(harmDoc.documentElement, true);
+
+              // Insert before the first note of the measure
+              const firstOnset = Math.min(...Array.from(onsetFirstNote.keys()));
+              const refNote = onsetFirstNote.get(firstOnset);
+              if (refNote) {
+                measure.insertBefore(harmEl, refNote);
+                totalChordsInjected++;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (totalChordsInjected > 0) {
+      console.log(`[ChordDetect] 🎸 Injected ${totalChordsInjected} chord symbols`);
     }
 
     const serializer = new XMLSerializer();
@@ -810,7 +855,7 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
       const pages = [];
       for (let i = 1; i <= Math.min(pageCount, 100); i++) {
         let svg = vrvToolkit.renderToSVG(i, {});
-        svg = scaleHarmText(svg, 12.5); // 10× + 25% = 12.5× native Verovio size, black+900w
+        svg = scaleHarmText(svg, 65); // 32.5 × 2 = 65 (chord names much bigger)
         pages.push(svg);
       }
 
