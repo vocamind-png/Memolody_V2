@@ -453,10 +453,9 @@ const PlayerPage: React.FC<{
             </div>
 
             <div className="w-full max-w-[calc(100vw-32px)] md:max-w-[640px] bg-white shadow-[0_20px_60px_rgba(0,0,0,0.9)] rounded-full h-[54px] flex items-center px-2.5 pointer-events-auto relative">
-              <div className="flex-[2.5] flex items-center justify-start gap-0.5 pr-1 border-r border-zinc-100">
+              <div className="flex-[2] flex items-center justify-start gap-0.5 pr-1 border-r border-zinc-100">
                 <button onClick={() => setShowMixer(!showMixer)} className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${showMixer ? 'bg-zinc-100 text-black' : 'text-zinc-300 hover:text-black'}`}><SlidersHorizontal size={14} /></button>
                 <button onClick={() => {
-                  // Stop transport fully → next Play = fresh start (Case 3)
                   if (musicEngine.transportState !== 'stopped') {
                     musicEngine.pause();
                   }
@@ -473,32 +472,14 @@ const PlayerPage: React.FC<{
                 </div>
               </div>
 
-              <div className="flex-[5] h-[40px] bg-[#0c0c0e] rounded-full flex items-center border border-black shadow-inner overflow-hidden mx-1.5">
-                <div className="flex-1 h-full border-r border-white/5 flex items-center justify-center"><KeyTransposeDisplay keySig={localSong.key} transpose={transpose} onTransposeChange={setTranspose} /></div>
-                <div className="flex-1 h-full border-r border-white/5 flex items-center justify-center"><BpmDisplay bpm={currentBpm} onBpmChange={(b) => { setCurrentBpm(b); musicEngine.setBpm(b); }} /></div>
-                <div className="flex-[0.5] h-full border-r border-white/5 flex items-center justify-center"><TimeSigDisplay beats={parsedData.timeSignature.beats} beatType={parsedData.timeSignature.beatType} /></div>
-                <div className="flex-[1.2] h-full flex items-center justify-center"><BarBeatPositionDisplay bar={currentBar} beat={currentBeat} onSeek={(bar) => musicEngine.setTransportSeconds((bar - 1) * beatsPerMeasure * 60 / currentBpm)} /></div>
+              <div className="flex-[8] h-[40px] bg-[#0c0c0e] rounded-full flex items-center border border-black shadow-inner overflow-hidden mx-1.5">
+                <div className="flex-[1.2] h-full border-r border-white/5 flex items-center justify-center"><KeyTransposeDisplay keySig={localSong.key} transpose={transpose} onTransposeChange={setTranspose} /></div>
+                <div className="flex-[1.2] h-full border-r border-white/5 flex items-center justify-center"><BpmDisplay bpm={currentBpm} onBpmChange={(b) => { setCurrentBpm(b); musicEngine.setBpm(b); }} /></div>
+                <div className="flex-[0.8] h-full border-r border-white/5 flex items-center justify-center"><TimeSigDisplay beats={parsedData.timeSignature.beats} beatType={parsedData.timeSignature.beatType} /></div>
+                <div className="flex-[1.5] h-full flex items-center justify-center"><BarBeatPositionDisplay bar={currentBar} beat={currentBeat} onSeek={(bar) => musicEngine.setTransportSeconds((bar - 1) * beatsPerMeasure * 60 / currentBpm)} /></div>
               </div>
 
-              <div className="flex-[2.5] flex items-center justify-end gap-1 pl-1 relative">
-                <div className="flex bg-indigo-500/5 p-0.5 rounded-full border border-white/10 gap-0.5 shadow-inner">
-                  {(['Movable Do', 'Fixed Do', 'Jianpu', 'Words', 'Kodaly', 'Kodaly Rhythm'] as LyricMode[]).map(mode => {
-                    const isActive = activeLyricMode === mode;
-                    const labels: Record<string, string> = {
-                      'Movable Do': 'M.DO', 'Fixed Do': 'F.DO', 'Jianpu': 'JIAN', 'Words': 'WORD', 'Kodaly': 'KOD', 'Kodaly Rhythm': 'K.RHY'
-                    };
-                    return (
-                      <button
-                        key={mode}
-                        onClick={() => setTracks(tracks.map(t => ({ ...t, lyricMode: mode })))}
-                        className={`h-9 px-1.5 sm:px-2.5 rounded-full flex items-center justify-center transition-all ${isActive ? 'bg-indigo-500 text-white shadow-[0_0_10px_rgba(99,102,241,0.5)]' : 'text-zinc-500 hover:text-white'}`}
-                        title={mode}
-                      >
-                        <span className="text-[7px] sm:text-[8px] font-black uppercase tracking-tight">{labels[mode]}</span>
-                      </button>
-                    );
-                  })}
-                </div>
+              <div className="flex-[1.5] flex items-center justify-end gap-1 pl-1 relative">
                 <button onClick={() => setActiveCard(activeCard === 'score' ? 'pianoroll' : 'score')} className={`w-9 h-9 border rounded-full flex flex-col items-center justify-center group active:scale-95 transition-all ${activeCard === 'score' ? 'bg-[#fbfbfb] border-zinc-100 text-zinc-300' : 'bg-cyan-50 border-cyan-100 text-cyan-500'}`}>
                   <Music size={13} className={activeCard === 'score' ? 'text-zinc-300' : 'text-cyan-500'} />
                   <span className={`text-[6px] font-black uppercase mt-0.5 ${activeCard === 'score' ? 'text-zinc-400' : 'text-cyan-600'}`}>SCR</span>
