@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
-import { Home, User, Database, Music2, Play, Settings, Zap, RefreshCcw } from 'lucide-react';
+import { Home, User, Database, Music2, Play, Settings, Zap, RefreshCcw, Star } from 'lucide-react';
 import JSZip from 'jszip';
 import { musicEngine } from './lib/MusicEngine';
 import { songStorage } from './lib/SongStorage';
@@ -18,6 +18,8 @@ const SettingsPage = lazy(() => import('./components/Settings/SettingsPage'));
 const DistributionPage = lazy(() => import('./components/Distribution/DistributionPage'));
 const NimoPage = lazy(() => import('./components/Nimo/NimoPage'));
 const BrandingPage = lazy(() => import('./components/Presentation/BrandingPage'));
+const AdminPage = lazy(() => import('./components/Admin/AdminPage'));
+const PricingTiers = lazy(() => import('./components/Subscription/PricingTiers'));
 
 // ── Minimal loading fallback ──
 const PageLoader = () => (
@@ -26,7 +28,7 @@ const PageLoader = () => (
   </div>
 );
 
-type ViewId = 'home' | 'library' | 'player' | 'profile' | 'forge' | 'distribution' | 'settings' | 'nimo' | 'presentation';
+type ViewId = 'home' | 'library' | 'player' | 'profile' | 'forge' | 'distribution' | 'settings' | 'nimo' | 'presentation' | 'admin' | 'subscription';
 
 const INITIAL_LOOP_PRESETS: LoopPreset[] = [
   { id: 'intro', label: 'Intro', color: '#00e5ff', startBar: 1, endBar: 4, isActive: false },
@@ -38,12 +40,13 @@ const INITIAL_LOOP_PRESETS: LoopPreset[] = [
   { id: 'custom', label: 'Custom', color: '#ffffff', startBar: 1, endBar: 100, isActive: false },
 ];
 
-const NAV_ITEMS: { id: ViewId; icon: typeof Home; label: string }[] = [
+const NAV_ITEMS: { id: ViewId; icon: any; label: string }[] = [
   { id: 'home', icon: Home, label: 'MATRIX' },
   { id: 'player', icon: Play, label: 'PLAYER' },
   { id: 'forge', icon: Music2, label: 'EDIT' },
+  { id: 'subscription', icon: Star, label: 'PLAN' },
   { id: 'profile', icon: User, label: 'ME' },
-  { id: 'settings', icon: Settings, label: 'CFG' },
+  { id: 'admin', icon: Database, label: 'CORE' },
 ];
 
 const App: React.FC = () => {
@@ -59,7 +62,7 @@ const App: React.FC = () => {
   const [performanceMode, setPerformanceMode] = useState(() => localStorage.getItem('nimo_perf_mode') === 'true');
   const [loopPresets, setLoopPresets] = useState<LoopPreset[]>(INITIAL_LOOP_PRESETS);
 
-  // Settings stored in localStorage only — no re-render needed for these
+  // Settings
   const [preferredLanguage, setPreferredLanguage] = useState<'th' | 'en'>(() => (localStorage.getItem('nimo_lang') as any) || 'en');
   const [userCountry, setUserCountry] = useState(() => localStorage.getItem('nimo_country') || '');
   const [userInstrument, setUserInstrument] = useState(() => localStorage.getItem('nimo_instrument') || '');
@@ -67,21 +70,18 @@ const App: React.FC = () => {
   const [nimoEnabled, setNimoEnabled] = useState(() => localStorage.getItem('nimo_enabled') !== 'false');
   const [nimoVoice, setNimoVoice] = useState<'teen_girl' | 'adult_woman' | 'teen_boy' | 'adult_man'>(() => (localStorage.getItem('nimo_voice') as any) || 'teen_girl');
 
-  // ── Init & Sync (deferred) ──
   useEffect(() => {
     (async () => {
       try {
         await songStorage.init();
         const songs = await songStorage.getAllSongs();
         setUserSongs(songs);
-        // Defer cloud sync — don't block UI
         setTimeout(() => triggerSync(), 5000);
       } catch (e) {
         console.error("Init Error:", e);
       }
     })();
 
-    // Check online status at slower cadence (60s instead of 15s)
     const interval = setInterval(async () => {
       const isUp = await CloudSyncService.checkUpdateAvailability();
       setOnlineStatus(isUp ? 'online' : 'offline');
@@ -105,7 +105,6 @@ const App: React.FC = () => {
     }
   }, [isSyncing]);
 
-  // ── Navigation — direct setState for instant response ──
   const navigateTo = useCallback((view: ViewId) => {
     if (view === 'player') setPlayerViewMode('score');
     setCurrentView(view);
@@ -136,19 +135,15 @@ const App: React.FC = () => {
     const owned = userSongs.find(s => s.metadata.id === song.id);
     if (!finalXml) finalXml = owned?.xmlData || '';
 
-    // ── LAZY FETCH: If xmlData is a URL, fetch the actual XML content ──
     if (finalXml && finalXml.startsWith('http')) {
       try {
         const url = finalXml;
-        console.log('[Neural] Lazy-fetching from:', url);
         const isMxl = url.endsWith('.mxl');
         const resp = await fetch(url);
         if (resp.ok) {
           if (isMxl) {
-            // .mxl = ZIP containing MusicXML
             const blob = await resp.blob();
             const zip = await JSZip.loadAsync(blob);
-            // Find the .xml file inside the zip (usually META-INF/rootfile or *.xml)
             let xmlContent = '';
             for (const [name, file] of Object.entries(zip.files)) {
               if (name.endsWith('.xml') && !name.startsWith('META-INF')) {
@@ -156,37 +151,21 @@ const App: React.FC = () => {
                 break;
               }
             }
-            if (!xmlContent) {
-              // Fallback: try any .xml file
-              for (const [name, file] of Object.entries(zip.files)) {
-                if (name.endsWith('.xml')) {
-                  xmlContent = await (file as any).async('string');
-                  break;
-                }
-              }
-            }
             finalXml = xmlContent || '';
-            console.log('[Neural] MXL decompressed:', finalXml.length, 'chars');
           } else {
             finalXml = await resp.text();
           }
-          // Cache it back to IndexedDB so we don't fetch again
           if (owned && finalXml) {
             await songStorage.saveSong(owned.metadata, finalXml);
           }
-        } else {
-          console.warn('[Neural] Fetch failed:', resp.status);
-          finalXml = '';
         }
       } catch (e) {
         console.warn('[Neural] Fetch error:', e);
-        finalXml = '';
       }
     }
 
     setSelectedSong(song);
     setUploadedMusicXml(finalXml);
-
     musicEngine.pause();
     musicEngine.setTransportSeconds(0);
 
@@ -226,24 +205,10 @@ const App: React.FC = () => {
     setShowOnboarding(false);
   };
 
-  // ── Render current page only ──
   const renderPage = () => {
     switch (currentView) {
       case 'home':
-        return (
-          <HomePage
-            onSongSelect={handleSongSelect}
-            userLibrary={userSongs}
-            onEnterStudio={() => navigateTo('player')}
-            onViewVault={() => navigateTo('home')} // Now part of home
-            onSearch={(q) => setGlobalSearchQuery(q)}
-            performanceMode={performanceMode}
-            onToggleDelete={handleToggleDelete}
-            onPermanentDelete={handlePermanentDelete}
-            onRefresh={triggerSync}
-            isSyncing={isSyncing}
-          />
-        );
+        return <HomePage onSongSelect={handleSongSelect} userLibrary={userSongs} onEnterStudio={() => navigateTo('player')} onViewVault={() => navigateTo('home')} onSearch={setGlobalSearchQuery} performanceMode={performanceMode} onToggleDelete={handleToggleDelete} onPermanentDelete={handlePermanentDelete} onRefresh={triggerSync} isSyncing={isSyncing} />;
       case 'player':
         return <PlayerPage song={selectedSong} musicXml={uploadedMusicXml} tracks={tracks} setTracks={setTracks} viewMode={playerViewMode} setViewMode={setPlayerViewMode} loopPresets={loopPresets} setLoopPresets={setLoopPresets} performanceMode={performanceMode} />;
       case 'forge':
@@ -258,6 +223,10 @@ const App: React.FC = () => {
         return <NimoPage selectedSong={selectedSong} xmlData={uploadedMusicXml} preferredLanguage={preferredLanguage} />;
       case 'presentation':
         return <BrandingPage onEnter={() => navigateTo('home')} backgroundImage="/images/memolody_hero.png" />;
+      case 'admin':
+        return <AdminPage onRefresh={triggerSync} />;
+      case 'subscription':
+        return <PricingTiers />;
       default:
         return null;
     }
@@ -265,73 +234,53 @@ const App: React.FC = () => {
 
   return (
     <div className={`flex flex-col h-[100dvh] w-full bg-[#0A0A0B] font-sans selection:bg-cyan-500/30 ${performanceMode ? 'perf-mode' : ''}`}>
-
-      {/* ── ONBOARDING ── */}
       {showOnboarding && (
         <div className="fixed inset-0 z-[30000] bg-black/95 flex items-center justify-center p-6">
           <div className="w-full max-w-sm bg-[#111] border border-white/10 rounded-2xl p-8 space-y-6">
             <h2 className="text-lg font-black text-white uppercase tracking-tight text-center">Welcome to Memolody</h2>
-
-            <select value={userCountry} onChange={e => handleCountryChange(e.target.value)}
-              className="w-full h-12 bg-white/5 border border-white/10 rounded-xl px-4 text-white text-sm outline-none focus:border-cyan-500">
-              <option value="" disabled className="text-black">Country...</option>
-              <option value="Thailand" className="text-black">Thailand</option>
-              <option value="USA" className="text-black">USA</option>
-              <option value="UK" className="text-black">UK</option>
-              <option value="Other" className="text-black">Other</option>
+            <select value={userCountry} onChange={e => handleCountryChange(e.target.value)} className="w-full h-12 bg-white/5 border border-white/10 rounded-xl px-4 text-white text-sm outline-none focus:border-cyan-500">
+              <option value="" disabled>Country...</option>
+              <option value="Thailand">Thailand</option>
+              <option value="USA">USA</option>
+              <option value="Other">Other</option>
             </select>
-
             <div className="flex gap-2">
-              {(['en', 'th'] as const).map(lang => (
-                <button key={lang} onClick={() => handleLanguageChange(lang)}
-                  className={`flex-1 h-11 rounded-xl text-xs font-black uppercase border transition-colors ${preferredLanguage === lang ? 'bg-cyan-500 text-black border-cyan-500' : 'bg-white/5 text-zinc-500 border-white/10'}`}>
-                  {lang === 'en' ? 'EN' : 'TH'}
+              {['en', 'th'].map(lang => (
+                <button key={lang} onClick={() => handleLanguageChange(lang as any)} className={`flex-1 h-11 rounded-xl text-xs font-black uppercase border transition-colors ${preferredLanguage === lang ? 'bg-cyan-500 text-black border-cyan-500' : 'bg-white/5 text-zinc-500 border-white/10'}`}>
+                  {lang.toUpperCase()}
                 </button>
               ))}
             </div>
-
-            <select value={userInstrument} onChange={e => handleInstrumentChange(e.target.value)}
-              className="w-full h-12 bg-white/5 border border-white/10 rounded-xl px-4 text-white text-sm outline-none focus:border-cyan-500">
-              <option value="" disabled className="text-black">Instrument...</option>
-              <option value="Piano" className="text-black">Piano</option>
-              <option value="Guitar" className="text-black">Guitar</option>
-              <option value="Vocals" className="text-black">Vocals</option>
-              <option value="Other" className="text-black">Other</option>
+            <select value={userInstrument} onChange={e => handleInstrumentChange(e.target.value)} className="w-full h-12 bg-white/5 border border-white/10 rounded-xl px-4 text-white text-sm outline-none focus:border-cyan-500">
+              <option value="" disabled>Instrument...</option>
+              <option value="Piano">Piano</option>
+              <option value="Guitar">Guitar</option>
+              <option value="Vocals">Vocals</option>
             </select>
-
-            <button onClick={completeOnboarding}
-              className="w-full h-12 bg-white text-black rounded-xl font-black uppercase tracking-widest text-xs active:scale-95">
-              Start
-            </button>
+            <button onClick={completeOnboarding} className="w-full h-12 bg-white text-black rounded-xl font-black uppercase tracking-widest text-xs active:scale-95">Start</button>
           </div>
         </div>
       )}
 
-      {/* ── HEADER — solid bg, no blur ── */}
       <header className="h-12 flex items-center justify-between px-4 bg-[#0A0A0B] border-b border-white/5 shrink-0 z-[10000]">
         <div className="flex items-center gap-2">
           <Zap size={14} className="text-cyan-400" />
           <span className="text-[10px] font-black tracking-[0.15em] text-zinc-400">MEMOLODY <span className="text-cyan-400">V2</span></span>
         </div>
-
         <nav className="flex items-center gap-0.5">
           {NAV_ITEMS.map(item => (
-            <button key={item.id}
-              onClick={() => navigateTo(item.id)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[8px] font-black uppercase tracking-wider transition-colors duration-75 ${currentView === item.id ? 'bg-white text-black' : 'text-zinc-600 hover:text-zinc-300'}`}>
+            <button key={item.id} onClick={() => navigateTo(item.id)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[8px] font-black uppercase tracking-wider transition-colors duration-75 ${currentView === item.id ? 'bg-white text-black' : 'text-zinc-600 hover:text-zinc-300'}`}>
               <item.icon size={12} strokeWidth={2.5} />
               {item.label}
             </button>
           ))}
         </nav>
-
         <div className="flex items-center gap-2">
           {isSyncing && <RefreshCcw size={10} className="animate-spin text-cyan-400" />}
           <div className={`w-1.5 h-1.5 rounded-full ${onlineStatus === 'online' ? 'bg-emerald-500' : 'bg-rose-500'}`} />
         </div>
       </header>
 
-      {/* ── MAIN — only active page renders ── */}
       <main className="flex-1 overflow-hidden relative bg-[#0A0A0B]">
         <Suspense fallback={<PageLoader />}>
           {renderPage()}

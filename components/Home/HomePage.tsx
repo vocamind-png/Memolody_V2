@@ -1,6 +1,6 @@
 
 import React, { useMemo, useState, useEffect, useCallback, useRef, memo } from 'react';
-import { Sparkles, Mic, MessageSquare, Waves, ChevronRight, Music2, Play, Search, X, Database, SortAsc, RefreshCcw, Loader2, Plus, RotateCcw, Trash2, ChevronDown, Heart, FolderPlus, Folder, Star, Music, MoreVertical } from 'lucide-react';
+import { Sparkles, Mic, MessageSquare, Waves, ChevronRight, Music2, Play, Search, X, Database, SortAsc, RefreshCcw, Loader2, Plus, RotateCcw, Trash2, ChevronDown, Heart, FolderPlus, Folder, Star, Music, MoreVertical, Store, Video, Target } from 'lucide-react';
 import { Song, ViewId, SongFolder } from '../../types';
 import { parseMusicXMLMetadata } from '../../lib/MusicXmlParser';
 import { songStorage } from '../../lib/SongStorage';
@@ -124,6 +124,61 @@ const SongRow = memo(({ item, onSongSelect, onToggleDelete, onPermanentDelete, i
                 {f.name}
               </button>
             ))}
+
+            {/* Distribution */}
+            <div className="px-3 py-1.5 text-[7px] font-black text-zinc-700 uppercase tracking-widest border-t border-white/5 mt-1">Distribution</div>
+            <button
+              onClick={(e) => { e.stopPropagation(); alert('Publishing to Marketplace...'); setShowMenu(false); }}
+              className="w-full px-4 py-2 text-[9px] font-bold text-left flex items-center gap-2 text-amber-500 hover:bg-white/5 hover:text-amber-400"
+            >
+              <Store size={10} />
+              SELL IN MARKET
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); alert('Promoting Challenge...'); setShowMenu(false); }}
+              className="w-full px-4 py-2 text-[9px] font-bold text-left flex items-center gap-2 text-zinc-400 hover:bg-white/5 hover:text-white"
+            >
+              <Star size={10} />
+              PROMOTE & CHALLENGE
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); alert('Add Promo Video...'); setShowMenu(false); }}
+              className="w-full px-4 py-2 text-[9px] font-bold text-left flex items-center gap-2 text-zinc-400 hover:bg-white/5 hover:text-white"
+            >
+              <Video size={10} />
+              ADD PROMO VDO CLIP
+            </button>
+
+            {/* Preview Restriction / Challenge */}
+            <div className="px-3 py-1.5 text-[7px] font-black text-zinc-700 uppercase tracking-widest border-t border-white/5 mt-1">Preview Restriction</div>
+            <button
+              onClick={(e) => { e.stopPropagation(); alert('Set limit: Full Song'); setShowMenu(false); }}
+              className="w-full px-4 py-2 text-[9px] font-bold text-left flex items-center justify-between text-indigo-400 hover:bg-white/5 hover:text-indigo-300 group/btn"
+            >
+              FULL SONG
+              <ChevronRight size={10} className="opacity-0 group-hover/btn:opacity-100 transition-opacity" />
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); alert('Set limit: 8 Bars'); setShowMenu(false); }}
+              className="w-full px-4 py-2 text-[9px] font-bold text-left flex items-center justify-between text-zinc-500 hover:bg-white/5 hover:text-white group/btn"
+            >
+              8 BARS LIMIT
+              <ChevronRight size={10} className="opacity-0 group-hover/btn:opacity-100 transition-opacity" />
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); alert('Set limit: 16 Bars'); setShowMenu(false); }}
+              className="w-full px-4 py-2 text-[9px] font-bold text-left flex items-center justify-between text-zinc-500 hover:bg-white/5 hover:text-white group/btn"
+            >
+              16 BARS LIMIT
+              <ChevronRight size={10} className="opacity-0 group-hover/btn:opacity-100 transition-opacity" />
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); alert('Set limit: 32 Bars'); setShowMenu(false); }}
+              className="w-full px-4 py-2 text-[9px] font-bold text-left flex items-center justify-between text-zinc-500 hover:bg-white/5 hover:text-white group/btn"
+            >
+              32 BARS LIMIT
+              <ChevronRight size={10} className="opacity-0 group-hover/btn:opacity-100 transition-opacity" />
+            </button>
           </div>
         </>
       )}
@@ -273,10 +328,10 @@ const HomePage: React.FC<HomePageProps> = ({
 
   return (
     <div className="h-full flex flex-col bg-[#0A0A0B] overflow-hidden select-none">
-      
+
       {/* ── HEADER / SEARCH & RECENT (STATIC TOP) ── */}
       <div className="shrink-0 p-6 space-y-6 bg-gradient-to-b from-white/[0.02] to-transparent border-b border-white/5">
-        
+
         {/* Brand/Hero */}
         <div className="flex flex-col items-center gap-2">
           <h1 className="text-2xl font-black text-white tracking-[0.4em] uppercase italic">MEMOLODY</h1>
@@ -304,35 +359,35 @@ const HomePage: React.FC<HomePageProps> = ({
         {/* Recent Matrix (Horizontal Scroll) */}
         {recentSongs.length > 0 && (
           <div className="space-y-3">
-             <div className="flex items-center justify-between px-1">
-               <span className="text-[8px] font-black text-zinc-600 uppercase tracking-widest italic">Recent Matrix</span>
-               <span className="text-[8px] font-mono text-zinc-700">{totalCount} songs</span>
-             </div>
-             <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2 px-1">
-               {recentSongs.map(item => (
-                 <div key={item.metadata.id} onClick={() => onSongSelect(item.metadata, item.xmlData, 'listen')}
-                    className="shrink-0 w-32 aspect-square rounded-2xl overflow-hidden relative group/card hover:scale-[1.03] active:scale-95 transition-all shadow-lg hover:shadow-xl hover:shadow-cyan-500/10 border border-white/10">
-                    <AbstractCover seed={item.metadata.title || item.metadata.id} size={256} />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
-                    <div className="absolute inset-0 flex flex-col justify-between p-3">
-                      <div className="flex items-center justify-between">
-                        <div className="w-8 h-8 rounded-lg bg-black/30 backdrop-blur-sm flex items-center justify-center text-white/80 group-hover/card:text-cyan-400 group-hover/card:bg-cyan-500/20 transition-colors">
-                          <Play size={12} fill="currentColor" />
-                        </div>
-                        {item.metadata.isFavorite && <Heart size={10} className="text-rose-500 fill-rose-500" />}
+            <div className="flex items-center justify-between px-1">
+              <span className="text-[8px] font-black text-zinc-600 uppercase tracking-widest italic">Recent Matrix</span>
+              <span className="text-[8px] font-mono text-zinc-700">{totalCount} songs</span>
+            </div>
+            <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2 px-1">
+              {recentSongs.map(item => (
+                <div key={item.metadata.id} onClick={() => onSongSelect(item.metadata, item.xmlData, 'listen')}
+                  className="shrink-0 w-32 aspect-square rounded-2xl overflow-hidden relative group/card hover:scale-[1.03] active:scale-95 transition-all shadow-lg hover:shadow-xl hover:shadow-cyan-500/10 border border-white/10">
+                  <AbstractCover seed={item.metadata.title || item.metadata.id} size={256} />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+                  <div className="absolute inset-0 flex flex-col justify-between p-3">
+                    <div className="flex items-center justify-between">
+                      <div className="w-8 h-8 rounded-lg bg-black/30 backdrop-blur-sm flex items-center justify-center text-white/80 group-hover/card:text-cyan-400 group-hover/card:bg-cyan-500/20 transition-colors">
+                        <Play size={12} fill="currentColor" />
                       </div>
-                      <p className="text-[9px] font-black text-white uppercase italic truncate drop-shadow-lg">{item.metadata.title}</p>
+                      {item.metadata.isFavorite && <Heart size={10} className="text-rose-500 fill-rose-500" />}
                     </div>
-                 </div>
-               ))}
-             </div>
+                    <p className="text-[9px] font-black text-white uppercase italic truncate drop-shadow-lg">{item.metadata.title}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>
 
       {/* ── TOTAL MATRIX / VAULT (SCROLLABLE BOTTOM) ── */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        
+
         {/* Section Tabs & Sort */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.03]">
           {/* Tabs */}
@@ -353,7 +408,7 @@ const HomePage: React.FC<HomePageProps> = ({
           {/* Action Buttons */}
           <div className="flex items-center gap-1.5 shrink-0">
             <button onClick={() => setShowSortDropdown(!showSortDropdown)}
-               className="h-7 px-2.5 rounded-lg bg-white/[0.03] border border-white/5 flex items-center gap-1 text-[8px] font-black text-zinc-500 uppercase">
+              className="h-7 px-2.5 rounded-lg bg-white/[0.03] border border-white/5 flex items-center gap-1 text-[8px] font-black text-zinc-500 uppercase">
               <SortAsc size={10} /> {SORT_OPTIONS.find(o => o.value === sortMode)?.label}
             </button>
             <button onClick={() => setShowNewFolder(true)} className="w-7 h-7 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 hover:bg-indigo-500/20 transition-colors" title="New Folder">
@@ -398,12 +453,12 @@ const HomePage: React.FC<HomePageProps> = ({
           <>
             <div className="fixed inset-0 z-[1000]" onClick={() => setShowSortDropdown(false)} />
             <div className="absolute right-16 top-[420px] sm:top-[440px] w-32 bg-[#111] border border-white/10 rounded-xl overflow-hidden z-[1001] shadow-2xl animate-in fade-in zoom-in-95 duration-100">
-               {SORT_OPTIONS.map(opt => (
-                 <button key={opt.value} onClick={() => { setSortMode(opt.value); setShowSortDropdown(false); }}
-                    className={`w-full px-4 py-2 text-[9px] font-bold text-left transition-colors ${sortMode === opt.value ? 'bg-cyan-500/10 text-cyan-400' : 'text-zinc-500 hover:bg-white/5 hover:text-white'}`}>
-                   {opt.label}
-                 </button>
-               ))}
+              {SORT_OPTIONS.map(opt => (
+                <button key={opt.value} onClick={() => { setSortMode(opt.value); setShowSortDropdown(false); }}
+                  className={`w-full px-4 py-2 text-[9px] font-bold text-left transition-colors ${sortMode === opt.value ? 'bg-cyan-500/10 text-cyan-400' : 'text-zinc-500 hover:bg-white/5 hover:text-white'}`}>
+                  {opt.label}
+                </button>
+              ))}
             </div>
           </>
         )}
@@ -415,8 +470,8 @@ const HomePage: React.FC<HomePageProps> = ({
               <Database size={24} className="mb-2 opacity-10" />
               <p className="text-[8px] font-black uppercase tracking-widest opacity-20">
                 {activeTab === 'favorites' ? 'No Favorites Yet' :
-                 activeTab === 'mysongs' ? 'No Imported Songs' :
-                 activeTab === 'trash' ? 'Trash Empty' : 'Matrix Offline or Empty'}
+                  activeTab === 'mysongs' ? 'No Imported Songs' :
+                    activeTab === 'trash' ? 'Trash Empty' : 'Matrix Offline or Empty'}
               </p>
             </div>
           ) : (
@@ -436,7 +491,7 @@ const HomePage: React.FC<HomePageProps> = ({
               ))}
               {hasMore && (
                 <div className="flex justify-center p-6 text-[8px] font-black text-zinc-700 uppercase tracking-widest">
-                   Accessing neural nodes...
+                  Accessing neural nodes...
                 </div>
               )}
             </>
@@ -473,8 +528,8 @@ const HomePage: React.FC<HomePageProps> = ({
               ))}
             </div>
             <button onClick={handleCreateFolder}
-               className="w-full h-12 bg-indigo-500 text-white rounded-2xl font-black uppercase tracking-widest text-xs active:scale-95 transition-transform disabled:opacity-30"
-               disabled={!newFolderName.trim()}>
+              className="w-full h-12 bg-indigo-500 text-white rounded-2xl font-black uppercase tracking-widest text-xs active:scale-95 transition-transform disabled:opacity-30"
+              disabled={!newFolderName.trim()}>
               Create Folder
             </button>
           </div>
@@ -492,7 +547,7 @@ const HomePage: React.FC<HomePageProps> = ({
               <p className="text-[9px] font-bold text-zinc-600 uppercase tracking-widest">Select MusicXML or MIDI to integrate</p>
             </div>
             <button onClick={() => fileInputRef.current?.click()}
-               className="w-full h-14 bg-cyan-500 text-black rounded-2xl font-black uppercase tracking-widest text-xs active:scale-95 transition-transform">
+              className="w-full h-14 bg-cyan-500 text-black rounded-2xl font-black uppercase tracking-widest text-xs active:scale-95 transition-transform">
               Select Files
             </button>
             <input ref={fileInputRef} type="file" multiple className="hidden" accept=".xml,.musicxml,.mxl,.mid,.midi" onChange={handleImport} />
