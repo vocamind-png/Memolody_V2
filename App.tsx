@@ -1,7 +1,8 @@
 
 import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { Home, User, Music2, Play, Zap, RefreshCcw, Star, Shield, Sparkles } from 'lucide-react';
-import { FloatingNimo } from './components/Nimo/FloatingNimo';
+// Lazy load Nimo - only loads JS bundle when user first clicks NIMO
+const FloatingNimo = lazy(() => import('./components/Nimo/FloatingNimo').then(m => ({ default: m.FloatingNimo })));
 import JSZip from 'jszip';
 import { musicEngine } from './lib/MusicEngine';
 import { songStorage } from './lib/SongStorage';
@@ -56,6 +57,7 @@ const App: React.FC = () => {
   const { authUser, role } = useAuth();
   const [currentView, setCurrentView] = useState<ViewId>('home');
   const [isNimoOpen, setIsNimoOpen] = useState(false);
+  const [nimoMounted, setNimoMounted] = useState(false); // mount on first click only
   const [selectedSong, setSelectedSong] = useState<Song | null>(null);
   const [uploadedMusicXml, setUploadedMusicXml] = useState<string | null>(null);
   const [userSongs, setUserSongs] = useState<{ metadata: Song, xmlData: string }[]>([]);
@@ -112,6 +114,7 @@ const App: React.FC = () => {
 
   const navigateTo = useCallback((view: ViewId, openNimo?: boolean) => {
     if (openNimo) {
+      setNimoMounted(true); // mount Nimo bundle lazily on first use
       setIsNimoOpen(true);
       return;
     }
@@ -315,14 +318,16 @@ const App: React.FC = () => {
         </Suspense>
       </main>
 
-      {/* Floating Nimo AI - globally visible on all pages */}
-      {nimoEnabled && (
-        <FloatingNimo
-          isOpenProp={isNimoOpen}
-          setIsOpenProp={setIsNimoOpen}
-          voiceType={nimoVoice}
-          preferredLanguage={preferredLanguage}
-        />
+      {/* Floating Nimo AI - lazy loaded on first use only */}
+      {nimoEnabled && nimoMounted && (
+        <Suspense fallback={null}>
+          <FloatingNimo
+            isOpenProp={isNimoOpen}
+            setIsOpenProp={setIsNimoOpen}
+            voiceType={nimoVoice}
+            preferredLanguage={preferredLanguage}
+          />
+        </Suspense>
       )}
     </div>
   );

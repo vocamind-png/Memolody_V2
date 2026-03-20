@@ -1,7 +1,12 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Send, Mic, MicOff, X, Maximize2, Minimize2, MessageCircle, Bot } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Send, Mic, MicOff, X, MessageCircle } from 'lucide-react';
 import { NIMO_IDENTITY_IMAGE } from '../../constants';
-import { GoogleGenAI } from "@google/genai";
+
+// Helper: safe initial position for mobile/desktop
+const getInitialPosition = () => ({
+    x: Math.max(0, window.innerWidth - 360),
+    y: Math.max(0, window.innerHeight - 520)
+});
 
 interface Message {
     role: 'user' | 'nimo';
@@ -46,7 +51,8 @@ export const FloatingNimo: React.FC<FloatingNimoProps> = ({ isOpenProp, setIsOpe
     const [activeTour, setActiveTour] = useState<TourStep[] | null>(null);
     const [currentTourIndex, setCurrentTourIndex] = useState(0);
 
-    const [position, setPosition] = useState({ x: window.innerWidth - 380, y: window.innerHeight - 500 });
+    const isMobile = window.innerWidth < 640;
+    const [position, setPosition] = useState(getInitialPosition);
     const [isDragging, setIsDragging] = useState(false);
     const dragRef = useRef<{ startX: number; startY: number; initialX: number; initialY: number } | null>(null);
 
