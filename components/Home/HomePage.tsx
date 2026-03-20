@@ -20,7 +20,7 @@ interface HomePageProps {
 }
 
 type SortMode = 'default' | 'az' | 'za' | 'newest' | 'oldest';
-type FilterTab = 'matrix' | 'favorites' | 'mysongs' | 'trash';
+type FilterTab = 'home' | 'favorites' | 'mysongs' | 'trash';
 
 const SORT_OPTIONS: { value: SortMode; label: string }[] = [
   { value: 'default', label: 'Default' },
@@ -192,7 +192,7 @@ const HomePage: React.FC<HomePageProps> = ({
 }) => {
   const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeTab, setActiveTab] = useState<FilterTab>('matrix');
+  const [activeTab, setActiveTab] = useState<FilterTab>('home');
   const [sortMode, setSortMode] = useState<SortMode>('default');
   const [showSortDropdown, setShowSortDropdown] = useState(false);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
@@ -249,7 +249,7 @@ const HomePage: React.FC<HomePageProps> = ({
   const filteredLibrary = useMemo(() => {
     let list: typeof userLibrary = [];
     switch (activeTab) {
-      case 'matrix':
+      case 'home':
         list = userLibrary.filter(item => !item.metadata.isDeleted);
         break;
       case 'favorites':
@@ -320,7 +320,7 @@ const HomePage: React.FC<HomePageProps> = ({
   };
 
   const TABS: { id: FilterTab, label: string, count: number, color: string }[] = [
-    { id: 'matrix', label: 'Matrix', count: totalCount, color: 'text-cyan-400' },
+    { id: 'home', label: 'Home', count: totalCount, color: 'text-cyan-400' },
     { id: 'favorites', label: 'Favorites', count: favCount, color: 'text-rose-400' },
     { id: 'mysongs', label: 'My Songs', count: mySongsCount, color: 'text-amber-400' },
     { id: 'trash', label: 'Trash', count: trashCount, color: 'text-zinc-500' },
@@ -360,7 +360,7 @@ const HomePage: React.FC<HomePageProps> = ({
         {recentSongs.length > 0 && (
           <div className="space-y-3">
             <div className="flex items-center justify-between px-1">
-              <span className="text-[8px] font-black text-zinc-600 uppercase tracking-widest italic">Recent Matrix</span>
+              <span className="text-[8px] font-black text-zinc-600 uppercase tracking-widest italic">Recent</span>
               <span className="text-[8px] font-mono text-zinc-700">{totalCount} songs</span>
             </div>
             <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2 px-1">
@@ -471,7 +471,7 @@ const HomePage: React.FC<HomePageProps> = ({
               <p className="text-[8px] font-black uppercase tracking-widest opacity-20">
                 {activeTab === 'favorites' ? 'No Favorites Yet' :
                   activeTab === 'mysongs' ? 'No Imported Songs' :
-                    activeTab === 'trash' ? 'Trash Empty' : 'Matrix Offline or Empty'}
+                    activeTab === 'trash' ? 'Trash Empty' : 'No Songs Yet'}
               </p>
             </div>
           ) : (

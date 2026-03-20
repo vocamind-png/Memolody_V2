@@ -41,7 +41,7 @@ const INITIAL_LOOP_PRESETS: LoopPreset[] = [
 ];
 
 const NAV_ITEMS: { id: ViewId; icon: any; label: string }[] = [
-  { id: 'home', icon: Home, label: 'MATRIX' },
+  { id: 'home', icon: Home, label: 'HOME' },
   { id: 'player', icon: Play, label: 'PLAYER' },
   { id: 'forge', icon: Music2, label: 'EDIT' },
   { id: 'subscription', icon: Star, label: 'PLAN' },
