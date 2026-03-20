@@ -3,8 +3,12 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
+// Read API key — works both locally (.env file) and on Vercel (process.env)
+const GEMINI_KEY = process.env.GEMINI_API_KEY || '';
+
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, '.', '');
+  // loadEnv for any other local vars, but GEMINI_KEY comes from process.env above
+  loadEnv(mode, '.', '');
   return {
     server: {
       port: 3000,
@@ -58,8 +62,9 @@ export default defineConfig(({ mode }) => {
       })
     ],
     define: {
-      'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
+      // Use process.env directly so Vercel env vars work at build time
+      'process.env.API_KEY': JSON.stringify(GEMINI_KEY),
+      'process.env.GEMINI_API_KEY': JSON.stringify(GEMINI_KEY)
     },
     resolve: {
       alias: { '@': path.resolve(__dirname, '.') }
