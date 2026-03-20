@@ -11,7 +11,7 @@ interface Props {
     preferredLanguage?: 'th' | 'en';
 }
 
-export const FloatingNimo: React.FC<Props> = ({
+export const FloatingNimoContent: React.FC<Props> = ({
     isOpenProp, setIsOpenProp,
     voiceType = 'teen_girl', preferredLanguage = 'en'
 }) => {
@@ -242,7 +242,7 @@ Instructions: Reply in English, be complete and helpful. Never cut off mid-sente
         <div 
             className="fixed z-[40000] flex flex-col bg-[#0d0d0f] border border-white/10 shadow-2xl overflow-hidden"
             style={isMobile 
-                ? { left: 0, right: 0, bottom: 0, height: '80dvh', borderRadius: '24px 24px 0 0' } 
+                ? { left: 0, right: 0, bottom: 0, height: '80vh', borderRadius: '24px 24px 0 0' } 
                 : { bottom: 24, right: 24, width: 360, height: 560, borderRadius: 28 }
             }
         >
@@ -357,5 +357,45 @@ Instructions: Reply in English, be complete and helpful. Never cut off mid-sente
         </div>
     );
 };
+
+// Error Boundary wrapper to prevent full app crashes (black screen)
+interface EBProps { children: React.ReactNode; }
+interface EBState { hasError: boolean; errorMsg: string; }
+
+class NimoErrorBoundary extends React.Component<EBProps, EBState> {
+    constructor(props: EBProps) {
+        super(props);
+        this.state = { hasError: false, errorMsg: '' };
+    }
+    static getDerivedStateFromError(error: any): EBState {
+        return { hasError: true, errorMsg: error?.message || 'Unknown error' };
+    }
+    componentDidCatch(error: any, errorInfo: any) {
+        console.error('[Nimo Crash]', error, errorInfo);
+    }
+    render() {
+        if (this.state.hasError) {
+            return (
+                <div className="fixed z-[40000] bottom-[100px] left-4 right-4 p-4 bg-[#8b0000] text-white rounded-xl shadow-2xl border border-red-500/50">
+                    <p className="font-bold mb-1">⚠️ Nimo AI Crash Detected</p>
+                    <p className="text-xs mb-3 text-red-200">{this.state.errorMsg}</p>
+                    <button 
+                        className="px-4 py-2 bg-white/20 hover:bg-white/30 rounded text-xs transition-colors"
+                        onClick={() => this.setState({hasError: false})}
+                    >
+                        Try Again
+                    </button>
+                </div>
+            );
+        }
+        return this.props.children;
+    }
+}
+
+export const FloatingNimo: React.FC<Props> = (props) => (
+    <NimoErrorBoundary>
+        <FloatingNimoContent {...props} />
+    </NimoErrorBoundary>
+);
 
 export default FloatingNimo;
