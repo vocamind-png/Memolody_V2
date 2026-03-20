@@ -99,9 +99,9 @@ export const FloatingNimo: React.FC<Props> = ({
                 ? `คุณคือ Nimo ผู้ช่วย AI ดนตรีของแอพ Memolody ตอบไทย 2-3 ประโยค สั้นกระชับ ลงท้าย${p}`
                 : 'You are Nimo, AI music assistant for Memolody app. Reply in English. 2-3 sentences max. No markdown.';
 
-            // Simple non-streaming for reliability
+            // gemini-2.5-flash = latest, fastest, smartest
             const res = await fetch(
-                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`,
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
                 {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
