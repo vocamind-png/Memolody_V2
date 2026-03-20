@@ -136,8 +136,8 @@ export const FloatingNimo: React.FC<Props> = ({
 
             setMsgs(prev => [...prev, { role: 'nimo', text: reply }]);
 
-            // TTS: only if voice input OR user explicitly asked to speak
-            if ((wasVoice || speakReq) && 'speechSynthesis' in window) {
+            // TTS: ONLY when user explicitly types "พูด" / "speak" etc.
+            if (speakReq && 'speechSynthesis' in window) {
                 window.speechSynthesis.cancel();
                 const speakText = preferredLanguage === 'th'
                     ? fixPronunciation(reply)
