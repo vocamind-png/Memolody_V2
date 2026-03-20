@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
-import { Home, User, Database, Music2, Play, Zap, RefreshCcw, Star, Shield } from 'lucide-react';
+import { Home, User, Music2, Play, Zap, RefreshCcw, Star, Shield, Sparkles } from 'lucide-react';
+import { FloatingNimo } from './components/Nimo/FloatingNimo';
 import JSZip from 'jszip';
 import { musicEngine } from './lib/MusicEngine';
 import { songStorage } from './lib/SongStorage';
@@ -41,11 +42,12 @@ const INITIAL_LOOP_PRESETS: LoopPreset[] = [
   { id: 'custom', label: 'Custom', color: '#ffffff', startBar: 1, endBar: 100, isActive: false },
 ];
 
-const NAV_ITEMS: { id: ViewId; icon: any; label: string; minRole?: string }[] = [
+const NAV_ITEMS: { id: ViewId; icon: any; label: string; minRole?: string; isNimo?: boolean }[] = [
   { id: 'home', icon: Home, label: 'HOME' },
   { id: 'player', icon: Play, label: 'PLAYER' },
   { id: 'forge', icon: Music2, label: 'EDIT' },
   { id: 'subscription', icon: Star, label: 'PLAN' },
+  { id: 'nimo', icon: Sparkles, label: 'NIMO', isNimo: true },
   { id: 'profile', icon: User, label: 'ME' },
   { id: 'admin', icon: Shield, label: 'CORE', minRole: 'admin' },
 ];
@@ -53,6 +55,7 @@ const NAV_ITEMS: { id: ViewId; icon: any; label: string; minRole?: string }[] = 
 const App: React.FC = () => {
   const { authUser, role } = useAuth();
   const [currentView, setCurrentView] = useState<ViewId>('home');
+  const [isNimoOpen, setIsNimoOpen] = useState(false);
   const [selectedSong, setSelectedSong] = useState<Song | null>(null);
   const [uploadedMusicXml, setUploadedMusicXml] = useState<string | null>(null);
   const [userSongs, setUserSongs] = useState<{ metadata: Song, xmlData: string }[]>([]);
@@ -107,7 +110,11 @@ const App: React.FC = () => {
     }
   }, [isSyncing]);
 
-  const navigateTo = useCallback((view: ViewId) => {
+  const navigateTo = useCallback((view: ViewId, openNimo?: boolean) => {
+    if (openNimo) {
+      setIsNimoOpen(true);
+      return;
+    }
     if (view === 'player') setPlayerViewMode('score');
     setCurrentView(view);
   }, []);
@@ -273,7 +280,16 @@ const App: React.FC = () => {
           {NAV_ITEMS
             .filter(item => !item.minRole || hasAccess(role, item.minRole as any))
             .map(item => (
-            <button key={item.id} onClick={() => navigateTo(item.id)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[8px] font-black uppercase tracking-wider transition-colors duration-75 ${currentView === item.id ? 'bg-white text-black' : 'text-zinc-600 hover:text-zinc-300'}`}>
+            <button
+              key={item.id}
+              id={`nav-${item.id}`}
+              onClick={() => item.isNimo ? navigateTo(item.id, true) : navigateTo(item.id)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[8px] font-black uppercase tracking-wider transition-colors duration-75 ${
+                item.isNimo
+                  ? 'text-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/10 border border-cyan-500/20'
+                  : currentView === item.id ? 'bg-white text-black' : 'text-zinc-600 hover:text-zinc-300'
+              }`}
+            >
               <item.icon size={12} strokeWidth={2.5} />
               {item.label}
             </button>
@@ -298,6 +314,16 @@ const App: React.FC = () => {
           {renderPage()}
         </Suspense>
       </main>
+
+      {/* Floating Nimo AI - globally visible on all pages */}
+      {nimoEnabled && (
+        <FloatingNimo
+          isOpenProp={isNimoOpen}
+          setIsOpenProp={setIsNimoOpen}
+          voiceType={nimoVoice}
+          preferredLanguage={preferredLanguage}
+        />
+      )}
     </div>
   );
 };
