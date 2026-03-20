@@ -67,36 +67,27 @@ export const FloatingNimo: React.FC<FloatingNimoProps> = ({ isOpenProp, setIsOpe
         }
     }, [messages, isTyping, isOpen]);
 
-    // Setup Speech Recognition
+    // Fix stale closure: keep ref to latest handleSend
+    const handleSendRef = useRef<(text?: string) => void>(() => {});
+
+    // Setup Speech Recognition - with up-to-date handleSend via ref
     useEffect(() => {
-        if (typeof window !== 'undefined') {
-            const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-            if (SpeechRecognition) {
-                const recognition = new SpeechRecognition();
-                recognition.continuous = false;
-                recognition.interimResults = false;
-                recognition.lang = preferredLanguage === 'en' ? 'en-US' : 'th-TH';
-
-                recognition.onresult = (event: any) => {
-                    const transcript = event.results[0][0].transcript;
-                    setInput(transcript);
-                    handleSend(transcript);
-                    setIsListening(false);
-                };
-
-                recognition.onerror = (event: any) => {
-                    console.error('Speech recognition error', event.error);
-                    setIsListening(false);
-                };
-
-                recognition.onend = () => {
-                    setIsListening(false);
-                };
-
-                recognitionRef.current = recognition;
-            }
-        }
-    }, []);
+        const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+        if (!SpeechRecognition) return;
+        const recognition = new SpeechRecognition();
+        recognition.continuous = false;
+        recognition.interimResults = false;
+        recognition.lang = preferredLanguage === 'en' ? 'en-US' : 'th-TH';
+        recognition.onresult = (event: any) => {
+            const transcript = event.results[0][0].transcript;
+            // Use ref so always latest handleSend
+            handleSendRef.current(transcript);
+            setIsListening(false);
+        };
+        recognition.onerror = () => setIsListening(false);
+        recognition.onend = () => setIsListening(false);
+        recognitionRef.current = recognition;
+    }, [preferredLanguage]);
 
     const speak = (text: string) => {
         if ('speechSynthesis' in window) {
@@ -155,16 +146,29 @@ export const FloatingNimo: React.FC<FloatingNimoProps> = ({ isOpenProp, setIsOpe
         }
     };
 
-    const toggleListen = () => {
+    const toggleListen = async () => {
+        const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            alert(preferredLanguage === 'en'
+                ? 'Microphone not supported on this browser. Try Chrome on Android.'
+                : 'เบราว์เซอร์นี้ไม่รองรับไมโครโฟน ลองใช้ Chrome บน Android นะคะ');
+            return;
+        }
         if (isListening) {
             recognitionRef.current?.stop();
             setIsListening(false);
         } else {
             try {
+                // Request mic permission explicitly first (important for mobile)
+                await navigator.mediaDevices.getUserMedia({ audio: true });
                 recognitionRef.current?.start();
                 setIsListening(true);
             } catch (e) {
-                console.error("Microphone error", e);
+                console.error('Microphone error', e);
+                alert(preferredLanguage === 'en'
+                    ? 'Microphone permission denied. Please allow mic access.'
+                    : 'กรุณาอนุญาตการใช้ไมโครโฟน แล้วลองอีกครั้ง');
+                setIsListening(false);
             }
         }
     };
@@ -204,113 +208,88 @@ export const FloatingNimo: React.FC<FloatingNimoProps> = ({ isOpenProp, setIsOpe
         setInput('');
         setMessages(prev => [...prev, { role: 'user', content: userMsg, timestamp: Date.now() }]);
         setIsTyping(true);
-        setActiveTour(null); // Clear previous tour
+        setActiveTour(null);
         window.speechSynthesis.cancel();
 
+        // Streaming placeholder
+        const nimoMsgId = Date.now();
+        setMessages(prev => [...prev, { role: 'nimo', content: '...', timestamp: nimoMsgId }]);
+
         try {
-            const apiKey = process.env.GEMINI_API_KEY || "";
-            if (!apiKey) throw new Error("API key missing. Run dev server properly.");
+            const apiKey = process.env.GEMINI_API_KEY || '';
+            if (!apiKey) throw new Error('API key missing');
 
             const isMale = voiceType === 'teen_boy' || voiceType === 'adult_man';
-            const genderRole = isMale ? "male" : "female";
-            const endingParticle = isMale ? "'ครับ' or 'นะครับ'" : "'ค่ะ' or 'นะคะ'";
+            const particle = isMale ? 'ครับ' : 'ค่ะ';
+            const langRule = preferredLanguage === 'en'
+                ? 'Reply in English only. Be concise (2-3 sentences max).'
+                : `ตอบเป็นภาษาไทย สั้น กระชับ ลงท้ายด้วย${particle}`;
 
-            const langInstruction = preferredLanguage === 'en'
-                ? `You MUST respond entirely in English. Do NOT use Thai language at all.`
-                : `Thai language is preferred. End sentences with ${endingParticle}.`;
+            const systemPrompt = `You are Nimo, a friendly AI music assistant for Memolody app. ${langRule} Help with music theory, reading notes, and app usage. No markdown, no emojis in replies.`;
 
-            const prompt = `You are Nimo, an expert ${genderRole} AI music assistant for the Memolody web app.
-Personality: Friendly, encouraging, professional but casual.
-Language Rule: ${langInstruction}
-If the user asks how to use the app, where a feature is, or wants a tour, return a valid JSON block enclosed in \`\`\`json ... \`\`\`.
-Available DOM selectors for the tour:
-- Home / Dashboard: "#nav-home"
-- Music Player: "#nav-player"
-- Song Matrix / Vault: "#nav-matrix"
-- Nimo AI Page: "#nav-nimo"
-- Profile / Me: "#nav-profile"
-- Setup / Settings: "#nav-settings"
-
-JSON Format Example:
-\`\`\`json
-{
-  "response": "Let me guide you! Starting from...",
-  "tour": [
-    { "selector": "#nav-player", "message": "Tap here to open the music Player" },
-    { "selector": "#nav-matrix", "message": "This is your Song Vault / Library" }
-  ]
-}
-\`\`\`
-
-If NO tour is needed, just respond with normal text.
-User: ${userMsg}`;
-
-            // Use native fetch to avoid any SDK browser issues
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+            // Use streaming API
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:streamGenerateContent?alt=sse&key=${apiKey}`;
             const res = await fetch(url, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    contents: [{ parts: [{ text: prompt }] }]
+                    system_instruction: { parts: [{ text: systemPrompt }] },
+                    contents: [{ role: 'user', parts: [{ text: userMsg }] }],
+                    generationConfig: { maxOutputTokens: 300, temperature: 0.7 }
                 })
             });
 
-            if (!res.ok) {
-                const errorData = await res.json().catch(() => ({}));
-                throw new Error(`Gemini API Error: ${res.status} HTTP - ${JSON.stringify(errorData)}`);
-            }
+            if (!res.ok) throw new Error(`API Error ${res.status}`);
 
-            const data = await res.json();
-            console.log("Gemini fetch response:", data);
+            const reader = res.body?.getReader();
+            if (!reader) throw new Error('No stream reader');
 
-            let responseText = "";
-            const candidate = data.candidates?.[0];
-            if (candidate?.content?.parts) {
-                responseText = candidate.content.parts
-                    .filter((p: any) => p.text)
-                    .map((p: any) => p.text)
-                    .join("");
-            }
+            let fullText = '';
+            const decoder = new TextDecoder();
 
-            if (!responseText) {
-                responseText = preferredLanguage === 'en' ? "Sorry, Nimo couldn't respond right now. Please try again!" : "ขอโทษค่ะ ลองอีกครั้งนะคะ";
-            }
-
-            // Extract JSON if present
-            const jsonMatch = responseText.match(/\`\`\`json([\s\S]*?)\`\`\`/);
-            let finalOutput = responseText;
-            let parsedTour: TourStep[] | null = null;
-
-            if (jsonMatch) {
-                try {
-                    const data = JSON.parse(jsonMatch[1]);
-                    if (data.response) finalOutput = data.response;
-                    if (data.tour && Array.isArray(data.tour)) parsedTour = data.tour;
-                } catch (e) {
-                    console.error("JSON Parse Error", e);
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                const chunk = decoder.decode(value, { stream: true });
+                // Parse SSE lines
+                for (const line of chunk.split('\n')) {
+                    if (!line.startsWith('data: ')) continue;
+                    const jsonStr = line.slice(6).trim();
+                    if (jsonStr === '[DONE]') break;
+                    try {
+                        const parsed = JSON.parse(jsonStr);
+                        const part = parsed.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                        if (part) {
+                            fullText += part;
+                            // Update message in real-time (streaming effect)
+                            setMessages(prev => prev.map(m =>
+                                m.timestamp === nimoMsgId ? { ...m, content: fullText } : m
+                            ));
+                        }
+                    } catch { /* skip malformed chunks */ }
                 }
             }
 
-            setMessages(prev => [...prev, { role: 'nimo', content: finalOutput, timestamp: Date.now() }]);
-            speak(finalOutput);
-
-            if (parsedTour) {
-                setActiveTour(parsedTour);
-                setCurrentTourIndex(0);
-            }
+            if (!fullText) fullText = preferredLanguage === 'en' ? 'Sorry, try again!' : `ขอโทษ${particle} ลองอีกครั้งนะ${particle}`;
+            speak(fullText);
 
         } catch (error) {
-            console.error("Gemini Error details:", error);
+            console.error('Nimo error:', error);
             const isMale = voiceType === 'teen_boy' || voiceType === 'adult_man';
+            const p = isMale ? 'ครับ' : 'ค่ะ';
             const fallback = preferredLanguage === 'en'
-                ? `Sorry, Nimo's Neural Link is temporarily down. The app still works fine though!`
-                : `การเชื่อมต่อ Neural Link ขัดข้องชั่วคราว${isMale ? 'ครับ' : 'ค่ะ'} แต่อินเทอร์เฟซหลักยังใช้งานได้${isMale ? 'นะครับ' : 'นะคะ'}`;
-            setMessages(prev => [...prev, { role: 'nimo', content: fallback, timestamp: Date.now() }]);
-            speak(fallback);
+                ? 'Connection issue. Please try again!'
+                : `เชื่อมต่อไม่ได้${p} ลองใหม่อีกครั้งนะ${p}`;
+            setMessages(prev => prev.map(m =>
+                m.timestamp === nimoMsgId ? { ...m, content: fallback } : m
+            ));
         } finally {
             setIsTyping(false);
         }
     };
+
+    // Keep ref updated so speech recognition always uses latest handleSend
+    handleSendRef.current = handleSend;
 
     const nextTourStep = () => {
         if (!activeTour) return;
