@@ -113,8 +113,12 @@ export const FloatingNimo: React.FC<Props> = ({
             const isMale = voiceType === 'teen_boy' || voiceType === 'adult_man';
             const p = isMale ? 'ครับ' : 'ค่ะ';
             const sys = preferredLanguage === 'th'
-                ? `คุณคือ Nimo ผู้ช่วย AI ดนตรีของแอพ เมมโมโลดี้ ตอบไทย 2-3 ประโยค สั้นกระชับ ลงท้าย${p}`
-                : 'You are Nimo, AI music assistant for Memolody app. Reply in English. 2-3 sentences max. No markdown.';
+                ? `คุณคือ Nimo ผู้ช่วย AI ของแอพ เมมโมโลดี้ (Memolody) แอพฝึกอ่านโน้ตดนตรีด้วยโซลเฟจ
+ฟีเจอร์: ดูโน้ตเพลง, ฟังเสียงโน้ต, ฝึกอ่านโน้ต, Piano Roll, บันทึกเพลง
+ตอบภาษาไทย เป็นมิตร ช่วยเหลือได้จริง ลงท้ายด้วย${p} ห้ามตัดคำกลางประโยค ตอบให้จบเสมอ`
+                : `You are Nimo, AI assistant for Memolody music reading practice app.
+Features: sheet music viewer, note audio, sight-reading practice, Piano Roll, song library.
+Reply helpfully in English. Always finish your sentences completely.`;
 
             const res = await fetch(
                 `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
@@ -124,7 +128,7 @@ export const FloatingNimo: React.FC<Props> = ({
                     body: JSON.stringify({
                         system_instruction: { parts: [{ text: sys }] },
                         contents: [{ role: 'user', parts: [{ text }] }],
-                        generationConfig: { maxOutputTokens: 200 }
+                        generationConfig: { maxOutputTokens: 600, temperature: 0.8 }
                     })
                 }
             );
