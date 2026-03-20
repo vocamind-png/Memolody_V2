@@ -4,7 +4,15 @@ import { Home, User, Music2, Play, Zap, RefreshCcw, Star, Shield, Sparkles } fro
 // Lazy load Nimo - only loads JS bundle when user first clicks NIMO
 const FloatingNimo = lazy(() => import('./components/Nimo/FloatingNimo').then(m => ({ default: m.FloatingNimo })));
 import JSZip from 'jszip';
-import { musicEngine } from './lib/MusicEngine';
+// Lazy — Tone.js (283KB) only loads when user opens a song
+let _musicEngine: typeof import('./lib/MusicEngine')['musicEngine'] | null = null;
+const getMusicEngine = async () => {
+  if (!_musicEngine) {
+    const mod = await import('./lib/MusicEngine');
+    _musicEngine = mod.musicEngine;
+  }
+  return _musicEngine;
+};
 import { songStorage } from './lib/SongStorage';
 import { CloudSyncService } from './lib/CloudSyncService';
 import { Song, TrackState } from './types';
@@ -178,10 +186,13 @@ const App: React.FC = () => {
 
     setSelectedSong(song);
     setUploadedMusicXml(finalXml);
-    musicEngine.pause();
-    musicEngine.setTransportSeconds(0);
 
-    const parsed = musicEngine.parseMusicXml(finalXml);
+    // Lazy-load Tone.js engine only when needed
+    const engine = await getMusicEngine();
+    engine.pause();
+    engine.setTransportSeconds(0);
+
+    const parsed = engine.parseMusicXml(finalXml);
     const newTracks: TrackState[] = Object.entries(parsed.partNames).map(([id, name]) => {
       const low = name.toLowerCase();
       const isVocal = ['vocal', 'voice', 'singer', 'melody', 'lead', 'soprano'].some(k => low.includes(k));
