@@ -106,21 +106,10 @@ const AuthForm: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
         </button>
       </form>
 
-      <div className="my-8 flex items-center gap-4 text-zinc-800">
+      <div className="my-6 flex items-center gap-4 text-zinc-800">
          <div className="h-px flex-1 bg-white/5" />
-         <span className="text-[9px] font-black uppercase">Or Access via</span>
+         <span className="text-[9px] font-black uppercase text-zinc-700">Email Only for Now</span>
          <div className="h-px flex-1 bg-white/5" />
-      </div>
-
-      <div className="grid grid-cols-2 gap-4">
-         <button onClick={() => handleSocialLogin('google')} className="h-12 border border-white/5 bg-white/5 rounded-2xl flex items-center justify-center gap-2 hover:bg-white/10 transition-colors">
-            <Chrome size={16} className="text-rose-400" />
-            <span className="text-[9px] font-black text-white uppercase">Google</span>
-         </button>
-         <button onClick={() => handleSocialLogin('github')} className="h-12 border border-white/5 bg-white/5 rounded-2xl flex items-center justify-center gap-2 hover:bg-white/10 transition-colors">
-            <Github size={16} className="text-cyan-400" />
-            <span className="text-[9px] font-black text-white uppercase">Github</span>
-         </button>
       </div>
 
       <button 
