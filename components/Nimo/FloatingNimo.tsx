@@ -153,15 +153,23 @@ export const FloatingNimo: React.FC<Props> = ({
     );
 
     // ── Full-screen on mobile, floating on desktop ──
-    const isMobile = window.innerWidth < 640;
+    const isMobile = typeof window !== 'undefined' && window.innerWidth < 640;
 
     return (
         <div
-            className="fixed z-[40000] flex flex-col bg-[#0d0d0f] border border-white/10"
-            style={isMobile
-                ? { inset: 0, top: 0 }                                          // full screen mobile
-                : { bottom: 20, right: 20, width: 340, height: 520, borderRadius: 20 }
-            }
+            className="fixed z-[40000] flex flex-col bg-[#0d0d0f] border border-white/10 shadow-2xl"
+            style={isMobile ? {
+                // Bottom-sheet: rises from bottom, NOT full screen (avoids black overlay bug)
+                left: 0, right: 0, bottom: 0,
+                height: '75dvh',
+                minHeight: 380,
+                borderRadius: '20px 20px 0 0',
+                borderBottom: 'none',
+            } : {
+                bottom: 20, right: 20,
+                width: 340, height: 520,
+                borderRadius: 20,
+            }}
         >
             {/* Header */}
             <div className="shrink-0 flex items-center gap-3 px-4 py-3 border-b border-white/10 bg-black/40">
