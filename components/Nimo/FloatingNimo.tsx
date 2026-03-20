@@ -46,14 +46,23 @@ export const FloatingNimo: React.FC<Props> = ({
 
     const requestPermission = async () => {
         try {
+            setStatus(preferredLanguage === 'th' ? '⏳ กำลังขอสิทธิ์...' : '⏳ Requesting...');
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            stream.getTracks().forEach(t => t.stop()); // close immediately
+            stream.getTracks().forEach(t => t.stop()); // close native stream immediately
+            
             setPermState('granted');
-            setStatus(preferredLanguage === 'th' ? '✅ เปิดไมค์สำเร็จ!' : '✅ Mic enabled!');
-            setTimeout(() => setStatus(''), 2000);
+            
+            // Auto start the voice recognition immediately so user doesn't have to click mic again
+            try {
+                if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+                recRef.current?.start();
+            } catch (err) {
+                // Ignore if it was somehow already started
+            }
+
         } catch (e) {
             setPermState('denied');
-            setStatus(preferredLanguage === 'th' ? '🔴 โปรดแก้ที่รูปแม่กุญแจ 🔒 ตรงแถบ URL' : '🔴 Please unblock in URL bar 🔒');
+            setStatus(preferredLanguage === 'th' ? '🔴 ขออภัย กรุณาปลดล็อกไมค์ที่รูปแม่กุญแจ 🔒' : '🔴 Please unblock in URL bar 🔒');
         }
     };
 
@@ -260,7 +269,7 @@ Instructions: Reply in English, be complete and helpful. Never cut off mid-sente
                     </div>
                     <div>
                         <p className="text-white font-black italic uppercase text-xs tracking-tighter flex items-center gap-1.5">
-                            NIMO AI <span className="text-[9px] text-zinc-500 font-normal">v1.2</span>
+                            NIMO AI <span className="text-[9px] text-zinc-500 font-normal">v1.3</span>
                         </p>
                         <p className="text-cyan-400 text-[9px] font-bold uppercase tracking-widest flex items-center gap-1">
                             <span className={`w-1.5 h-1.5 rounded-full ${busy ? 'bg-amber-500 animate-pulse' : 'bg-cyan-500'}`} />
