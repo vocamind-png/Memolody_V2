@@ -50,7 +50,7 @@ const AuthForm: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
            <ShieldCheck size={14} /> AUTHORIZATION CORE
          </div>
          <h2 className="text-4xl font-black italic tracking-tighter uppercase text-white leading-none mb-1">
-           {isSignUp ? 'CREATE' : 'SYSTEM'}<span className="text-cyan-500">{isSignUp ? 'SEED' : 'LOGIN'}</span>
+           {isSignUp ? 'SIGN' : 'SYSTEM'}<span className="text-cyan-500">{isSignUp ? 'UP' : 'LOGIN'}</span>
          </h2>
          <p className="text-zinc-500 text-[10px] font-bold uppercase tracking-widest max-w-xs leading-relaxed">
             Verify your neural link to access the global cloud matrix.
@@ -101,7 +101,7 @@ const AuthForm: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
           type="submit"
           className="w-full h-14 bg-cyan-500 text-black rounded-2xl font-black uppercase tracking-widest text-xs active:scale-95 transition-all flex items-center justify-center gap-3 shadow-xl hover:shadow-cyan-500/20 disabled:opacity-50"
         >
-          {isLoading ? <Loader2 size={18} className="animate-spin" /> : (isSignUp ? 'INITIALIZE LINK' : 'ESTABLISH LINK')}
+          {isLoading ? <Loader2 size={18} className="animate-spin" /> : (isSignUp ? 'SIGN UP' : 'LOGIN')}
           {!isLoading && <ArrowRight size={18} strokeWidth={3} />}
         </button>
       </form>
@@ -127,7 +127,7 @@ const AuthForm: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
         onClick={() => setIsSignUp(!isSignUp)}
         className="w-full text-center text-[10px] font-black text-zinc-600 uppercase tracking-widest mt-8 hover:text-cyan-500 transition-colors"
       >
-        {isSignUp ? 'Already linked? Authentication Required' : 'No link established? Access Request'}
+        {isSignUp ? 'Already have an account? → Sign In' : 'No account yet? → Sign Up Free'}
       </button>
     </div>
   );
