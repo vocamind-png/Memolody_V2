@@ -1,12 +1,13 @@
 
 import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
-import { Home, User, Database, Music2, Play, Settings, Zap, RefreshCcw, Star } from 'lucide-react';
+import { Home, User, Database, Music2, Play, Zap, RefreshCcw, Star, Shield } from 'lucide-react';
 import JSZip from 'jszip';
 import { musicEngine } from './lib/MusicEngine';
 import { songStorage } from './lib/SongStorage';
 import { CloudSyncService } from './lib/CloudSyncService';
 import { Song, TrackState } from './types';
 import { LoopPreset } from './components/Player/LoopMatrixModal';
+import { useAuth, hasAccess } from './lib/useAuth';
 
 // ── Lazy-load ALL heavy page components ──
 const HomePage = lazy(() => import('./components/Home/HomePage'));
@@ -40,16 +41,17 @@ const INITIAL_LOOP_PRESETS: LoopPreset[] = [
   { id: 'custom', label: 'Custom', color: '#ffffff', startBar: 1, endBar: 100, isActive: false },
 ];
 
-const NAV_ITEMS: { id: ViewId; icon: any; label: string }[] = [
+const NAV_ITEMS: { id: ViewId; icon: any; label: string; minRole?: string }[] = [
   { id: 'home', icon: Home, label: 'HOME' },
   { id: 'player', icon: Play, label: 'PLAYER' },
   { id: 'forge', icon: Music2, label: 'EDIT' },
   { id: 'subscription', icon: Star, label: 'PLAN' },
   { id: 'profile', icon: User, label: 'ME' },
-  { id: 'admin', icon: Database, label: 'CORE' },
+  { id: 'admin', icon: Shield, label: 'CORE', minRole: 'admin' },
 ];
 
 const App: React.FC = () => {
+  const { authUser, role } = useAuth();
   const [currentView, setCurrentView] = useState<ViewId>('home');
   const [selectedSong, setSelectedSong] = useState<Song | null>(null);
   const [uploadedMusicXml, setUploadedMusicXml] = useState<string | null>(null);
@@ -268,7 +270,9 @@ const App: React.FC = () => {
           <span className="text-[10px] font-black tracking-[0.15em] text-zinc-400">MEMOLODY <span className="text-cyan-400">V2</span></span>
         </div>
         <nav className="flex items-center gap-0.5">
-          {NAV_ITEMS.map(item => (
+          {NAV_ITEMS
+            .filter(item => !item.minRole || hasAccess(role, item.minRole as any))
+            .map(item => (
             <button key={item.id} onClick={() => navigateTo(item.id)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[8px] font-black uppercase tracking-wider transition-colors duration-75 ${currentView === item.id ? 'bg-white text-black' : 'text-zinc-600 hover:text-zinc-300'}`}>
               <item.icon size={12} strokeWidth={2.5} />
               {item.label}
@@ -276,6 +280,14 @@ const App: React.FC = () => {
           ))}
         </nav>
         <div className="flex items-center gap-2">
+          {authUser && ['owner','executive','admin'].includes(role) && (
+            <span className={`hidden sm:flex items-center gap-1 px-2 py-0.5 rounded-full text-[7px] font-black uppercase tracking-widest border
+              ${role === 'owner' ? 'bg-amber-500/10 border-amber-500/20 text-amber-400' :
+                role === 'executive' ? 'bg-violet-500/10 border-violet-500/20 text-violet-400' :
+                'bg-cyan-500/10 border-cyan-500/20 text-cyan-400'}`}>
+              {role === 'owner' ? '👑' : role === 'executive' ? '💼' : '🛡️'} {role}
+            </span>
+          )}
           {isSyncing && <RefreshCcw size={10} className="animate-spin text-cyan-400" />}
           <div className={`w-1.5 h-1.5 rounded-full ${onlineStatus === 'online' ? 'bg-emerald-500' : 'bg-rose-500'}`} />
         </div>

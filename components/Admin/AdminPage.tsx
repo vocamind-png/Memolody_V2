@@ -1,13 +1,15 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { 
-  Upload, CheckCircle2, ShieldCheck, RefreshCcw, Zap, Trash2, HardDrive, Cpu, AlertTriangle, RotateCcw,
-  Sparkles, FileText, FileImage, FileCode, Plus, Music, LayoutDashboard, Database, TrendingUp, Users
+  CheckCircle2, ShieldCheck, RefreshCcw, Trash2, HardDrive, AlertTriangle,
+  Sparkles, FileText, FileImage, FileCode, Plus, Music, Database, TrendingUp, Users, Lock
 } from 'lucide-react';
 import { parseMusicXMLMetadata } from '../../lib/MusicXmlParser';
 import { songStorage } from '../../lib/SongStorage';
 import { Song } from '../../types';
 import FinanceOverview from './FinanceOverview';
+import UserManagement from './UserManagement';
+import { useAuth, hasAccess } from '../../lib/useAuth';
 
 interface AdminPageProps {
   onMusicXmlUpload?: (metadata: Song, xmlData: string) => void;
@@ -18,6 +20,7 @@ interface AdminPageProps {
 type AdminTab = 'vault' | 'finance' | 'users';
 
 const AdminPage: React.FC<AdminPageProps> = ({ onMusicXmlUpload, onRestoreMasterpieces, onRefresh }) => {
+  const { role } = useAuth();
   const [activeTab, setActiveTab] = useState<AdminTab>('vault');
   const [isImporting, setIsImporting] = useState(false);
   const [files, setFiles] = useState<{name: string, status: string, message?: string, type?: string}[]>([]);
@@ -94,6 +97,26 @@ const AdminPage: React.FC<AdminPageProps> = ({ onMusicXmlUpload, onRestoreMaster
     { id: 'finance', label: 'Economics', icon: TrendingUp, color: 'text-emerald-500' },
     { id: 'users', label: 'Members', icon: Users, color: 'text-indigo-500' },
   ];
+
+  // Role guard — only admin and above
+  if (!hasAccess(role, 'admin')) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center gap-5 bg-[#050507] p-8">
+        <div className="w-20 h-20 rounded-3xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center">
+          <Lock size={36} className="text-rose-400" />
+        </div>
+        <div className="text-center space-y-2">
+          <h2 className="text-xl font-black text-white uppercase italic tracking-tighter">Access Restricted</h2>
+          <p className="text-[9px] text-zinc-500 uppercase tracking-widest max-w-xs leading-relaxed">
+            This section requires Admin, Executive, or Owner role. Contact your system administrator.
+          </p>
+        </div>
+        <div className="px-5 py-2 bg-rose-500/10 border border-rose-500/20 rounded-full">
+          <span className="text-[8px] font-black text-rose-400 uppercase tracking-widest">Your role: {role}</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-full flex flex-col bg-[#050507] overflow-y-auto no-scrollbar pb-32 px-6 pt-10">
@@ -206,64 +229,8 @@ const AdminPage: React.FC<AdminPageProps> = ({ onMusicXmlUpload, onRestoreMaster
       {activeTab === 'finance' && <FinanceOverview />}
 
       {activeTab === 'users' && (
-        <section className="animate-in fade-in slide-in-from-bottom-4 duration-500 h-full">
-           <div className="bg-[#111115] border border-white/5 rounded-[40px] overflow-hidden">
-                <div className="p-8 border-b border-white/5 flex justify-between items-center bg-[#111115]">
-                    <h3 className="text-lg font-black text-white italic tracking-tight uppercase">Member Authority</h3>
-                    <div className="flex gap-2">
-                        <input type="text" placeholder="FIND MEMBER..." className="h-10 bg-white/5 border border-white/5 rounded-xl px-4 text-[9px] font-black text-white uppercase outline-none focus:border-cyan-500/30 w-64" />
-                        <button className="h-10 bg-indigo-500 text-white px-5 rounded-xl text-[9px] font-black uppercase tracking-widest active:scale-95 transition-all">Export CSV</button>
-                    </div>
-                </div>
-                <div className="overflow-x-auto">
-                    <table className="w-full text-left">
-                        <thead>
-                            <tr className="border-b border-white/5">
-                                <th className="px-8 py-4 text-[8px] font-black text-zinc-600 uppercase tracking-widest">Master ID</th>
-                                <th className="px-8 py-4 text-[8px] font-black text-zinc-600 uppercase tracking-widest">Member Name</th>
-                                <th className="px-8 py-4 text-[8px] font-black text-zinc-600 uppercase tracking-widest">Current Plan</th>
-                                <th className="px-8 py-4 text-[8px] font-black text-zinc-600 uppercase tracking-widest">AI Slots</th>
-                                <th className="px-8 py-4 text-[8px] font-black text-zinc-600 uppercase tracking-widest">Status</th>
-                                <th className="px-8 py-4 text-[8px] font-black text-zinc-600 uppercase tracking-widest">Next Billing</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-white/5">
-                            {[
-                                { id: 'UID-001', name: 'Mnemo Creator', plan: 'Creator Tier', slots: '10 / 10', status: 'Active', next: '2026-04-12' },
-                                { id: 'UID-002', name: 'Solfege Student', plan: 'Student Tier', slots: '3 / 3', status: 'Active', next: '2026-04-05' },
-                                { id: 'UID-003', name: 'Digital Maestro', plan: 'Creator Tier', slots: '10 / 10', status: 'Past Due', next: 'Today' },
-                                { id: 'UID-004', name: 'Pitch Master', plan: 'Student Tier', slots: '1 / 3', status: 'Active', next: '2026-03-28' },
-                                { id: 'UID-005', name: 'Piano Prodigy', plan: 'Free Tier', slots: '1 / 1', status: 'Free', next: 'N/A' },
-                            ].map((user, i) => (
-                                <tr key={i} className="hover:bg-white/[0.02] transition-colors group cursor-pointer">
-                                    <td className="px-8 py-5 text-[10px] font-mono text-zinc-500 font-bold uppercase">{user.id}</td>
-                                    <td className="px-8 py-5">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-zinc-800 to-zinc-900 border border-white/5 flex items-center justify-center text-[10px] font-black text-white">
-                                                {user.name.charAt(0)}
-                                            </div>
-                                            <span className="text-[11px] font-black text-white uppercase italic">{user.name}</span>
-                                        </div>
-                                    </td>
-                                    <td className="px-8 py-5">
-                                        <span className={`px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-tighter ${user.plan.includes('Creator') ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20' : user.plan.includes('Student') ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20' : 'bg-white/5 text-zinc-500 border border-white/5'}`}>
-                                            {user.plan}
-                                        </span>
-                                    </td>
-                                    <td className="px-8 py-5 text-[11px] font-black text-white/80 tabular-nums">{user.slots}</td>
-                                    <td className="px-8 py-5">
-                                        <span className={`flex items-center gap-1.5 text-[8px] font-black uppercase tracking-widest ${user.status === 'Active' ? 'text-emerald-500' : user.status === 'Past Due' ? 'text-rose-500' : 'text-zinc-600'}`}>
-                                            <div className={`w-1 h-1 rounded-full ${user.status === 'Active' ? 'bg-emerald-500' : user.status === 'Past Due' ? 'bg-rose-500' : 'bg-zinc-600'}`} />
-                                            {user.status}
-                                        </span>
-                                    </td>
-                                    <td className="px-8 py-5 text-[9px] font-bold text-zinc-700 uppercase tracking-wider">{user.next}</td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-           </div>
+        <section className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <UserManagement currentUserRole={role} />
         </section>
       )}
     </div>
