@@ -158,6 +158,22 @@
 <link rel="stylesheet" href="/index.css">
 </head>
 <body class="unselectable">
+    <script>
+        // Force unregister Service Worker to clear aggressive cache, ensuring new version loads
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(function(registrations) {
+                for(let registration of registrations) {
+                    registration.unregister();
+                }
+                // If we found and unregistered a SW, reload the page to get fresh assets
+                if (registrations.length > 0 && !window.location.search.includes('cleared_sw')) {
+                    const newUrl = new URL(window.location.href);
+                    newUrl.searchParams.set('cleared_sw', '1');
+                    window.location.replace(newUrl.href);
+                }
+            });
+        }
+    </script>
     <div id="root"></div>
 <script type="module" src="/index.tsx"></script>
 </body>

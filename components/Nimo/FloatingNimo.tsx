@@ -259,7 +259,9 @@ Instructions: Reply in English, be complete and helpful. Never cut off mid-sente
                         <img src={NIMO_IDENTITY_IMAGE} alt="Nimo" className="w-full h-full object-cover" />
                     </div>
                     <div>
-                        <p className="text-white font-black italic uppercase text-xs tracking-tighter">NIMO AI</p>
+                        <p className="text-white font-black italic uppercase text-xs tracking-tighter flex items-center gap-1.5">
+                            NIMO AI <span className="text-[9px] text-zinc-500 font-normal">v1.2</span>
+                        </p>
                         <p className="text-cyan-400 text-[9px] font-bold uppercase tracking-widest flex items-center gap-1">
                             <span className={`w-1.5 h-1.5 rounded-full ${busy ? 'bg-amber-500 animate-pulse' : 'bg-cyan-500'}`} />
                             {busy ? 'Processing...' : 'Online'}
