@@ -44,22 +44,16 @@ export const FloatingNimo: React.FC<Props> = ({
         }
     }, []);
 
-    const requestPermission = async () => {
+    const requestPermission = () => {
+        // SYNCHRONOUS call is required by Android Chrome. Do not use async/await here!
         try {
-            setStatus(preferredLanguage === 'th' ? '⏳ กำลังขอสิทธิ์...' : '⏳ Requesting...');
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            stream.getTracks().forEach(t => t.stop()); // close native stream immediately
+            setStatus(preferredLanguage === 'th' ? '⏳ กำลังเตรียม...' : '⏳ Preparing...');
+            if ('speechSynthesis' in window) window.speechSynthesis.cancel();
             
-            setPermState('granted');
+            setPermState('granted'); // hide banner
             
-            // Auto start the voice recognition immediately so user doesn't have to click mic again
-            try {
-                if ('speechSynthesis' in window) window.speechSynthesis.cancel();
-                recRef.current?.start();
-            } catch (err) {
-                // Ignore if it was somehow already started
-            }
-
+            // The start() method itself triggers the permission prompt natively
+            recRef.current?.start();
         } catch (e) {
             setPermState('denied');
             setStatus(preferredLanguage === 'th' ? '🔴 ขออภัย กรุณาปลดล็อกไมค์ที่รูปแม่กุญแจ 🔒' : '🔴 Please unblock in URL bar 🔒');
@@ -127,26 +121,17 @@ export const FloatingNimo: React.FC<Props> = ({
         }
 
         if (listening) {
-            try {
-                recRef.current?.stop();
-            } catch (e) { /* ignore */ }
+            try { recRef.current?.stop(); } catch(e){}
             setListening(false);
         } else {
-            setStatus(preferredLanguage === 'th' ? '⏳ กำลังเปิดไมค์...' : '⏳ Opening mic...');
+            setStatus(preferredLanguage === 'th' ? '⏳ กำลังเปิดไมค์...' : '⏳ Opening...');
             try {
-                // Pre-cancel any speech synth that might block mic
                 if ('speechSynthesis' in window) window.speechSynthesis.cancel();
-                
+                // Synchronous start
                 recRef.current?.start();
             } catch (err: any) {
                 console.error('[Mic Start Error]', err);
-                // If already running, stop and try again after small delay
-                try { recRef.current?.stop(); } catch (e) {}
-                setTimeout(() => {
-                    try { recRef.current?.start(); } catch (e) {
-                         setStatus(preferredLanguage === 'th' ? '❌ เปิดไมค์ไม่สำเร็จ' : '❌ Mic failed to start');
-                    }
-                }, 200);
+                setStatus(preferredLanguage === 'th' ? '❌ เกิดข้อผิดพลาดโปรดลองใหม่' : '❌ Mic start failed');
             }
         }
     };
@@ -269,7 +254,7 @@ Instructions: Reply in English, be complete and helpful. Never cut off mid-sente
                     </div>
                     <div>
                         <p className="text-white font-black italic uppercase text-xs tracking-tighter flex items-center gap-1.5">
-                            NIMO AI <span className="text-[9px] text-zinc-500 font-normal">v1.3</span>
+                            NIMO AI <span className="text-[9px] text-zinc-500 font-normal">v1.4</span>
                         </p>
                         <p className="text-cyan-400 text-[9px] font-bold uppercase tracking-widest flex items-center gap-1">
                             <span className={`w-1.5 h-1.5 rounded-full ${busy ? 'bg-amber-500 animate-pulse' : 'bg-cyan-500'}`} />
