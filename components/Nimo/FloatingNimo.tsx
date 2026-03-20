@@ -24,6 +24,7 @@ export const FloatingNimo: React.FC<Props> = ({
     const [busy, setBusy] = useState(false);
     const [listening, setListening] = useState(false);
     const [status, setStatus] = useState('');
+    const usedMic = useRef(false); // track whether last message was voice
     const listRef = useRef<HTMLDivElement>(null);
     const recRef = useRef<any>(null);
     const inputRef = useRef<HTMLInputElement>(null);
@@ -55,7 +56,8 @@ export const FloatingNimo: React.FC<Props> = ({
             const t = e.results[0][0].transcript;
             setInput(t);
             setListening(false);
-            sendMsg(t); // send immediately
+            usedMic.current = true;  // mark as voice input
+            sendMsg(t);
         };
         r.onerror = () => setListening(false);
         r.onend   = () => setListening(false);
@@ -80,9 +82,24 @@ export const FloatingNimo: React.FC<Props> = ({
         }
     };
 
+    // Fix pronunciation: replace brand names before TTS
+    const fixPronunciation = (text: string) =>
+        text
+            .replace(/Memolody/gi, 'เมมโมโลดี้')
+            .replace(/Nimo/gi, 'นิโม่');
+
+    // Check if user explicitly requests speech (e.g. "พูดให้ฟัง", "speak", "อ่านให้ฟัง")
+    const wantsSpeech = (text: string) =>
+        /พูด|อ่านให้ฟัง|ออกเสียง|speak|read.?aloud|say.?it/i.test(text);
+
     const sendMsg = async (override?: string) => {
         const text = (override ?? input).trim();
         if (!text || busy) return;
+
+        const wasVoice = usedMic.current;    // capture before reset
+        const speakReq = wantsSpeech(text);  // user asked for speech?
+        usedMic.current = false;             // reset for next message
+
         setInput('');
         setBusy(true);
         setStatus('');
@@ -96,10 +113,9 @@ export const FloatingNimo: React.FC<Props> = ({
             const isMale = voiceType === 'teen_boy' || voiceType === 'adult_man';
             const p = isMale ? 'ครับ' : 'ค่ะ';
             const sys = preferredLanguage === 'th'
-                ? `คุณคือ Nimo ผู้ช่วย AI ดนตรีของแอพ Memolody ตอบไทย 2-3 ประโยค สั้นกระชับ ลงท้าย${p}`
+                ? `คุณคือ Nimo ผู้ช่วย AI ดนตรีของแอพ เมมโมโลดี้ ตอบไทย 2-3 ประโยค สั้นกระชับ ลงท้าย${p}`
                 : 'You are Nimo, AI music assistant for Memolody app. Reply in English. 2-3 sentences max. No markdown.';
 
-            // gemini-2.5-flash = latest, fastest, smartest
             const res = await fetch(
                 `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
                 {
@@ -120,11 +136,17 @@ export const FloatingNimo: React.FC<Props> = ({
 
             setMsgs(prev => [...prev, { role: 'nimo', text: reply }]);
 
-            // TTS
-            if ('speechSynthesis' in window) {
+            // TTS: only if voice input OR user explicitly asked to speak
+            if ((wasVoice || speakReq) && 'speechSynthesis' in window) {
                 window.speechSynthesis.cancel();
-                const u = new SpeechSynthesisUtterance(reply);
+                const speakText = preferredLanguage === 'th'
+                    ? fixPronunciation(reply)
+                    : reply;
+                const u = new SpeechSynthesisUtterance(speakText);
                 u.lang = preferredLanguage === 'th' ? 'th-TH' : 'en-US';
+                const isMale2 = voiceType === 'teen_boy' || voiceType === 'adult_man';
+                u.pitch = isMale2 ? 0.9 : 1.2;
+                u.rate = 0.95;
                 window.speechSynthesis.speak(u);
             }
         } catch (e: any) {
