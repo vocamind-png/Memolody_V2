@@ -83,7 +83,7 @@ export const FloatingNimo: React.FC<Props> = ({
         recRef.current = r;
     }, [preferredLanguage]);
 
-    const toggleMic = async () => {
+    const toggleMic = () => {
         const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
         if (!SR) {
             setStatus(preferredLanguage === 'th' ? '⚠️ ต้องใช้ Chrome บน Android' : '⚠️ Use Chrome on Android');
@@ -91,19 +91,26 @@ export const FloatingNimo: React.FC<Props> = ({
         }
 
         if (listening) {
-            recRef.current?.stop();
+            try {
+                recRef.current?.stop();
+            } catch (e) { /* ignore */ }
             setListening(false);
         } else {
+            setStatus(preferredLanguage === 'th' ? '⏳ กำลังเปิดไมค์...' : '⏳ Opening mic...');
             try {
-                // Ensure mic permission before starting
-                if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-                    await navigator.mediaDevices.getUserMedia({ audio: true });
-                }
-                setStatus(preferredLanguage === 'th' ? '⏳ กำลังเปิดไมค์...' : '⏳ Opening mic...');
+                // Pre-cancel any speech synth that might block mic
+                if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+                
                 recRef.current?.start();
-            } catch (err) {
-                console.error('[Mic Request Error]', err);
-                setStatus(preferredLanguage === 'th' ? '🔴 กรุณาอนุญาตการใช้ไมค์ในตั้งค่า' : '🔴 Please allow mic in settings');
+            } catch (err: any) {
+                console.error('[Mic Start Error]', err);
+                // If already running, stop and try again after small delay
+                try { recRef.current?.stop(); } catch (e) {}
+                setTimeout(() => {
+                    try { recRef.current?.start(); } catch (e) {
+                         setStatus(preferredLanguage === 'th' ? '❌ เปิดไมค์ไม่สำเร็จ' : '❌ Mic failed to start');
+                    }
+                }, 200);
             }
         }
     };
