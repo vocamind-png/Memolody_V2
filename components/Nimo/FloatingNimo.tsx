@@ -55,31 +55,56 @@ export const FloatingNimo: React.FC<Props> = ({
         r.continuous = false;
         r.interimResults = false;
         r.lang = preferredLanguage === 'th' ? 'th-TH' : 'en-US';
+
+        r.onstart = () => {
+            setListening(true);
+            setStatus(preferredLanguage === 'th' ? '🎙️ กำลังฟัง... (พูดได้เลย)' : '🎙️ Listening...');
+        };
         r.onresult = (e: any) => {
             const t = Array.from(e.results).map((res: any) => res[0].transcript).join('');
             setInput(t);
             setListening(false);
-            usedMic.current = true; // Mark as voice to potentially speak back
+            usedMic.current = true;
             sendMsg(t);
         };
-        r.onerror = () => setListening(false);
-        r.onend = () => setListening(false);
+        r.onerror = (e: any) => {
+            setListening(false);
+            console.error('[Mic Error]', e.error);
+            if (e.error === 'not-allowed') {
+                setStatus(preferredLanguage === 'th' ? '🔴 ไม่ได้รับอนุญาตให้ใช้ไมค์' : '🔴 Mic Permission Denied');
+            } else {
+                setStatus(preferredLanguage === 'th' ? `❌ ขออภัย ลองใหม่อีกครั้ง (${e.error})` : `❌ Error: ${e.error}`);
+            }
+        };
+        r.onend = () => {
+            setListening(false);
+            // Don't clear success status immediately
+        };
         recRef.current = r;
     }, [preferredLanguage]);
 
-    const toggleMic = () => {
+    const toggleMic = async () => {
         const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
         if (!SR) {
-            setStatus(preferredLanguage === 'th' ? '⚠️ กรุณาใช้ Chrome บน Android' : '⚠️ Use Chrome on Android');
+            setStatus(preferredLanguage === 'th' ? '⚠️ ต้องใช้ Chrome บน Android' : '⚠️ Use Chrome on Android');
             return;
         }
+
         if (listening) {
             recRef.current?.stop();
             setListening(false);
         } else {
-            setStatus('');
-            recRef.current?.start();
-            setListening(true);
+            try {
+                // Ensure mic permission before starting
+                if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                    await navigator.mediaDevices.getUserMedia({ audio: true });
+                }
+                setStatus(preferredLanguage === 'th' ? '⏳ กำลังเปิดไมค์...' : '⏳ Opening mic...');
+                recRef.current?.start();
+            } catch (err) {
+                console.error('[Mic Request Error]', err);
+                setStatus(preferredLanguage === 'th' ? '🔴 กรุณาอนุญาตการใช้ไมค์ในตั้งค่า' : '🔴 Please allow mic in settings');
+            }
         }
     };
 
