@@ -24,11 +24,38 @@ export const FloatingNimo: React.FC<Props> = ({
     const [busy, setBusy] = useState(false);
     const [listening, setListening] = useState(false);
     const [status, setStatus] = useState('');
+    const [permState, setPermState] = useState<'prompt' | 'granted' | 'denied'>('prompt');
     
     // usedMic tracks if the last message was voice input
     const usedMic = useRef(false);
     const listRef = useRef<HTMLDivElement>(null);
     const recRef = useRef<any>(null);
+
+    // Initial permission check
+    useEffect(() => {
+        if (navigator.permissions && (navigator.permissions as any).query) {
+            (navigator.permissions as any).query({ name: 'microphone' }).then((p: any) => {
+                setPermState(p.state);
+                p.onchange = () => setPermState(p.state);
+            }).catch(() => {
+                // Fallback for browsers that don't support mic query
+                setPermState('prompt');
+            });
+        }
+    }, []);
+
+    const requestPermission = async () => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            stream.getTracks().forEach(t => t.stop()); // close immediately
+            setPermState('granted');
+            setStatus(preferredLanguage === 'th' ? '✅ เปิดไมค์สำเร็จ!' : '✅ Mic enabled!');
+            setTimeout(() => setStatus(''), 2000);
+        } catch (e) {
+            setPermState('denied');
+            setStatus(preferredLanguage === 'th' ? '🔴 โปรดแก้ที่รูปแม่กุญแจ 🔒 ตรงแถบ URL' : '🔴 Please unblock in URL bar 🔒');
+        }
+    };
 
     // Welcome message initialization
     useEffect(() => {
@@ -265,6 +292,29 @@ Instructions: Reply in English, be complete and helpful. Never cut off mid-sente
                         </div>
                     </div>
                 ))}
+                {/* Mic Onboarding Banner */}
+                {permState === 'prompt' && !busy && (
+                    <div className="mx-4 my-2 p-5 bg-cyan-500/10 border-2 border-dashed border-cyan-500/30 rounded-[24px] text-center shadow-xl animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        <div className="w-12 h-12 bg-cyan-500/20 rounded-full flex items-center justify-center mx-auto mb-3 shadow-[0_0_20px_rgba(0,229,255,0.2)]">
+                            <Mic size={24} className="text-cyan-400" />
+                        </div>
+                        <h3 className="text-white font-black text-sm uppercase italic mb-1 tracking-tight">
+                            {preferredLanguage === 'th' ? 'คุยกับ Nimo ด้วยเสียง' : 'Talk with Voice'}
+                        </h3>
+                        <p className="text-zinc-400 text-[10px] mb-4 leading-relaxed">
+                            {preferredLanguage === 'th' 
+                                ? 'กดปุ่มด้านล่างเพื่อเปิดใช้งานไมค์ครั้งเดียว และเริ่มคุยกับ Nimo ได้ทันทีค่ะ!' 
+                                : 'Click below to enable your microphone once and start talking to Nimo!'}
+                        </p>
+                        <button 
+                            onClick={requestPermission}
+                            className="w-full py-3 bg-cyan-500 hover:bg-cyan-400 text-black text-xs font-black uppercase rounded-xl shadow-[0_4px_20px_rgba(0,229,255,0.4)] active:scale-95 transition-all"
+                        >
+                            {preferredLanguage === 'th' ? '👉 เปิดใช้งานไมค์ที่นี่ 👈' : '👉 Enable Microphone Now 👈'}
+                        </button>
+                    </div>
+                )}
+
                 {busy && (
                     <div className="flex items-center gap-2 px-9">
                         <span className="w-1.5 h-1.5 bg-cyan-500/60 rounded-full animate-bounce" />
