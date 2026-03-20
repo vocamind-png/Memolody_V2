@@ -2,12 +2,17 @@
 import { createClient } from '@supabase/supabase-js';
 
 // --- CONFIGURATION ---
-// ในการใช้งานจริง ให้ก๊อปปี้ค่าจาก Supabase Console (Settings > API) 
-// แนะนำให้ใช้ .env variable เมื่อทำการ Deploy
-const supabaseUrl = 'YOUR_SUPABASE_PROJECT_URL';
-const supabaseAnonKey = 'YOUR_SUPABASE_ANON_KEY';
+// ก๊อปปี้ค่าจาก Supabase Console (Settings > API) 
+const supabaseUrl = (import.meta as any).env?.VITE_SUPABASE_URL || 'https://placeholder.supabase.co';
+const supabaseAnonKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || 'placeholder_anon_key';
+
+export const isSupabaseConfigured = (
+  supabaseUrl !== 'https://placeholder.supabase.co' && 
+  supabaseAnonKey !== 'placeholder_anon_key'
+);
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
 
 export const authActions = {
   signUp: async (email: string, pass: string, fullName: string) => {
