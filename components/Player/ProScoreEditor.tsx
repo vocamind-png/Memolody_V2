@@ -247,7 +247,7 @@ function detectAndInjectChords(xml: string): string {
 }
 
 const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
-  xmlData, currentTime, isPlaying, songMetadata, zoom: externalZoom = 1.0, setZoom: setExternalZoom, lyricMode = 'Movable Do',
+  xmlData, currentTime, isPlaying, songMetadata, zoom: externalZoom = 1.0, setZoom: setExternalZoom,
   transpose = 0, layoutMode, isLoupeEnabled, pageFormat = 'A4', showBorders = true,
   editorMode = 'select', drawingColor = '#6366f1', clearTrigger = 0,
   onPageCountChange, onActivePageChange, onMetadataChange,
@@ -260,7 +260,8 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
   isPreviewMode = false,
   isEditable = false, activeNotationTool = 'select', onXmlChange,
   activeLoop = null,
-  performanceMode = false
+  performanceMode = false,
+  lyricMode = 'Ju Solfege Movable Doh'
 }, ref) => {
   // Detection for Mobile Devices (Centralized)
   const isMobile = useMemo(() => /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent), []);
@@ -769,44 +770,50 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
 
   const renderScore = useCallback(async () => {
     if (!isReady || !vrvToolkitRef.current || !xmlData) return;
-    setLoadingStep("Syncing Neural Score...");
+    setLoadingStep("Rendering score...");
     setError(null);
+
+    // Yield to browser so loading indicator repaints BEFORE heavy work starts
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+
     try {
       const vrvToolkit = vrvToolkitRef.current;
       let finalXml = transpose !== 0 ? transposeMusicXml(xmlData, transpose) : xmlData;
 
       // Inject Lyric based on mode
-      if (lyricMode !== 'Closed' && lyricMode !== 'Words') {
+      if (lyricMode !== 'Close' && lyricMode !== 'Lyric') {
         finalXml = injectSolfegeToXml(finalXml, lyricMode as any);
       }
 
-      // ── Ensure harmony/chord symbols are visible ────────────────────────
-      // PDMX files often have print-frame="no" on <harmony> which can suppress rendering.
-      // Remove that attribute so Verovio always shows chord names above the staff.
-      if (finalXml.includes('<harmony')) {
-        finalXml = finalXml
-          .replace(/(<harmony[^>]*)\s+print-frame="no"/g, '$1')   // remove print-frame="no"
-          .replace(/(<harmony[^>]*)\s+print-object="no"/g, '$1'); // remove print-object="no"
-      } else {
-        // ── Auto-detect chords from simultaneous notes ──────────────────
-        finalXml = detectAndInjectChords(finalXml);
+      // ── Chord symbols: skip in edit mode (not needed and slows down) ──────
+      if (!isEditable) {
+        if (finalXml.includes('<harmony')) {
+          finalXml = finalXml
+            .replace(/(<harmony[^>]*)\s+print-frame="no"/g, '$1')
+            .replace(/(<harmony[^>]*)\s+print-object="no"/g, '$1');
+        } else {
+          // yield to browser before heavy O(n²) chord detection
+          await new Promise<void>(r => setTimeout(r, 0));
+          // finalXml = detectAndInjectChords(finalXml); // Disable auto-chord injection to preserve exact original score
+        }
       }
 
       vrvToolkit.setOptions({
-        scale: 45,
+        scale: 55,
         font: musicFont,
         header: "none",
         footer: "none",
-        adjustPageHeight: false,
+        adjustPageHeight: true,
+        adjustPageWidth: false,
         pageWidth: 2100,
         pageHeight: 2970,
-        pageMarginTop: 150,
-        pageMarginBottom: 100,
-        pageMarginLeft: 80,
-        pageMarginRight: 80,
+        pageMarginTop: 80,
+        pageMarginBottom: 80,
+        pageMarginLeft: 50,
+        pageMarginRight: 50,
         spacingSystem: systemSpacing,
         spacingStaff: 18,
-        lyricTopMinMargin: 4.0, // Replaced spacingLyricTop with standard lyricTopMinMargin
+        lyricTopMinMargin: 4.0,
         lyricSize: 3.0,
         stemWidth: stemThickness,
         barLineWidth: barlineThickness,
@@ -815,14 +822,15 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
         breaks: 'auto',
       });
 
+      // Yield before Verovio parse (heavy WASM call)
+      await new Promise<void>(r => setTimeout(r, 0));
       vrvToolkit.loadData(finalXml);
       vrvToolkit.redoLayout();
 
       const pageCount = vrvToolkit.getPageCount();
       if (onPageCountChange) onPageCountChange(pageCount);
 
-      // scaleHarmText: multiply font-size attributes inside g.harm groups by 'factor'
-      // (must operate on SVG string, not CSS px, because Verovio uses SVG user-unit space)
+      // ── scaleHarmText helper ──────────────────────────────────────────────
       const scaleHarmText = (svg: string, factor: number): string => {
         let result = '';
         let pos = 0;
@@ -830,10 +838,8 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
         while (pos < svg.length) {
           const harmIdx = svg.indexOf(HARM_CLASS, pos);
           if (harmIdx === -1) { result += svg.slice(pos); break; }
-          // Walk back to find opening <g
           let gStart = harmIdx;
           while (gStart > 0 && svg[gStart] !== '<') gStart--;
-          // Find matching </g>
           let depth = 0, gEnd = gStart;
           for (let k = gStart; k < svg.length - 1; k++) {
             if (svg[k] === '<' && svg[k + 1] !== '/') depth++;
@@ -841,7 +847,6 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
           }
           result += svg.slice(pos, gStart);
           const harmGroup = svg.slice(gStart, gEnd);
-          // Multiply font-size and force black bold on all text inside harm group
           result += harmGroup
             .replace(/font-size="([\d.]+)"/g, (_, sz) =>
               `font-size="${(parseFloat(sz) * factor).toFixed(1)}"`)
@@ -852,38 +857,35 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
         return result;
       };
 
-      const pages = [];
-      for (let i = 1; i <= Math.min(pageCount, 100); i++) {
+      // ── Progressive page rendering — yield between pages ──────────────────
+      const totalPages = Math.min(pageCount, 100);
+      const pages: string[] = [];
+      for (let i = 1; i <= totalPages; i++) {
         let svg = vrvToolkit.renderToSVG(i, {});
-        svg = scaleHarmText(svg, 65); // 32.5 × 2 = 65 (chord names much bigger)
+        if (!isEditable) svg = scaleHarmText(svg, 65);
         pages.push(svg);
+        // Show first page immediately, then yield between subsequent pages
+        if (i === 1 || i % 2 === 0) {
+          setSvgPages([...pages]);
+          setLoadingStep(totalPages > 1 ? `Rendering page ${i}/${totalPages}...` : "");
+          await new Promise<void>(r => setTimeout(r, 0));
+        }
       }
-
 
       setSvgPages(pages);
       setLoadingStep("");
       setTimeout(() => {
         createCoordMap();
-        // DEBUG: Direct SVG scan test after rendering
-        if (containerRef.current) {
-          const allUse = containerRef.current.querySelectorAll('use');
-          const allGWithId = containerRef.current.querySelectorAll('g[id]');
-          const noteGs = containerRef.current.querySelectorAll('g[id^="note"]');
-          const sampleIds = Array.from(allGWithId).slice(0, 8).map(e => (e as Element).id);
-          // const msg = `SVG: use=${allUse.length} g[id]=${allGWithId.length} note-g=${noteGs.length} noteMap=${svgNoteMapRef.current.length} IDs=[${sampleIds.join(',')}]`;
-          // setDebugInfo(msg);
-          // console.log('[Memolody-DEBUG]', msg);
-        }
-      }, 500);
+      }, 300);
     } catch (err) {
       setLoadingStep("");
       setError("Matrix Rendering Error. The XML might be corrupted.");
     }
-  }, [isReady, xmlData, lyricMode, transpose, musicFont, systemSpacing, stemThickness, barlineThickness, stafflineThickness, onPageCountChange, createCoordMap]);
+  }, [isReady, xmlData, lyricMode, transpose, isEditable, musicFont, systemSpacing, stemThickness, barlineThickness, stafflineThickness, onPageCountChange, createCoordMap]);
 
   useEffect(() => {
     if (xmlData) {
-      const debounce = setTimeout(renderScore, 400);
+      const debounce = setTimeout(renderScore, 200);
       return () => clearTimeout(debounce);
     } else {
       setSvgPages([]);
@@ -995,17 +997,41 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
 
 
   const exportToPdf = useCallback(async () => {
-    if (!svgPages.length) return;
-    const doc = new jsPDF({ orientation: 'p', unit: 'pt', format: pageFormat });
-    for (let i = 0; i < svgPages.length; i++) {
-      if (i > 0) doc.addPage();
-      const pageEl = containerRef.current?.children[i] as HTMLElement;
-      if (pageEl) {
-        const canvas = await html2canvas(pageEl, { scale: 2, useCORS: true });
-        doc.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG', 0, 0, doc.internal.pageSize.getWidth(), doc.internal.pageSize.getHeight());
-      }
+    console.log('[Export] Starting PDF export, svgPages:', svgPages.length);
+    if (!svgPages.length) {
+      console.warn('[Export] No pages to export');
+      return;
     }
-    doc.save(`${displayTitle.replace(/\s+/g, '_')}_Score.pdf`);
+    try {
+      const doc = new jsPDF({ orientation: 'p', unit: 'pt', format: pageFormat });
+      const pageEls = containerRef.current?.querySelectorAll('.page-container');
+      console.log('[Export] Found page elements:', pageEls?.length);
+      
+      if (!pageEls || pageEls.length === 0) {
+        // Fallback: use direct children
+        const children = containerRef.current?.children;
+        if (children) {
+          for (let i = 0; i < children.length; i++) {
+            if (i > 0) doc.addPage();
+            const canvas = await html2canvas(children[i] as HTMLElement, { scale: 2, useCORS: true });
+            doc.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG', 0, 0, doc.internal.pageSize.getWidth(), doc.internal.pageSize.getHeight());
+          }
+        }
+      } else {
+        for (let i = 0; i < pageEls.length; i++) {
+          if (i > 0) doc.addPage();
+          const canvas = await html2canvas(pageEls[i] as HTMLElement, { scale: 2, useCORS: true });
+          doc.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG', 0, 0, doc.internal.pageSize.getWidth(), doc.internal.pageSize.getHeight());
+        }
+      }
+      
+      const fileName = `${displayTitle.replace(/\s+/g, '_')}_Score.pdf`;
+      console.log('[Export] Saving PDF as:', fileName);
+      doc.save(fileName);
+      console.log('[Export] PDF save triggered');
+    } catch (err) {
+      console.error('[Export] PDF export failed:', err);
+    }
   }, [svgPages, displayTitle, pageFormat]);
 
   const exportToImage = useCallback(async (format: 'png' | 'jpeg') => {
@@ -1130,17 +1156,16 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
 
       <div
         ref={scrollAreaRef}
-        className="flex-1 w-full overflow-auto memolody-scrollbar scroll-smooth p-3 sm:p-6 flex flex-col items-center"
+        className="flex-1 w-full overflow-auto memolody-scrollbar scroll-smooth px-2 sm:px-3 flex flex-col items-center"
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
       >
         <div
           ref={containerRef}
-          className="relative min-h-full flex flex-col items-center origin-top transition-transform duration-75 ease-out pb-32"
+          className="relative min-h-full flex flex-col items-center origin-top transition-transform duration-75 ease-out"
           style={{
             width: '100%',
-            maxWidth: localZoom > 1 ? 'none' : '794px',
             transform: `scale(${localZoom})`,
             marginTop: localZoom > 1 ? `${(localZoom - 1) * 50}%` : '0px'
           }}
@@ -1153,8 +1178,7 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
                 ${showBorders ? 'shadow-[0_20px_60px_rgba(0,0,0,0.8)] border border-white/10' : ''}
                 ${isPreviewMode && i > 0 ? 'filter blur-xl grayscale opacity-50' : ''}`}
               style={{
-                width: localZoom > 1 ? 'max-content' : '92vw',
-                maxWidth: '794px'
+                width: '100%',
               }}
             >
               <div className="absolute inset-0 z-50 pointer-events-none">

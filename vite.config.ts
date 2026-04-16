@@ -3,12 +3,19 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
-// Read API key — works both locally (.env file) and on Vercel (process.env)
-const GEMINI_KEY = process.env.GEMINI_API_KEY || '';
-
 export default defineConfig(({ mode }) => {
-  // loadEnv for any other local vars, but GEMINI_KEY comes from process.env above
-  loadEnv(mode, '.', '');
+  // Load .env file variables — prefix '' means load ALL vars (not just VITE_ prefixed)
+  const env = loadEnv(mode, '.', '');
+
+  // Read API key: .env file first, then process.env (for Vercel), then empty fallback
+  const GEMINI_KEY = env.GEMINI_API_KEY || process.env.GEMINI_API_KEY || '';
+
+  if (!GEMINI_KEY) {
+    console.warn('⚠️  GEMINI_API_KEY is not set! Create a .env file with: GEMINI_API_KEY=your_key_here');
+  } else {
+    console.log('✅ GEMINI_API_KEY loaded, length:', GEMINI_KEY.length);
+  }
+
   return {
     server: {
       port: 3000,
@@ -19,6 +26,27 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           secure: false,
           rewrite: (path) => path.replace(/^\/api\/manifest/, '')
+        },
+        // --- VOCALIDO SVS PROXY → Google Cloud VM ---
+        '/vocalido': {
+          target: 'http://35.247.141.53:5001',
+          changeOrigin: true,
+          secure: false,
+          rewrite: (path) => path.replace(/^\/vocalido/, '')
+        },
+        // --- VOICE STUDIO → Local server ---
+        '/studio': {
+          target: 'http://localhost:5001',
+          changeOrigin: true,
+          secure: false,
+        },
+        // --- GEMINI API PROXY (bypass CORS/referrer restrictions) ---
+        '/gemini-api': {
+          target: 'https://generativelanguage.googleapis.com',
+          changeOrigin: true,
+          secure: true,
+          rewrite: (path) => path.replace(/^\/gemini-api/, ''),
+          timeout: 180000,
         }
       }
     },

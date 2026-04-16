@@ -359,36 +359,38 @@ Instructions: Reply in English, be complete and helpful. Never cut off mid-sente
 };
 
 // Error Boundary wrapper to prevent full app crashes (black screen)
-interface EBProps { children: React.ReactNode; }
-interface EBState { hasError: boolean; errorMsg: string; }
+interface NEBProps { children: React.ReactNode; }
+interface NEBState { hasError: boolean; errorMsg: string; }
 
-class NimoErrorBoundary extends React.Component<EBProps, EBState> {
-    constructor(props: EBProps) {
+class NimoErrorBoundary extends React.Component<NEBProps, NEBState> {
+    constructor(props: NEBProps) {
         super(props);
-        this.state = { hasError: false, errorMsg: '' };
+        (this as any).state = { hasError: false, errorMsg: '' };
     }
-    static getDerivedStateFromError(error: any): EBState {
+    static getDerivedStateFromError(error: any): NEBState {
         return { hasError: true, errorMsg: error?.message || 'Unknown error' };
     }
     componentDidCatch(error: any, errorInfo: any) {
         console.error('[Nimo Crash]', error, errorInfo);
     }
-    render() {
-        if (this.state.hasError) {
+    render(): React.ReactNode {
+        const s = (this as any).state as NEBState;
+        const p = (this as any).props as NEBProps;
+        if (s.hasError) {
             return (
                 <div className="fixed z-[40000] bottom-[100px] left-4 right-4 p-4 bg-[#8b0000] text-white rounded-xl shadow-2xl border border-red-500/50">
                     <p className="font-bold mb-1">⚠️ Nimo AI Crash Detected</p>
-                    <p className="text-xs mb-3 text-red-200">{this.state.errorMsg}</p>
-                    <button 
+                    <p className="text-xs mb-3 text-red-200">{s.errorMsg}</p>
+                    <button
                         className="px-4 py-2 bg-white/20 hover:bg-white/30 rounded text-xs transition-colors"
-                        onClick={() => this.setState({hasError: false})}
+                        onClick={() => (this as any).setState({ hasError: false, errorMsg: '' })}
                     >
                         Try Again
                     </button>
                 </div>
             );
         }
-        return this.props.children;
+        return p.children;
     }
 }
 

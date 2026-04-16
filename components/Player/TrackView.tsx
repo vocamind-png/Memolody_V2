@@ -6,7 +6,7 @@ import {
   ChevronLast, ChevronFirst, Maximize, Minimize, Search,
   Target, TargetIcon, MousePointer2, MoveHorizontal,
   Circle, PlusSquare, Sliders, Music2, Languages, FileText, EyeOff, Music,
-  Cpu, Sparkles, RefreshCw
+  Cpu, Sparkles, RefreshCw, Activity, Binary, Timer, Library
 } from 'lucide-react';
 import { musicEngine } from '../../lib/MusicEngine';
 import { Song, ParsedNote, TrackState, EffectInstance, LyricMode } from '../../types';
@@ -275,57 +275,25 @@ const TrackView: React.FC<TrackViewProps> = ({ song, musicXml, tracks, setTracks
     }
   };
 
-  const cycleTrackMode = async (track: TrackState) => {
-    let nextLyricMode: LyricMode = 'Movable Do';
-    let nextMode: 'instrument' | 'vocal' = 'vocal';
-    let nextPluginId: 'memolody-sampler' | 'svs-vocal' | null = 'svs-vocal';
-
-    // การ Cycle: Vocal(M.DO) -> Vocal(F.DO) -> Vocal(Words) -> Vocal(Kodaly) -> Vocal(Kodaly Rhythm) -> Instrument(OFF)
-    if (track.mode === 'instrument' || track.lyricMode === 'Closed') {
-      nextLyricMode = 'Movable Do';
-      nextMode = 'vocal';
-      nextPluginId = 'svs-vocal';
-    } else if (track.lyricMode === 'Movable Do') {
-      nextLyricMode = 'Fixed Do';
-      nextMode = 'vocal';
-      nextPluginId = 'svs-vocal';
-    } else if (track.lyricMode === 'Fixed Do') {
-      nextLyricMode = 'Words';
-      nextMode = 'vocal';
-      nextPluginId = 'svs-vocal';
-    } else if (track.lyricMode === 'Words') {
-      nextLyricMode = 'Kodaly';
-      nextMode = 'vocal';
-      nextPluginId = 'svs-vocal';
-    } else if (track.lyricMode === 'Kodaly') {
-      nextLyricMode = 'Kodaly Rhythm';
-      nextMode = 'vocal';
-      nextPluginId = 'svs-vocal';
-    } else if (track.lyricMode === 'Kodaly Rhythm') {
-      nextLyricMode = 'Closed';
-      nextMode = 'instrument';
-      nextPluginId = 'memolody-sampler';
-    }
+  const cycleTrackMode = (track: TrackState) => {
+    const modes: LyricMode[] = [
+      'American Movable Do', 'American Fixed Do', 
+      'British Movable Doh', 'British Fixed Doh', 
+      'Ju Solfege Movable Doh', 'Ju Solfege Fixed Doh', 
+      'Jianpu', 'Kodaly', 'Kodaly Rhythm', 
+      'Indian Sargam', 'Lyric', 'Close'
+    ];
+    const currentIdx = modes.indexOf(track.lyricMode);
+    const nextLyricMode = modes[(currentIdx + 1) % modes.length];
+    
+    const nextMode: 'instrument' | 'vocal' = nextLyricMode === 'Close' ? 'instrument' : 'vocal';
+    const nextPluginId = nextMode === 'vocal' ? 'svs-vocal' : 'memolody-sampler';
 
     // Update UI state
     setTracks(prev => prev.map(t => {
       if (t.id !== track.id) return t;
-      return { ...t, lyricMode: nextLyricMode, mode: nextMode, pluginId: nextPluginId };
+      return { ...t, lyricMode: nextLyricMode, mode: nextMode, pluginId: nextPluginId as any };
     }));
-
-    // 🔄 Switch the audio engine's sampler in real-time
-    const modeChanged = track.mode !== nextMode;
-    if (modeChanged) {
-      await musicEngine.switchTrackMode(track.id, track.name, nextMode, track.pluginSettings);
-      // Re-load song to re-schedule notes with the new sampler
-      if (musicEngine.transportState === 'started') {
-        const currentPos = musicEngine.transportSeconds;
-        await musicEngine.loadSong(parsedData.notes, tracks.map(t =>
-          t.id === track.id ? { ...t, mode: nextMode, pluginId: nextPluginId } : t
-        ), transpose, parsedData.timeSignature, false);
-        musicEngine.setTransportSeconds(currentPos);
-      }
-    }
   };
 
   const formatTime = (s: number) => `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, '0')}`;
@@ -434,15 +402,21 @@ const TrackView: React.FC<TrackViewProps> = ({ song, musicXml, tracks, setTracks
             </div>
 
             {tracks.map((track) => {
-              const modeConfig: Record<string, any> = {
-                'Movable Do': { label: 'M.DO', color: 'bg-indigo-600', icon: Languages },
-                'Fixed Do': { label: 'F.DO', color: 'bg-emerald-600', icon: Languages },
-                'Words': { label: 'WORD', color: 'bg-sky-500', icon: FileText },
-                'Kodaly': { label: 'KOD', color: 'bg-fuchsia-600', icon: Languages },
-                'Kodaly Rhythm': { label: 'K.RHY', color: 'bg-purple-600', icon: Languages },
-                'Closed': { label: 'INST', color: 'bg-zinc-800', icon: Music }
+              const modeConfig: Record<string, { label: string, color: string, icon: any }> = {
+                'American Movable Do': { label: 'AMER-M', color: 'bg-blue-600', icon: Languages },
+                'American Fixed Do': { label: 'AMER-F', color: 'bg-blue-800', icon: Languages },
+                'British Movable Doh': { label: 'BRIT-M', color: 'bg-red-600', icon: Languages },
+                'British Fixed Doh': { label: 'BRIT-F', color: 'bg-red-800', icon: Languages },
+                'Ju Solfege Movable Doh': { label: 'JU-M', color: 'bg-indigo-600', icon: Languages },
+                'Ju Solfege Fixed Doh': { label: 'JU-F', color: 'bg-indigo-800', icon: Languages },
+                'Jianpu': { label: 'JIAPU', color: 'bg-amber-600', icon: Activity },
+                'Kodaly': { label: 'KODLY', color: 'bg-rose-600', icon: Binary },
+                'Kodaly Rhythm': { label: 'TA-TI', color: 'bg-fuchsia-600', icon: Timer },
+                'Indian Sargam': { label: 'SRGAM', color: 'bg-orange-600', icon: Library },
+                'Lyric': { label: 'LYRIC', color: 'bg-sky-500', icon: FileText },
+                'Close': { label: 'OFF', color: 'bg-zinc-800', icon: EyeOff }
               };
-              const currentCfg = modeConfig[track.mode === 'instrument' ? 'Closed' : track.lyricMode] || modeConfig['Movable Do'];
+              const currentCfg = modeConfig[track.lyricMode] || modeConfig['Ju Solfege Movable Doh'];
 
               return (
                 <div key={track.id} className="border-b border-white/5 flex flex-col px-3 py-3 gap-2 transition-all overflow-hidden relative group/strip" style={{ height: trackHeight }}>
@@ -521,7 +495,7 @@ const TrackView: React.FC<TrackViewProps> = ({ song, musicXml, tracks, setTracks
             <div className="flex-1 min-h-[120px] pb-10 flex items-center justify-center border-b border-white/5 bg-transparent hover:bg-white/[0.02] transition-colors cursor-pointer" onClick={() => {
               const newId = `T-${Date.now().toString().slice(-6)}`;
               setTracks(prev => [...prev, {
-                id: newId, name: `NEW TRACK`, isMuted: false, isSolo: false, lyricMode: 'Movable Do', volume: 0.8, pan: 0, mode: 'instrument', effects: Array(6).fill(null), isArmed: false
+                id: newId, name: `NEW TRACK`, isMuted: false, isSolo: false, lyricMode: 'Ju Solfege Movable Doh', volume: 0.8, pan: 0, mode: 'instrument', effects: Array(6).fill(null), isArmed: false
               }]);
             }}>
               <div className="flex flex-col items-center gap-2 group mt-6">

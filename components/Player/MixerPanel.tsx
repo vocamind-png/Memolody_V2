@@ -1,11 +1,13 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Volume2, VolumeX, Languages, FileText, EyeOff, Music, Mic, Mic2, Hash, Binary, Timer, PlusSquare, Settings2 } from 'lucide-react';
-import { TrackState, LyricMode, EffectInstance } from '../../types';
+import React, { useState, useRef, useEffect } from 'react';
+import { Volume2, VolumeX, Languages, FileText, EyeOff, Music, Mic, Hash, Binary, Timer, PlusSquare, Settings2, Sparkles, Loader2, Activity, Library } from 'lucide-react';
+import { TrackState, LyricMode, EffectInstance, ParsedNote } from '../../types';
 import { musicEngine } from '../../lib/MusicEngine';
+import { PluginManager } from '../../plugins/core/manager';
 import LEDMeter from './LEDMeter';
 
 interface MixerPanelProps {
   tracks: TrackState[];
+  songKey?: string;
   onUpdateTrack: (id: string, update: Partial<TrackState>) => void;
   onOpenPluginBrowser?: (trackId: string, slotIndex: number) => void;
   onOpenPluginEditor?: (trackId: string, slotIndex: number, plugin: EffectInstance) => void;
@@ -58,7 +60,20 @@ const RotaryPan = ({ value, onChange }: { value: number; onChange: (val: number)
   );
 };
 
-const MixerPanel: React.FC<MixerPanelProps> = ({ tracks, onUpdateTrack, onOpenPluginBrowser, onOpenPluginEditor }) => {
+const MixerPanel: React.FC<MixerPanelProps> = ({ tracks, songKey = 'C', onUpdateTrack, onOpenPluginBrowser, onOpenPluginEditor }) => {
+  const [synthesizingTracks, setSynthesizingTracks] = useState<Set<string>>(new Set());
+  const [singers, setSingers] = useState<any[]>([]);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('vocalido_singers') || '[]');
+      setSingers(saved);
+    } catch (e) {}
+  }, []);
+  const [renderedAudio, setRenderedAudio] = useState<Map<string, string>>(new Map());
+  const [playingVocal, setPlayingVocal] = useState<Set<string>>(new Set());
+  const audioRefs = useRef<Map<string, HTMLAudioElement>>(new Map());
+
   if (!tracks || tracks.length === 0) return (
     <div className="py-20 text-center">
       <span className="text-[10px] font-black uppercase text-zinc-600 tracking-widest italic">Awaiting Audio Tracks...</span>
@@ -66,20 +81,88 @@ const MixerPanel: React.FC<MixerPanelProps> = ({ tracks, onUpdateTrack, onOpenPl
   );
 
   const cycleLyricMode = (track: TrackState) => {
-    const modes: LyricMode[] = ['Movable Do', 'Fixed Do', 'Jianpu', 'Kodaly', 'Kodaly Rhythm', 'Words', 'Closed'];
+    const modes: LyricMode[] = [
+      'American Movable Do', 'American Fixed Do', 
+      'British Movable Doh', 'British Fixed Doh', 
+      'Ju Solfege Movable Doh', 'Ju Solfege Fixed Doh', 
+      'Jianpu', 'Kodaly', 'Kodaly Rhythm', 
+      'Indian Sargam', 'Lyric', 'Close'
+    ];
     const currentIdx = modes.indexOf(track.lyricMode);
     onUpdateTrack(track.id, { lyricMode: modes[(currentIdx + 1) % modes.length] });
   };
 
   const toggleInstrumentVocal = (track: TrackState) => {
     const nextMode = track.mode === 'vocal' ? 'instrument' : 'vocal';
-    // กฎ: ถ้าเปลี่ยนเป็น Instrument ให้ปิด Lyric (Closed) ทันที
-    // และถ้ากลับมาเป็น Vocal ให้เปิดเป็น Movable Do (หรือค่าที่เหมาะสม)
     const updates: Partial<TrackState> = {
       mode: nextMode,
-      lyricMode: nextMode === 'instrument' ? 'Closed' : (track.lyricMode === 'Closed' ? 'Movable Do' : track.lyricMode)
+      lyricMode: nextMode === 'instrument' ? 'Close' : (track.lyricMode === 'Close' ? 'Ju Solfege Movable Doh' : track.lyricMode)
     };
     onUpdateTrack(track.id, updates);
+  };
+
+  const handleRender = async (track: TrackState) => {
+    if (synthesizingTracks.has(track.id)) return;
+    setSynthesizingTracks(prev => new Set(prev).add(track.id));
+    try {
+      const plugin = PluginManager.getInstance().getPlugin('vocalido-svs');
+      if (!plugin) throw new Error('No Vocalido plugin. Go to Studio > Plugins.');
+
+      const allNotes = musicEngine.lastLoadedNotes || [];
+      const trackNotes = allNotes.filter((n: ParsedNote) => n.trackId === track.id);
+
+      if (trackNotes.length === 0) {
+        const ids = [...new Set(allNotes.map((n: any) => n.trackId))].join(', ');
+        throw new Error(`No notes for "${track.name}". Available track IDs: [${ids}]`);
+      }
+
+      const activeSinger = singers.find(s => s.name === track.instrument) || singers[0] || {};
+      const audioUrl = await plugin.execute({
+        lyrics: trackNotes.map((n: any) => n.lyric || ''),
+        notes: trackNotes,
+        lyricMode: track.lyricMode,
+        songKey: songKey,
+        params: activeSinger.params || {}
+      });
+
+      setRenderedAudio(prev => new Map(prev).set(track.id, audioUrl));
+      await musicEngine.addVocalLayer(track.id, audioUrl);
+    } catch (e: any) {
+      alert(`Render Error: ${e.message}`);
+    } finally {
+      setSynthesizingTracks(prev => { const n = new Set(prev); n.delete(track.id); return n; });
+    }
+  };
+
+  const handlePlayVocal = (trackId: string) => {
+    const url = renderedAudio.get(trackId);
+    if (!url) return;
+
+    // Stop any existing playback
+    const ex = audioRefs.current.get(trackId);
+    if (ex) { ex.pause(); ex.currentTime = 0; }
+
+    // Create new Audio directly from blob URL
+    const audio = new Audio();
+    audio.src = url;
+    audio.volume = 1.0;
+    audio.controls = true;
+    audioRefs.current.set(trackId, audio);
+
+    setPlayingVocal(prev => new Set(prev).add(trackId));
+
+    const playPromise = audio.play();
+    if (playPromise !== undefined) {
+      playPromise
+        .then(() => console.log('[Mixer] ▶ Vocal playing:', url))
+        .catch(err => {
+          console.error('[Mixer] Playback failed:', err);
+          // Fallback: open audio in new tab so user can play it manually
+          window.open(url, '_blank');
+        });
+    }
+
+    audio.onended = () => setPlayingVocal(prev => { const s = new Set(prev); s.delete(trackId); return s; });
   };
 
   return (
@@ -87,28 +170,35 @@ const MixerPanel: React.FC<MixerPanelProps> = ({ tracks, onUpdateTrack, onOpenPl
       {tracks.map(track => {
         if (!track) return null;
         const solfegeConfig: Record<string, any> = {
-          'Fixed Do': { label: 'F.DO', color: 'bg-emerald-600', icon: Languages },
-          'Movable Do': { label: 'M.DO', color: 'bg-indigo-600', icon: Languages },
-          'Jianpu': { label: '123', color: 'bg-amber-600', icon: Hash },
-          'Kodaly': { label: 'KODALY', color: 'bg-rose-600', icon: Binary },
+          'American Movable Do': { label: 'AMER-M', color: 'bg-blue-600', icon: Languages },
+          'American Fixed Do': { label: 'AMER-F', color: 'bg-blue-800', icon: Languages },
+          'British Movable Doh': { label: 'BRIT-M', color: 'bg-red-600', icon: Languages },
+          'British Fixed Doh': { label: 'BRIT-F', color: 'bg-red-800', icon: Languages },
+          'Ju Solfege Movable Doh': { label: 'JU-M', color: 'bg-indigo-600', icon: Languages },
+          'Ju Solfege Fixed Doh': { label: 'JU-F', color: 'bg-indigo-800', icon: Languages },
+          'Jianpu': { label: 'JIAPU', color: 'bg-amber-600', icon: Activity },
+          'Kodaly': { label: 'KODLY', color: 'bg-rose-600', icon: Binary },
           'Kodaly Rhythm': { label: 'TA-TI', color: 'bg-fuchsia-600', icon: Timer },
-          'Words': { label: 'WORD', color: 'bg-sky-500', icon: FileText },
-          'Closed': { label: 'OFF', color: 'bg-zinc-800', icon: EyeOff }
+          'Indian Sargam': { label: 'SRGAM', color: 'bg-orange-600', icon: Library },
+          'Lyric': { label: 'LYRIC', color: 'bg-sky-500', icon: FileText },
+          'Close': { label: 'OFF', color: 'bg-zinc-800', icon: EyeOff }
         };
-        const cfg = solfegeConfig[track.lyricMode] || solfegeConfig['Movable Do'];
+        const cfg = solfegeConfig[track.lyricMode] || solfegeConfig['Ju Solfege Movable Doh'];
         const SIcon = cfg.icon;
 
         return (
           <div key={track.id} className="bg-[#08080a] border border-white/5 rounded-2xl px-2 py-1.5 flex items-center shadow-2xl min-h-[64px] w-full group/row">
 
-            <div className="flex items-center gap-3 shrink-0 border-r border-white/5 pr-4 min-w-[60px]">
+            {/* Track Name */}
+            <div className="flex items-center gap-3 shrink-0 border-r border-white/5 pr-4 min-w-[120px]">
               <LEDMeter trackId={track.id} />
-              <div className="flex flex-col truncate w-[40px]">
-                <span className="text-[11px] font-black text-white uppercase italic truncate">{track.name || 'Track'}</span>
-                <span className="text-[7px] text-zinc-600 font-bold uppercase tracking-widest">{track.id}</span>
+              <div className="flex flex-col truncate w-[100px]">
+                <span className="text-[11px] font-black text-white uppercase italic truncate text-left">{track.name || 'Track'}</span>
+                <span className="text-[7px] text-zinc-600 font-bold uppercase tracking-widest text-left">{track.id}</span>
               </div>
             </div>
 
+            {/* Mode Toggle */}
             <div className="flex flex-col gap-1 shrink-0 px-4 border-r border-white/5 items-center">
               <button
                 onClick={() => toggleInstrumentVocal(track)}
@@ -119,6 +209,24 @@ const MixerPanel: React.FC<MixerPanelProps> = ({ tracks, onUpdateTrack, onOpenPl
               <span className="text-[6px] font-black uppercase text-zinc-700 tracking-widest">{track.mode || 'INSTR'}</span>
             </div>
 
+            {/* Vocalido Singer Select */}
+            {track.mode === 'vocal' && (
+              <div className="flex flex-col gap-1 shrink-0 px-3 border-r border-white/5 items-start justify-center min-w-[100px]">
+                <span className="text-[6px] font-black uppercase text-rose-400 tracking-widest">SINGER PROFILE</span>
+                <select
+                  value={track.instrument || ''}
+                  onChange={(e) => onUpdateTrack(track.id, { instrument: e.target.value })}
+                  className="bg-black/50 border border-rose-500/30 text-[9px] text-zinc-300 font-bold rounded p-1 w-[90px] outline-none"
+                >
+                  <option value="">Default Singer</option>
+                  {singers.map((s, idx) => (
+                    <option key={idx} value={s.name}>{s.emoji} {s.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Solo / Mute */}
             <div className="flex flex-col gap-1 shrink-0 px-3 border-r border-white/5">
               <button
                 onClick={() => {
@@ -138,14 +246,50 @@ const MixerPanel: React.FC<MixerPanelProps> = ({ tracks, onUpdateTrack, onOpenPl
 
             <RotaryPan value={track.pan || 0} onChange={(val) => onUpdateTrack(track.id, { pan: val })} />
 
-            <button
-              onClick={() => cycleLyricMode(track)}
-              className={`h-10 w-14 flex flex-col items-center justify-center gap-0.5 rounded-xl border border-white/10 transition-all active:scale-90 mx-2 shrink-0 ${cfg.color}`}
-            >
-              <SIcon size={14} className="text-white" />
-              <span className="text-[7px] font-black uppercase text-white tracking-tighter leading-none">{cfg.label}</span>
-            </button>
+            {/* Solfege Mode + AI Render */}
+            <div className="flex flex-col gap-1 items-center mx-2 shrink-0">
+              <button
+                onClick={() => cycleLyricMode(track)}
+                className={`h-8 w-14 flex flex-col items-center justify-center gap-0.5 rounded-xl border border-white/10 transition-all active:scale-90 ${cfg.color}`}
+              >
+                <SIcon size={12} className="text-white" />
+                <span className="text-[7px] font-black uppercase text-white tracking-tighter leading-none">{cfg.label}</span>
+              </button>
 
+              {track.mode === 'vocal' && (
+                <React.Fragment>
+                  <button
+                    onClick={() => handleRender(track)}
+                    className={`h-6 w-14 flex items-center justify-center gap-1 rounded-lg border transition-all ${
+                      synthesizingTracks.has(track.id) ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-400'
+                      : renderedAudio.has(track.id) ? 'bg-green-500/20 border-green-500/40 text-green-400'
+                      : 'bg-black/40 border-white/10 text-cyan-500 hover:bg-cyan-500/10'
+                    }`}
+                  >
+                    {synthesizingTracks.has(track.id) ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />}
+                    <span className="text-[6px] font-black uppercase tracking-tighter">
+                      {renderedAudio.has(track.id) ? 'RE-RENDER' : 'AI RENDER'}
+                    </span>
+                  </button>
+
+                  {renderedAudio.has(track.id) && (
+                    <button
+                      onClick={() => handlePlayVocal(track.id)}
+                      className={`h-6 w-14 flex items-center justify-center gap-1 rounded-lg border transition-all ${
+                        playingVocal.has(track.id)
+                          ? 'bg-green-500/30 border-green-400/60 text-green-300 animate-pulse'
+                          : 'bg-green-500/10 border-green-500/30 text-green-400 hover:bg-green-500/20'
+                      }`}
+                    >
+                      <span className="text-[9px]">&#9654;</span>
+                      <span className="text-[6px] font-black uppercase tracking-tighter">VOCAL</span>
+                    </button>
+                  )}
+                </React.Fragment>
+              )}
+            </div>
+
+            {/* Volume Fader */}
             <div className="flex-1 flex items-center gap-4 bg-black/40 px-4 py-3 rounded-2xl border border-white/5 ml-1">
               <VolumeX size={14} className={track.isMuted || track.volume === 0 ? 'text-rose-500' : 'text-zinc-800'} />
               <div className="relative flex-1 h-1.5 bg-zinc-900 rounded-full overflow-hidden">
@@ -165,6 +309,7 @@ const MixerPanel: React.FC<MixerPanelProps> = ({ tracks, onUpdateTrack, onOpenPl
               </span>
             </div>
 
+            {/* Effects */}
             <div className="flex flex-col gap-1 shrink-0 px-3 border-l border-white/5 ml-2">
               <div className="flex items-center gap-1">
                 {track.effects?.filter(Boolean).map((fx, idx) => (

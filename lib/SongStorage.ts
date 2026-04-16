@@ -21,16 +21,20 @@ export class SongStorage {
   private memoStore = 'musical_memos';
   private statsStore = 'usage_stats';
   private foldersStore = 'song_folders';
+  private deletedStore = 'deleted_ids';
   private db: IDBDatabase | null = null;
 
   async init(): Promise<IDBDatabase> {
     if (this.db) return this.db;
     return new Promise((resolve, reject) => {
-      const request = indexedDB.open(this.dbName, 6);
+      const request = indexedDB.open(this.dbName, 8); // Bump to 8 for deleted_ids
       request.onupgradeneeded = (e: any) => {
         const db = e.target.result;
         if (!db.objectStoreNames.contains(this.storeName)) {
           db.createObjectStore(this.storeName, { keyPath: 'metadata.id' });
+        }
+        if (!db.objectStoreNames.contains(this.deletedStore)) {
+          db.createObjectStore(this.deletedStore, { keyPath: 'id' });
         }
         if (!db.objectStoreNames.contains(this.historyStore)) {
           db.createObjectStore(this.historyStore, { keyPath: 'id' });
@@ -87,16 +91,57 @@ export class SongStorage {
 
   async saveSong(metadata: Song, xmlData: string): Promise<void> {
     const db = await this.init();
-    const transaction = db.transaction([this.storeName], 'readwrite');
-    // Ensure ID is a string for consistent indexing
-    const finalMetadata = { ...metadata, id: String(metadata.id) };
-    transaction.objectStore(this.storeName).put({ metadata: finalMetadata, xmlData });
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction([this.storeName, this.deletedStore], 'readwrite');
+      // Ensure ID is a string for consistent indexing
+      const finalMetadata = { ...metadata, id: String(metadata.id) };
+      transaction.objectStore(this.storeName).put({ metadata: finalMetadata, xmlData });
+      transaction.objectStore(this.deletedStore).delete(finalMetadata.id); // Remove from deleted list if re-added
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+    });
   }
 
   async deleteSong(id: string): Promise<void> {
     const db = await this.init();
-    const transaction = db.transaction([this.storeName], 'readwrite');
-    transaction.objectStore(this.storeName).delete(id);
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction([this.storeName, this.deletedStore], 'readwrite');
+      // Physically remove from main store (permanent real delete)
+      transaction.objectStore(this.storeName).delete(String(id));
+      // Keep a tombstone in deletedStore so cloud-sync knows not to re-download this song
+      transaction.objectStore(this.deletedStore).put({ id: String(id), deletedAt: new Date().toISOString() });
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+    });
+  }
+
+  /** Permanently deletes a song with NO tombstone (e.g. after user confirms from trash) */
+  async permanentDeleteSong(id: string): Promise<void> {
+    const db = await this.init();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction([this.storeName, this.deletedStore], 'readwrite');
+      transaction.objectStore(this.storeName).delete(String(id));
+      transaction.objectStore(this.deletedStore).delete(String(id)); // also clear tombstone
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+    });
+  }
+
+  async bulkDeleteSongs(ids: string[]): Promise<void> {
+    const db = await this.init();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction([this.storeName, this.deletedStore], 'readwrite');
+      const store = transaction.objectStore(this.storeName);
+      const delStore = transaction.objectStore(this.deletedStore);
+      ids.forEach(id => {
+        // Physically remove from main store
+        store.delete(String(id));
+        // Keep tombstone for cloud-sync
+        delStore.put({ id: String(id), deletedAt: new Date().toISOString() });
+      });
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+    });
   }
 
   async getAllSongs(): Promise<StoredSong[]> {
@@ -210,6 +255,33 @@ export class SongStorage {
     });
   }
 
+  async bulkUpdateSongsMetadata(ids: string[], updates: Partial<Song>): Promise<void> {
+    const db = await this.init();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction([this.storeName], 'readwrite');
+      const store = tx.objectStore(this.storeName);
+      
+      let processed = 0;
+      ids.forEach(id => {
+        const request = store.get(String(id));
+        request.onsuccess = () => {
+          const song = request.result;
+          if (song) {
+            song.metadata = { ...song.metadata, ...updates };
+            store.put(song);
+          }
+          processed++;
+          if (processed === ids.length) {
+            // All requests initiated, transaction will complete
+          }
+        };
+      });
+
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
   async exportNeuralCore(): Promise<string> {
     const songs = await this.getAllSongs();
     const bundle = {
@@ -256,18 +328,26 @@ export class SongStorage {
 
     if (songsToImport.length === 0) return;
 
-    const tx = db.transaction([this.storeName], 'readwrite');
+    const tx = db.transaction([this.storeName, this.deletedStore], 'readwrite');
     const songStore = tx.objectStore(this.storeName);
+    const delStore = tx.objectStore(this.deletedStore);
 
-    songsToImport.forEach((s: any) => {
-      if (s.metadata && s.metadata.id) {
-        // xmlData อาจเป็น URL (จาก Cloud) หรือ XML string (จาก Local)
-        songStore.put(s);
-      } else if (s.id && s.title) {
-        // Legacy format — metadata อยู่ชั้นนอก, xmlData อาจเป็น URL
-        songStore.put({ metadata: s, xmlData: s.xmlData || '' });
-      }
-    });
+    // Get all deleted IDs first to skip them
+    const deletedIdsRequest = delStore.getAll();
+    deletedIdsRequest.onsuccess = () => {
+      const deletedIds = new Set((deletedIdsRequest.result || []).map((d: any) => d.id));
+
+      songsToImport.forEach((s: any) => {
+        const id = s.metadata?.id || s.id;
+        if (!id || deletedIds.has(String(id))) return; // SKIP deleted songs
+
+        if (s.metadata && s.metadata.id) {
+          songStore.put(s);
+        } else if (s.id && s.title) {
+          songStore.put({ metadata: s, xmlData: s.xmlData || '' });
+        }
+      });
+    };
 
     return new Promise((resolve, reject) => {
       tx.oncomplete = () => resolve();

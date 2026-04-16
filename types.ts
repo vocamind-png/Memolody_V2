@@ -6,7 +6,12 @@ export enum ChromaticSolfege {
   LU = 'lu', TU = 'tu'
 }
 
-export type LyricMode = 'Movable Do' | 'Fixed Do' | 'Words' | 'Closed' | 'Jianpu' | 'Kodaly' | 'Kodaly Rhythm';
+export type LyricMode = 
+  | 'American Movable Do' | 'American Fixed Do' 
+  | 'British Movable Doh' | 'British Fixed Doh' 
+  | 'Ju Solfege Movable Doh' | 'Ju Solfege Fixed Doh' 
+  | 'Jianpu' | 'Kodaly' | 'Kodaly Rhythm' 
+  | 'Indian Sargam' | 'Lyric' | 'Close';
 export type ScoreLayoutMode = 'auto' | 'infinite' | 'horizontal' | 'paginated';
 export type ViewId = 'home' | 'library' | 'player' | 'profile' | 'forge' | 'distribution' | 'settings' | 'nimo' | 'presentation';
 
@@ -71,6 +76,7 @@ export interface TrackState {
   pan: number;
   isArmed?: boolean;
   mode?: 'instrument' | 'vocal';
+  instrument?: string;
   pluginId?: 'memolody-sampler' | 'svs-vocal' | null;
   pluginSettings?: any;
   effects: (EffectInstance | null)[];

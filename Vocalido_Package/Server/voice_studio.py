@@ -1,0 +1,244 @@
+"""
+Vocalido Voice Studio — backend processor
+Handles: sample library, timbre transform, synthesis preview
+"""
+import numpy as np
+import soundfile as sf
+import librosa
+import io, os, json, base64
+from pathlib import Path
+from scipy import signal
+
+SAMPLE_DIR = Path("/tmp/voice_samples_full")
+SR = 44100
+
+# ── Load sample library ────────────────────────────────────────────────
+def load_library():
+    """Load all WAV samples from the sample directory"""
+    lib = {}
+    if not SAMPLE_DIR.exists():
+        return lib
+    for f in sorted(SAMPLE_DIR.glob("*.wav")):
+        name = f.stem  # e.g. "A4", "Cs4", "Bb3"
+        try:
+            audio, sr = sf.read(str(f))
+            if audio.ndim > 1:
+                audio = audio[:, 0]
+            if sr != SR:
+                audio = librosa.resample(audio, orig_sr=sr, target_sr=SR)
+            # Parse MIDI note from filename
+            note_name = name.replace('s', '#')  # Cs4 → C#4
+            midi = librosa_note_to_midi(note_name)
+            lib[midi] = {'audio': audio, 'name': note_name, 'file': str(f)}
+        except Exception as e:
+            print(f"[Studio] Skip {f}: {e}")
+    print(f"[Studio] Loaded {len(lib)} samples: MIDI {min(lib.keys()) if lib else '?'}-{max(lib.keys()) if lib else '?'}")
+    return lib
+
+def librosa_note_to_midi(name):
+    """Convert note name like 'A4', 'C#4', 'Bb3' to MIDI number"""
+    try:
+        return librosa.note_to_midi(name)
+    except:
+        # Manual fallback
+        note_map = {'C':0,'D':2,'E':4,'F':5,'G':7,'A':9,'B':11}
+        n = name[0].upper()
+        rest = name[1:]
+        acc = 0
+        if rest.startswith('#') or rest.startswith('s'):
+            acc = 1; rest = rest[1:]
+        elif rest.startswith('b'):
+            acc = -1; rest = rest[1:]
+        octave = int(rest) if rest else 4
+        return note_map[n] + acc + (octave + 1) * 12
+
+# ── Timbre processing ──────────────────────────────────────────────────
+def apply_timbre(audio, sr, params):
+    """
+    Apply timbre transformation to audio segment.
+    params: {
+        pitch_shift: float (-12 to +12 semitones)
+        formant_shift: float (-6 to +6) — changes vocal character
+        breathiness: float (0.0 to 1.0)
+        vibrato_rate: float (0 to 8 Hz)
+        vibrato_depth: float (0.0 to 0.5 semitones)
+        reverb: float (0.0 to 1.0)
+        warmth: float (-1.0 to +1.0)
+        brightness: float (-1.0 to +1.0)
+        speed: float (0.5 to 2.0)
+    }
+    """
+    audio = audio.copy().astype(np.float32)
+
+    # 1. Speed (time-stretch without pitch change)
+    speed = float(params.get('speed', 1.0))
+    if abs(speed - 1.0) > 0.02:
+        audio = librosa.effects.time_stretch(audio, rate=speed)
+
+    # 2. Formant shift (simulate different vocal tract)
+    #    Stretch time → changes formants → pitch-compensate
+    formant = float(params.get('formant_shift', 0.0))
+    if abs(formant) > 0.1:
+        factor = 2.0 ** (formant / 12.0)
+        audio_fmt = librosa.effects.time_stretch(audio, rate=factor)
+        compensate = -formant
+        audio = librosa.effects.pitch_shift(audio_fmt, sr=sr, n_steps=compensate)
+        audio = librosa.util.fix_length(audio, size=len(audio_fmt))
+
+    # 3. Pitch shift
+    pitch = float(params.get('pitch_shift', 0.0))
+    if abs(pitch) > 0.05:
+        audio = librosa.effects.pitch_shift(audio, sr=sr, n_steps=pitch)
+
+    # 4. Vibrato (LFO on pitch)
+    vib_rate = float(params.get('vibrato_rate', 0.0))
+    vib_depth = float(params.get('vibrato_depth', 0.0))
+    if vib_rate > 0.1 and vib_depth > 0.001:
+        t = np.arange(len(audio)) / sr
+        lfo = np.sin(2 * np.pi * vib_rate * t) * vib_depth
+        # Apply as time-varying pitch shift (approximation)
+        audio = _apply_vibrato(audio, sr, lfo)
+
+    # 5. EQ — Warmth (low shelf) + Brightness (high shelf)
+    warmth = float(params.get('warmth', 0.0))
+    brightness = float(params.get('brightness', 0.0))
+    if abs(warmth) > 0.05:
+        sos = signal.butter(2, 300 / (sr/2), btype='low', output='sos')
+        low_band = signal.sosfilt(sos, audio)
+        audio = audio + low_band * warmth * 0.5
+    if abs(brightness) > 0.05:
+        sos = signal.butter(2, 4000 / (sr/2), btype='high', output='sos')
+        hi_band = signal.sosfilt(sos, audio)
+        audio = audio + hi_band * brightness * 0.5
+
+    # 6. Breathiness (add shaped noise)
+    breathiness = float(params.get('breathiness', 0.0))
+    if breathiness > 0.01:
+        noise = np.random.randn(len(audio)).astype(np.float32)
+        # Shape noise to match signal envelope
+        env = np.abs(librosa.effects.preemphasis(audio))
+        env = np.convolve(env, np.ones(int(sr*0.02))/(sr*0.02), mode='same')
+        noise = noise * env * breathiness * 0.4
+        audio = audio + noise
+
+    # 7. Simple reverb (comb + allpass approximation)
+    reverb = float(params.get('reverb', 0.0))
+    if reverb > 0.01:
+        audio = _apply_reverb(audio, sr, reverb)
+
+    # Normalize
+    peak = np.max(np.abs(audio))
+    if peak > 0.001:
+        audio = audio / peak * 0.85
+
+    return audio.astype(np.float32)
+
+def _apply_vibrato(audio, sr, lfo_semitones):
+    """Apply vibrato using phase vocoder approximation"""
+    try:
+        # Simplified: use short segments with slight pitch shift
+        seg_len = int(sr * 0.02)
+        out = np.zeros_like(audio)
+        for i in range(0, len(audio), seg_len):
+            seg = audio[i:i+seg_len]
+            if len(seg) < 10: break
+            shift = float(lfo_semitones[min(i, len(lfo_semitones)-1)])
+            if abs(shift) > 0.05:
+                seg = librosa.effects.pitch_shift(seg, sr=sr, n_steps=shift)
+            out[i:i+len(seg)] = seg[:len(out[i:i+seg_len])]
+        return out
+    except:
+        return audio
+
+def _apply_reverb(audio, sr, amount):
+    """Simple Schroeder reverb"""
+    delays = [int(sr * d) for d in [0.030, 0.037, 0.041, 0.043]]
+    out = audio.copy()
+    for d in delays:
+        if d >= len(audio): continue
+        padded = np.pad(audio, (d, 0))[:len(audio)]
+        out = out + padded * amount * 0.3
+    return out
+
+# ── Synthesis: note → audio ────────────────────────────────────────────
+def synthesize_note(midi_note, duration_sec, library, params):
+    """Find best sample for midi_note and apply timbre"""
+    if not library:
+        return np.zeros(int(SR * duration_sec), dtype=np.float32)
+
+    # Find nearest available sample
+    available = sorted(library.keys())
+    nearest = min(available, key=lambda m: abs(m - midi_note))
+    sample = library[nearest]['audio'].copy()
+
+    # Pitch-correct if needed (sample → target note)
+    semitone_diff = midi_note - nearest
+    if abs(semitone_diff) > 0.1:
+        sample = librosa.effects.pitch_shift(sample, sr=SR, n_steps=float(semitone_diff))
+
+    # Trim or loop to match duration
+    target_len = int(SR * duration_sec)
+    if len(sample) < target_len:
+        # Loop with crossfade
+        fade = int(SR * 0.02)
+        loops = []
+        while sum(len(s) for s in loops) < target_len:
+            loops.append(sample)
+        sample = np.concatenate(loops)
+    sample = sample[:target_len]
+
+    # Apply fade in/out
+    fade = min(int(SR * 0.015), len(sample)//4)
+    if fade > 0:
+        sample[:fade] *= np.linspace(0, 1, fade)
+        sample[-fade:] *= np.linspace(1, 0, fade)
+
+    # Apply timbre
+    return apply_timbre(sample, SR, params)
+
+def synthesize_phrase(notes, library, params):
+    """
+    Synthesize a phrase of notes.
+    notes: [{'midi': int, 'duration': float, 'lyric': str}, ...]
+    Returns: numpy array
+    """
+    crossfade = int(SR * 0.025)
+    segments = []
+    for note in notes:
+        midi = note['midi']
+        dur = note.get('duration', 0.75)
+        seg = synthesize_note(midi, dur, library, params)
+        segments.append(seg)
+
+    if not segments:
+        return np.zeros(SR, dtype=np.float32)
+
+    # Concatenate with crossfade
+    total = sum(len(s) for s in segments) - crossfade * max(0, len(segments)-1)
+    out = np.zeros(max(total, SR), dtype=np.float32)
+    pos = 0
+    for i, seg in enumerate(segments):
+        end = pos + len(seg)
+        out[pos:end] += seg
+        pos += len(seg) - crossfade
+
+    peak = np.max(np.abs(out))
+    if peak > 0.001:
+        out = out / peak * 0.88
+    return out
+
+def audio_to_base64_wav(audio, sr=SR):
+    """Convert numpy audio to base64 WAV string"""
+    buf = io.BytesIO()
+    sf.write(buf, audio, sr, format='WAV', subtype='PCM_16')
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode('utf-8')
+
+# ── Global library ─────────────────────────────────────────────────────
+_library = None
+
+def get_library():
+    global _library
+    if _library is None:
+        _library = load_library()
+    return _library

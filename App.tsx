@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
-import { Home, User, Music2, Play, Zap, RefreshCcw, Star, Shield, Sparkles } from 'lucide-react';
+import { Home, User, Music2, Play, Zap, RefreshCcw, Star, Shield, Sparkles, Mic2, Settings } from 'lucide-react';
 // Lazy load Nimo - only loads JS bundle when user first clicks NIMO
 const FloatingNimo = lazy(() => import('./components/Nimo/FloatingNimo').then(m => ({ default: m.FloatingNimo })));
 import JSZip from 'jszip';
@@ -13,7 +13,9 @@ const getMusicEngine = async () => {
   }
   return _musicEngine;
 };
+import { initPlugins } from './lib/plugin-init';
 import { songStorage } from './lib/SongStorage';
+import { DEMO_SONGS } from './data/demo_songs';
 import { CloudSyncService } from './lib/CloudSyncService';
 import { Song, TrackState } from './types';
 import { LoopPreset } from './components/Player/LoopMatrixModal';
@@ -32,14 +34,50 @@ const BrandingPage = lazy(() => import('./components/Presentation/BrandingPage')
 const AdminPage = lazy(() => import('./components/Admin/AdminPage'));
 const PricingTiers = lazy(() => import('./components/Subscription/PricingTiers'));
 
-// ── Minimal loading fallback ──
-const PageLoader = () => (
-  <div className="flex-1 flex items-center justify-center">
-    <div className="w-5 h-5 border-2 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin" />
-  </div>
-);
+// ── Error Boundary for lazy-loaded pages ──
+interface EBState { hasError: boolean }
+interface EBProps { children: React.ReactNode }
+class PageErrorBoundary extends React.Component<EBProps, EBState> {
+  constructor(props: EBProps) {
+    super(props);
+    (this as any).state = { hasError: false };
+  }
+  static getDerivedStateFromError(): EBState { return { hasError: true }; }
+  componentDidCatch(err: Error) { console.error('[EB] lazy fail:', err); }
+  render(): React.ReactNode {
+    if (((this as any).state as EBState).hasError) {
+      return (
+        <div className="flex-1 flex flex-col items-center justify-center gap-4">
+          <p className="text-zinc-600 text-[9px] uppercase tracking-widest">Page failed — tap to reload</p>
+          <button onClick={() => window.location.reload()}
+            className="px-4 py-2 bg-cyan-500 text-black text-[9px] font-black uppercase rounded-xl">
+            Reload
+          </button>
+        </div>
+      );
+    }
+    return ((this as any).props as EBProps).children;
+  }
+}
 
-type ViewId = 'home' | 'library' | 'player' | 'profile' | 'forge' | 'distribution' | 'settings' | 'nimo' | 'presentation' | 'admin' | 'subscription';
+// ── Minimal loading fallback with auto-recover ──
+const PageLoader = () => {
+  useEffect(() => {
+    // If Suspense spins for >12s it means HMR invalidated the lazy chunk — reload
+    const t = setTimeout(() => {
+      console.warn('[Memolody] Lazy chunk timeout — reloading...');
+      window.location.reload();
+    }, 12000);
+    return () => clearTimeout(t);
+  }, []);
+  return (
+    <div className="flex-1 flex items-center justify-center">
+      <div className="w-5 h-5 border-2 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin" />
+    </div>
+  );
+};
+
+type ViewId = 'home' | 'library' | 'player' | 'profile' | 'forge' | 'distribution' | 'settings' | 'nimo' | 'presentation' | 'admin' | 'subscription' | 'vocalido';
 
 const INITIAL_LOOP_PRESETS: LoopPreset[] = [
   { id: 'intro', label: 'Intro', color: '#00e5ff', startBar: 1, endBar: 4, isActive: false },
@@ -58,30 +96,40 @@ const NAV_ITEMS: { id: ViewId; icon: any; label: string; minRole?: string; isNim
   { id: 'subscription', icon: Star, label: 'PLAN' },
   { id: 'nimo', icon: Sparkles, label: 'NIMO', isNimo: true },
   { id: 'profile', icon: User, label: 'ME' },
+  { id: 'settings', icon: Settings, label: 'SETTINGS' },
   { id: 'admin', icon: Shield, label: 'CORE', minRole: 'admin' },
 ];
 
 const App: React.FC = () => {
   const { authUser, role } = useAuth();
+  const isAdmin = hasAccess(role, 'admin');
   const [currentView, setCurrentView] = useState<ViewId>('home');
   const [isNimoOpen, setIsNimoOpen] = useState(false);
   const [nimoMounted, setNimoMounted] = useState(false); // mount on first click only
   const [selectedSong, setSelectedSong] = useState<Song | null>(null);
   const [uploadedMusicXml, setUploadedMusicXml] = useState<string | null>(null);
   const [userSongs, setUserSongs] = useState<{ metadata: Song, xmlData: string }[]>([]);
+  const userSongsRef = React.useRef(userSongs); // ref to avoid stale closure in callbacks
   const [tracks, setTracks] = useState<TrackState[]>([]);
   const [playerViewMode, setPlayerViewMode] = useState<'score' | 'pianoroll'>('score');
   const [isSyncing, setIsSyncing] = useState(false);
+  const isSyncingRef = React.useRef(false); // ref to prevent cascade re-renders from isSyncing dep
   const [onlineStatus, setOnlineStatus] = useState<'online' | 'offline'>('online');
   const [globalSearchQuery, setGlobalSearchQuery] = useState('');
   const [performanceMode, setPerformanceMode] = useState(() => localStorage.getItem('nimo_perf_mode') === 'true');
   const [loopPresets, setLoopPresets] = useState<LoopPreset[]>(INITIAL_LOOP_PRESETS);
+  const [pendingImportFile, setPendingImportFile] = useState<File | null>(null);
+  const [autoPlayOnLoad, setAutoPlayOnLoad] = useState(false); // true after OMR import → Player auto-starts
 
   // Settings
   const [preferredLanguage, setPreferredLanguage] = useState<'th' | 'en'>(() => (localStorage.getItem('nimo_lang') as any) || 'en');
-  const [userCountry, setUserCountry] = useState(() => localStorage.getItem('nimo_country') || '');
-  const [userInstrument, setUserInstrument] = useState(() => localStorage.getItem('nimo_instrument') || '');
-  const [showOnboarding, setShowOnboarding] = useState(() => !localStorage.getItem('nimo_lang'));
+  const [userCountry, setUserCountry] = useState(() => localStorage.getItem('nimo_country') || 'Other');
+  const [userInstrument, setUserInstrument] = useState<'piano' | 'violin' | 'voice' | 'guitar'>('piano');
+  const [vocalidoAutoRender, setVocalidoAutoRender] = useState(() => {
+    const saved = localStorage.getItem('vocalido_auto_render');
+    if (saved === null) return true; // Default ON
+    return saved === 'true';
+  });
   const [nimoEnabled, setNimoEnabled] = useState(() => localStorage.getItem('nimo_enabled') !== 'false');
   const [nimoVoice, setNimoVoice] = useState<'teen_girl' | 'adult_woman' | 'teen_boy' | 'adult_man'>(() => (localStorage.getItem('nimo_voice') as any) || 'teen_girl');
 
@@ -89,7 +137,19 @@ const App: React.FC = () => {
     (async () => {
       try {
         await songStorage.init();
-        const songs = await songStorage.getAllSongs();
+        await initPlugins(); // Initialize the Plugin System (including Vocalido)
+        let songs = await songStorage.getAllSongs();
+
+        // 🌱 SEED DATA: If library is empty, add demo songs
+        if (songs.length === 0) {
+          console.log('🌱 Project Empty: Seeding Vocalido Demo data...');
+          for (const demo of DEMO_SONGS) {
+            await songStorage.saveSong(demo.metadata as any, demo.xmlData);
+          }
+          songs = await songStorage.getAllSongs();
+        }
+
+        userSongsRef.current = songs;
         setUserSongs(songs);
         setTimeout(() => triggerSync(), 5000);
       } catch (e) {
@@ -105,20 +165,23 @@ const App: React.FC = () => {
   }, []);
 
   const triggerSync = useCallback(async () => {
-    if (isSyncing) return;
+    if (isSyncingRef.current) return; // use ref — not state — to prevent re-render cascade
+    isSyncingRef.current = true;
     setIsSyncing(true);
     try {
       const syncResult = await CloudSyncService.syncWithGlobalCloud();
       if (syncResult.total >= 0) {
         const updatedSongs = await songStorage.getAllSongs();
+        userSongsRef.current = updatedSongs;
         setUserSongs(updatedSongs);
       }
     } catch (e: any) {
       console.warn("Sync interrupted:", e.message);
     } finally {
+      isSyncingRef.current = false;
       setIsSyncing(false);
     }
-  }, [isSyncing]);
+  }, []); // ← no deps: uses refs to read mutable values safely
 
   const navigateTo = useCallback((view: ViewId, openNimo?: boolean) => {
     if (openNimo) {
@@ -131,17 +194,76 @@ const App: React.FC = () => {
   }, []);
 
   const handleToggleDelete = useCallback(async (id: string, isDeleted: boolean) => {
-    const song = userSongs.find(s => s.metadata.id === id);
-    if (song) {
-      await songStorage.saveSong({ ...song.metadata, isDeleted }, song.xmlData);
-      setUserSongs(await songStorage.getAllSongs());
+    try {
+      await songStorage.updateSongMetadata(id, { isDeleted });
+      const updated = await songStorage.getAllSongs();
+      userSongsRef.current = updated;
+      setUserSongs(updated);
+    } catch (err) {
+      alert("❌ ไม่สามารถย้ายเพลงได้:\n" + (err instanceof Error ? err.message : String(err)));
     }
-  }, [userSongs]);
+  }, []); // ← no deps: reads from ref
+
+  const handleTogglePublic = useCallback(async (id: string, isPublic: boolean) => {
+    await songStorage.updateSongMetadata(id, { isPublic });
+    const updated = await songStorage.getAllSongs();
+    userSongsRef.current = updated;
+    setUserSongs(updated);
+  }, []);
+
+  const handleBulkTogglePublic = useCallback(async (ids: string[], isPublic: boolean) => {
+    await songStorage.bulkUpdateSongsMetadata(ids, { isPublic });
+    const updated = await songStorage.getAllSongs();
+    userSongsRef.current = updated;
+    setUserSongs(updated);
+  }, []);
+
+  /** Lightweight local-only refresh — reads IndexedDB directly, no cloud sync guard */
+  const handleLocalRefresh = useCallback(async () => {
+    try {
+      const songs = await songStorage.getAllSongs();
+      userSongsRef.current = songs;
+      setUserSongs(songs);
+      console.log(`[LocalRefresh] ✅ Loaded ${songs.length} songs from IndexedDB`);
+    } catch (e) {
+      console.error('[LocalRefresh] ❌ Failed:', e);
+    }
+  }, []);
 
   const handlePermanentDelete = useCallback(async (id: string) => {
-    if (window.confirm("ลบเพลงนี้ถาวร?")) {
-      await songStorage.deleteSong(id);
-      setUserSongs(await songStorage.getAllSongs());
+    try {
+      // permanentDeleteSong removes from IndexedDB AND clears the tombstone — zero residue
+      await songStorage.permanentDeleteSong(id);
+      const updated = await songStorage.getAllSongs();
+      userSongsRef.current = updated;
+      setUserSongs(updated);
+      console.log(`[Storage] ✅ Song ${id} permanently deleted from IndexedDB`);
+    } catch (err) {
+      alert('❌ ไม่สามารถลบเพลงได้:\n' + (err instanceof Error ? err.message : String(err)));
+    }
+  }, []);
+
+  const handleBulkPermanentDelete = useCallback(async (ids: string[]) => {
+    try {
+      // Permanently remove all — no tombstone, no residue in IndexedDB
+      await Promise.all(ids.map(id => songStorage.permanentDeleteSong(id)));
+      const updated = await songStorage.getAllSongs();
+      userSongsRef.current = updated;
+      setUserSongs(updated);
+      console.log(`[Storage] ✅ ${ids.length} songs permanently deleted from IndexedDB`);
+    } catch (err) {
+      alert('❌ ไม่สามารถลบเพลงกลุ่มนี้ได้:\n' + (err instanceof Error ? err.message : String(err)));
+    }
+  }, []);
+
+  const handleBulkToggleDelete = useCallback(async (ids: string[], isDeleted: boolean) => {
+    try {
+      await songStorage.bulkUpdateSongsMetadata(ids, { isDeleted });
+      const updated = await songStorage.getAllSongs();
+      userSongsRef.current = updated;
+      setUserSongs(updated);
+    } catch (err) {
+      alert("❌ ไม่สามารถจัดการเพลงกลุ่มนี้ได้:\n" + (err instanceof Error ? err.message : String(err)));
     }
   }, []);
 
@@ -152,7 +274,7 @@ const App: React.FC = () => {
     desiredView?: { main: 'player' | 'tracks', player?: 'score' | 'pianoroll' }
   ) => {
     let finalXml = xml;
-    const owned = userSongs.find(s => s.metadata.id === song.id);
+    const owned = userSongsRef.current.find(s => s.metadata.id === song.id); // use ref — stable
     if (!finalXml) finalXml = owned?.xmlData || '';
 
     if (finalXml && finalXml.startsWith('http')) {
@@ -193,12 +315,34 @@ const App: React.FC = () => {
     engine.setTransportSeconds(0);
 
     const parsed = engine.parseMusicXml(finalXml);
-    const newTracks: TrackState[] = Object.entries(parsed.partNames).map(([id, name]) => {
+    let vocalTrackSelected = false;
+    const trackIds = Object.keys(parsed.partNames);
+    
+    const newTracks: TrackState[] = trackIds.map((id, index) => {
+      const name = parsed.partNames[id] || 'Track';
+      const clef = parsed.trackClefs?.[id];
       const low = name.toLowerCase();
-      const isVocal = ['vocal', 'voice', 'singer', 'melody', 'lead', 'soprano'].some(k => low.includes(k));
+      
+      // Auto-logic: 
+      // 1. If only one track total, it's vocal.
+      // 2. Otherwise, the first Treble Clef (G) track found is vocal.
+      // 3. All others are instruments.
+      let isVocal = false;
+      if (trackIds.length === 1) {
+        isVocal = true;
+      } else if (!vocalTrackSelected && clef === 'G') {
+        isVocal = true;
+        vocalTrackSelected = true;
+      } else if (!vocalTrackSelected && index === 0 && !clef) {
+        // Fallback for cases where clef detection might fail on first track
+        isVocal = true;
+        vocalTrackSelected = true;
+      }
+
       return {
-        id, name, isMuted: false, isSolo: false, lyricMode: 'Movable Do', volume: 0.8, pan: 0,
-        mode: isVocal ? 'vocal' : 'instrument',
+        id, name, isMuted: false, isSolo: false, lyricMode: 'British Fixed Doh' as const, volume: 0.8, pan: 0,
+        mode: isVocal ? 'vocal' as const : 'instrument' as const,
+        instrument: isVocal ? 'Auto' : 'Piano', 
         effects: Array(6).fill(null)
       };
     });
@@ -210,46 +354,77 @@ const App: React.FC = () => {
     } else if (mode === 'studio' || mode === 'edit') {
       setCurrentView('forge');
     } else {
+      // 'listen' mode → go to Player and auto-play
+      setAutoPlayOnLoad(true);
       setCurrentView('player');
       setPlayerViewMode('score');
     }
-  }, [userSongs]);
+  }, []); // ← no deps: reads userSongsRef instead of closing over state
 
   const handleLanguageChange = (lang: 'th' | 'en') => { setPreferredLanguage(lang); localStorage.setItem('nimo_lang', lang); };
   const handleCountryChange = (c: string) => { setUserCountry(c); localStorage.setItem('nimo_country', c); };
   const handleInstrumentChange = (i: string) => { setUserInstrument(i); localStorage.setItem('nimo_instrument', i); };
   const handleTogglePerformanceMode = (v: boolean) => { setPerformanceMode(v); localStorage.setItem('nimo_perf_mode', String(v)); };
 
-  const completeOnboarding = () => {
-    if (!userCountry || !userInstrument) {
-      alert(preferredLanguage === 'en' ? "Please complete all fields" : "กรุณากรอกข้อมูลให้ครบ");
-      return;
-    }
-    setShowOnboarding(false);
-  };
+
 
   const renderPage = () => {
     switch (currentView) {
       case 'home':
-        return <HomePage onSongSelect={handleSongSelect} userLibrary={userSongs} onEnterStudio={() => navigateTo('player')} onViewVault={() => navigateTo('home')} onSearch={setGlobalSearchQuery} performanceMode={performanceMode} onToggleDelete={handleToggleDelete} onPermanentDelete={handlePermanentDelete} onRefresh={triggerSync} isSyncing={isSyncing} />;
+        return <HomePage
+          onSongSelect={handleSongSelect}
+          userLibrary={userSongs}
+          onEnterStudio={() => navigateTo('player')}
+          onViewVault={() => navigateTo('home')}
+          onSearch={setGlobalSearchQuery}
+          performanceMode={performanceMode}
+          onToggleDelete={handleToggleDelete}
+          onPermanentDelete={handlePermanentDelete}
+          onBulkDelete={handleBulkToggleDelete}
+          onBulkPermanentDelete={handleBulkPermanentDelete}
+          onRefresh={triggerSync}
+          onLocalRefresh={handleLocalRefresh}
+          isSyncing={isSyncing}
+          onOpenNimo={(song, xml) => handleSongSelect(song, xml, 'studio', false, { main: 'player' })}
+          onImportToNimo={f => { setNimoFileToLoad(f); setNimoMounted(true); setIsNimoOpen(true); }}
+          onTogglePublic={handleTogglePublic}
+          isAdmin={isAdmin}
+          currentUserId={authUser?.id}
+        />;
       case 'player':
-        return <PlayerPage song={selectedSong} musicXml={uploadedMusicXml} tracks={tracks} setTracks={setTracks} viewMode={playerViewMode} setViewMode={setPlayerViewMode} loopPresets={loopPresets} setLoopPresets={setLoopPresets} performanceMode={performanceMode} />;
+        return <PlayerPage song={selectedSong} musicXml={uploadedMusicXml} tracks={tracks} setTracks={setTracks} viewMode={playerViewMode} setViewMode={setPlayerViewMode} loopPresets={loopPresets} setLoopPresets={setLoopPresets} performanceMode={performanceMode} vocalidoAutoRender={vocalidoAutoRender} autoPlay={autoPlayOnLoad} onAutoPlayConsumed={() => setAutoPlayOnLoad(false)} />;
       case 'forge':
         return <StudioPage selectedSong={selectedSong} xmlData={uploadedMusicXml} tracks={tracks} setTracks={setTracks} onPublish={triggerSync} onExit={() => navigateTo('home')} />;
       case 'profile':
         return <ProfilePage onEnterForge={() => navigateTo('forge')} userLibrary={userSongs} onSongSelect={handleSongSelect} onTriggerSync={triggerSync} isSyncing={isSyncing} onRefresh={triggerSync} preferredLanguage={preferredLanguage} setPreferredLanguage={handleLanguageChange} userCountry={userCountry} setUserCountry={handleCountryChange} userInstrument={userInstrument} setUserInstrument={handleInstrumentChange} />;
       case 'settings':
-        return <SettingsPage performanceMode={performanceMode} onTogglePerformanceMode={handleTogglePerformanceMode} nimoEnabled={nimoEnabled} onToggleNimoEnabled={(val) => { setNimoEnabled(val); localStorage.setItem('nimo_enabled', String(val)); }} nimoVoice={nimoVoice} onChangeNimoVoice={(val) => { setNimoVoice(val); localStorage.setItem('nimo_voice', val); }} />;
+        return <SettingsPage performanceMode={performanceMode} onTogglePerformanceMode={handleTogglePerformanceMode} nimoEnabled={nimoEnabled} onToggleNimoEnabled={(val) => { setNimoEnabled(val); localStorage.setItem('nimo_enabled', String(val)); }} nimoVoice={nimoVoice} onChangeNimoVoice={(val) => { setNimoVoice(val); localStorage.setItem('nimo_voice', val); }} vocalidoAutoRender={vocalidoAutoRender} onToggleVocalidoAutoRender={(val) => { setVocalidoAutoRender(val); localStorage.setItem('vocalido_auto_render', String(val)); }} />;
       case 'distribution':
         return <DistributionPage userLibrary={userSongs} onRefresh={triggerSync} onBack={() => navigateTo('home')} />;
       case 'nimo':
-        return <NimoPage selectedSong={selectedSong} xmlData={uploadedMusicXml} preferredLanguage={preferredLanguage} />;
+        return <NimoPage selectedSong={selectedSong} xmlData={uploadedMusicXml} preferredLanguage={preferredLanguage} onSongSelect={handleSongSelect} onRefresh={triggerSync} initialFile={pendingImportFile} />;
       case 'presentation':
         return <BrandingPage onEnter={() => navigateTo('home')} backgroundImage="/images/memolody_hero.png" />;
       case 'admin':
         return <AdminPage onRefresh={triggerSync} />;
       case 'subscription':
         return <PricingTiers />;
+      case 'vocalido':
+        return (
+          <div className="flex-1 flex flex-col overflow-hidden bg-[#0a0a0f]">
+            <div className="flex items-center gap-2 px-4 py-2 border-b border-white/5 shrink-0">
+              <Mic2 size={14} className="text-purple-400" />
+              <span className="text-[10px] font-black tracking-[0.15em] text-zinc-400">VOCALIDO <span className="text-purple-400">VOICE STUDIO</span></span>
+              <span className="ml-auto text-[9px] text-zinc-600">Sample-based voice synthesis • 29 notes • E3→D6</span>
+            </div>
+            <iframe
+              src="http://localhost:3000/voice-studio.html"
+              className="flex-1 w-full border-0"
+              title="Vocalido Voice Studio"
+              allow="autoplay; microphone"
+            />
+          </div>
+        );
       default:
         return null;
     }
@@ -257,33 +432,6 @@ const App: React.FC = () => {
 
   return (
     <div className={`flex flex-col h-[100dvh] w-full bg-[#0A0A0B] font-sans selection:bg-cyan-500/30 ${performanceMode ? 'perf-mode' : ''}`}>
-      {showOnboarding && (
-        <div className="fixed inset-0 z-[30000] bg-black/95 flex items-center justify-center p-6">
-          <div className="w-full max-w-sm bg-[#111] border border-white/10 rounded-2xl p-8 space-y-6">
-            <h2 className="text-lg font-black text-white uppercase tracking-tight text-center">Welcome to Memolody</h2>
-            <select value={userCountry} onChange={e => handleCountryChange(e.target.value)} className="w-full h-12 bg-white/5 border border-white/10 rounded-xl px-4 text-white text-sm outline-none focus:border-cyan-500">
-              <option value="" disabled>Country...</option>
-              <option value="Thailand">Thailand</option>
-              <option value="USA">USA</option>
-              <option value="Other">Other</option>
-            </select>
-            <div className="flex gap-2">
-              {['en', 'th'].map(lang => (
-                <button key={lang} onClick={() => handleLanguageChange(lang as any)} className={`flex-1 h-11 rounded-xl text-xs font-black uppercase border transition-colors ${preferredLanguage === lang ? 'bg-cyan-500 text-black border-cyan-500' : 'bg-white/5 text-zinc-500 border-white/10'}`}>
-                  {lang.toUpperCase()}
-                </button>
-              ))}
-            </div>
-            <select value={userInstrument} onChange={e => handleInstrumentChange(e.target.value)} className="w-full h-12 bg-white/5 border border-white/10 rounded-xl px-4 text-white text-sm outline-none focus:border-cyan-500">
-              <option value="" disabled>Instrument...</option>
-              <option value="Piano">Piano</option>
-              <option value="Guitar">Guitar</option>
-              <option value="Vocals">Vocals</option>
-            </select>
-            <button onClick={completeOnboarding} className="w-full h-12 bg-white text-black rounded-xl font-black uppercase tracking-widest text-xs active:scale-95">Start</button>
-          </div>
-        </div>
-      )}
 
       <header className="h-12 flex items-center justify-between px-4 bg-[#0A0A0B] border-b border-white/5 shrink-0 z-[10000]">
         <div className="flex items-center gap-2">
@@ -297,10 +445,10 @@ const App: React.FC = () => {
             <button
               key={item.id}
               id={`nav-${item.id}`}
-              onClick={() => item.isNimo ? navigateTo(item.id, true) : navigateTo(item.id)}
+              onClick={() => navigateTo(item.id)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[8px] font-black uppercase tracking-wider transition-colors duration-75 ${
                 item.isNimo
-                  ? 'text-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/10 border border-cyan-500/20'
+                  ? currentView === item.id ? 'bg-cyan-500 text-black' : 'text-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/10 border border-cyan-500/20'
                   : currentView === item.id ? 'bg-white text-black' : 'text-zinc-600 hover:text-zinc-300'
               }`}
             >
@@ -324,9 +472,11 @@ const App: React.FC = () => {
       </header>
 
       <main className="flex-1 overflow-hidden relative bg-[#0A0A0B]">
-        <Suspense fallback={<PageLoader />}>
-          {renderPage()}
-        </Suspense>
+        <PageErrorBoundary>
+          <Suspense fallback={<PageLoader />}>
+            {renderPage()}
+          </Suspense>
+        </PageErrorBoundary>
       </main>
 
       {/* Floating Nimo AI - lazy loaded on first use only */}

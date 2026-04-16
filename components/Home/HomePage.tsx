@@ -1,10 +1,96 @@
-
 import React, { useMemo, useState, useEffect, useCallback, useRef, memo } from 'react';
-import { Sparkles, Mic, MessageSquare, Waves, ChevronRight, Music2, Play, Search, X, Database, SortAsc, RefreshCcw, Loader2, Plus, RotateCcw, Trash2, ChevronDown, Heart, FolderPlus, Folder, Star, Music, MoreVertical, Store, Video, Target } from 'lucide-react';
+import { Sparkles, Mic, MessageSquare, Waves, ChevronRight, Music2, Play, Search, X, Database, SortAsc, RefreshCcw, Loader2, Plus, RotateCcw, Trash2, ChevronDown, Heart, FolderPlus, Folder, Star, Music, MoreVertical, Store, Video, Target, Camera, Upload, Crop } from 'lucide-react';
 import { Song, ViewId, SongFolder } from '../../types';
 import { parseMusicXMLMetadata } from '../../lib/MusicXmlParser';
 import { songStorage } from '../../lib/SongStorage';
+import ScoreSelectionModal from './ScoreSelectionModal';
+import * as Tone from 'tone';
+
+
+
 import AbstractCover from './AbstractCover';
+import CameraCapture from './CameraCapture';
+
+// ── Processing Overlay (shown during OMR) ─────────────────────────────────
+const ProcessingOverlay: React.FC<{ message: string; error?: string | null; onDismiss?: () => void }> = ({ message, error, onDismiss }) => {
+  const [elapsed, setElapsed] = React.useState(0);
+  React.useEffect(() => {
+    const t = setInterval(() => setElapsed(s => s + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Error state
+  if (error) {
+    return (
+      <div className="fixed inset-0 z-[70000] flex flex-col items-center justify-center gap-5 p-6"
+        style={{ background: 'rgba(9,9,12,0.97)', backdropFilter: 'blur(20px)' }}>
+        <div className="w-20 h-20 bg-rose-500/20 rounded-full flex items-center justify-center border border-rose-500/30">
+          <span className="text-3xl">❌</span>
+        </div>
+        <div className="text-center max-w-sm">
+          <p className="text-white font-black uppercase tracking-widest text-sm">Import ไม่สำเร็จ</p>
+          <p className="text-rose-300 text-[11px] font-bold mt-3 leading-relaxed break-words">{error}</p>
+        </div>
+        <button onClick={onDismiss}
+          className="mt-2 bg-white/10 hover:bg-white/20 text-white px-8 py-3 rounded-2xl text-xs font-black uppercase tracking-widest transition-all">
+          ปิด
+        </button>
+      </div>
+    );
+  }
+
+  const step = message.includes('Pass 1') ? 1
+    : message.includes('Pass 2') ? 2
+    : message.includes('บันทึก') ? 3
+    : message.includes('✅') ? 4 : 1;
+
+  return (
+    <div className="fixed inset-0 z-[70000] flex flex-col items-center justify-center gap-5"
+      style={{ background: 'rgba(9,9,12,0.97)', backdropFilter: 'blur(20px)' }}>
+
+      {/* Animated ring */}
+      <div className="relative w-24 h-24 mb-2">
+        <div className="absolute inset-0 rounded-full border-2 border-cyan-500/10 animate-ping" />
+        <div className="absolute inset-0 rounded-full border-4 border-zinc-800" />
+        <div className="absolute inset-0 rounded-full border-4 border-t-cyan-400 border-r-cyan-500/0 border-b-cyan-500/0 border-l-cyan-500/0 animate-spin" />
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className="text-3xl select-none">🎵</span>
+        </div>
+      </div>
+
+      {/* Title */}
+      <div className="text-center">
+        <p className="text-white font-black uppercase tracking-widest text-sm">AI กำลังอ่านโน้ต</p>
+        <p className="text-zinc-500 text-[10px] font-bold uppercase tracking-widest mt-1">Gemini Vision · Sheet Music OCR</p>
+      </div>
+
+      {/* Step progress */}
+      <div className="flex items-center gap-2">
+        {['อ่านโน้ต', 'ตรวจสอบ', 'บันทึก', 'เสร็จ'].map((label, i) => (
+          <div key={i} className="flex items-center gap-2">
+            <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[9px] font-black transition-all duration-500 ${
+              i + 1 < step ? 'bg-cyan-400 text-black' :
+              i + 1 === step ? 'bg-cyan-500/30 border border-cyan-400 text-cyan-300 animate-pulse' :
+              'bg-zinc-800 text-zinc-600'
+            }`}>{i + 1 < step ? '✓' : i + 1}</div>
+            {i < 3 && <div className={`w-6 h-px transition-all duration-500 ${i + 1 < step ? 'bg-cyan-400' : 'bg-zinc-700'}`} />}
+          </div>
+        ))}
+      </div>
+
+      {/* Current message */}
+      <p className="text-cyan-300 text-[11px] font-bold max-w-xs text-center leading-relaxed px-4">{message}</p>
+
+      {/* Elapsed time */}
+      <div className="flex items-center gap-3 mt-1">
+        <span className="text-zinc-600 text-[9px] uppercase tracking-widest">⏱ {elapsed}s</span>
+        <span className="text-zinc-700">·</span>
+        <span className="text-zinc-600 text-[9px] uppercase tracking-widest">ใช้เวลา 30-60 วิ กรุณารอ...</span>
+      </div>
+    </div>
+  );
+};
+
 
 interface HomePageProps {
   onSongSelect: (song: Song, xml?: string, mode?: 'listen' | 'studio') => void;
@@ -15,8 +101,16 @@ interface HomePageProps {
   performanceMode?: boolean;
   onToggleDelete: (id: string, isDeleted: boolean) => void;
   onPermanentDelete: (id: string) => void;
+  onBulkDelete: (ids: string[], isDeleted: boolean) => void;
+  onBulkPermanentDelete: (ids: string[]) => void;
   onRefresh: () => void;
+  onLocalRefresh: () => Promise<void>; // ← fast local-only DB refresh (bypasses cloud sync guard)
   isSyncing?: boolean;
+  onOpenNimo?: (song: Song, xml: string) => void;
+  onImportToNimo?: (file: File) => void;
+  onTogglePublic: (id: string, isPublic: boolean) => void;
+  isAdmin?: boolean;
+  currentUserId?: string;
 }
 
 type SortMode = 'default' | 'az' | 'za' | 'newest' | 'oldest';
@@ -34,17 +128,32 @@ const FOLDER_COLORS = ['#6366f1', '#ec4899', '#f59e0b', '#10b981', '#3b82f6', '#
 
 const PAGE_SIZE = 50;
 
-// ── Song Row with Favorite + Folder Context Menu ──
-const SongRow = memo(({ item, onSongSelect, onToggleDelete, onPermanentDelete, isTrashMode, onToggleFavorite, folders, onAssignFolder }: any) => {
+// ── Song Row with Selection + Context Menu ──
+// ── Song Row with Selection + Context Menu ──
+const SongRow = memo(({ item, onSongSelect, onToggleDelete, onPermanentDelete, isTrashMode, onToggleFavorite, folders, onAssignFolder, isSelected, onToggleSelect, onTogglePublic, activeTab, isAdmin, currentUserId }: any) => {
   const durMin = Math.floor((item.metadata.duration || 0) / 60);
   const durSec = Math.floor((item.metadata.duration || 0) % 60);
   const [showMenu, setShowMenu] = useState(false);
 
   return (
     <div
-      className="flex items-center gap-3 px-4 py-3 border-b border-white/[0.03] hover:bg-white/[0.02] cursor-pointer group active:bg-white/[0.05] relative"
-      onClick={() => !isTrashMode && onSongSelect(item.metadata, item.xmlData, 'listen')}
+      className={`flex items-center gap-3 px-4 py-3 border-b border-white/[0.03] hover:bg-white/[0.02] cursor-pointer group active:bg-white/[0.05] relative transition-colors ${isSelected ? 'bg-cyan-500/5' : ''}`}
+      onClick={() => {
+        if (!isTrashMode) {
+          onSongSelect(item.metadata, item.xmlData, 'listen');
+        }
+      }}
     >
+      {/* Checkbox for Selection - ONLY show if not in Home tab */}
+      {activeTab !== 'home' && (
+        <div 
+          onClick={(e) => { e.stopPropagation(); onToggleSelect && onToggleSelect(item.metadata.id); }}
+          className={`w-5 h-5 rounded-md border flex items-center justify-center transition-all shrink-0 ${isSelected ? 'bg-cyan-500 border-cyan-500 text-black' : 'border-white/10 text-transparent group-hover:border-cyan-500/50'}`}
+        >
+          <div className={`w-2 h-2 rounded-sm bg-white ${isSelected ? 'opacity-100' : 'opacity-0'}`} />
+        </div>
+      )}
+
       <div className="w-10 h-10 rounded-xl shrink-0 overflow-hidden relative shadow-md group-hover:shadow-cyan-500/20 transition-shadow">
         <AbstractCover seed={item.metadata.title || item.metadata.id} size={80} />
         <div className="absolute inset-0 flex items-center justify-center bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -60,6 +169,9 @@ const SongRow = memo(({ item, onSongSelect, onToggleDelete, onPermanentDelete, i
         </div>
         <p className="text-[8px] font-bold text-zinc-600 uppercase tracking-widest truncate">
           {item.metadata.artist || 'Unknown Maestro'}
+          {item.metadata.ownerName && item.metadata.ownerName !== 'Admin' && (
+            <span className="ml-1 text-cyan-500/80 lowercase italic font-medium"> @{item.metadata.ownerName}</span>
+          )}
           {item.metadata.folderId && <span className="ml-2 text-indigo-400/60">• {folders?.find((f: SongFolder) => f.id === item.metadata.folderId)?.name || ''}</span>}
         </p>
       </div>
@@ -128,6 +240,13 @@ const SongRow = memo(({ item, onSongSelect, onToggleDelete, onPermanentDelete, i
             {/* Distribution */}
             <div className="px-3 py-1.5 text-[7px] font-black text-zinc-700 uppercase tracking-widest border-t border-white/5 mt-1">Distribution</div>
             <button
+              onClick={(e) => { e.stopPropagation(); setShowMenu(false); onTogglePublic(item.metadata.id, !item.metadata.isPublic); }}
+              className={`w-full px-4 py-2 text-[9px] font-bold text-left flex items-center gap-2 border-t border-white/5 ${item.metadata.isPublic ? 'text-cyan-400' : 'text-zinc-500'} hover:bg-white/5`}
+            >
+              <Music size={10} />
+              {item.metadata.isPublic ? 'REMOVE FROM HOME' : 'SHARE TO HOME FEED'}
+            </button>
+            <button
               onClick={(e) => { e.stopPropagation(); alert('Publishing to Marketplace...'); setShowMenu(false); }}
               className="w-full px-4 py-2 text-[9px] font-bold text-left flex items-center gap-2 text-amber-500 hover:bg-white/5 hover:text-amber-400"
             >
@@ -179,6 +298,26 @@ const SongRow = memo(({ item, onSongSelect, onToggleDelete, onPermanentDelete, i
               32 BARS LIMIT
               <ChevronRight size={10} className="opacity-0 group-hover/btn:opacity-100 transition-opacity" />
             </button>
+
+            {/* Danger Zone */}
+            {(() => {
+              const isOwner = currentUserId && item.metadata.ownerId === currentUserId;
+              if (activeTab !== 'home' || isAdmin || isOwner) {
+                return (
+                  <>
+                    <div className="px-3 py-1.5 text-[7px] font-black text-rose-500/70 uppercase tracking-widest border-t border-white/5 mt-1">Danger Zone</div>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onToggleDelete(item.metadata.id, true); setShowMenu(false); }}
+                      className="w-full px-4 py-2 text-[9px] font-bold text-left flex items-center gap-2 text-rose-500 hover:bg-rose-500/10 hover:text-rose-400"
+                    >
+                      <Trash2 size={10} />
+                      MOVE TO TRASH
+                    </button>
+                  </>
+                );
+              }
+              return null;
+            })()}
           </div>
         </>
       )}
@@ -188,8 +327,23 @@ const SongRow = memo(({ item, onSongSelect, onToggleDelete, onPermanentDelete, i
 
 const HomePage: React.FC<HomePageProps> = ({
   onSongSelect, userLibrary = [], onEnterStudio, onViewVault, onSearch,
-  performanceMode, onToggleDelete, onPermanentDelete, onRefresh, isSyncing
+  performanceMode, onToggleDelete, onPermanentDelete, onBulkDelete, onBulkPermanentDelete, onRefresh, onLocalRefresh, isSyncing, onOpenNimo, onImportToNimo,
+  onTogglePublic, isAdmin, currentUserId
 }) => {
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  // Resume Tone.js audio context on first interaction
+  useEffect(() => {
+    const resumeAudio = async () => {
+      try {
+        await Tone.start();
+        console.log('🔊 Audio context resumed');
+      } catch (e) {
+        console.warn('Audio context resume failed', e);
+      }
+    };
+    window.addEventListener('click', resumeAudio);
+    return () => window.removeEventListener('click', resumeAudio);
+  }, []);
   const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<FilterTab>('home');
@@ -197,12 +351,73 @@ const HomePage: React.FC<HomePageProps> = ({
   const [showSortDropdown, setShowSortDropdown] = useState(false);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [showImport, setShowImport] = useState(false);
+  const [showCamera, setShowCamera] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [processingMsg, setProcessingMsg] = useState('');
+  const [processingError, setProcessingError] = useState<string | null>(null);
+  // After import/capture — ask user: Edit or NIMO?
+  const [pendingImport, setPendingImport] = useState<{ metadata: Song; xmlData: string } | null>(null);
+  const [pendingSelectionFile, setPendingSelectionFile] = useState<File | null>(null);
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [newFolderColor, setNewFolderColor] = useState(FOLDER_COLORS[0]);
   const [folders, setFolders] = useState<SongFolder[]>([]);
   const [activeFolder, setActiveFolder] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+
+  const handleToggleSelect = useCallback((id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const handleSelectAll = useCallback((ids: string[]) => {
+    if (selectedIds.size === ids.length) setSelectedIds(new Set());
+    else setSelectedIds(new Set(ids));
+  }, [selectedIds]);
+
+  const handleBulkAction = useCallback(async (action: 'delete' | 'permanent' | 'restore') => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+
+    if (action === 'delete') onBulkDelete(ids, true);
+    else if (action === 'permanent') onBulkPermanentDelete(ids);
+    else if (action === 'restore') onBulkDelete(ids, false);
+
+    setSelectedIds(new Set());
+  }, [selectedIds, onBulkDelete, onBulkPermanentDelete]);
+
+  // Derived state for bulk actions
+  const isAllSelectedOwnedByMe = useMemo(() => {
+    if (selectedIds.size === 0) return false;
+    const selectedSongs = userLibrary.filter(s => selectedIds.has(s.metadata.id));
+    return selectedSongs.every(s => currentUserId && s.metadata.ownerId === currentUserId);
+  }, [selectedIds, userLibrary, currentUserId]);
+
+  const handleCameraCapture = useCallback(async ({ file }: { dataUrl: string; file: File }) => {
+    setShowCamera(false);
+    setIsProcessing(true);
+    setProcessingMsg('🤖 Gemini AI กำลังอ่านโน้ตจากภาพ...');
+    try {
+      const { metadata, xmlData } = await parseMusicXMLMetadata(file);
+      metadata.origin = 'load';
+      await songStorage.saveSong(metadata, xmlData);
+      await onLocalRefresh();
+      onRefresh();
+      // Go straight to player
+      onSongSelect(metadata, xmlData, 'listen');
+      setIsProcessing(false); 
+      setProcessingMsg('');
+    } catch (err: any) {
+      setProcessingError(err?.message || 'Camera processing failed');
+      setProcessingMsg('');
+    }
+  }, [onRefresh, onLocalRefresh, onSongSelect]);
+
 
   // Load folders on mount
   useEffect(() => {
@@ -250,7 +465,8 @@ const HomePage: React.FC<HomePageProps> = ({
     let list: typeof userLibrary = [];
     switch (activeTab) {
       case 'home':
-        list = userLibrary.filter(item => !item.metadata.isDeleted);
+        // Only show songs that are public OR NOT from 'load' origin (imported/scanned)
+        list = userLibrary.filter(item => !item.metadata.isDeleted && (item.metadata.origin !== 'load' || item.metadata.isPublic));
         break;
       case 'favorites':
         list = userLibrary.filter(item => !item.metadata.isDeleted && item.metadata.isFavorite);
@@ -309,15 +525,94 @@ const HomePage: React.FC<HomePageProps> = ({
     const files = e.target.files;
     if (!files || files.length === 0) return;
     setShowImport(false);
-    try {
-      for (let i = 0; i < files.length; i++) {
-        const { metadata, xmlData } = await parseMusicXMLMetadata(files[i]);
-        metadata.origin = 'load';
-        await songStorage.saveSong(metadata, xmlData);
-      }
-      onRefresh();
-    } catch { alert("Import failed."); }
+
+    const fileList: File[] = Array.from(files as FileList);
+    const file = fileList[0];
+
+    const isPdf = /\.pdf$/i.test(file.name) || file.type === 'application/pdf';
+    const isImg = /\.(jpg|jpeg|png|webp)$/i.test(file.name) || file.type.startsWith('image/');
+
+    if (isPdf || isImg) {
+      // Route to ScoreSelectionModal for cropping
+      setPendingSelectionFile(file);
+      e.target.value = '';
+      return;
+    }
+
+    // Non-image files (XML, MIDI) go directly to processImport
+    e.target.value = '';
+    processImport(fileList);
   };
+
+  const processImport = async (files: File | File[] | Blob, originalFileName?: string) => {
+    console.log('[Import] 🚀 processImport called:', { files, originalFileName });
+    setProcessingError(null);
+    setIsProcessing(true);
+    setProcessingMsg('🤖 Pass 1: Gemini กำลังอ่านโน้ต...');
+
+    let fileList: File[];
+    if (Array.isArray(files)) {
+      fileList = files;
+    } else if (files instanceof File) {
+      fileList = [files];
+    } else {
+      fileList = [new File([files], originalFileName || 'upload.jpg', { type: 'image/jpeg' })];
+    }
+
+    console.log('[Import] fileList:', fileList.map(f => `${f.name} (${f.type}, ${(f.size/1024).toFixed(0)}KB)`));
+
+    try {
+      let lastMetadata: any = null;
+      let lastXml = '';
+
+      for (let i = 0; i < fileList.length; i++) {
+        const f = fileList[i];
+        console.log(`[Import] Processing file ${i+1}/${fileList.length}: ${f.name} (${f.type}, ${f.size} bytes)`);
+
+        if (fileList.length > 1) setProcessingMsg(`ไฟล์ ${i + 1}/${fileList.length}...`);
+        setProcessingMsg('🤖 Pass 1: Gemini กำลังอ่านโน้ต...');
+
+        console.log('[Import] Calling parseMusicXMLMetadata...');
+        const { metadata, xmlData } = await parseMusicXMLMetadata(f, false, (msg) => setProcessingMsg(msg));
+        console.log('[Import] ✅ parseMusicXMLMetadata returned:', metadata.title, '| xmlData length:', xmlData.length);
+
+        setProcessingMsg('💾 กำลังบันทึกลง My Songs...');
+
+        if (originalFileName && (metadata.title === 'NEURAL MASTERPIECE' || metadata.title.includes('UNTITLED'))) {
+          metadata.title = originalFileName.replace(/\.[^/.]+$/, '').replace(/_/g, ' ') + ' (Selection)';
+        }
+
+        metadata.origin = 'load';
+        console.log('[Import] Saving to IndexedDB:', metadata.id, metadata.title);
+        await songStorage.saveSong(metadata, xmlData);
+        console.log('[Import] ✅ Saved to IndexedDB');
+        lastMetadata = metadata;
+        lastXml = xmlData;
+      }
+
+      setProcessingMsg('✅ บันทึกเรียบร้อย! กำลังเปิด Player...');
+      console.log('[Import] Refreshing song list...');
+      await onLocalRefresh();
+      onRefresh();
+
+      if (lastMetadata && lastXml) {
+        console.log('[Import] 🎵 Navigating to Player with:', lastMetadata.title);
+        // Clear background state before navigating
+        setIsProcessing(false);
+        setProcessingMsg('');
+        onSongSelect(lastMetadata, lastXml, 'listen');
+      } else {
+        setIsProcessing(false);
+        setProcessingMsg('');
+      }
+    } catch (err: any) {
+      console.error('[Import] ❌ FULL ERROR:', err);
+      // Keep isProcessing=true but set error so overlay shows it
+      setProcessingError(err?.message || 'Failed to process file');
+      setProcessingMsg(''); 
+    }
+  };
+
 
   const TABS: { id: FilterTab, label: string, count: number, color: string }[] = [
     { id: 'home', label: 'Home', count: totalCount, color: 'text-cyan-400' },
@@ -336,6 +631,149 @@ const HomePage: React.FC<HomePageProps> = ({
         <div className="flex flex-col items-center gap-2">
           <h1 className="text-2xl font-black text-white tracking-[0.4em] uppercase italic">MEMOLODY</h1>
           <p className="text-[8px] font-black text-zinc-500 uppercase tracking-[0.3em]">Hear by Eye, Play by Ear</p>
+        </div>
+
+        {/* ── TWO BUTTONS ROW: Camera (left) + Import (right) ── */}
+        <div className="flex gap-3">
+
+          {/* LEFT — Camera Capture Button */}
+          <button
+            id="camera-capture-btn"
+            onClick={() => setShowCamera(true)}
+            className="group relative flex-1 h-[88px] rounded-[24px] overflow-hidden active:scale-[0.97] transition-all duration-200 select-none"
+            style={{
+              background: 'linear-gradient(145deg, #1c1206, #2a1a07, #1a1205)',
+              boxShadow: '0 8px 0px rgba(0,0,0,0.8), 0 12px 32px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,200,80,0.15), 0 0 0 1px rgba(180,120,20,0.3)',
+            }}
+          >
+            {/* Amber leather texture overlay */}
+            <div className="absolute inset-0 opacity-20" style={{
+              backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,180,50,0.04) 2px, rgba(255,180,50,0.04) 4px)',
+            }} />
+            {/* Amber top shine */}
+            <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-amber-400/40 to-transparent" />
+            {/* Shimmer hover */}
+            <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500" style={{
+              background: 'linear-gradient(120deg, transparent 20%, rgba(255,200,80,0.08) 50%, transparent 80%)',
+            }} />
+
+            <div className="relative flex flex-col items-center justify-center gap-1.5 h-full">
+              {/* 3D Camera Body */}
+              <div className="relative" style={{ perspective: '180px' }}>
+                <div style={{ transform: 'rotateX(10deg)', transformStyle: 'preserve-3d' }}>
+                  {/* Camera body rect */}
+                  <div className="relative w-[44px] h-[30px]">
+                    {/* Top aluminum section (top 40%) */}
+                    <div className="absolute top-0 left-0 right-0 h-[40%] rounded-t-[5px]" style={{
+                      background: 'linear-gradient(to bottom, #e5e7eb, #9ca3af)',
+                      boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.4)',
+                    }}>
+                      {/* Mode dial */}
+                      <div className="absolute right-1 top-0.5 w-2.5 h-2.5 rounded-full" style={{
+                        background: 'conic-gradient(#374151, #9ca3af, #374151, #6b7280)',
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.5)',
+                      }} />
+                    </div>
+                    {/* Bottom black leather section (bottom 60%) */}
+                    <div className="absolute bottom-0 left-0 right-0 h-[60%] rounded-b-[5px]" style={{
+                      background: '#0a0a0a',
+                      boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.6)',
+                      backgroundImage: 'repeating-linear-gradient(45deg, rgba(255,255,255,0.015) 0px, rgba(255,255,255,0.015) 1px, transparent 1px, transparent 5px)',
+                    }} />
+                    {/* Lens ring (chrome) */}
+                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[20px] h-[20px] rounded-full flex items-center justify-center" style={{
+                      background: 'conic-gradient(#374151, #9ca3af, #e5e7eb, #9ca3af, #374151)',
+                      boxShadow: '0 0 0 1px rgba(0,0,0,0.8), 0 2px 8px rgba(0,0,0,0.9)',
+                    }}>
+                      {/* Lens glass */}
+                      <div className="w-[12px] h-[12px] rounded-full" style={{
+                        background: 'radial-gradient(circle at 35% 30%, #1e3a5f 0%, #0a1830 50%, #020810 100%)',
+                        boxShadow: 'inset 0 1px 3px rgba(80,160,255,0.4)',
+                      }}>
+                        <div className="w-[4px] h-[4px] rounded-full ml-[2px] mt-[1px]" style={{
+                          background: 'radial-gradient(circle, rgba(180,220,255,0.7) 0%, transparent 100%)',
+                        }} />
+                      </div>
+                    </div>
+                    {/* Shutter button (top right) */}
+                    <div className="absolute -top-1 right-2 w-[6px] h-[6px] rounded-full" style={{
+                      background: 'linear-gradient(to bottom, #d1d5db, #6b7280)',
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.7)',
+                    }} />
+                  </div>
+                </div>
+              </div>
+              <p className="text-[9px] font-black text-amber-400 uppercase tracking-[0.15em] leading-tight">Scan Score</p>
+              <p className="text-[6px] font-bold text-amber-500/50 uppercase tracking-widest">Photo → XML · Gemini AI</p>
+            </div>
+
+            {/* Bottom shadow depth */}
+            <div className="absolute bottom-0 left-3 right-3 h-[2px]" style={{
+              background: 'rgba(0,0,0,0.5)', filter: 'blur(2px)',
+            }} />
+          </button>
+
+          {/* RIGHT — Import File Button */}
+          <button
+            id="file-import-btn"
+            onClick={() => cameraInputRef.current?.click()}
+            className="group relative flex-1 h-[88px] rounded-[24px] overflow-hidden active:scale-[0.97] transition-all duration-200 select-none"
+            style={{
+              background: 'linear-gradient(145deg, #0d1117, #161b22, #0d1117)',
+              boxShadow: '0 8px 0 rgba(0,0,0,0.8), 0 12px 28px rgba(0,149,255,0.12), inset 0 1px 0 rgba(0,149,255,0.15), 0 0 0 1px rgba(0,149,255,0.12)',
+            }}
+          >
+            {/* Blue glow top edge */}
+            <div className="absolute top-0 left-0 right-0 h-[1px]" style={{
+              background: 'linear-gradient(to right, transparent, rgba(0,229,255,0.5), transparent)',
+            }} />
+            {/* Circuit board texture */}
+            <div className="absolute inset-0 opacity-10" style={{
+              backgroundImage: 'repeating-linear-gradient(0deg, rgba(0,229,255,0.3) 0px, rgba(0,229,255,0.3) 1px, transparent 1px, transparent 24px), repeating-linear-gradient(90deg, rgba(0,229,255,0.3) 0px, rgba(0,229,255,0.3) 1px, transparent 1px, transparent 24px)',
+            }} />
+            {/* Hover shimmer */}
+            <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500" style={{
+              background: 'radial-gradient(ellipse at 50% 0%, rgba(0,229,255,0.12) 0%, transparent 70%)',
+            }} />
+
+            <div className="relative flex flex-col items-center justify-center gap-1.5 h-full">
+              {/* 3D Import Icon Box */}
+              <div className="relative" style={{ perspective: '180px' }}>
+                <div style={{ transform: 'rotateX(8deg) rotateY(-4deg)', transformStyle: 'preserve-3d' }}>
+                  <div className="w-[36px] h-[36px] rounded-xl flex items-center justify-center" style={{
+                    background: 'linear-gradient(135deg, rgba(0,229,255,0.15), rgba(0,100,200,0.08))',
+                    border: '1.5px solid rgba(0,229,255,0.3)',
+                    boxShadow: '0 4px 12px rgba(0,229,255,0.2), inset 0 1px 0 rgba(0,229,255,0.2)',
+                  }}>
+                    <Upload size={18} className="text-cyan-400" strokeWidth={2.5} />
+                  </div>
+                  {/* Bottom face (3D depth) */}
+                  <div className="absolute -bottom-[4px] left-[2px] right-[-2px] h-[36px] rounded-xl" style={{
+                    background: 'rgba(0,60,120,0.3)',
+                    transform: 'rotateX(-90deg)',
+                    transformOrigin: 'bottom',
+                  }} />
+                </div>
+              </div>
+              <p className="text-[9px] font-black text-cyan-400 uppercase tracking-[0.15em] leading-tight">Import File</p>
+              <p className="text-[6px] font-bold text-cyan-500/50 uppercase tracking-widest">XML · PDF · MIDI · Image</p>
+            </div>
+
+            {/* Bottom shadow depth */}
+            <div className="absolute bottom-0 left-3 right-3 h-[2px]" style={{
+              background: 'rgba(0,0,0,0.5)', filter: 'blur(2px)',
+            }} />
+          </button>
+
+          {/* Hidden file input for Import button */}
+          <input
+            ref={cameraInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            accept=".xml,.musicxml,.mxl,.mid,.midi,.pdf,.png,.jpg,.jpeg"
+            onChange={handleImport}
+          />
         </div>
 
         {/* Search */}
@@ -395,7 +833,7 @@ const HomePage: React.FC<HomePageProps> = ({
             {TABS.map(tab => (
               <button
                 key={tab.id}
-                onClick={() => { setActiveTab(tab.id); setActiveFolder(null); }}
+                onClick={() => { setActiveTab(tab.id); setActiveFolder(null); setSelectedIds(new Set()); }}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all shrink-0
                   ${activeTab === tab.id ? `${tab.color} bg-white/[0.05]` : 'text-zinc-700 hover:text-zinc-400'}`}
               >
@@ -487,6 +925,12 @@ const HomePage: React.FC<HomePageProps> = ({
                   onToggleFavorite={handleToggleFavorite}
                   folders={folders}
                   onAssignFolder={handleAssignFolder}
+                  isSelected={selectedIds.has(item.metadata.id)}
+                  onToggleSelect={handleToggleSelect}
+                  onTogglePublic={onTogglePublic}
+                  activeTab={activeTab}
+                  isAdmin={isAdmin}
+                  currentUserId={currentUserId}
                 />
               ))}
               {hasMore && (
@@ -544,13 +988,13 @@ const HomePage: React.FC<HomePageProps> = ({
             <div className="w-20 h-20 rounded-[24px] bg-cyan-500/10 flex items-center justify-center text-cyan-400"><Database size={40} /></div>
             <div className="text-center">
               <h2 className="text-xl font-black text-white italic tracking-tighter uppercase mb-2">Import Node</h2>
-              <p className="text-[9px] font-bold text-zinc-600 uppercase tracking-widest">Select MusicXML or MIDI to integrate</p>
+              <p className="text-[9px] font-bold text-zinc-600 uppercase tracking-widest">MusicXML · MIDI · PDF · PNG · JPG · Scan Score</p>
             </div>
             <button onClick={() => fileInputRef.current?.click()}
               className="w-full h-14 bg-cyan-500 text-black rounded-2xl font-black uppercase tracking-widest text-xs active:scale-95 transition-transform">
               Select Files
             </button>
-            <input ref={fileInputRef} type="file" multiple className="hidden" accept=".xml,.musicxml,.mxl,.mid,.midi" onChange={handleImport} />
+            <input ref={fileInputRef} type="file" multiple className="hidden" accept=".xml,.musicxml,.mxl,.mid,.midi,.pdf,.png,.jpg,.jpeg,.webp" onChange={handleImport} />
           </div>
         </div>
       )}
@@ -564,6 +1008,89 @@ const HomePage: React.FC<HomePageProps> = ({
         </button>
       </div>
 
+      {/* ── BULK ACTION BAR ── */}
+      {selectedIds.size > 0 && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 px-6 py-4 bg-zinc-900/90 backdrop-blur-2xl border border-white/10 rounded-[28px] shadow-2xl z-[10000] flex items-center gap-6 animate-in slide-in-from-bottom-8 duration-300">
+          <div className="flex flex-col">
+            <span className="text-[10px] font-black text-white uppercase italic tracking-widest">{selectedIds.size} STREAMS SELECTED</span>
+            <button
+              onClick={() => handleSelectAll(filteredLibrary.map(i => i.metadata.id))}
+              className="text-[8px] font-bold text-cyan-400 uppercase text-left hover:text-white transition-colors"
+            >
+              {selectedIds.size === filteredLibrary.length ? 'DESELECT ALL' : 'SELECT ALL SONGS'}
+            </button>
+          </div>
+
+          <div className="h-8 w-[1px] bg-white/10" />
+
+          <div className="flex gap-2">
+            {activeTab === 'trash' ? (
+              <>
+                <button
+                  onClick={() => handleBulkAction('restore')}
+                  className="px-5 py-2.5 bg-emerald-500 text-black text-[9px] font-black uppercase tracking-widest rounded-xl hover:bg-emerald-400 transition-all flex items-center gap-2"
+                >
+                  <RotateCcw size={12} /> RESTORE
+                </button>
+                <button
+                  onClick={() => handleBulkAction('permanent')}
+                  className="px-5 py-2.5 bg-rose-500 text-white text-[9px] font-black uppercase tracking-widest rounded-xl hover:bg-rose-400 transition-all flex items-center gap-2"
+                >
+                  <Trash2 size={12} /> PURGE FOREVER
+                </button>
+              </>
+            ) : (activeTab !== 'home' || isAdmin || isAllSelectedOwnedByMe) ? (
+              <button
+                onClick={() => handleBulkAction('delete')}
+                className="px-5 py-2.5 bg-rose-500/10 border border-rose-500/30 text-rose-500 text-[9px] font-black uppercase tracking-widest rounded-xl hover:bg-rose-500 hover:text-white transition-all flex items-center gap-2"
+              >
+                <Trash2 size={12} /> MOVE TO TRASH
+              </button>
+            ) : null}
+            <button
+              onClick={() => setSelectedIds(new Set())}
+              className="px-5 py-2.5 bg-white/5 text-zinc-400 text-[9px] font-black uppercase tracking-widest rounded-xl hover:bg-white/10 transition-all"
+            >
+              CANCEL
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Camera Capture Modal ── */}
+      {showCamera && (
+        <CameraCapture
+          onCapture={handleCameraCapture}
+          onClose={() => setShowCamera(false)}
+        />
+      )}
+
+      {/* ── OCR / Import Processing Overlay ── */}
+      {isProcessing && (
+        <ProcessingOverlay
+          message={processingMsg}
+          error={processingError}
+          onDismiss={() => { setIsProcessing(false); setProcessingMsg(''); setProcessingError(null); }}
+        />
+      )}
+
+
+
+
+      {/* Selective Crop Modal */}
+      {pendingSelectionFile && (
+        <ScoreSelectionModal
+          file={pendingSelectionFile}
+          onConfirm={(croppedBlob) => {
+            const fileName = pendingSelectionFile.name;
+            console.log('[ScoreSelection] ✅ onConfirm called. croppedBlob:', croppedBlob, 'type:', croppedBlob instanceof File ? (croppedBlob as File).type : 'Blob', 'size:', croppedBlob.size);
+            setPendingSelectionFile(null); // close modal
+            // processImport handles the rest (Gemini Vision → save → Player)
+            processImport(croppedBlob, fileName);
+          }}
+          onCancel={() => setPendingSelectionFile(null)}
+        />
+      )}
     </div>
   );
 };

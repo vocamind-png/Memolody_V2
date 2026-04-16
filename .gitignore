@@ -6,3 +6,15 @@ dist
 build
 *.log
 .vercel
+
+# Vocalido / AI Training Data
+**/checkpoints/
+**/data/vocalido/
+**/binary_data/
+*.ckpt
+*.onnx
+*.wav
+*.mp3
+**/__pycache__/
+.cache/
+.ipynb_checkpoints/

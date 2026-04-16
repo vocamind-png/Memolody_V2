@@ -10,6 +10,7 @@ export class MusicEngine {
   private trackMeters: Map<string, Tone.Meter> = new Map();
   private trackVocalLayers: Map<string, Tone.Player[]> = new Map();
   private trackModes: Map<string, 'instrument' | 'vocal'> = new Map();
+  public vocalAudioElements: Map<string, HTMLAudioElement> = new Map(); // For AI Vocal playback
 
   private masterBus: Tone.Gain | null = null;
   private masterGain: Tone.Gain | null = null;
@@ -28,6 +29,7 @@ export class MusicEngine {
   private baseStartTime = 0;
   private currentPart: Tone.Part | null = null;
   private loadedSongHash = '';  // Cache to prevent re-loading the same song
+  public lastLoadedNotes: ParsedNote[] = []; // Store notes for plugins/rendering
 
   // ── Loop (Section repeat) ──────────────────────────────────────────────
   private loopStartBeats = 0;
@@ -87,6 +89,7 @@ export class MusicEngine {
     notes: ParsedNote[],
     timeSignature: { beats: number, beatType: number },
     partNames: Record<string, string>,
+    trackClefs: Record<string, string>,
     metadata: { title: string, artist: string, bpm: number, key: string }
   } {
     // Default values if XML is missing or empty
@@ -96,6 +99,7 @@ export class MusicEngine {
       notes: [] as ParsedNote[],
       timeSignature: { beats: 4, beatType: 4 },
       partNames: {} as Record<string, string>,
+      trackClefs: {} as Record<string, string>,
       metadata: defaultMeta
     };
 
@@ -136,13 +140,16 @@ export class MusicEngine {
     // Parse Notes
     const notes: ParsedNote[] = [];
     const partNames: Record<string, string> = {};
+    const trackClefs: Record<string, string> = {};
     let beats = 4;
     let beatType = 4;
 
     const parts = xmlDoc.querySelectorAll("part");
     parts.forEach((part) => {
       const partId = part.getAttribute("id") || "P1";
-      const basePartName = xmlDoc.querySelector(`score-part[id="${partId}"] part-name`)?.textContent || "Part";
+      // Escape partId for safe use in selector
+      const safePartId = partId.replace(/"/g, '\\"');
+      const basePartName = xmlDoc.querySelector(`score-part[id="${safePartId}"] part-name`)?.textContent || "Part";
       let currentTime = 0;
       let divisions = 1; // persists across measures — most MusicXML only declares this in measure 1
       // --- [UNROLL REPEATS — STACK-BASED SIMULATOR] ---
@@ -266,6 +273,14 @@ export class MusicEngine {
           divisions = parseInt(divNode.textContent || "1") || 1;
         }
 
+        // Detect Clefs
+        const clefNodes = measure.querySelectorAll("attributes clef");
+        clefNodes.forEach(clef => {
+          const staffNum = clef.getAttribute("number") || "1";
+          const sign = clef.querySelector("sign")?.textContent || "G";
+          trackClefs[`${partId}-S${staffNum}`] = sign;
+        });
+
         Array.from(measure.children).forEach((child) => {
           if (child.tagName === "backup") {
             const duration = (parseInt(child.querySelector("duration")?.textContent || "0") / divisions);
@@ -288,12 +303,25 @@ export class MusicEngine {
 
             if (!isRest) {
               const step = child.querySelector("step")?.textContent || "C";
-              const octave = parseInt(child.querySelector("octave")?.textContent || "4");
-              const alter = parseInt(child.querySelector("alter")?.textContent || "0");
+              const octaveVal = child.querySelector("octave")?.textContent;
+              const octave = octaveVal ? parseInt(octaveVal) : 4;
+              const alterVal = child.querySelector("alter")?.textContent;
+              const alter = alterVal ? parseInt(alterVal) : 0;
+              
+              const safeOctave = isNaN(octave) ? 4 : octave;
+              const safeAlter = isNaN(alter) ? 0 : alter;
+              
+              // Extract Lyric/Solfege from XML
+              let solfegeVal = "";
+              const lyricTextNode = child.querySelector("lyric text");
+              if (lyricTextNode) {
+                solfegeVal = lyricTextNode.textContent?.trim() || "";
+              }
+
               notes.push({
-                trackId: currentTrackId, step, octave, alter, duration,
-                startTime: isChord ? (currentTime - duration) : currentTime,
-                solfege: "", staff, voice, measure: measureNum
+                trackId: currentTrackId, step, octave: safeOctave, alter: safeAlter, duration: isNaN(duration) ? 0.5 : duration,
+                startTime: isChord ? (currentTime - (isNaN(duration) ? 0.5 : duration)) : currentTime,
+                solfege: solfegeVal, staff: isNaN(staff) ? 1 : staff, voice: isNaN(voice) ? 1 : voice, measure: measureNum
               });
             }
             if (!isChord) currentTime += duration;
@@ -308,10 +336,13 @@ export class MusicEngine {
       }
     });
 
+    this.lastLoadedNotes = notes;
+
     return {
       notes,
       timeSignature: { beats, beatType },
       partNames,
+      trackClefs,
       metadata: { title: title.trim(), artist: artist.trim(), bpm, key }
     };
   }
@@ -349,16 +380,35 @@ export class MusicEngine {
     }
   }
 
-  async addVocalLayer(trackId: string, buffer: AudioBuffer) {
-    await this.ensureInitialized();
-    const channel = this.trackChannels.get(trackId) || this.masterBus!;
-    const player = new Tone.Player(buffer).connect(channel);
+  async addVocalLayer(trackId: string, audioUrl: string) {
+    // 1. Clean up existing players for this track
+    this.clearVocalLayers(trackId);
 
+    // 2. Create new Player and connect to track's channel
+    const channel = this.trackChannels.get(trackId);
+    if (!channel) {
+      console.warn(`[MusicEngine] Can't add vocal: Track ${trackId} has no channel.`);
+      return;
+    }
+
+    const player = new Tone.Player({
+      url: audioUrl,
+      autostart: false,
+      volume: 0, // Control via channel
+    }).connect(channel);
+
+    // Wait for buffer to load
+    await Tone.loaded();
+
+    // Store in vocal layers map
     if (!this.trackVocalLayers.has(trackId)) {
       this.trackVocalLayers.set(trackId, []);
     }
     this.trackVocalLayers.get(trackId)!.push(player);
+
+    console.log(`[MusicEngine] 🎤 Vocal layer (Tone.Player) loaded for track: ${trackId} (${player.buffer.duration.toFixed(2)}s)`);
   }
+
 
   clearVocalLayers(trackId: string) {
     const layers = this.trackVocalLayers.get(trackId);
@@ -472,7 +522,14 @@ export class MusicEngine {
         channel.pan.rampTo(t.pan, 0.1);
         const hasSolo = tracks.some(tr => tr.isSolo);
         channel.mute = t.isMuted || (hasSolo && !t.isSolo);
+
+        // If in vocal mode, the sampler (instrument) should be silent
+        const sampler = this.trackSamplers.get(t.id);
+        if (sampler) {
+          sampler.volume.value = t.mode === 'vocal' ? -100 : 0;
+        }
       }
+      if (t.mode) this.trackModes.set(t.id, t.mode);
     });
   }
 
@@ -498,10 +555,16 @@ export class MusicEngine {
         if (player.state === 'started') player.stop();
       });
     });
+    // 🎤 Sync HTML Audio Vocal Elements
+    this.vocalAudioElements.forEach(audio => {
+      audio.currentTime = s;
+      if (Tone.Transport.state !== 'started') audio.pause();
+    });
   }
 
   async loadSong(notes: ParsedNote[], tracks: TrackState[] = [], transpose = 0, timeSignature: { beats: number } = { beats: 4 }, isMetronomeOn = false) {
     await this.ensureInitialized();
+    this.lastLoadedNotes = notes; // Cache for plugins/rendering
     if (notes.length === 0) return;
 
     // Generate a hash to check if data actually changed
@@ -548,18 +611,22 @@ export class MusicEngine {
     });
 
     this.currentPart = new Tone.Part((time, event) => {
-      const sampler = this.trackSamplers.get(event.trackId);
-      if (sampler) {
-        sampler.triggerAttackRelease(event.freq, event.duration, time, 0.75);
+      // Only play the sampler if the track is in 'instrument' mode
+      if (this.trackModes.get(event.trackId) !== 'vocal') {
+        const sampler = this.trackSamplers.get(event.trackId);
+        if (sampler) {
+          sampler.triggerAttackRelease(event.freq, event.duration, time, 0.75);
+        }
       }
-      // Track which note is currently active for laser sync
+      
+      // Always track which note is currently active for laser sync (even in vocal mode)
       this.currentNoteId = event.noteId || '';
       this.currentNoteTime = event.unrolledTime;
       this.currentMeasure = event.measure || '';
-      // DEBUG: log first few callbacks to verify measure field
+      
       if ((event as any).__logged === undefined) {
         (event as any).__logged = true;
-        console.log(`[Part CB] measure="${event.measure}" noteId="${event.noteId}" time=${time.toFixed(2)}`);
+        console.log(`[Part CB] measure="${event.measure}" mode="${this.trackModes.get(event.trackId)}" noteId="${event.noteId}" time=${time.toFixed(2)}`);
       }
     }, events).start(0);
 
@@ -586,24 +653,27 @@ export class MusicEngine {
       this.trackVocalLayers.forEach(layers => {
         layers.forEach(player => {
           if (player.state === 'started') player.stop();
-          if (this.baseStartTime < player.buffer.duration) {
-            player.start(startTime, this.baseStartTime);
+          const offset = Math.max(0, Tone.Transport.seconds - this.countInDuration);
+          if (offset < player.buffer.duration) {
+            player.start(startTime, offset);
           }
         });
       });
     }
   }
 
-  // Resume from paused position (does NOT rebuild Part or reset position)
+  // Resume from paused position
   async resume() {
     await this.ensureInitialized();
     if (Tone.Transport.state === 'paused') {
       const startTime = Tone.now() + 0.05;
+      const offset = Math.max(0, Tone.Transport.seconds - this.countInDuration);
       Tone.Transport.start(startTime);
       this.trackVocalLayers.forEach(layers => {
         layers.forEach(player => {
-          if (this.baseStartTime < player.buffer.duration) {
-            player.start(startTime, this.baseStartTime);
+          if (player.state === 'started') player.stop();
+          if (offset < player.buffer.duration) {
+            player.start(startTime, offset);
           }
         });
       });
@@ -616,6 +686,10 @@ export class MusicEngine {
       layers.forEach(player => {
         if (player.state === 'started') player.stop();
       });
+    });
+    // 🎤 Sync HTML Audio Vocal Elements
+    this.vocalAudioElements.forEach(audio => {
+      audio.pause();
     });
   }
 
@@ -675,7 +749,14 @@ export class MusicEngine {
     // 7. Clear loop
     this.clearLoop();
 
-    // 8. Reset transport position
+    // 8. Clear vocal audio elements
+    this.vocalAudioElements.forEach(audio => {
+      audio.pause();
+      audio.src = '';
+    });
+    this.vocalAudioElements.clear();
+
+    // 9. Reset transport position
     Tone.Transport.seconds = 0;
 
     console.log('[MusicEngine] 🧹 stopAndClear — all song data purged');

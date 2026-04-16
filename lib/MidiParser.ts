@@ -69,16 +69,20 @@ export class MidiParser {
           xml += `      <direction><direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>${bpm}</per-minute></metronome></direction-type></direction>\n`;
         }
 
-        let lastTick = mStartTick;
+        let currentTick = mStartTick;
 
-        notesInMeasure.forEach((note) => {
-          // 1. Handle Rests (if gap between notes)
-          if (note.ticks > lastTick) {
-            const restDurTicks = note.ticks - lastTick;
+        for (let i = 0; i < notesInMeasure.length; i++) {
+          const note = notesInMeasure[i];
+          const isChord = i > 0 && note.ticks === notesInMeasure[i - 1].ticks;
+
+          // 1. Handle Rests (if gap between notes and NOT a chord)
+          if (!isChord && note.ticks > currentTick) {
+            const restDurTicks = note.ticks - currentTick;
             const restDurXml = Math.round((restDurTicks / ticksPerBeat) * divisions);
             if (restDurXml > 0) {
               xml += `      <note><rest/><duration>${restDurXml}</duration></note>\n`;
             }
+            currentTick = note.ticks;
           }
 
           // 2. Add Note
@@ -87,8 +91,9 @@ export class MidiParser {
           const durXml = Math.max(1, Math.round((note.durationTicks / ticksPerBeat) * divisions));
           const type = this.getNoteType(durXml, divisions);
 
-          xml += `      <note>
-        <pitch>
+          xml += `      <note>\n`;
+          if (isChord) xml += `        <chord/>\n`;
+          xml += `        <pitch>
           <step>${pitchData.step}</step>
           ${pitchData.alter !== 0 ? `<alter>${pitchData.alter}</alter>` : ''}
           <octave>${octave}</octave>
@@ -98,12 +103,16 @@ export class MidiParser {
         <type>${type}</type>
       </note>\n`;
 
-          lastTick = note.ticks + note.durationTicks;
-        });
+          if (!isChord) {
+            currentTick = note.ticks + note.durationTicks;
+          } else {
+            currentTick = Math.max(currentTick, note.ticks + note.durationTicks);
+          }
+        }
 
         // 3. Fill remaining measure with rest if needed
-        if (lastTick < mEndTick) {
-          const remainTicks = mEndTick - lastTick;
+        if (currentTick < mEndTick) {
+          const remainTicks = mEndTick - currentTick;
           const remainXml = Math.round((remainTicks / ticksPerBeat) * divisions);
           if (remainXml > 0) {
             xml += `      <note><rest/><duration>${remainXml}</duration></note>\n`;

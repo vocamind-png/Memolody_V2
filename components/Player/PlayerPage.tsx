@@ -6,7 +6,7 @@ import {
   X, Volume2, SkipBack,
   RefreshCw, Repeat, Music,
   VolumeX, Bell, BellOff, Eye, EyeOff, Lock,
-  ChevronDown, Library, Languages
+  ChevronDown, Library, Languages, Mic2, Timer
 } from 'lucide-react';
 import ProScoreEditor from './ProScoreEditor';
 import { KeyTransposeDisplay, BpmDisplay, BarBeatPositionDisplay, TimeSigDisplay } from './LCDDisplay';
@@ -19,16 +19,20 @@ import FXPluginModal from './FXPluginModal';
 import MemoPractice from './MemoPractice';
 import ChordPage from '../Chord/ChordPage';
 import { musicEngine } from '../../lib/MusicEngine';
+import { getChromaticSolfege } from '../../lib/SolfegeLogic';
 import { Song, TrackState, EffectInstance, LyricMode } from '../../types';
 
-export type PlayerCardType = 'score' | 'pianoroll' | 'trackview' | 'memochord' | 'practice';
+export type PlayerCardType = 'score' | 'pianoroll' | 'trackview' | 'memochord' | 'practice' | 'vocalido';
 
 const PlayerPage: React.FC<{
   song: Song | null; musicXml?: string | null; tracks: TrackState[]; setTracks: any;
   viewMode: any; setViewMode: any; isPreviewMode?: boolean;
   loopPresets: LoopPreset[]; setLoopPresets: any;
   performanceMode?: boolean;
-}> = ({ song, musicXml, tracks, setTracks, viewMode = 'score', setViewMode, loopPresets, setLoopPresets, performanceMode }) => {
+  vocalidoAutoRender?: boolean;
+  autoPlay?: boolean;           // ← auto-start playback after OMR import
+  onAutoPlayConsumed?: () => void; // ← clears the flag in App.tsx
+}> = ({ song, musicXml, tracks, setTracks, viewMode = 'score', setViewMode, loopPresets, setLoopPresets, performanceMode, vocalidoAutoRender, autoPlay, onAutoPlayConsumed }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isTransportHidden, setIsTransportHidden] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -40,10 +44,17 @@ const PlayerPage: React.FC<{
   const [isAudioLoading, setIsAudioLoading] = useState(false);
   const [masterVolume, setMasterVolume] = useState(0.8);
   const [isMetronomeOn, setIsMetronomeOn] = useState(false);
+  const [isRenderingVocal, setIsRenderingVocal] = useState(false);
+  const [renderProgress, setRenderProgress] = useState(0);
+  const [renderTimer, setRenderTimer] = useState(0);
+  const [renderError, setRenderError] = useState<string | null>(null);
 
   // Card Navigation State
   const [activeCard, setActiveCard] = useState<PlayerCardType>('score');
   const [isNavMenuVisible, setIsNavMenuVisible] = useState(false);
+
+  const [storedSinger, setStoredSinger] = useState<string | null>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
 
   const [pluginBrowserTarget, setPluginBrowserTarget] = useState<{ trackId: string; slotIndex: number } | null>(null);
   const [editingPlugin, setEditingPlugin] = useState<{ trackId: string; slotIndex: number; plugin: EffectInstance } | null>(null);
@@ -51,16 +62,38 @@ const PlayerPage: React.FC<{
   const volumePopupRef = useRef<HTMLDivElement>(null);
   const volumeDragStartYRef = useRef<number | null>(null);
   const volumeDragStartVolRef = useRef<number>(0.8);
+  const lastRenderedKeyRef = useRef<string>('');
   const localSong = song || { title: 'Untitled', artist: 'Unknown', bpm: 120, key: 'Bb', duration: 180 } as any;
-  const parsedData = useMemo(() => musicEngine.parseMusicXml(musicXml || ''), [musicXml]);
+  const parsedData = useMemo(() => {
+    try {
+      const result = musicEngine.parseMusicXml(musicXml || '');
+      console.log(`[PlayerPage] 📦 MusicXML parsed: ${result.notes.length} notes, size: ${musicXml?.length || 0} chars`);
+      return result;
+    } catch (e) {
+      console.error('[PlayerPage] ❌ Parse error:', e);
+      return { notes: [], metadata: {} as any, partNames: {}, timeSignature: { beats: 4, beatType: 4 } };
+    }
+  }, [musicXml]);
 
-  // ── SONG CHANGE → Full engine reset ────────────────────────────────────────
-  // When user selects a different song, purge ALL previous song data from memory
+  const vocalTrack = useMemo(() => {
+    if (!tracks || tracks.length === 0) return null;
+    return tracks.find(t => t.mode === 'vocal') || tracks[0];
+  }, [tracks]);
+
+  const activeLyricMode = useMemo(() => {
+    return vocalTrack?.lyricMode || 'British Fixed Doh';
+  }, [vocalTrack]);
+
+  const activeVoiceName = useMemo(() => {
+    if (vocalTrack?.instrument && vocalTrack.instrument !== 'Auto') return vocalTrack.instrument;
+    if (storedSinger) return storedSinger;
+    return 'Auto';
+  }, [vocalTrack, storedSinger]);
+
+
+  // ── SONG CHANGE → Full engine reset (ONLY on song change) ─────────────────
   useEffect(() => {
-    // Stop and clear all audio from the previous song
     musicEngine.stopAndClear();
-
-    // Reset all UI states to defaults
     setIsPlaying(false);
     setCurrentTime(0);
     setTranspose(0);
@@ -69,12 +102,58 @@ const PlayerPage: React.FC<{
     setShowMixer(false);
     setShowVolumeSlider(false);
     setShowLoopMatrix(false);
-
+    // Note: We don't immediate reset rendering state here to avoid race with triggerVocalSynthesis
+    setRenderProgress(0);
+    lastRenderedKeyRef.current = ''; // Reset so new song triggers render
     console.log(`[PlayerPage] 🎵 Song changed → engine cleared, ready for: ${song?.title || 'none'}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [song?.id]);
 
-  // Auto-sync BPM from XML metadata whenever a new song is loaded
+  // ── AUTO-RENDER: Direct trigger on song load or lyric mode change ────────────
+  const autoRenderRef = useRef(false);
+  
+  useEffect(() => {
+    // Guard: only run when we have a song with XML, tracks are ready, and lyrics are not off
+    if (!musicXml || !song?.id || activeLyricMode === 'Close') return;
+    if (!parsedData.notes.length) return;
+    if (tracks.length === 0) return; // Wait for tracks to populate
+
+    const currentKey = `${song.id}_${activeLyricMode}_${activeVoiceName}`;
+    if (currentKey === lastRenderedKeyRef.current) return;
+    
+    console.log(`[Vocalido] 🚀 Auto-Render triggered: ${activeLyricMode} (${parsedData.notes.length} notes)`);
+    lastRenderedKeyRef.current = currentKey;
+    
+    // Use a microtask to avoid stale closure issues
+    autoRenderRef.current = true;
+  }, [song?.id, musicXml, activeLyricMode, activeVoiceName, parsedData.notes.length, tracks.length]);
+
+  // Separate effect to actually call the function (avoids stale closure)
+  useEffect(() => {
+    if (autoRenderRef.current) {
+      autoRenderRef.current = false;
+      triggerVocalSynthesis();
+    }
+  });
+
+  // ── AUTO-PLAY: Triggered after OMR import to play immediately ────────────
+  useEffect(() => {
+    if (!autoPlay) return;
+    if (!parsedData.notes.length) return;
+    if (!song?.id) return;
+
+    // Consume the flag immediately so re-renders don't re-trigger
+    onAutoPlayConsumed?.();
+
+    // Wait for song change effect + audio engine init to settle
+    const t = setTimeout(() => {
+      console.log('[PlayerPage] 🎹 Auto-play triggered after OMR import');
+      handleTogglePlay();
+    }, 900);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoPlay, song?.id, parsedData.notes.length]);
+
   useEffect(() => {
     const xmlBpm = parsedData.metadata.bpm;
     if (xmlBpm && xmlBpm >= 20 && xmlBpm <= 400) {
@@ -83,10 +162,63 @@ const PlayerPage: React.FC<{
     }
   }, [parsedData.metadata.bpm]);
 
-  // Derive the current active lyric mode from tracks to feed into the Score Editor
-  const activeLyricMode = useMemo(() => {
-    return tracks[0]?.lyricMode || 'Movable Do';
-  }, [tracks]);
+  // Listen to cross-window storage changes and direct messages so Voice Name updates locally immediately
+  useEffect(() => {
+    const syncSinger = () => {
+      try {
+        const saved = localStorage.getItem('vocalido_singers');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed && parsed.length > 0) setStoredSinger(parsed[0].name);
+        }
+      } catch(e) {}
+    };
+    
+    const handleMessage = (e: MessageEvent) => {
+      if (e.data && e.data.type === 'SINGER_SAVED') {
+        setStoredSinger(e.data.name);
+      }
+    };
+
+    syncSinger();
+    window.addEventListener('storage', syncSinger);
+    window.addEventListener('message', handleMessage);
+    return () => {
+      window.removeEventListener('storage', syncSinger);
+      window.removeEventListener('message', handleMessage);
+    };
+  }, []);
+
+  // Derive up to 8 notes of lyrics based on current parse
+  const currentPhraseToSing = useMemo(() => {
+    if (!parsedData || parsedData.notes.length === 0) return "Do Re Mi Fa Sol La Ti Do";
+    return parsedData.notes.slice(0, 8).map(n => n.solfege || 'La').join(' ');
+  }, [parsedData]);
+
+  // When switching to Vocalido Studio card, push note data into the iframe
+  useEffect(() => {
+    if (activeCard === 'vocalido' && iframeRef.current) {
+      // 1. Send the simple 8-note phrase for the quick preview box
+      const phraseMessage = { type: 'UPDATE_PHRASE', phrase: currentPhraseToSing };
+      
+      // 2. Send the full note data for the "Sing from Score" feature
+      const stepMap: Record<string, number> = { 'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11 };
+      const notesForStudio = parsedData.notes.map(n => ({
+        pitch: (n.octave + 1) * 12 + (stepMap[n.step.toUpperCase()] || 0) + (n.alter || 0),
+        duration: n.duration,
+        startTime: n.startTime,
+        lyric: n.solfege || 'La'
+      }));
+      const notesMessage = { type: 'UPDATE_NOTES', notes: notesForStudio };
+
+      // Small timeout to ensure iframe's script has attached its listener after mount
+      setTimeout(() => {
+        if (!iframeRef.current) return;
+        iframeRef.current.contentWindow?.postMessage(phraseMessage, '*');
+        iframeRef.current.contentWindow?.postMessage(notesMessage, '*');
+      }, 800);
+    }
+  }, [activeCard, currentPhraseToSing, parsedData.notes]);
 
   useEffect(() => {
     musicEngine.setMasterVolume(masterVolume);
@@ -143,28 +275,128 @@ const PlayerPage: React.FC<{
     return ((lastNote.startTime + lastNote.duration) * 60) / (currentBpm || 75);
   }, [parsedData.notes, currentBpm, localSong.duration]);
 
-  const handleTogglePlay = async () => {
-    // 1. Force start Tone.js Context immediately on user gesture
-    await Tone.start();
+  const triggerVocalSynthesis = async () => {
+    if (isRenderingVocal || !musicXml || !parsedData.notes.length) return;
+    if (tracks.length === 0) return;
 
-    // Resume if still suspended (some browsers need this)
-    if (Tone.getContext().state !== 'running') {
-      await Tone.getContext().resume();
+    setRenderError(null);
+    setIsRenderingVocal(true);
+    setRenderProgress(0);
+    setRenderTimer(0);
+
+    try {
+      const stepMap: Record<string, number> = { 'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11 };
+      
+      const primaryTrackId = tracks.find(t => t.mode === 'vocal')?.id || tracks[0]?.id || 'P1';
+      
+      const sourceNotes = parsedData.notes.filter(n => n.trackId === primaryTrackId).slice(0, 128);
+      
+      const notesToSynthesize = sourceNotes.map(n => {
+        let lyric = 'La';
+        try {
+          const songKey = (parsedData.metadata as any)?.key || 'C';
+          lyric = getChromaticSolfege(
+            n.step || 'C', 
+            n.alter || 0, 
+            songKey, 
+            activeLyricMode,
+            n.duration / ((parsedData.timeSignature as any)?.beats || 4),
+            0 
+          ) || n.solfege || 'La';
+        } catch (e) {
+          console.warn('[Vocalido] Solfege calc error:', e);
+        }
+        
+        const safeStep = (n.step || 'C').toUpperCase();
+        return {
+          pitch: (n.octave + 1) * 12 + (stepMap[safeStep] || 0) + (n.alter || 0),
+          duration: isNaN(n.duration) ? 0.5 : n.duration,
+          startTime: isNaN(n.startTime) ? 0 : n.startTime,
+          lyric
+        };
+      });
+
+      console.log(`[Vocalido] 🎙️ POSTing ${notesToSynthesize.length} notes (Track: ${primaryTrackId})`);
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 min timeout
+
+      const startTime = Date.now();
+      const progressInterval = setInterval(() => {
+        const elapsed = (Date.now() - startTime) / 1000;
+        let simulatedProgress = 0;
+        if (elapsed < 3) simulatedProgress = (elapsed / 3) * 60;
+        else if (elapsed < 10) simulatedProgress = 60 + ((elapsed - 3) / 7) * 30;
+        else {
+          const extra = elapsed - 10;
+          simulatedProgress = 90 + (9.9 * (1 - Math.exp(-extra / 60)));
+        }
+        setRenderProgress(Math.min(99.9, simulatedProgress));
+        setRenderTimer(Math.round(elapsed));
+      }, 250);
+
+      const cleanupLocal = () => {
+        clearInterval(progressInterval);
+        clearTimeout(timeoutId);
+      };
+
+      const resp = await fetch('/studio/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({ 
+          notes: notesToSynthesize, 
+          params: { singer: activeVoiceName, bpm: currentBpm } 
+        })
+      });
+      clearTimeout(timeoutId);
+
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.audio_b64) {
+          setRenderProgress(100);
+          const mime = data.mime_type || 'audio/mpeg';
+          await musicEngine.addVocalLayer(primaryTrackId, `data:${mime};base64,${data.audio_b64}`);
+          await new Promise(r => setTimeout(r, 1200));
+          setIsRenderingVocal(false);
+          cleanupLocal();
+        } else if (data.error) {
+           setRenderError(data.error);
+           cleanupLocal();
+        }
+      } else {
+        setRenderError(`Server Error: ${resp.status}`);
+        cleanupLocal();
+      }
+    } catch (e: any) {
+      console.error('[Vocalido] Synthesis Error:', e);
+      setRenderError(e.message || "Network Error");
+      if (typeof cleanupLocal === 'function') cleanupLocal();
     }
+  };
+
+  const closeRenderOverlay = () => {
+    setIsRenderingVocal(false);
+    setRenderError(null);
+  };
+
+  const handleTogglePlay = async () => {
+    if (isRenderingVocal) return;
+    
+    await Tone.start();
+    if (Tone.getContext().state !== 'running') await Tone.getContext().resume();
 
     const tState = musicEngine.transportState;
 
-    // ── CASE 1: Currently playing → PAUSE ──────────────────────────────
     if (tState === 'started') {
       musicEngine.pause();
       setIsPlaying(false);
       return;
     }
 
-    // ── CASE 2: Paused (not stopped) → RESUME from current position ────
     if (tState === 'paused') {
+      setIsAudioLoading(true);
       try {
-        setIsAudioLoading(true);
         await musicEngine.resume();
         setIsPlaying(true);
       } catch (e) {
@@ -175,13 +407,13 @@ const PlayerPage: React.FC<{
       return;
     }
 
-    // ── CASE 3: Stopped / never started → fresh loadSong + start ───────
     setIsAudioLoading(true);
     try {
       await musicEngine.ensureInitialized();
-      const bpmToUse = parsedData.metadata.bpm || currentBpm || 120;
+      const bpmToUse = (parsedData.metadata as any)?.bpm || currentBpm || 120;
       musicEngine.setBpm(bpmToUse);
       setCurrentBpm(bpmToUse);
+
       await musicEngine.loadSong(parsedData.notes, tracks, transpose, parsedData.timeSignature, isMetronomeOn);
       await musicEngine.start();
       setIsPlaying(true);
@@ -192,16 +424,18 @@ const PlayerPage: React.FC<{
     }
   };
 
-  const beatsPerMeasure = parsedData.timeSignature.beats || 4;
-  // Use written bar number from MusicEngine (correct during repeats)
-  // Falls back to calculated bar if currentMeasure not yet set
+  const beatsPerMeasure = Math.max(1, parsedData?.timeSignature?.beats || 4);
   const writtenBar = musicEngine.currentMeasure;
   const currentBar = writtenBar ? parseInt(writtenBar) || 1 : Math.floor(musicEngine.transportMusicalTime / beatsPerMeasure) + 1;
   const currentBeat = Math.floor(musicEngine.transportMusicalTime % beatsPerMeasure) + 1;
-  const formatTime = (s: number) => `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, '0')}`;
+  const formatTime = (s: number) => {
+    const min = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return `${min}:${sec.toString().padStart(2, '0')}`;
+  };
 
-  const originalBpm = parsedData.metadata.bpm || 120;
-  const musicalTime = musicEngine.transportMusicalTime * (60 / originalBpm);
+  const originalBpm = (parsedData?.metadata as any)?.bpm || 120;
+  const musicalTime = musicEngine.transportMusicalTime * (60 / Math.max(1, originalBpm));
 
   const activeLoop = useMemo(() => loopPresets.find(p => p.isActive), [loopPresets]);
 
@@ -257,27 +491,27 @@ const PlayerPage: React.FC<{
 
   return (
     <div className="flex flex-col h-full w-full bg-[#050507] relative overflow-hidden unselectable">
-
-      {/* ── PLAYER OPTIONS MENU (FIXED VERTICAL DROPDOWN) ── */}
-      <div className="fixed top-[72px] left-1/2 -translate-x-1/2 z-[4000] flex flex-col items-center mt-2">
+      {/* ── PLAYER OPTIONS MENU (LEFT ALIGNED) ── */}
+      <div className="absolute top-3 left-3 sm:left-4 z-[4000] flex flex-col items-start">
         <button
           onClick={() => setIsNavMenuVisible(!isNavMenuVisible)}
-          className="bg-[#0c0c0e]/90 backdrop-blur-xl border border-white/10 px-5 py-2.5 rounded-full text-[10px] font-black uppercase tracking-widest text-[#00e5ff] hover:text-white shadow-[0_10px_30px_rgba(0,0,0,0.5)] flex items-center gap-2 transition-all active:scale-95 group"
+          className={`bg-[#0c0c0e]/95 backdrop-blur-xl border border-white/10 px-4 py-2 rounded-full text-[8px] sm:text-[9px] font-black uppercase tracking-widest hover:text-white shadow-[0_10px_30px_rgba(0,0,0,0.6)] flex items-center gap-1.5 transition-all active:scale-95 group ${activeCard !== 'vocalido' ? 'text-[#00e5ff]' : 'text-zinc-400'}`}
         >
-          <Library size={13} className="text-[#00e5ff] group-hover:text-white transition-colors" />
-          PLAYER OPTIONS
-          <ChevronDown size={14} className={`transition-transform duration-300 ${isNavMenuVisible ? 'rotate-180' : ''}`} />
+          <Library size={12} className={`${activeCard !== 'vocalido' ? 'text-[#00e5ff]' : 'text-zinc-400'} group-hover:text-white transition-colors`} />
+          <span className="hidden sm:inline">PLAYER : </span>
+          <span className="text-zinc-200">{activeLyricMode || 'Standard'}</span>
+          <ChevronDown size={12} className={`ml-1 transition-transform duration-300 ${isNavMenuVisible ? 'rotate-180' : ''}`} />
         </button>
 
         {isNavMenuVisible && (
-          <div className="mt-3 bg-[#0c0c0e]/95 backdrop-blur-3xl border border-white/10 p-4 rounded-3xl shadow-[0_20px_60px_rgba(0,0,0,0.9)] flex flex-col gap-3 w-[260px] animate-in fade-in slide-in-from-top-4 origin-top">
+          <div className="mt-2 bg-[#0c0c0e]/95 backdrop-blur-3xl border border-white/10 p-4 rounded-3xl shadow-[0_20px_60px_rgba(0,0,0,0.9)] flex flex-col gap-3 w-[260px] animate-in fade-in slide-in-from-top-4 origin-top-left">
 
             <div className="flex flex-col gap-1.5">
               <span className="text-[8px] font-black text-white/40 uppercase tracking-widest pl-2 mb-1 flex items-center gap-1.5"><Library size={9} /> Visual Modes</span>
               {(['score', 'pianoroll', 'trackview', 'memochord', 'practice'] as PlayerCardType[]).map(card => {
                 const labels: Record<PlayerCardType, string> = {
                   'score': 'Score Sheet', 'pianoroll': 'Piano Roll', 'trackview': 'Trackview',
-                  'memochord': 'Chord Ring', 'practice': 'Memo Practice'
+                  'memochord': 'Chord Ring', 'practice': 'Memo Practice', 'vocalido': 'Voice Studio'
                 };
                 return (
                   <button
@@ -295,29 +529,72 @@ const PlayerPage: React.FC<{
 
             <div className="h-px bg-white/10 w-full my-0.5" />
 
-            <div className="flex flex-col gap-1.5">
-              <span className="text-[8px] font-black text-white/40 uppercase tracking-widest pl-2 mb-1 flex items-center gap-1.5"><Languages size={9} /> Lyric Target</span>
-              {(['Movable Do', 'Fixed Do', 'Jianpu', 'Words', 'Kodaly', 'Kodaly Rhythm'] as LyricMode[]).map(mode => {
-                const isActive = tracks.length > 0 && tracks[0].lyricMode === mode;
-                return (
-                  <button
-                    key={mode}
-                    onClick={() => {
-                      setTracks((prevTracks: any) => prevTracks.map((t: any) => ({ ...t, lyricMode: mode })));
-                      setIsNavMenuVisible(false);
-                    }}
-                    className={`px-4 py-2.5 rounded-2xl text-[10px] sm:text-[11px] font-black uppercase tracking-widest transition-all text-left flex items-center justify-between
-                      ${isActive ? 'bg-indigo-500 text-white shadow-[0_0_15px_rgba(99,102,241,0.5)]' : 'bg-white/5 text-zinc-400 hover:text-white hover:bg-white/10'}`}
-                  >
-                    <span>{mode}</span>
-                    {isActive && <span className="w-1.5 h-1.5 rounded-full bg-white/80 animate-pulse" />}
-                  </button>
-                );
-              })}
+            <div className="flex flex-col gap-2.5 max-h-[400px] overflow-y-auto scrollbar-hide pr-1">
+              <span className="text-[8px] font-black text-white/40 uppercase tracking-widest pl-2 mb-1 flex items-center gap-1.5"><Languages size={9} /> Singing Systems</span>
+              
+              {[
+                { group: 'American', items: ['American Movable Do', 'American Fixed Do'] },
+                { group: 'British', items: ['British Movable Doh', 'British Fixed Doh'] },
+                { group: 'Ju Solfege', items: ['Ju Solfege Movable Doh', 'Ju Solfege Fixed Doh'] },
+                { group: 'Pedagogical', items: ['Jianpu', 'Kodaly', 'Kodaly Rhythm'] },
+                { group: 'Ethnic', items: ['Indian Sargam'] },
+                { group: 'Standard', items: ['Lyric', 'Close'] }
+              ].map(grp => (
+                <div key={grp.group} className="flex flex-col gap-1">
+                  <span className="text-[7px] font-black text-zinc-600 uppercase tracking-widest pl-2 mb-0.5">{grp.group}</span>
+                  <div className="grid grid-cols-2 gap-1">
+                    {grp.items.map(mode => {
+                      const isActive = tracks.length > 0 && tracks[0].lyricMode === mode;
+                      return (
+                        <button
+                          key={mode}
+                          onClick={() => {
+                            setTracks((prevTracks: any) => prevTracks.map((t: any) => ({ ...t, lyricMode: mode as LyricMode })));
+                            setIsNavMenuVisible(false);
+                          }}
+                          className={`px-3 py-2 rounded-xl text-[8px] sm:text-[9px] font-black uppercase tracking-widest transition-all text-center flex items-center justify-center border
+                            ${isActive ? 'bg-indigo-500 border-indigo-400 text-white shadow-lg' : 'bg-white/5 border-white/5 text-zinc-400 hover:text-white hover:bg-white/10'}`}
+                        >
+                          {mode.replace('American ', '').replace('British ', '').replace('Ju Solfege ', '').replace('Indian ', '')}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
 
           </div>
         )}
+      </div>
+
+      {/* ── VOICE STUDIO / CLOSE (RIGHT ALIGNED) ── */}
+      <div className="absolute top-3 right-3 sm:right-4 z-[4000] flex flex-col items-end">
+        <button
+          onClick={() => {
+            if (activeCard === 'vocalido') {
+              setActiveCard('score'); // Close by reverting to default score sheet
+            } else {
+              setActiveCard('vocalido');
+              setIsNavMenuVisible(false);
+              // 🎤 Auto-enable Vocal mode for the first track so it sings immediately
+              if (tracks.length > 0 && tracks[0].mode !== 'vocal') {
+                setTracks((prev: any) => [
+                  { ...prev[0], mode: 'vocal', instrument: activeVoiceName },
+                  ...prev.slice(1)
+                ]);
+              }
+            }
+          }}
+          className={`bg-[#0c0c0e]/95 backdrop-blur-xl border px-5 py-2.5 rounded-full text-[9px] sm:text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 transition-all active:scale-95 shadow-[0_10px_30px_rgba(0,0,0,0.6)] 
+            ${activeCard === 'vocalido' 
+              ? 'border-rose-500/80 text-rose-400 hover:bg-rose-500/10 shadow-[0_0_20px_rgba(244,114,182,0.3)]' 
+              : 'border-[#bc6df5]/40 text-[#bc6df5] hover:border-[#bc6df5] hover:text-white'}`}
+        >
+          {activeCard === 'vocalido' ? <X size={13} /> : <Mic2 size={13} />}
+          <span className="inline">{activeCard === 'vocalido' ? 'CLOSE VOCALIDO' : 'VOICE STUDIO'}</span>
+          <span className="text-zinc-200 ml-1">: {activeVoiceName.split(' ')[0]}</span>
+        </button>
       </div>
 
       {song?.previewLimit && song.previewLimit > 0 && (
@@ -327,12 +604,13 @@ const PlayerPage: React.FC<{
         </div>
       )}
 
-      <div className={`flex-1 flex flex-col relative items-center w-full ${activeCard === 'score' || activeCard === 'memochord' ? 'pt-2 pb-48 overflow-y-auto no-scrollbar' : 'overflow-hidden'}`}>
+      <div className={`flex-1 flex flex-col relative w-full overflow-hidden`}>
 
         {/* ProScoreEditor: Handles Score, MemoChord */}
         <div
           style={{
-            display: (activeCard === 'score') ? 'contents' : 'none',
+            display: (activeCard === 'score') ? 'flex' : 'none',
+            flexDirection: 'column',
             width: '100%', height: '100%'
           }}
         >
@@ -351,6 +629,85 @@ const PlayerPage: React.FC<{
             performanceMode={performanceMode}
           />
         </div>
+
+        {/* ── [VOCALIDO RENDER OVERLAY] ── */}
+        {isRenderingVocal && (
+          <div className="absolute inset-0 z-[5000] flex flex-col items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-500 pointer-events-auto">
+            <div className="relative flex flex-col items-center">
+              {/* Outer Ring */}
+              <div className="relative w-56 h-56 flex items-center justify-center">
+                <svg viewBox="0 0 224 224" className="absolute inset-0 w-full h-full -rotate-90 drop-shadow-[0_0_15px_rgba(0,229,255,0.2)]">
+                  <circle
+                    cx="112" cy="112" r="100"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                    fill="transparent"
+                    className="text-white/10"
+                  />
+                  {!renderError && (
+                    <circle
+                      cx="112" cy="112" r="100"
+                      stroke="currentColor"
+                      strokeWidth="8"
+                      strokeDasharray="628.3"
+                      strokeDashoffset={628.3 - (628.3 * renderProgress) / 100}
+                      strokeLinecap="round"
+                      fill="transparent"
+                      className="text-cyan-400 transition-all duration-300 ease-out"
+                    />
+                  )}
+                </svg>
+                
+                {/* Center Content */}
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-white">
+                  <span className="text-4xl font-black tracking-tighter tabular-nums drop-shadow-lg">
+                    {renderProgress < 99.9 ? renderProgress.toFixed(1) : "99.9"}%
+                  </span>
+                  <div className="flex items-center gap-1.5 mt-2 bg-white/10 px-3 py-1 rounded-full backdrop-blur-sm border border-white/10">
+                    <span className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-pulse" />
+                    <span className="text-[10px] font-bold tabular-nums opacity-80">{renderTimer}s</span>
+                  </div>
+                  <div className="mt-6 flex flex-col items-center gap-2">
+                    <span className="text-[10px] font-black uppercase tracking-[0.3em] text-cyan-400 animate-pulse">
+                      {renderProgress > 95 ? "Finalizing Audio..." : "Rendering Tone"}
+                    </span>
+                    <div className="flex gap-1">
+                      {[0, 1, 2].map(i => (
+                        <div key={i} className="w-1 h-1 bg-white/20 rounded-full animate-bounce" style={{ animationDelay: `${i * 0.2}s` }} />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-8 flex flex-col items-center gap-2">
+                <div className="px-5 py-2 bg-black/60 border border-white/10 rounded-2xl backdrop-blur-xl flex items-center gap-3">
+                  <span className={`w-1.5 h-1.5 rounded-full ${renderError ? 'bg-rose-500' : 'bg-cyan-400 animate-pulse'}`} />
+                  <span className="text-[10px] font-black text-white uppercase tracking-widest">
+                    {renderError ? (
+                      <span className="text-rose-400 truncate max-w-[200px]">{renderError}</span>
+                    ) : (
+                      <>AI SINGER: <span className="text-cyan-400">{(activeVoiceName || 'Auto').toUpperCase()}</span></>
+                    )}
+                  </span>
+                </div>
+                {renderError ? (
+                  <button 
+                    onClick={() => triggerVocalSynthesis()}
+                    className="mt-2 px-6 py-2 bg-white/10 hover:bg-white/20 border border-white/20 rounded-xl text-[10px] font-black text-white uppercase tracking-widest transition-all"
+                  >
+                    Try Again • ลองใหม่
+                  </button>
+                ) : (
+                  <p className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest">Wait for play • กำลังประมวลผลจนจบ</p>
+                )}
+                {renderError && (
+                  <button onClick={closeRenderOverlay} className="text-[8px] text-zinc-500 underline mt-2 uppercase tracking-widest">Dismiss • ปิด</button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* PerformanceScore: Handles Piano Roll */}
         {activeCard === 'pianoroll' && (
@@ -409,6 +766,19 @@ const PlayerPage: React.FC<{
               setActiveCard('score');
             }}
           />
+        )}
+
+        {/* Voice Studio: Embedded Timbre Designer */}
+        {activeCard === 'vocalido' && (
+          <div className="absolute inset-0 z-[3500] bg-[#0a0a0f] overflow-auto overscroll-contain pt-[52px]">
+            <iframe
+              ref={iframeRef}
+              src="/voice-studio.html"
+              className="w-full h-full border-0"
+              title="Vocalido Voice Studio"
+              allow="autoplay; microphone"
+            />
+          </div>
         )}
       </div>
 
@@ -489,7 +859,12 @@ const PlayerPage: React.FC<{
                 }} className="w-8 h-8 flex items-center justify-center text-zinc-300 hover:text-black"><SkipBack size={18} fill="currentColor" /></button>
                 <div className="relative ml-1">
                   <div className={`absolute inset-0 bg-cyan-400/20 blur-md rounded-full transition-opacity ${isPlaying ? 'opacity-100' : 'opacity-0'}`} />
-                  <button onClick={handleTogglePlay} disabled={isAudioLoading} className={`relative w-[38px] h-[38px] rounded-full flex items-center justify-center text-white transition-all bg-[#00e5ff] shadow-[0_4px_15px_rgba(0,229,255,0.4)]`}>
+                  <button 
+                    onClick={handleTogglePlay} 
+                    disabled={isAudioLoading || isRenderingVocal} 
+                    className={`relative w-[38px] h-[38px] rounded-full flex items-center justify-center text-white transition-all 
+                      ${isRenderingVocal ? 'bg-zinc-800 shadow-none grayscale' : 'bg-[#00e5ff] shadow-[0_4px_15px_rgba(0,229,255,0.4)]'}`}
+                  >
                     {isAudioLoading ? <RefreshCw size={16} className="animate-spin text-white/50" /> : (isPlaying ? <Pause size={20} fill="white" /> : <Play size={20} fill="white" className="ml-0.5" />)}
                   </button>
                 </div>
@@ -571,6 +946,7 @@ const PlayerPage: React.FC<{
             </div>
             <MixerPanel
               tracks={tracks}
+              songKey={song?.key || localSong.key || 'C'}
               onUpdateTrack={(id, update) => setTracks((prev: any) => prev.map((t: any) => t.id === id ? { ...t, ...update } : t))}
               onOpenPluginBrowser={(trackId, slotIndex) => setPluginBrowserTarget({ trackId, slotIndex })}
               onOpenPluginEditor={(trackId, slotIndex, plugin) => setEditingPlugin({ trackId, slotIndex, plugin })}

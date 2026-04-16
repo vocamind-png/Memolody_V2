@@ -8,19 +8,51 @@
  * identifiers are protected to maintain pedagogical integrity.
  */
 
-const SOLFEGE_MAP: Record<number, { sharp: string, flat: string, jianpu: string, kodaly: string }> = {
-  0: { sharp: 'Doh', flat: 'Doh', jianpu: '1', kodaly: 'd' },
-  1: { sharp: 'di', flat: 'ru', jianpu: '#1', kodaly: 'di' },
-  2: { sharp: 'Re', flat: 'Re', jianpu: '2', kodaly: 'r' },
-  3: { sharp: 'ri', flat: 'mu', jianpu: '#2', kodaly: 'ri' },
-  4: { sharp: 'Me', flat: 'Me', jianpu: '3', kodaly: 'm' },
-  5: { sharp: 'Fah', flat: 'Fah', jianpu: '4', kodaly: 'f' },
-  6: { sharp: 'fi', flat: 'su', jianpu: '#4', kodaly: 'fi' },
-  7: { sharp: 'Sol', flat: 'Sol', jianpu: '5', kodaly: 's' },
-  8: { sharp: 'si', flat: 'lu', jianpu: '#5', kodaly: 'si' },
-  9: { sharp: 'Lah', flat: 'Lah', jianpu: '6', kodaly: 'l' },
-  10: { sharp: 'li', flat: 'tu', jianpu: '#6', kodaly: 'li' },
-  11: { sharp: 'Ti', flat: 'Ti', jianpu: '7', kodaly: 't' }
+// Ascending (sharp) chromatic syllables for each system
+const SOLFEGE_MAPS: Record<string, Record<number, string>> = {
+  'American': {
+    0: 'Do', 1: 'Di', 2: 'Re', 3: 'Ri', 4: 'Mi', 5: 'Fa', 6: 'Fi', 7: 'Sol', 8: 'Si', 9: 'La', 10: 'Li', 11: 'Ti'
+  },
+  'British': {
+    0: 'Doh', 1: 'Di', 2: 'Ray', 3: 'Ri', 4: 'Me', 5: 'Fah', 6: 'Fi', 7: 'Soh', 8: 'Si', 9: 'Lah', 10: 'Li', 11: 'Ti'
+  },
+  'Ju': {
+    0: 'Doh', 1: 'di', 2: 'Re', 3: 'ri', 4: 'Me', 5: 'Fah', 6: 'fi', 7: 'Sol', 8: 'si', 9: 'Lah', 10: 'li', 11: 'Ti'
+  },
+  'Sargam': {
+    0: 'Sa', 1: 're', 2: 'Re', 3: 'ga', 4: 'Ga', 5: 'ma', 6: 'Ma', 7: 'Pa', 8: 'dha', 9: 'Dha', 10: 'ni', 11: 'Ni'
+  },
+  'Jianpu': {
+    0: '1', 1: '#1', 2: '2', 3: '#2', 4: '3', 5: '4', 6: '#4', 7: '5', 8: '#5', 9: '6', 10: '#6', 11: '7'
+  },
+  'Kodaly': {
+    0: 'd', 1: 'di', 2: 'r', 3: 'ri', 4: 'm', 5: 'f', 6: 'fi', 7: 's', 8: 'si', 9: 'l', 10: 'li', 11: 't'
+  }
+};
+
+// Flat-side chromatic syllables (used when alter < 0, e.g. Bb, Eb, Ab)
+// British: Curwen convention — flat chromatics use vowel 'a': ra, ma, sa, la, ta
+// American: standard — flat chromatics: Ra, Me, Se, Le, Te
+// Ju: hybrid — flat chromatics: ra, me, se, le, te
+const SOLFEGE_FLAT_MAPS: Record<string, Record<number, string>> = {
+  'American': {
+    0: 'Do', 1: 'Ra', 2: 'Re', 3: 'Me', 4: 'Mi', 5: 'Fa', 6: 'Se', 7: 'Sol', 8: 'Le', 9: 'La', 10: 'Te', 11: 'Ti'
+  },
+  'British': {
+    0: 'Doh', 1: 'Raw', 2: 'Ray', 3: 'Maw', 4: 'Me', 5: 'Fah', 6: 'Saw', 7: 'Soh', 8: 'Law', 9: 'Lah', 10: 'Taw', 11: 'Ti'
+  },
+  'Ju': {
+    0: 'Doh', 1: 'ra', 2: 'Re', 3: 'me', 4: 'Me', 5: 'Fah', 6: 'se', 7: 'Sol', 8: 'le', 9: 'Lah', 10: 'te', 11: 'Ti'
+  },
+  'Sargam': {
+    0: 'Sa', 1: 're', 2: 'Re', 3: 'ga', 4: 'Ga', 5: 'ma', 6: 'Ma', 7: 'Pa', 8: 'dha', 9: 'Dha', 10: 'ni', 11: 'Ni'
+  },
+  'Jianpu': {
+    0: '1', 1: 'b2', 2: '2', 3: 'b3', 4: '3', 5: '4', 6: 'b5', 7: '5', 8: 'b6', 9: '6', 10: 'b7', 11: '7'
+  },
+  'Kodaly': {
+    0: 'd', 1: 'ra', 2: 'r', 3: 'ma', 4: 'm', 5: 'f', 6: 'sa', 7: 's', 8: 'la', 9: 'l', 10: 'ta', 11: 't'
+  }
 };
 
 const KEY_OFFSETS: Record<string, number> = {
@@ -28,19 +60,17 @@ const KEY_OFFSETS: Record<string, number> = {
   'F': 5, 'Bb': 10, 'Eb': 3, 'Ab': 8, 'Db': 1, 'Gb': 6, 'Cb': 11
 };
 
-/**
- * [NEURAL SOLFEGE CORE V2.5]
- * คำนวณคำร้องใต้โน้ตตามโหมดที่เลือก
- * @param mode ต้องระบุค่าตามมาตรฐานระบบ (Kodaly | Jianpu | Fixed Do)
- */
 export const getChromaticSolfege = (
   step: string,
   alter: number,
   key: string,
-  mode: 'Movable Do' | 'Fixed Do' | 'Jianpu' | 'Kodaly' | 'Kodaly Rhythm' = 'Movable Do',
-  durationRatio?: number
+  mode: string = 'Ju Solfege Movable Doh',
+  durationRatio?: number,
+  fifths: number = 0
 ): string => {
-  // 1. ระบบ Kodaly Rhythm (ta, ti, tiri...)
+  if (mode === 'Close' || mode === 'Lyric') return '';
+
+  // 1. ระบบ Kodaly Rhythm
   if (mode === 'Kodaly Rhythm' && durationRatio !== undefined) {
     if (durationRatio >= 4) return "ta-a-a-a";
     if (durationRatio >= 2) return "ta-ah";
@@ -54,19 +84,28 @@ export const getChromaticSolfege = (
 
   // 2. คำนวณ Pitch Absolute
   const noteBases: Record<string, number> = { 'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11 };
-  const tonic = (mode === 'Fixed Do') ? 0 : (KEY_OFFSETS[key] ?? 0);
+  
+  // Decide Tonic based on Fixed vs Movable — matches 'Fixed Do', 'Fixed Doh', etc.
+  const isFixed = mode.includes('Fixed');
+  const tonic = isFixed ? 0 : (KEY_OFFSETS[key] ?? 0);
+  
   const abs = (noteBases[step.toUpperCase()] + (alter || 0) + 12) % 12;
   const interval = (abs - tonic + 12) % 12;
 
-  const m = SOLFEGE_MAP[interval];
-  if (!m) return step;
+  // 3. ปรับชื่อระบบตามโหมด
+  let system = 'Ju';
+  if (mode.includes('American')) system = 'American';
+  else if (mode.includes('British')) system = 'British';
+  else if (mode === 'Indian Sargam') system = 'Sargam';
+  else if (mode === 'Jianpu') system = 'Jianpu';
+  else if (mode === 'Kodaly') system = 'Kodaly';
 
-  // 3. แยกส่งค่าตามโหมด
-  if (mode === 'Jianpu') return m.jianpu;
-  if (mode === 'Kodaly') return m.kodaly;
-
-  const isFlatKey = key.includes('b') || key === 'F';
-  const useFlat = alter < 0 || (alter === 0 && isFlatKey && [1, 3, 6, 8, 10].includes(interval));
-
-  return useFlat ? m.flat : m.sharp;
+  // Determine flat vs sharp naming:
+  // - If key signature has flats (fifths < 0) → use flat-side names for all notes
+  //   UNLESS the note itself has a sharp accidental (alter > 0)
+  // - If the note itself has a flat accidental (alter < 0) → always use flat names
+  // - Otherwise → use sharp-side names
+  const useFlat = (alter < 0) || (fifths < 0 && alter <= 0);
+  const map = (useFlat ? SOLFEGE_FLAT_MAPS[system] : SOLFEGE_MAPS[system]) || SOLFEGE_MAPS['Ju'];
+  return map[interval] || step;
 };

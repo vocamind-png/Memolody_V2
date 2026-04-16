@@ -1,6 +1,10 @@
 import React, { useState } from 'react';
 import * as Tone from 'tone';
-import { Settings2, Volume2, Cpu, Mic, Activity, Keyboard, MonitorSpeaker, Command, Monitor, Zap, Bot, Play } from 'lucide-react';
+import { Settings2, Volume2, Cpu, Mic, Activity, Keyboard, MonitorSpeaker, Command, Monitor, Zap, Bot, Play, Sparkles } from 'lucide-react';
+import VocalidoTrainingCard from './VocalidoTrainingCard';
+import CreditsCard from './CreditsCard';
+import AudioEngineSettings from './AudioEngineSettings';
+import OMRSettingsCard from './OMRSettingsCard';
 
 interface SettingsPageProps {
     onBack?: () => void;
@@ -10,9 +14,11 @@ interface SettingsPageProps {
     onToggleNimoEnabled: (enabled: boolean) => void;
     nimoVoice: 'teen_girl' | 'adult_woman' | 'teen_boy' | 'adult_man';
     onChangeNimoVoice: (voice: 'teen_girl' | 'adult_woman' | 'teen_boy' | 'adult_man') => void;
+    vocalidoAutoRender: boolean;
+    onToggleVocalidoAutoRender: (enabled: boolean) => void;
 }
 
-const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, onTogglePerformanceMode, nimoEnabled, onToggleNimoEnabled, nimoVoice, onChangeNimoVoice }) => {
+const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, onTogglePerformanceMode, nimoEnabled, onToggleNimoEnabled, nimoVoice, onChangeNimoVoice, vocalidoAutoRender, onToggleVocalidoAutoRender }) => {
     const [activeTab, setActiveTab] = useState<'audio' | 'midi' | 'shortcuts' | 'visual' | 'ai'>('audio');
 
     // Audio Settings State
@@ -81,8 +87,8 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, on
     const [midiInput, setMidiInput] = useState('all');
 
     return (
-        <div className="w-full min-h-full bg-black text-white p-4 md:p-8 flex flex-col pt-[20px] pb-32">
-            <div className="max-w-4xl mx-auto w-full relative z-10 flex-col flex h-full">
+        <div className="w-full h-full bg-black text-white p-4 md:p-8 flex flex-col pt-[20px] pb-8 overflow-hidden">
+            <div className="max-w-4xl mx-auto w-full relative z-10 flex-col flex h-full overflow-hidden">
                 {/* Header */}
                 <div className="flex items-center gap-4 mb-8">
                     <div className="w-12 h-12 rounded-full bg-cyan-500/10 flex items-center justify-center border border-cyan-500/30">
@@ -107,8 +113,9 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, on
                     ].map(tab => (
                         <button
                             key={tab.id}
+                            id={`tab-${tab.id}`}
                             onClick={() => setActiveTab(tab.id as any)}
-                            className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === tab.id
+                            className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${activeTab === tab.id
                                 ? 'bg-gradient-to-r from-cyan-500/20 to-blue-500/20 text-cyan-400 border border-cyan-500/30 shadow-[0_0_20px_rgba(6,182,212,0.15)]'
                                 : 'text-zinc-500 hover:text-white hover:bg-white/5 border border-transparent'
                                 }`}
@@ -120,7 +127,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, on
                 </div>
 
                 {/* Content Area */}
-                <div className="flex-1 bg-[#0a0a0f]/80 backdrop-blur-xl rounded-3xl border border-white/5 p-6 md:p-10 shadow-2xl relative overflow-hidden">
+                <div className="flex-1 bg-[#0a0a0f]/80 backdrop-blur-xl rounded-3xl border border-white/5 p-6 md:p-10 shadow-2xl relative overflow-y-auto custom-scrollbar">
                     {/* Subtle glow effect */}
                     <div className="absolute top-0 right-0 w-96 h-96 bg-cyan-500/5 rounded-full blur-[100px] pointer-events-none" />
 
@@ -417,6 +424,8 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, on
                             </h2>
 
                             <div className="flex flex-col gap-6">
+                {/* Audio AI Engine Settings */}
+                <AudioEngineSettings />
                                 <div className={`p-6 rounded-[28px] border transition-all ${nimoEnabled ? 'bg-cyan-500/10 border-cyan-500/30' : 'bg-white/5 border-white/10'}`}>
                                     <div className="flex items-start justify-between gap-4">
                                         <div className="flex-1">
@@ -438,6 +447,32 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, on
                                         </button>
                                     </div>
                                 </div>
+
+                                <div className={`p-6 rounded-[28px] border transition-all ${vocalidoAutoRender ? 'bg-rose-500/10 border-rose-500/30' : 'bg-white/5 border-white/10'}`}>
+                                    <div className="flex items-start justify-between gap-4">
+                                        <div className="flex-1">
+                                            <div className="flex items-center gap-2 mb-2">
+                                                <Mic size={16} className={vocalidoAutoRender ? 'text-rose-400' : 'text-zinc-500'} />
+                                                <h3 className="text-sm font-black uppercase tracking-widest text-white">Vocalido Auto-Render</h3>
+                                            </div>
+                                            <p className="text-[10px] text-zinc-500 uppercase tracking-widest leading-relaxed">
+                                                {vocalidoAutoRender
+                                                    ? "AI will automatically render singing voices when a song is loaded. This may take a few seconds."
+                                                    : "Manual Vocal Synthesis: You must trigger rendering from the Voice Studio."}
+                                            </p>
+                                        </div>
+                                        <button
+                                            onClick={() => onToggleVocalidoAutoRender(!vocalidoAutoRender)}
+                                            className={`relative w-14 h-7 rounded-full transition-all flex items-center p-1 ${vocalidoAutoRender ? 'bg-rose-500' : 'bg-white/10'}`}
+                                        >
+                                            <div className={`w-5 h-5 bg-white rounded-full shadow-lg transform transition-transform ${vocalidoAutoRender ? 'translate-x-7' : 'translate-x-0'}`} />
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* ── Vocalido DiffSinger Training Status ── */}
+                                <VocalidoTrainingCard />
+                <CreditsCard />
 
                                 <div className={`transition-all duration-300 ${!nimoEnabled ? 'opacity-50 pointer-events-none grayscale' : ''}`}>
                                     <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2 block">Voice Identity & Personality</label>
@@ -497,6 +532,75 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, on
                                         <Play size={12} /> Test Voice Sample
                                     </button>
                                 </div>
+                            </div>
+
+                            {/* OMR Score Scanner */}
+                            <div className="mt-8">
+                                <div className="text-[10px] font-black uppercase tracking-widest text-zinc-600 mb-4 flex items-center gap-2">
+                                    <span>🎼 OMR Score Scanner</span>
+                                    <div className="h-px flex-1 bg-zinc-800" />
+                                </div>
+                                <OMRSettingsCard />
+                            </div>
+
+                            {/* ── NEW: Neural Link Advanced Settings ── */}
+                            <div className="mt-12 mb-12 border-t border-white/5 pt-12">
+                                <div className="text-[10px] font-black uppercase tracking-widest text-cyan-500/50 mb-6 flex items-center gap-2">
+                                    <span>🧠 Neural Link Advanced Config</span>
+                                    <div className="h-px flex-1 bg-cyan-500/10" />
+                                </div>
+                                
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="p-6 rounded-[24px] bg-white/[0.02] border border-white/5 hover:border-cyan-500/20 transition-all">
+                                        <div className="flex items-center gap-3 mb-3">
+                                            <Zap size={16} className="text-cyan-400" />
+                                            <span className="text-[11px] font-black uppercase tracking-widest text-white italic">Neural Processing Priority</span>
+                                        </div>
+                                        <p className="text-[9px] text-zinc-500 uppercase leading-relaxed mb-4">Allocation of local CPU resources for AI inference tasks.</p>
+                                        <div className="flex gap-2">
+                                            {['Energy Save', 'Balanced', 'Turbo'].map(mode => (
+                                                <button key={mode} className={`flex-1 py-2 rounded-lg text-[8px] font-black uppercase tracking-tighter border ${mode === 'Balanced' ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400' : 'border-white/5 text-zinc-600'}`}>
+                                                    {mode}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    <div className="p-6 rounded-[24px] bg-white/[0.02] border border-white/5 hover:border-cyan-500/20 transition-all">
+                                        <div className="flex items-center gap-3 mb-3">
+                                            <Activity size={16} className="text-emerald-400" />
+                                            <span className="text-[11px] font-black uppercase tracking-widest text-white italic">Real-time Analysis</span>
+                                        </div>
+                                        <p className="text-[9px] text-zinc-500 uppercase leading-relaxed mb-4">Nimo's reactivity speed to MIDI and audio input changes.</p>
+                                        <div className="w-full h-1 bg-zinc-800 rounded-full overflow-hidden mb-2">
+                                            <div className="w-4/5 h-full bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+                                        </div>
+                                        <div className="flex justify-between items-center text-[7px] font-mono text-zinc-600 uppercase">
+                                            <span>Low Latency</span>
+                                            <span className="text-emerald-400">80ms Responsive</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Creative Exploration Policy */}
+                                <div className="mt-4 p-6 rounded-[24px] bg-gradient-to-r from-cyan-500/5 to-purple-500/5 border border-white/5">
+                                    <div className="flex items-center justify-between mb-4">
+                                        <div>
+                                            <div className="text-[11px] font-black uppercase tracking-widest text-white italic flex items-center gap-2">
+                                                <Sparkles size={14} className="text-purple-400" />
+                                                Creative Entropy (AI Temperature)
+                                            </div>
+                                            <p className="text-[9px] text-zinc-500 uppercase tracking-wider mt-1">Higher entropy results in more experimental chord and melody suggestions.</p>
+                                        </div>
+                                        <span className="text-xs font-mono text-purple-400 font-bold">0.82</span>
+                                    </div>
+                                    <input type="range" className="w-full accent-purple-500 h-1 rounded-full bg-zinc-800" />
+                                </div>
+                            </div>
+                            
+                            <div className="text-center py-12 opacity-30">
+                                <div className="h-px w-24 bg-gradient-to-r from-transparent via-zinc-500 to-transparent mx-auto mb-4" />
+                                <p className="text-[9px] font-black uppercase tracking-[0.3em] text-zinc-500">End of AI Configuration</p>
                             </div>
                         </div>
                     )}
