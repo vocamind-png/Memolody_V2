@@ -11,6 +11,7 @@ const ScoreSelectionModal: React.FC<ScoreSelectionModalProps> = ({ file, onConfi
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [renderError, setRenderError] = useState<string | null>(null);
+  const [isCropMode, setIsCropMode] = useState(false);
   const [cropRect, setCropRect] = useState({ x: 5, y: 15, width: 90, height: 25 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragType, setDragType] = useState<'move' | 'resize-br' | null>(null);
@@ -219,28 +220,30 @@ const ScoreSelectionModal: React.FC<ScoreSelectionModalProps> = ({ file, onConfi
             src={imageSrc}
             alt="Score preview"
             className="block max-w-full max-h-[60vh] rounded-sm"
-            style={{ opacity: 0.55 }}
+            style={{ opacity: isCropMode ? 0.55 : 1 }}
             draggable={false}
           />
 
           {/* Crop box */}
-          <div
-            className={`absolute border-2 border-indigo-400 bg-indigo-400/10 cursor-move ${isDragging ? 'shadow-[0_0_60px_rgba(99,102,241,0.5)]' : 'shadow-[0_0_30px_rgba(99,102,241,0.25)]'}`}
-            style={{ left: `${cropRect.x}%`, top: `${cropRect.y}%`, width: `${cropRect.width}%`, height: `${cropRect.height}%` }}
-            onMouseDown={(e) => handleMouseDown(e, 'move')}
-          >
-            {/* Label */}
-            <span className="absolute -top-6 left-0 bg-indigo-500 text-white text-[8px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest whitespace-nowrap">
-              Selected Region
-            </span>
-            {/* Resize handle */}
+          {isCropMode && (
             <div
-              className="absolute -right-2.5 -bottom-2.5 w-5 h-5 bg-indigo-500 rounded-md flex items-center justify-center cursor-nwse-resize shadow-lg"
-              onMouseDown={(e) => handleMouseDown(e, 'resize-br')}
+              className={`absolute border-2 border-indigo-400 bg-indigo-400/10 cursor-move ${isDragging ? 'shadow-[0_0_60px_rgba(99,102,241,0.5)]' : 'shadow-[0_0_30px_rgba(99,102,241,0.25)]'}`}
+              style={{ left: `${cropRect.x}%`, top: `${cropRect.y}%`, width: `${cropRect.width}%`, height: `${cropRect.height}%` }}
+              onMouseDown={(e) => handleMouseDown(e, 'move')}
             >
-              <Maximize size={10} className="text-white" />
+              {/* Label */}
+              <span className="absolute -top-6 left-0 bg-indigo-500 text-white text-[8px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest whitespace-nowrap">
+                Selected Region
+              </span>
+              {/* Resize handle */}
+              <div
+                className="absolute -right-2.5 -bottom-2.5 w-5 h-5 bg-indigo-500 rounded-md flex items-center justify-center cursor-nwse-resize shadow-lg"
+                onMouseDown={(e) => handleMouseDown(e, 'resize-br')}
+              >
+                <Maximize size={10} className="text-white" />
+              </div>
             </div>
-          </div>
+          )}
         </div>
       );
     }
@@ -260,9 +263,9 @@ const ScoreSelectionModal: React.FC<ScoreSelectionModalProps> = ({ file, onConfi
               <ScanLine className="text-indigo-400" size={20} />
             </div>
             <div>
-              <h2 className="text-base font-black text-white uppercase tracking-tight">Selective Line Scan</h2>
+              <h2 className="text-base font-black text-white uppercase tracking-tight">Score Scan Mode</h2>
               <p className="text-zinc-600 text-[9px] font-bold uppercase tracking-widest">
-                Drag to select 1–3 lines · All devices supported
+                เลือก: สแกนทั้งหน้า หรือ ลากเลือกเฉพาะบรรทัด
               </p>
             </div>
           </div>
@@ -285,30 +288,58 @@ const ScoreSelectionModal: React.FC<ScoreSelectionModalProps> = ({ file, onConfi
         {/* Footer */}
         <div className="px-6 py-4 border-t border-white/5 bg-white/[0.015] flex items-center justify-between shrink-0">
           <div className="flex items-center gap-4 text-xs">
-            <span className="text-zinc-600 uppercase tracking-widest font-bold text-[9px]">Selection</span>
-            <span className="text-white font-bold">
-              {Math.round(cropRect.width)}% × {Math.round(cropRect.height)}%
-            </span>
+            {isCropMode && (
+              <>
+                <span className="text-zinc-600 uppercase tracking-widest font-bold text-[9px]">Selection</span>
+                <span className="text-white font-bold">
+                  {Math.round(cropRect.width)}% × {Math.round(cropRect.height)}%
+                </span>
+              </>
+            )}
           </div>
           <div className="flex items-center gap-3">
-            <button onClick={onCancel} className="px-5 py-2.5 rounded-xl text-[10px] font-black text-zinc-500 uppercase tracking-widest hover:text-white transition-all">
-              Cancel
+            <button onClick={() => {
+              if (isCropMode) {
+                setIsCropMode(false);
+              } else {
+                onCancel();
+              }
+            }} className="px-5 py-2.5 rounded-xl text-[10px] font-black text-zinc-500 uppercase tracking-widest hover:text-white transition-all">
+              {isCropMode ? 'Cancel Crop' : 'Cancel'}
             </button>
+            {!isCropMode && (
+              <button
+                onClick={() => handleProcess(true)}
+                disabled={!imageSrc}
+                title="สแกนภาพทั้งหน้า (Full Page) — ส่งไฟล์ต้นฉบับทั้งหมดให้ AI"
+                className="bg-white/5 hover:bg-white/10 text-zinc-300 px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 border border-white/10 transition-all active:scale-95"
+              >
+                <Maximize size={14} />
+                <span className="flex flex-col items-start leading-none gap-0.5">
+                  <span>Scan Full Page</span>
+                  <span className="text-[7px] text-zinc-600 font-bold normal-case tracking-normal">ส่งทั้งหน้าให้ AI อ่าน</span>
+                </span>
+              </button>
+            )}
             <button
-              onClick={() => handleProcess(true)}
+              onClick={() => {
+                if (!isCropMode) {
+                  setIsCropMode(true);
+                } else {
+                  handleProcess(false);
+                }
+              }}
               disabled={!imageSrc}
-              className="bg-white/5 hover:bg-white/10 text-zinc-300 px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 border border-white/10 transition-all active:scale-95"
-            >
-              <Maximize size={14} />
-              Scan Full Page
-            </button>
-            <button
-              onClick={() => handleProcess(false)}
-              disabled={!imageSrc}
+              title={isCropMode ? "ยืนยันการสแกนส่วนที่เลือก" : "สแกนเฉพาะส่วนที่เลือก (Selection) — Crop ตาม Box แล้วส่ง AI"}
               className="bg-indigo-500 hover:bg-indigo-400 disabled:opacity-30 disabled:cursor-not-allowed text-white px-7 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-[0_8px_24px_rgba(99,102,241,0.3)] transition-all active:scale-95"
             >
               <Check size={14} />
-              Scan Selection
+              <span className="flex flex-col items-start leading-none gap-0.5">
+                <span>{isCropMode ? 'Confirm Crop' : 'Scan Selection'}</span>
+                <span className="text-[7px] text-indigo-200/60 font-bold normal-case tracking-normal">
+                  {isCropMode ? 'ยืนยันและส่งสแกน' : 'เลือกเฉพาะส่วนที่ต้องการ'}
+                </span>
+              </span>
             </button>
           </div>
         </div>

@@ -1,9 +1,39 @@
+# ── Vocalido SVS Server — Full Requirements ──────────────────────────────────
+# Install with: pip install -r requirements.txt
+
+# Web server
 fastapi==0.100.0
 uvicorn==0.22.0
-pydantic==2.0.2
+pydantic>=2.5.0
 python-multipart==0.0.6
-wave
-# For Real AI (Install if GPU is available):
-# torch
-# librosa
-# diffsinger (local package if you have one)
+
+# Audio processing (required for ALL synthesis paths)
+librosa>=0.10.0
+soundfile>=0.12.1
+scipy>=1.11.0
+numpy>=1.24.0
+
+# ONNX Runtime (required for TIGER DiffSinger v106)
+onnxruntime>=1.16.0
+
+# G2P English phonemizer (required for TIGER text → phoneme)
+g2p_en>=2.1.0
+
+# MIDI file parsing (for /song/synthesize endpoint)
+pretty_midi>=0.2.10
+
+# PDF to image (for /pdf/preview endpoint — optional but recommended)
+PyMuPDF>=1.23.0
+
+# Music notation parsing (for /xml/synthesize endpoint — optional)
+music21>=9.1.0
+
+# MP3 export support (required for /studio/preview response)
+pydub>=0.25.1
+
+# PyTorch (required for custom trained model — CPU-only version)
+# For Apple Silicon (M1/M2/M3) use: pip install torch torchvision torchaudio
+# For CPU-only (Intel/AMD): pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+# Uncomment one of the lines below or install manually:
+# torch>=2.1.0
+# torchaudio>=2.1.0

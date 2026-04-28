@@ -77,7 +77,7 @@ class VocalidoAIEngine:
         if not os.path.isdir(model_path):
             # Attempt to download missing model automatically
             try:
-                from .model_manager import download_model
+                from model_manager import download_model  # absolute import (not a package)
                 msg = download_model(model_name)
                 print(f"[AI Engine] 📥 {msg}")
             except Exception as e:

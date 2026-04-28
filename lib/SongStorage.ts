@@ -4,6 +4,7 @@ import { Song, MusicalMemo, SongFolder } from '../types';
 interface StoredSong {
   metadata: Song;
   xmlData: string;
+  layoutBundle?: any | null;
 }
 
 export interface NeuralStats {
@@ -89,13 +90,13 @@ export class SongStorage {
     });
   }
 
-  async saveSong(metadata: Song, xmlData: string): Promise<void> {
+  async saveSong(metadata: Song, xmlData: string, layoutBundle?: any | null): Promise<void> {
     const db = await this.init();
     return new Promise((resolve, reject) => {
       const transaction = db.transaction([this.storeName, this.deletedStore], 'readwrite');
       // Ensure ID is a string for consistent indexing
       const finalMetadata = { ...metadata, id: String(metadata.id) };
-      transaction.objectStore(this.storeName).put({ metadata: finalMetadata, xmlData });
+      transaction.objectStore(this.storeName).put({ metadata: finalMetadata, xmlData, layoutBundle });
       transaction.objectStore(this.deletedStore).delete(finalMetadata.id); // Remove from deleted list if re-added
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error);

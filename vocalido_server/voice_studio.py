@@ -9,16 +9,46 @@ import io, os, json, base64
 from pathlib import Path
 from scipy import signal
 
-SAMPLE_DIR = Path("/tmp/voice_samples_full")
+# ── Sample directory: use permanent project-relative path ─────────────────────
+# Priority: 1) female voicebank, 2) male voicebank, 3) any voicebank subdir
+_BASE_DIR = Path(__file__).parent / "voicebanks"
+_CANDIDATE_DIRS = [
+    _BASE_DIR / "female" / "ophelia_en_test",
+    _BASE_DIR / "male",
+    _BASE_DIR / "female",
+    _BASE_DIR,
+]
+
+def _find_sample_dir() -> Path:
+    """Find the first directory that contains .wav files"""
+    for d in _CANDIDATE_DIRS:
+        if d.exists() and any(d.glob("*.wav")):
+            return d
+    # Fallback: create default path so the user knows where to put samples
+    default = _BASE_DIR / "female" / "ophelia_en_test"
+    default.mkdir(parents=True, exist_ok=True)
+    print(f"[Studio] ⚠️  No WAV samples found. Put your voice samples (.wav) in:\n         {default}")
+    return default
+
+SAMPLE_DIR = _find_sample_dir()
 SR = 44100
 
 # ── Load sample library ────────────────────────────────────────────────
 def load_library():
-    """Load all WAV samples from the sample directory"""
+    """Load all WAV samples from the sample directory.
+    Re-evaluates SAMPLE_DIR each call in case files were added after startup.
+    """
+    global SAMPLE_DIR
+    SAMPLE_DIR = _find_sample_dir()  # re-scan in case files were added
     lib = {}
     if not SAMPLE_DIR.exists():
+        print("[Studio] ⚠️  Sample directory does not exist — sampler unavailable.")
         return lib
-    for f in sorted(SAMPLE_DIR.glob("*.wav")):
+    wav_files = list(SAMPLE_DIR.glob("*.wav"))
+    if not wav_files:
+        print(f"[Studio] ⚠️  No .wav files in {SAMPLE_DIR} — sampler unavailable.")
+        return lib
+    for f in sorted(wav_files):
         name = f.stem  # e.g. "A4", "Cs4", "Bb3"
         try:
             audio, sr = sf.read(str(f))

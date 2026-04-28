@@ -299,7 +299,7 @@ const VaultPage: React.FC<VaultPageProps> = ({
               className="w-full py-4 bg-cyan-500/10 border border-cyan-500/20 rounded-xl text-sm font-bold text-cyan-400 hover:bg-cyan-500/20 transition-colors duration-75">
               Select MusicXML / MIDI Files
             </button>
-            <input ref={fileInputRef} type="file" multiple className="hidden" accept=".xml,.musicxml,.mxl,.mid,.midi" onChange={handleFileInputChange} />
+            <input ref={fileInputRef} type="file" multiple className="hidden" accept=".xml,.musicxml,.mxl,.mid,.midi,.emk" onChange={handleFileInputChange} />
           </div>
         </div>
       )}

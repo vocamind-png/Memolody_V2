@@ -179,7 +179,7 @@ const PalettePanel: React.FC<PaletteProps> = ({
     <div
       ref={ref}
       style={{ left: pos.x, top: pos.y, position: 'fixed', zIndex: 5000 }}
-      className={`w-48 bg-zinc-950/96 backdrop-blur-3xl border border-white/8 rounded-[28px] shadow-[0_24px_60px_rgba(0,0,0,0.85)] animate-in fade-in zoom-in-95 duration-200 select-none touch-none overflow-hidden ${colors.glow}`}
+      className={`w-48 bg-zinc-950 border border-white/8 rounded-[28px] shadow-[0_24px_60px_rgba(0,0,0,0.85)] animate-in fade-in zoom-in-95 duration-200 select-none touch-none overflow-hidden ${colors.glow}`}
       onClick={e => e.stopPropagation()}
     >
       {/* Drag handle / header */}
@@ -264,7 +264,7 @@ const HistoryPanel: React.FC<HistoryPanelProps> = ({
     <div
       ref={ref}
       style={{ left: pos.x, top: pos.y, position: 'fixed', zIndex: 5000 }}
-      className="bg-zinc-950/96 backdrop-blur-3xl border border-white/8 rounded-[24px] shadow-[0_20px_50px_rgba(0,0,0,0.8)] animate-in fade-in duration-200 select-none"
+      className="bg-zinc-950 border border-white/8 rounded-[24px] shadow-[0_20px_50px_rgba(0,0,0,0.8)] animate-in fade-in duration-200 select-none"
       onClick={e => e.stopPropagation()}
     >
       <div className="flex items-center justify-between px-3 py-2 border-b border-white/5 cursor-move" onMouseDown={onHandleMouseDown}>
@@ -393,7 +393,7 @@ const EngraverCommandCenter: React.FC<EngraverCommandCenterProps> = ({
       {/* Panel Selector popup */}
       {showSelector && (
         <div
-          className="fixed bottom-40 left-5 z-[5500] bg-zinc-950/98 backdrop-blur-3xl border border-white/10 rounded-[28px] p-3 shadow-2xl animate-in fade-in zoom-in-95 duration-200"
+          className="fixed bottom-40 left-5 z-[5500] bg-zinc-950 border border-white/10 rounded-[28px] p-3 shadow-2xl animate-in fade-in zoom-in-95 duration-200"
           style={{ minWidth: 220 }}
         >
           <p className="text-[7px] font-black uppercase tracking-[0.3em] text-zinc-500 mb-2 px-1">Toggle Panels</p>

@@ -4,24 +4,54 @@ import time
 import subprocess
 import yaml
 
+# ── Force vocalido-env onto PATH so all subprocesses find fstcompile, mfa, etc. ──
+VOCALIDO_BIN = "/Users/paisan/miniconda3/envs/vocalido-env/bin"
+os.environ["PATH"] = f"{VOCALIDO_BIN}:{os.environ.get('PATH', '')}"
+os.environ["CONDA_PREFIX"] = "/Users/paisan/miniconda3/envs/vocalido-env"
+
 def print_header():
     print("\n" + "🌟"*25)
     print("    🍏 VOCALIDO M4 - LIVE COMMAND CENTER")
     print("    ระบบรายงานผลการเทรนเสียงแบบ Real-Time")
     print("🌟"*25 + "\n")
 
+def get_env_cmd(cmd):
+    # Force use of vocalido-env binaries
+    env_path = "/Users/paisan/miniconda3/envs/vocalido-env/bin"
+    if cmd.startswith("python"):
+        return f"{env_path}/{cmd}"
+    if cmd.startswith("mfa"):
+        return f"{env_path}/{cmd}"
+    if cmd.startswith("tensorboard"):
+        return f"{env_path}/{cmd}"
+    return cmd
+
 def run_step(step_name, cmd, cwd=None):
     print(f"\n{'-'*60}")
     print(f"▶️ สเต็ปปฏิบัติการ: {step_name}")
     print(f"{'-'*60}")
     
-    # รันโปรแกรมโดยให้มันแสดงผลไหลออกมาที่หน้าจอโดยตรง (Stream stdout/stderr)
-    process = subprocess.Popen(cmd, shell=True, cwd=cwd)
+    # Process the command to use absolute paths
+    parts = cmd.split(" && ")
+    new_parts = []
+    for p in parts:
+        if p.strip().startswith("cd "):
+            new_parts.append(p)
+        else:
+            # Handle commands like 'python scripts/...'
+            cmd_parts = p.strip().split(" ", 1)
+            executable = get_env_cmd(cmd_parts[0])
+            args = cmd_parts[1] if len(cmd_parts) > 1 else ""
+            new_parts.append(f"{executable} {args}")
+    
+    final_cmd = " && ".join(new_parts)
+    
+    process = subprocess.Popen(final_cmd, shell=True, cwd=cwd)
     process.wait()
     
     if process.returncode != 0:
         print(f"\n❌ [ข้อผิดพลาดจังๆ] การทำงานหยุดชะงักที่ขั้นตอน: {step_name}")
-        print("💡 โปรดเลื่อนอ่านข้อความแจ้งเตือนสีแดงด้านบนเพื่อหาสาเหตุครับ")
+        print(f"💡 คำสั่งที่รัน: {final_cmd}")
         sys.exit(1)
     print(f"✅ [ผ่านฉลุย] เสร็จสิ้นขั้นตอน: {step_name}\n")
 
@@ -60,10 +90,10 @@ def create_config(ds_data):
         "datasets": [
             {
                 "raw_data_dir": ds_data,
-                "speaker": "Slora",
+                "speaker": "vocalido",
                 "spk_id": 0,
                 "language": "en",
-                "test_prefixes": ["song_37", "song_38", "song_39"]
+                "test_prefixes": ["song_01"]
             }
         ],
         "dictionaries": {
@@ -72,7 +102,7 @@ def create_config(ds_data):
         "binary_data_dir": f"{ds_data}_bin",
         "hnsep": "world",
         "val_with_vocoder": False,
-        "max_batch_size": 16,  # เหมาะกับ RAM 24GB ของ Apple M4
+        "max_batch_size": 16,
         "max_epochs": 10000,
         "num_ckpt_keep": 5,
         "val_check_interval": 200,
@@ -84,55 +114,54 @@ def create_config(ds_data):
     print("✅ สร้างไฟล์คอนฟิกสำเร็จ...")
 
 def main():
-    os.environ["PATH"] = f"/Users/paisan/miniconda3/bin:{os.environ.get('PATH', '')}"
-    base_dir = "/Users/paisan/vocamind-projects/Memolody_V2/vocalido-server/training"
+    base_dir = "/Users/paisan/vocamind-projects/Memolody_V2/vocalido_server/training"
     os.chdir(base_dir)
     print_header()
 
-    # 1. เปิดกราฟสด (TensorBoard)
+    # 1. TensorBoard
+    tb_cmd = get_env_cmd("tensorboard")
     print("📊 1. กำลังเปิดระบบบอร์ดรายงานผล (กราฟ TensorBoard)...")
-    os.system("conda run -n vocalido-env tensorboard --logdir=DiffSinger/checkpoints --port=6006 > /dev/null 2>&1 &")
-    print("   👉 [สำคัญ] กดลิงก์นี้เพื่อดูบราอัจฉริยภาพได้เลย: http://localhost:6006")
-    print("   (คุณสามารถเปิดเว็บนี้ค้างไว้ กราฟจะรีเฟรชทุกๆ ไม่กี่นาทีเพื่อบอกว่ามันแม่นยำขึ้นแค่ไหน)")
-    time.sleep(2)
+    os.system(f"{tb_cmd} --logdir=DiffSinger/checkpoints --port=6006 > /dev/null 2>&1 &")
+    print("   👉 ดูความคืบหน้าได้ที่: http://localhost:6006")
+    time.sleep(1)
 
-    # 2. โหลดโมเดลตัวแกะคำอัตโนมัติของ MFA
-    run_step("2. โหลดเครื่องมือเทียบเสียงวรรณยุกต์ (MFA Models)", 
-             "conda run -n vocalido-env mfa model download dictionary english_mfa && conda run -n vocalido-env mfa model download acoustic english_mfa")
-
-    # 3. สกัดหาตำแหน่งช่วงเวลาเสียง
-    dataset_dir = "/tmp/diffsinger_dataset"
-    textgrids_dir = f"{dataset_dir}/textgrids"
-    run_step("3. จับคู่เวลาคลื่นเสียงกับเนื้อร้อง (Alignment)", 
-             f"conda run -n vocalido-env mfa align {dataset_dir}/wavs english_mfa english_mfa {textgrids_dir} --clean -j 4")
-
-    # ย้ายไฟล์เตรียมเข้าโฟลเดอร์รัน AI
     ds_data = f"{base_dir}/DiffSinger/data/vocalido"
-    os.makedirs(f"{ds_data}/wavs", exist_ok=True)
-    os.makedirs(f"{ds_data}/textgrids", exist_ok=True)
-    os.system(f"cp -r {dataset_dir}/wavs/* {ds_data}/wavs/ 2>/dev/null || true")
-    os.system(f"cp -r {dataset_dir}/textgrids/* {ds_data}/textgrids/ 2>/dev/null || true")
+    bin_data = f"{base_dir}/DiffSinger/data/vocalido_bin"
     
-    generate_transcriptions_csv(textgrids_dir, f"{ds_data}/transcriptions.csv")
-    print(f"✅ สร้างไฟล์ฐานข้อมูล transcriptions.csv สำหรับ DiffSinger สำเร็จ...\n")
-    
+    if os.path.exists(bin_data) and len(os.listdir(bin_data)) > 0:
+        print("✅ พบฐานข้อมูลเดิม (Binarized Data) แล้ว! ข้ามขั้นตอนเตรียมข้อมูล...")
+    else:
+        dataset_dir = f"{ds_data}/wavs"
+        if not os.path.exists(dataset_dir):
+            print(f"❌ ไม่พบโฟลเดอร์ Dataset ที่ {dataset_dir}")
+            sys.exit(1)
+            
+        print(f"🎤 ตรวจพบไฟล์เสียงต้นฉบับที่: {dataset_dir}")
+        
+        run_step("2. โหลด MFA Models", 
+                 "mfa model download dictionary english_mfa && mfa model download acoustic english_mfa")
+
+        textgrids_dir = f"{ds_data}/textgrids"
+        os.makedirs(textgrids_dir, exist_ok=True)
+        run_step("3. Alignment", 
+                 f"mfa align {dataset_dir} english_mfa english_mfa {textgrids_dir} --clean -j 4")
+        
+        generate_transcriptions_csv(textgrids_dir, f"{ds_data}/transcriptions.csv")
+        create_config(ds_data)
+        
+        run_step("4. Binarization", 
+                 "cd DiffSinger && python scripts/binarize.py --config usr/configs/vocalido.yaml")
+
     create_config(ds_data)
 
-    # 4. แปลงไฟล์เสียงให้เป็นฐานข้อมูลตัวเลข (Binarization)
-    run_step("4. ย่อยสลายคลื่นเสียงเป็นฐานข้อมูลดิจิทัล (Binarization)", 
-             "cd DiffSinger && conda run -n vocalido-env python scripts/binarize.py --config usr/configs/vocalido.yaml")
-
-    # 5. เทรนโมเดล
+    # 5. Train
     print("\n" + "🔥"*25)
-    print("เข้าสู่การเทรน AI (TRAINING PHASE) อย่างเป็นทางการ")
-    print("หน้าจอจะเริ่มโชว์แถบเปอร์เซ็นต์ (Progress Bar)")
-    print("ถ้าระบบค้าง เปอร์เซ็นต์นี้จะหยุดวิ่ง ให้สังเกตจากตรงนี้ได้เลยครับ!")
+    print("เข้าสู่การเทรน AI 🚀")
     print("🔥"*25 + "\n")
     
-    # บังคับให้ใช้การ์ดจอ M4 (MPS) อย่างเต็มสูบ
     os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
-    run_step("5. เดินเครื่องเทรน AI 🚀", 
-             "cd DiffSinger && conda run -n vocalido-env python scripts/train.py --config usr/configs/vocalido.yaml --exp_name vocalido_v1 --reset")
+    run_step("5. เริ่มการเทรน AI", 
+             "cd DiffSinger && python scripts/train.py --config usr/configs/vocalido.yaml --exp_name vocalido_v1")
 
 if __name__ == "__main__":
     main()

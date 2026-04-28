@@ -124,7 +124,7 @@ export class MusicEngine {
     const fifths = fifthsNode ? parseInt(fifthsNode.textContent || "0") : 0;
     const modeNode = xmlDoc.querySelector("key mode");
     const isMinor = modeNode?.textContent?.toLowerCase() === 'minor';
-    
+
     const FIFTHS_TO_MAJOR: Record<number, string> = {
       [-7]: "Cb", [-6]: "Gb", [-5]: "Db", [-4]: "Ab", [-3]: "Eb", [-2]: "Bb", [-1]: "F",
       0: "C", 1: "G", 2: "D", 3: "A", 4: "E", 5: "B", 6: "F#", 7: "C#"
@@ -144,197 +144,201 @@ export class MusicEngine {
     let beats = 4;
     let beatType = 4;
 
-    const parts = xmlDoc.querySelectorAll("part");
-    parts.forEach((part) => {
-      const partId = part.getAttribute("id") || "P1";
-      // Escape partId for safe use in selector
-      const safePartId = partId.replace(/"/g, '\\"');
-      const basePartName = xmlDoc.querySelector(`score-part[id="${safePartId}"] part-name`)?.textContent || "Part";
-      let currentTime = 0;
-      let divisions = 1; // persists across measures — most MusicXML only declares this in measure 1
-      // --- [UNROLL REPEATS — STACK-BASED SIMULATOR] ---
-      //
-      //  Rules implemented (standard Western music notation):
-      //  1.  |:   (forward repeat)  → push current measure onto repeatStack
-      //  2.  :|   (backward repeat) → first time: jump back to top of stack, increment pass
-      //                               second time: pop stack, continue
-      //  3.  [1]  (volta 1)         → play only on pass 1; skip on all subsequent passes
-      //  4.  [2]  (volta 2)         → skip on pass 1; play on pass 2
-      //  5.  [1,2](combined)        → play on both passes
-      //  6. Nested repeats          → each :| goes back to its own matching |: via stack
-      //  7. Implicit start          → :| with empty stack repeats from measure 0
+    try {
+      const parts = xmlDoc.querySelectorAll("part");
+      parts.forEach((part) => {
+        const partId = part.getAttribute("id") || "P1";
+        // Escape partId for safe use in selector
+        const safePartId = partId.replace(/"/g, '\\"');
+        const basePartName = xmlDoc.querySelector(`score-part[id="${safePartId}"] part-name`)?.textContent || "Part";
+        let currentTime = 0;
+        let divisions = 1; // persists across measures — most MusicXML only declares this in measure 1
+        // --- [UNROLL REPEATS — STACK-BASED SIMULATOR] ---
+        //
+        //  Rules implemented (standard Western music notation):
+        //  1.  |:   (forward repeat)  → push current measure onto repeatStack
+        //  2.  :|   (backward repeat) → first time: jump back to top of stack, increment pass
+        //                               second time: pop stack, continue
+        //  3.  [1]  (volta 1)         → play only on pass 1; skip on all subsequent passes
+        //  4.  [2]  (volta 2)         → skip on pass 1; play on pass 2
+        //  5.  [1,2](combined)        → play on both passes
+        //  6. Nested repeats          → each :| goes back to its own matching |: via stack
+        //  7. Implicit start          → :| with empty stack repeats from measure 0
 
-      const physicalMeasures = Array.from(part.querySelectorAll("measure"));
-      const measureOrder: number[] = [];
+        const physicalMeasures = Array.from(part.querySelectorAll("measure"));
+        const measureOrder: number[] = [];
 
-      // ── Helpers ──────────────────────────────────────────────────────────
-      /** Returns ending numbers (e.g. "1,2" → [1,2]) for all barline endings */
-      const getEndingNums = (m: Element): number[] => {
-        const nums: number[] = [];
-        m.querySelectorAll('barline ending').forEach(e => {
-          (e.getAttribute('number') || '').split(',').forEach(s => {
-            const n = parseInt(s.trim());
-            if (!isNaN(n)) nums.push(n);
+        // ── Helpers ──────────────────────────────────────────────────────────
+        /** Returns ending numbers (e.g. "1,2" → [1,2]) for all barline endings */
+        const getEndingNums = (m: Element): number[] => {
+          const nums: number[] = [];
+          m.querySelectorAll('barline ending').forEach(e => {
+            (e.getAttribute('number') || '').split(',').forEach(s => {
+              const n = parseInt(s.trim());
+              if (!isNaN(n)) nums.push(n);
+            });
           });
-        });
-        return nums;
-      };
+          return nums;
+        };
 
-      /** True if this measure starts a repeated section |: */
-      const hasFwdRepeat = (m: Element) =>
-        !!m.querySelector('barline repeat[direction="forward"]');
+        /** True if this measure starts a repeated section |: */
+        const hasFwdRepeat = (m: Element) =>
+          !!m.querySelector('barline repeat[direction="forward"]');
 
-      /** True if this measure ends a repeated section :| */
-      const hasBwdRepeat = (m: Element) =>
-        !!m.querySelector('barline repeat[direction="backward"]');
+        /** True if this measure ends a repeated section :| */
+        const hasBwdRepeat = (m: Element) =>
+          !!m.querySelector('barline repeat[direction="backward"]');
 
-      // ── Simulator state ───────────────────────────────────────────────────
-      const repeatStack: number[] = [];          // indices of |: measures
-      const passCount = new Map<number, number>(); // repeatStart → current pass (1-based)
-      const repeatInited = new Set<number>();    // which |: have been initialized
-      const bwdDone = new Set<number>();         // which :| have been taken once
+        // ── Simulator state ───────────────────────────────────────────────────
+        const repeatStack: number[] = [];          // indices of |: measures
+        const passCount = new Map<number, number>(); // repeatStart → current pass (1-based)
+        const repeatInited = new Set<number>();    // which |: have been initialized
+        const bwdDone = new Set<number>();         // which :| have been taken once
 
-      let cursor = 0;
-      const MAX_ITER = physicalMeasures.length * 8; // safety guard
-      let iter = 0;
+        let cursor = 0;
+        const MAX_ITER = physicalMeasures.length * 8; // safety guard
+        let iter = 0;
 
-      while (cursor < physicalMeasures.length && iter < MAX_ITER) {
-        iter++;
-        const m = physicalMeasures[cursor];
+        while (cursor < physicalMeasures.length && iter < MAX_ITER) {
+          iter++;
+          const m = physicalMeasures[cursor];
 
-        // ── Push |: onto stack (only on first encounter) ──────────────────
-        if (hasFwdRepeat(m) && !repeatInited.has(cursor)) {
-          repeatInited.add(cursor);
-          repeatStack.push(cursor);
-          passCount.set(cursor, 1);
-        }
+          // ── Push |: onto stack (only on first encounter) ──────────────────
+          if (hasFwdRepeat(m) && !repeatInited.has(cursor)) {
+            repeatInited.add(cursor);
+            repeatStack.push(cursor);
+            passCount.set(cursor, 1);
+          }
 
-        // ── Determine current pass for the inner-most repeat ──────────────
-        const innerStart = repeatStack.length > 0 ? repeatStack[repeatStack.length - 1] : -1;
-        const currentPass = innerStart >= 0 ? (passCount.get(innerStart) ?? 1) : 1;
+          // ── Determine current pass for the inner-most repeat ──────────────
+          const innerStart = repeatStack.length > 0 ? repeatStack[repeatStack.length - 1] : -1;
+          const currentPass = innerStart >= 0 ? (passCount.get(innerStart) ?? 1) : 1;
 
-        // ── Check volta: should we skip this measure? ─────────────────────
-        const endings = getEndingNums(m);
-        const shouldSkip = endings.length > 0 && !endings.includes(currentPass);
+          // ── Check volta: should we skip this measure? ─────────────────────
+          const endings = getEndingNums(m);
+          const shouldSkip = endings.length > 0 && !endings.includes(currentPass);
 
-        if (!shouldSkip) {
-          measureOrder.push(cursor);
-        }
+          if (!shouldSkip) {
+            measureOrder.push(cursor);
+          }
 
-        // ── Handle :| (backward repeat) ──────────────────────────────────
-        if (hasBwdRepeat(m) && !shouldSkip) {
-          // Determine where to jump back
-          let repeatStart: number;
-          if (repeatStack.length > 0) {
-            repeatStart = repeatStack[repeatStack.length - 1];
-          } else {
-            // No explicit |: → treat measure 0 as the implicit start
-            repeatStart = 0;
-            if (!repeatInited.has(0)) {
-              repeatInited.add(0);
-              repeatStack.push(0);
-              passCount.set(0, 1);
+          // ── Handle :| (backward repeat) ──────────────────────────────────
+          if (hasBwdRepeat(m) && !shouldSkip) {
+            // Determine where to jump back
+            let repeatStart: number;
+            if (repeatStack.length > 0) {
+              repeatStart = repeatStack[repeatStack.length - 1];
+            } else {
+              // No explicit |: → treat measure 0 as the implicit start
+              repeatStart = 0;
+              if (!repeatInited.has(0)) {
+                repeatInited.add(0);
+                repeatStack.push(0);
+                passCount.set(0, 1);
+              }
+            }
+
+            if (!bwdDone.has(cursor)) {
+              // First time hitting this :| → take the repeat
+              bwdDone.add(cursor);
+              passCount.set(repeatStart, (passCount.get(repeatStart) ?? 1) + 1);
+              cursor = repeatStart;
+              continue; // jump to top of loop
+            } else {
+              // Already taken this repeat → pop the stack, continue forward
+              if (repeatStack.length > 0 && repeatStack[repeatStack.length - 1] === repeatStart) {
+                repeatStack.pop();
+                passCount.delete(repeatStart);
+              }
             }
           }
 
-          if (!bwdDone.has(cursor)) {
-            // First time hitting this :| → take the repeat
-            bwdDone.add(cursor);
-            passCount.set(repeatStart, (passCount.get(repeatStart) ?? 1) + 1);
-            cursor = repeatStart;
-            continue; // jump to top of loop
-          } else {
-            // Already taken this repeat → pop the stack, continue forward
-            if (repeatStack.length > 0 && repeatStack[repeatStack.length - 1] === repeatStart) {
-              repeatStack.pop();
-              passCount.delete(repeatStart);
-            }
+          cursor++;
+        }
+
+        if (iter >= MAX_ITER) {
+          console.warn('[MusicEngine] ⚠️ Repeat unrolling hit safety limit — possible notation error in XML');
+        }
+
+        // Process measures in unrolled order
+        measureOrder.forEach((mIdx) => {
+          const measure = physicalMeasures[mIdx];
+          const measureNum = measure.getAttribute("number") || "1";
+          const timeNode = measure.querySelector("time");
+          if (timeNode) {
+            beats = parseInt(timeNode.querySelector("beats")?.textContent || "4");
+            beatType = parseInt(timeNode.querySelector("beat-type")?.textContent || "4");
           }
-        }
+          const divNode = measure.querySelector("attributes divisions");
+          if (divNode) {
+            divisions = parseInt(divNode.textContent || "1") || 1;
+          }
 
-        cursor++;
-      }
+          // Detect Clefs
+          const clefNodes = measure.querySelectorAll("attributes clef");
+          clefNodes.forEach(clef => {
+            const staffNum = clef.getAttribute("number") || "1";
+            const sign = clef.querySelector("sign")?.textContent || "G";
+            trackClefs[`${partId}-S${staffNum}`] = sign;
+          });
 
-      if (iter >= MAX_ITER) {
-        console.warn('[MusicEngine] ⚠️ Repeat unrolling hit safety limit — possible notation error in XML');
-      }
+          Array.from(measure.children).forEach((child) => {
+            if (child.tagName === "backup") {
+              const duration = (parseInt(child.querySelector("duration")?.textContent || "0") / divisions);
+              currentTime -= duration;
+            } else if (child.tagName === "forward") {
+              const duration = (parseInt(child.querySelector("duration")?.textContent || "0") / divisions);
+              currentTime += duration;
+            } else if (child.tagName === "note") {
+              const isRest = child.querySelector("rest");
+              const isChord = child.querySelector("chord");
+              const duration = (parseInt(child.querySelector("duration")?.textContent || "0") / divisions);
+              const staff = parseInt(child.querySelector("staff")?.textContent || "1");
+              const voice = parseInt(child.querySelector("voice")?.textContent || "1");
 
-      // Process measures in unrolled order
-      measureOrder.forEach((mIdx) => {
-        const measure = physicalMeasures[mIdx];
-        const measureNum = measure.getAttribute("number") || "1";
-        const timeNode = measure.querySelector("time");
-        if (timeNode) {
-          beats = parseInt(timeNode.querySelector("beats")?.textContent || "4");
-          beatType = parseInt(timeNode.querySelector("beat-type")?.textContent || "4");
-        }
-        const divNode = measure.querySelector("attributes divisions");
-        if (divNode) {
-          divisions = parseInt(divNode.textContent || "1") || 1;
-        }
-
-        // Detect Clefs
-        const clefNodes = measure.querySelectorAll("attributes clef");
-        clefNodes.forEach(clef => {
-          const staffNum = clef.getAttribute("number") || "1";
-          const sign = clef.querySelector("sign")?.textContent || "G";
-          trackClefs[`${partId}-S${staffNum}`] = sign;
-        });
-
-        Array.from(measure.children).forEach((child) => {
-          if (child.tagName === "backup") {
-            const duration = (parseInt(child.querySelector("duration")?.textContent || "0") / divisions);
-            currentTime -= duration;
-          } else if (child.tagName === "forward") {
-            const duration = (parseInt(child.querySelector("duration")?.textContent || "0") / divisions);
-            currentTime += duration;
-          } else if (child.tagName === "note") {
-            const isRest = child.querySelector("rest");
-            const isChord = child.querySelector("chord");
-            const duration = (parseInt(child.querySelector("duration")?.textContent || "0") / divisions);
-            const staff = parseInt(child.querySelector("staff")?.textContent || "1");
-            const voice = parseInt(child.querySelector("voice")?.textContent || "1");
-
-            const currentTrackId = `${partId}-S${staff}`;
-            if (!partNames[currentTrackId]) {
-              const staffSuffix = staff === 1 ? ' (Treble)' : staff === 2 ? ' (Bass)' : ` (Staff ${staff})`;
-              partNames[currentTrackId] = `${basePartName}${staffSuffix}`;
-            }
-
-            if (!isRest) {
-              const step = child.querySelector("step")?.textContent || "C";
-              const octaveVal = child.querySelector("octave")?.textContent;
-              const octave = octaveVal ? parseInt(octaveVal) : 4;
-              const alterVal = child.querySelector("alter")?.textContent;
-              const alter = alterVal ? parseInt(alterVal) : 0;
-              
-              const safeOctave = isNaN(octave) ? 4 : octave;
-              const safeAlter = isNaN(alter) ? 0 : alter;
-              
-              // Extract Lyric/Solfege from XML
-              let solfegeVal = "";
-              const lyricTextNode = child.querySelector("lyric text");
-              if (lyricTextNode) {
-                solfegeVal = lyricTextNode.textContent?.trim() || "";
+              const currentTrackId = `${partId}-S${staff}`;
+              if (!partNames[currentTrackId]) {
+                const staffSuffix = staff === 1 ? ' (Treble)' : staff === 2 ? ' (Bass)' : ` (Staff ${staff})`;
+                partNames[currentTrackId] = `${basePartName}${staffSuffix}`;
               }
 
-              notes.push({
-                trackId: currentTrackId, step, octave: safeOctave, alter: safeAlter, duration: isNaN(duration) ? 0.5 : duration,
-                startTime: isChord ? (currentTime - (isNaN(duration) ? 0.5 : duration)) : currentTime,
-                solfege: solfegeVal, staff: isNaN(staff) ? 1 : staff, voice: isNaN(voice) ? 1 : voice, measure: measureNum
-              });
-            }
-            if (!isChord) currentTime += duration;
-          }
-        });
-      });
+              if (!isRest) {
+                const step = child.querySelector("step")?.textContent || "C";
+                const octaveVal = child.querySelector("octave")?.textContent;
+                const octave = octaveVal ? parseInt(octaveVal) : 4;
+                const alterVal = child.querySelector("alter")?.textContent;
+                const alter = alterVal ? parseInt(alterVal) : 0;
 
-      // Clean up part names if a part only ever had one staff
-      const usedStaves = Object.keys(partNames).filter(k => k.startsWith(`${partId}-S`));
-      if (usedStaves.length === 1) {
-        partNames[usedStaves[0]] = basePartName;
-      }
-    });
+                const safeOctave = isNaN(octave) ? 4 : octave;
+                const safeAlter = isNaN(alter) ? 0 : alter;
+
+                // Extract Lyric/Solfege from XML
+                let solfegeVal = "";
+                const lyricTextNode = child.querySelector("lyric text");
+                if (lyricTextNode) {
+                  solfegeVal = lyricTextNode.textContent?.trim() || "";
+                }
+
+                notes.push({
+                  trackId: currentTrackId, step, octave: safeOctave, alter: safeAlter, duration: isNaN(duration) ? 0.5 : duration,
+                  startTime: isChord ? (currentTime - (isNaN(duration) ? 0.5 : duration)) : currentTime,
+                  solfege: solfegeVal, staff: isNaN(staff) ? 1 : staff, voice: isNaN(voice) ? 1 : voice, measure: measureNum
+                });
+              }
+              if (!isChord) currentTime += duration;
+            }
+          });
+        });
+
+        // Clean up part names if a part only ever had one staff
+        const usedStaves = Object.keys(partNames).filter(k => k.startsWith(`${partId}-S`));
+        if (usedStaves.length === 1) {
+          partNames[usedStaves[0]] = basePartName;
+        }
+      });
+    } catch (e) {
+      console.warn('[MusicEngine] Error parsing notes from XML:', e);
+    }
 
     this.lastLoadedNotes = notes;
 
@@ -381,32 +385,38 @@ export class MusicEngine {
   }
 
   async addVocalLayer(trackId: string, audioUrl: string) {
-    // 1. Clean up existing players for this track
+    console.log(`[MusicEngine] 🎤 addVocalLayer (HTMLAudio) for track: ${trackId}`);
+
+    // Stop & remove any previous vocal audio for this track
+    const existing = this.vocalAudioElements.get(trackId);
+    if (existing) {
+      existing.pause();
+      existing.src = '';
+      this.vocalAudioElements.delete(trackId);
+    }
+    // Also clean up old Tone.Player layers if any
     this.clearVocalLayers(trackId);
 
-    // 2. Create new Player and connect to track's channel
-    const channel = this.trackChannels.get(trackId);
-    if (!channel) {
-      console.warn(`[MusicEngine] Can't add vocal: Track ${trackId} has no channel.`);
-      return;
-    }
+    // Use HTMLAudioElement — survives loadSong() / disposeSampler() calls
+    return new Promise<void>((resolve, reject) => {
+      const audio = new Audio();
+      audio.volume = 1.0;
+      audio.preload = 'auto';
 
-    const player = new Tone.Player({
-      url: audioUrl,
-      autostart: false,
-      volume: 0, // Control via channel
-    }).connect(channel);
+      audio.addEventListener('canplaythrough', () => {
+        this.vocalAudioElements.set(trackId, audio);
+        console.log(`[MusicEngine] ✅ Vocal HTMLAudio ready for ${trackId} (${audio.duration.toFixed(2)}s)`);
+        resolve();
+      }, { once: true });
 
-    // Wait for buffer to load
-    await Tone.loaded();
+      audio.addEventListener('error', (e) => {
+        console.error(`[MusicEngine] ❌ Vocal audio load error for ${trackId}:`, e);
+        reject(e);
+      }, { once: true });
 
-    // Store in vocal layers map
-    if (!this.trackVocalLayers.has(trackId)) {
-      this.trackVocalLayers.set(trackId, []);
-    }
-    this.trackVocalLayers.get(trackId)!.push(player);
-
-    console.log(`[MusicEngine] 🎤 Vocal layer (Tone.Player) loaded for track: ${trackId} (${player.buffer.duration.toFixed(2)}s)`);
+      audio.src = audioUrl;
+      audio.load();
+    });
   }
 
 
@@ -550,15 +560,20 @@ export class MusicEngine {
   setTransportSeconds(s: number) {
     this.baseStartTime = Math.max(0, s);
     Tone.Transport.seconds = this.baseStartTime + this.countInDuration;
+    // Stop any Tone.Player vocal layers (legacy)
     this.trackVocalLayers.forEach(layers => {
       layers.forEach(player => {
         if (player.state === 'started') player.stop();
       });
     });
-    // 🎤 Sync HTML Audio Vocal Elements
+    // 🎤 Sync HTMLAudio vocal elements to new position
     this.vocalAudioElements.forEach(audio => {
       audio.currentTime = s;
-      if (Tone.Transport.state !== 'started') audio.pause();
+      if (Tone.Transport.state === 'started') {
+        audio.play().catch(() => {});
+      } else {
+        audio.pause();
+      }
     });
   }
 
@@ -618,12 +633,12 @@ export class MusicEngine {
           sampler.triggerAttackRelease(event.freq, event.duration, time, 0.75);
         }
       }
-      
+
       // Always track which note is currently active for laser sync (even in vocal mode)
       this.currentNoteId = event.noteId || '';
       this.currentNoteTime = event.unrolledTime;
       this.currentMeasure = event.measure || '';
-      
+
       if ((event as any).__logged === undefined) {
         (event as any).__logged = true;
         console.log(`[Part CB] measure="${event.measure}" mode="${this.trackModes.get(event.trackId)}" noteId="${event.noteId}" time=${time.toFixed(2)}`);
@@ -648,16 +663,16 @@ export class MusicEngine {
   async start() {
     await this.ensureInitialized();
     if (Tone.Transport.state !== 'started') {
+      const startOffset = Math.max(0, (this.baseStartTime || 0));
       const startTime = Tone.now() + 0.1;
       Tone.Transport.start(startTime);
-      this.trackVocalLayers.forEach(layers => {
-        layers.forEach(player => {
-          if (player.state === 'started') player.stop();
-          const offset = Math.max(0, Tone.Transport.seconds - this.countInDuration);
-          if (offset < player.buffer.duration) {
-            player.start(startTime, offset);
-          }
-        });
+
+      // ── Start HTMLAudio vocal layers ──────────────────────────────
+      this.vocalAudioElements.forEach(audio => {
+        try {
+          audio.currentTime = startOffset;
+          audio.play().catch(e => console.warn('[MusicEngine] Vocal audio.play() failed:', e));
+        } catch (e) { console.warn('[MusicEngine] Vocal start error:', e); }
       });
     }
   }
@@ -666,16 +681,15 @@ export class MusicEngine {
   async resume() {
     await this.ensureInitialized();
     if (Tone.Transport.state === 'paused') {
-      const startTime = Tone.now() + 0.05;
       const offset = Math.max(0, Tone.Transport.seconds - this.countInDuration);
-      Tone.Transport.start(startTime);
-      this.trackVocalLayers.forEach(layers => {
-        layers.forEach(player => {
-          if (player.state === 'started') player.stop();
-          if (offset < player.buffer.duration) {
-            player.start(startTime, offset);
-          }
-        });
+      Tone.Transport.start(Tone.now() + 0.05);
+
+      // ── Resume HTMLAudio vocal layers ─────────────────────────────
+      this.vocalAudioElements.forEach(audio => {
+        try {
+          audio.currentTime = offset;
+          audio.play().catch(e => console.warn('[MusicEngine] Vocal audio.play() resume failed:', e));
+        } catch (e) { console.warn('[MusicEngine] Vocal resume error:', e); }
       });
     }
   }

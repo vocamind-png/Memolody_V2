@@ -61,32 +61,26 @@ const ProcessingOverlay: React.FC<{ message: string; error?: string | null; onDi
       {/* Title */}
       <div className="text-center">
         <p className="text-white font-black uppercase tracking-widest text-sm">AI กำลังอ่านโน้ต</p>
-        <p className="text-zinc-500 text-[10px] font-bold uppercase tracking-widest mt-1">Gemini Vision · Sheet Music OCR</p>
+        <p className="text-zinc-500 text-[10px] font-bold uppercase tracking-widest mt-1">Deep Learning OMR Engine</p>
       </div>
 
-      {/* Step progress */}
-      <div className="flex items-center gap-2">
-        {['อ่านโน้ต', 'ตรวจสอบ', 'บันทึก', 'เสร็จ'].map((label, i) => (
-          <div key={i} className="flex items-center gap-2">
-            <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[9px] font-black transition-all duration-500 ${
-              i + 1 < step ? 'bg-cyan-400 text-black' :
-              i + 1 === step ? 'bg-cyan-500/30 border border-cyan-400 text-cyan-300 animate-pulse' :
-              'bg-zinc-800 text-zinc-600'
-            }`}>{i + 1 < step ? '✓' : i + 1}</div>
-            {i < 3 && <div className={`w-6 h-px transition-all duration-500 ${i + 1 < step ? 'bg-cyan-400' : 'bg-zinc-700'}`} />}
-          </div>
-        ))}
+      {/* Large Timer */}
+      <div className="flex flex-col items-center justify-center my-4">
+        <div className="text-5xl font-black tabular-nums text-transparent bg-clip-text bg-gradient-to-b from-cyan-300 to-cyan-600 drop-shadow-[0_0_15px_rgba(34,211,238,0.3)]">
+          {elapsed}<span className="text-2xl text-cyan-500/50">s</span>
+        </div>
+        <p className="text-zinc-600 text-[9px] uppercase tracking-widest mt-2">กำลังประมวลผล (อาจจะใช้เวลาถึง 4 นาที โปรดรอ)</p>
       </div>
 
       {/* Current message */}
-      <p className="text-cyan-300 text-[11px] font-bold max-w-xs text-center leading-relaxed px-4">{message}</p>
+      <p className="text-cyan-300 text-[11px] font-bold max-w-xs text-center leading-relaxed px-4 animate-pulse">{message}</p>
 
-      {/* Elapsed time */}
-      <div className="flex items-center gap-3 mt-1">
-        <span className="text-zinc-600 text-[9px] uppercase tracking-widest">⏱ {elapsed}s</span>
-        <span className="text-zinc-700">·</span>
-        <span className="text-zinc-600 text-[9px] uppercase tracking-widest">ใช้เวลา 30-60 วิ กรุณารอ...</span>
-      </div>
+      {/* Cancel Button */}
+      {elapsed > 10 && onDismiss && (
+        <button onClick={onDismiss} className="mt-4 px-6 py-2 rounded-full border border-zinc-800 text-zinc-500 text-[10px] uppercase font-bold tracking-widest hover:text-white hover:border-zinc-600 transition-colors">
+          ยกเลิกการทำงาน
+        </button>
+      )}
     </div>
   );
 };
@@ -154,13 +148,25 @@ const SongRow = memo(({ item, onSongSelect, onToggleDelete, onPermanentDelete, i
         </div>
       )}
 
-      <div className="w-10 h-10 rounded-xl shrink-0 overflow-hidden relative shadow-md group-hover:shadow-cyan-500/20 transition-shadow">
+      <div 
+        className="w-10 h-10 rounded-xl shrink-0 overflow-hidden relative shadow-md group-hover:shadow-cyan-500/20 transition-shadow cursor-pointer"
+        onClick={(e) => {
+          e.stopPropagation();
+          onSongSelect(item.metadata, item.xmlData, 'listen');
+        }}
+      >
         <AbstractCover seed={item.metadata.title || item.metadata.id} size={80} />
         <div className="absolute inset-0 flex items-center justify-center bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity">
           <Play size={12} className="text-white fill-current drop-shadow-lg" />
         </div>
       </div>
-      <div className="flex-1 min-w-0">
+      <div 
+        className="flex-1 min-w-0 cursor-pointer"
+        onClick={(e) => {
+          e.stopPropagation();
+          onSongSelect(item.metadata, item.xmlData, 'listen');
+        }}
+      >
         <div className="flex items-center gap-1.5">
           {item.metadata.isFavorite && <Heart size={10} className="text-rose-500 fill-rose-500 shrink-0" />}
           <p className="text-[11px] font-black text-white uppercase italic truncate group-hover:text-cyan-400 transition-colors duration-75">
@@ -346,6 +352,12 @@ const HomePage: React.FC<HomePageProps> = ({
   }, []);
   const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [showFilters, setShowFilters] = useState(false);
+  const [filterGenre, setFilterGenre] = useState('');
+  const [filterEra, setFilterEra] = useState('');
+  const [filterComposer, setFilterComposer] = useState('');
+  const [filterYear, setFilterYear] = useState('');
+  const [filterInstrument, setFilterInstrument] = useState('');
   const [activeTab, setActiveTab] = useState<FilterTab>('home');
   const [sortMode, setSortMode] = useState<SortMode>('default');
   const [showSortDropdown, setShowSortDropdown] = useState(false);
@@ -403,9 +415,9 @@ const HomePage: React.FC<HomePageProps> = ({
     setIsProcessing(true);
     setProcessingMsg('🤖 Gemini AI กำลังอ่านโน้ตจากภาพ...');
     try {
-      const { metadata, xmlData } = await parseMusicXMLMetadata(file);
+      const { metadata, xmlData, layoutBundle } = await parseMusicXMLMetadata(file);
       metadata.origin = 'load';
-      await songStorage.saveSong(metadata, xmlData);
+      await songStorage.saveSong(metadata, xmlData, layoutBundle);
       await onLocalRefresh();
       onRefresh();
       // Go straight to player
@@ -492,6 +504,12 @@ const HomePage: React.FC<HomePageProps> = ({
       );
     }
 
+    if (filterGenre) list = list.filter(i => i.metadata.genre === filterGenre);
+    if (filterEra) list = list.filter(i => i.metadata.era === filterEra);
+    if (filterComposer) list = list.filter(i => i.metadata.composer === filterComposer || i.metadata.artist === filterComposer);
+    if (filterYear) list = list.filter(i => i.metadata.year === filterYear);
+    if (filterInstrument) list = list.filter(i => i.metadata.instruments?.includes(filterInstrument));
+
     switch (sortMode) {
       case 'az': list.sort((a, b) => a.metadata.title.localeCompare(b.metadata.title)); break;
       case 'za': list.sort((a, b) => b.metadata.title.localeCompare(a.metadata.title)); break;
@@ -573,7 +591,7 @@ const HomePage: React.FC<HomePageProps> = ({
         setProcessingMsg('🤖 Pass 1: Gemini กำลังอ่านโน้ต...');
 
         console.log('[Import] Calling parseMusicXMLMetadata...');
-        const { metadata, xmlData } = await parseMusicXMLMetadata(f, false, (msg) => setProcessingMsg(msg));
+        const { metadata, xmlData, layoutBundle } = await parseMusicXMLMetadata(f, false, (msg) => setProcessingMsg(msg));
         console.log('[Import] ✅ parseMusicXMLMetadata returned:', metadata.title, '| xmlData length:', xmlData.length);
 
         setProcessingMsg('💾 กำลังบันทึกลง My Songs...');
@@ -584,13 +602,31 @@ const HomePage: React.FC<HomePageProps> = ({
 
         metadata.origin = 'load';
         console.log('[Import] Saving to IndexedDB:', metadata.id, metadata.title);
-        await songStorage.saveSong(metadata, xmlData);
+        await songStorage.saveSong(metadata, xmlData, layoutBundle);
         console.log('[Import] ✅ Saved to IndexedDB');
         lastMetadata = metadata;
         lastXml = xmlData;
       }
 
       setProcessingMsg('✅ บันทึกเรียบร้อย! กำลังเปิด Player...');
+      
+      // Play C Major Arpeggio Success Sound
+      try {
+        await Tone.start();
+        const synth = new Tone.PolySynth(Tone.Synth, {
+          oscillator: { type: 'triangle' },
+          envelope: { attack: 0.05, decay: 0.2, sustain: 0.4, release: 2 }
+        }).toDestination();
+        synth.volume.value = -12;
+        const now = Tone.now();
+        synth.triggerAttackRelease("C4", "8n", now);
+        synth.triggerAttackRelease("E4", "8n", now + 0.15);
+        synth.triggerAttackRelease("G4", "8n", now + 0.3);
+        synth.triggerAttackRelease("C5", "2n", now + 0.45);
+      } catch (e) {
+        console.log('Audio play failed', e);
+      }
+
       console.log('[Import] Refreshing song list...');
       await onLocalRefresh();
       onRefresh();
@@ -788,13 +824,112 @@ const HomePage: React.FC<HomePageProps> = ({
             className="w-full h-12 bg-white/[0.03] border border-white/5 rounded-2xl pl-12 pr-10 text-[10px] font-black text-white outline-none focus:border-cyan-500/30 placeholder:text-zinc-800 transition-all uppercase"
           />
           {searchInput && (
-            <button onClick={() => { setSearchInput(''); setSearchQuery(''); }} className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-600">
-              <X size={14} />
+          <div className="absolute right-12 top-1/2 -translate-y-1/2 flex items-center gap-2">
+            {searchQuery && (
+              <button onClick={() => { setSearchInput(''); setSearchQuery(''); }} className="text-zinc-600 hover:text-white transition-colors">
+                <X size={14} />
+              </button>
+            )}
+            <button 
+              onClick={() => setShowFilters(!showFilters)}
+              className={`p-1.5 rounded-lg transition-colors ${showFilters || filterGenre || filterEra || filterComposer || filterYear || filterInstrument ? 'bg-cyan-500/20 text-cyan-400' : 'text-zinc-600 hover:text-zinc-400'}`}
+            >
+              <Database size={14} />
             </button>
-          )}
-        </div>
+          </div>
+        )}
 
-        {/* Recent Matrix (Horizontal Scroll) */}
+        {/* ── ADVANCED FILTERS PANEL ── */}
+        {showFilters && (
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 p-4 bg-white/[0.02] border border-white/5 rounded-[20px] animate-in slide-in-from-top-2 duration-200">
+            {/* Genre */}
+            <div className="space-y-1">
+              <label className="text-[7px] font-black text-zinc-600 uppercase tracking-widest ml-2">Genre</label>
+              <select 
+                value={filterGenre}
+                onChange={e => setFilterGenre(e.target.value)}
+                className="w-full bg-[#111] border border-white/5 rounded-xl px-3 py-2 text-[10px] font-bold text-zinc-400 outline-none focus:border-cyan-500/50 transition-colors"
+              >
+                <option value="">All Genres</option>
+                {Array.from(new Set(userLibrary.map(i => i.metadata.genre).filter(Boolean))).sort().map(g => (
+                  <option key={g} value={g}>{g}</option>
+                ))}
+              </select>
+            </div>
+            {/* Era */}
+            <div className="space-y-1">
+              <label className="text-[7px] font-black text-zinc-600 uppercase tracking-widest ml-2">Era</label>
+              <select 
+                value={filterEra}
+                onChange={e => setFilterEra(e.target.value)}
+                className="w-full bg-[#111] border border-white/5 rounded-xl px-3 py-2 text-[10px] font-bold text-zinc-400 outline-none focus:border-cyan-500/50 transition-colors"
+              >
+                <option value="">All Eras</option>
+                {Array.from(new Set(userLibrary.map(i => i.metadata.era).filter(Boolean))).sort().map(e => (
+                  <option key={e} value={e}>{e}</option>
+                ))}
+              </select>
+            </div>
+            {/* Composer */}
+            <div className="space-y-1">
+              <label className="text-[7px] font-black text-zinc-600 uppercase tracking-widest ml-2">Composer</label>
+              <select 
+                value={filterComposer}
+                onChange={e => setFilterComposer(e.target.value)}
+                className="w-full bg-[#111] border border-white/5 rounded-xl px-3 py-2 text-[10px] font-bold text-zinc-400 outline-none focus:border-cyan-500/50 transition-colors"
+              >
+                <option value="">All Composers</option>
+                {Array.from(new Set(userLibrary.map(i => i.metadata.composer || i.metadata.artist).filter(Boolean))).sort().map(c => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            </div>
+            {/* Year */}
+            <div className="space-y-1">
+              <label className="text-[7px] font-black text-zinc-600 uppercase tracking-widest ml-2">Year</label>
+              <select 
+                value={filterYear}
+                onChange={e => setFilterYear(e.target.value)}
+                className="w-full bg-[#111] border border-white/5 rounded-xl px-3 py-2 text-[10px] font-bold text-zinc-400 outline-none focus:border-cyan-500/50 transition-colors"
+              >
+                <option value="">All Years</option>
+                {Array.from(new Set(userLibrary.map(i => i.metadata.year).filter(Boolean))).sort().map(y => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            </div>
+            {/* Instruments */}
+            <div className="space-y-1">
+              <label className="text-[7px] font-black text-zinc-600 uppercase tracking-widest ml-2">Instruments</label>
+              <select 
+                value={filterInstrument}
+                onChange={e => setFilterInstrument(e.target.value)}
+                className="w-full bg-[#111] border border-white/5 rounded-xl px-3 py-2 text-[10px] font-bold text-zinc-400 outline-none focus:border-cyan-500/50 transition-colors"
+              >
+                <option value="">All Instruments</option>
+                {Array.from(new Set(userLibrary.flatMap(i => i.metadata.instruments || []))).sort().map(inst => (
+                  <option key={inst} value={inst}>{inst}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Clear All */}
+            {(filterGenre || filterEra || filterComposer || filterYear || filterInstrument) && (
+              <button 
+                onClick={() => {
+                  setFilterGenre(''); setFilterEra(''); setFilterComposer(''); setFilterYear(''); setFilterInstrument('');
+                }}
+                className="col-span-full mt-2 text-[8px] font-black text-rose-500 uppercase tracking-[0.2em] hover:text-rose-400 transition-colors flex items-center justify-center gap-1 py-2 border-t border-white/5"
+              >
+                <RotateCcw size={10} />
+                Reset All Filters
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Recent Matrix (Horizontal Scroll) */}
         {recentSongs.length > 0 && (
           <div className="space-y-3">
             <div className="flex items-center justify-between px-1">

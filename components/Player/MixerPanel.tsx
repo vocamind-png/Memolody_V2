@@ -112,7 +112,7 @@ const MixerPanel: React.FC<MixerPanelProps> = ({ tracks, songKey = 'C', onUpdate
       const trackNotes = allNotes.filter((n: ParsedNote) => n.trackId === track.id);
 
       if (trackNotes.length === 0) {
-        const ids = [...new Set(allNotes.map((n: any) => n.trackId))].join(', ');
+        const ids = Array.from(new Set(allNotes.map((n: any) => n.trackId))).join(', ');
         throw new Error(`No notes for "${track.name}". Available track IDs: [${ids}]`);
       }
 

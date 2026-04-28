@@ -10,16 +10,28 @@ export default defineConfig(({ mode }) => {
   // Read API key: .env file first, then process.env (for Vercel), then empty fallback
   const GEMINI_KEY = env.GEMINI_API_KEY || process.env.GEMINI_API_KEY || '';
 
+  // Local mode: set VITE_LOCAL_VOCALIDO=true in .env.local to route all
+  // Vocalido traffic to localhost:5001 instead of the Google Cloud VM.
+  const LOCAL_VOCALIDO = env.VITE_LOCAL_VOCALIDO === 'true';
+  const VOCALIDO_TARGET = LOCAL_VOCALIDO
+    ? 'http://localhost:5001'
+    : 'http://35.247.141.53:5001';
+
   if (!GEMINI_KEY) {
     console.warn('⚠️  GEMINI_API_KEY is not set! Create a .env file with: GEMINI_API_KEY=your_key_here');
   } else {
     console.log('✅ GEMINI_API_KEY loaded, length:', GEMINI_KEY.length);
   }
+  console.log(`🎤 Vocalido target: ${VOCALIDO_TARGET} (LOCAL_VOCALIDO=${LOCAL_VOCALIDO})`);
 
   return {
     server: {
-      port: 3000,
+      port: 3100,
       host: '0.0.0.0',
+      watch: {
+        // Ignore Python venv and node_modules to prevent spurious reloads
+        ignored: ['**/vocalido_server/.venv/**', '**/node_modules/**', '**/.git/**'],
+      },
       proxy: {
         '/api/manifest': {
           target: 'https://storage.googleapis.com/memolody-vault/manifest.json',
@@ -27,9 +39,9 @@ export default defineConfig(({ mode }) => {
           secure: false,
           rewrite: (path) => path.replace(/^\/api\/manifest/, '')
         },
-        // --- VOCALIDO SVS PROXY → Google Cloud VM ---
+        // --- VOCALIDO SVS PROXY → Cloud VM or localhost (set VITE_LOCAL_VOCALIDO=true for local) ---
         '/vocalido': {
-          target: 'http://35.247.141.53:5001',
+          target: VOCALIDO_TARGET,
           changeOrigin: true,
           secure: false,
           rewrite: (path) => path.replace(/^\/vocalido/, '')

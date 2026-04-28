@@ -381,8 +381,7 @@ const ScoreEditOverlay: React.FC<ScoreEditOverlayProps> = ({
           <div
             className="rounded-2xl shadow-2xl border border-white/10 overflow-hidden min-w-[280px]"
             style={{
-              background: 'linear-gradient(135deg,rgba(8,8,18,0.97),rgba(14,14,28,0.97))',
-              backdropFilter: 'blur(24px)',
+              background: 'linear-gradient(135deg,rgba(8,8,18,1),rgba(14,14,28,1))',
               animation: 'floatIn 0.15s ease-out',
             }}
           >

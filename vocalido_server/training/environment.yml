@@ -1,0 +1,19 @@
+name: vocalido-env
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pytorch==2.*
+  - cudatoolkit=12.1
+  - librosa
+  - mfa
+  - openfst
+  - kaldi
+  - lightning
+  - tqdm
+  - pyyaml
+  - rich
+  - pip:
+    - diffsinger

@@ -4,9 +4,13 @@
   "version": "1.6.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k -n \"vite,omr,api\" -c \"cyan,yellow,magenta\" \"vite\" \"node scripts/audiveris-server.mjs\" \"python -m uvicorn vocalido_server.main:app --host 0.0.0.0 --port 5001\"",
+    "dev": "concurrently --kill-others-on-fail -n \"vite,omr\" -c \"cyan,yellow\" \"vite\" \"node scripts/omr-server.mjs\"",
+    "dev:all": "concurrently --kill-others-on-fail -n \"vite,omr,api\" -c \"cyan,yellow,magenta\" \"vite\" \"node scripts/omr-server.mjs\" \"conda run -n memolody python -m uvicorn vocalido_server.main:app --host 0.0.0.0 --port 5001\"",
+    "dev:vite": "vite",
     "dev:web": "vite",
-    "omr": "node scripts/audiveris-server.mjs",
+    "dev:local": "concurrently --kill-others-on-fail -n \"vite,svs,omr\" -c \"cyan,magenta,yellow\" \"vite\" \"npm run dev:svs\" \"node scripts/omr-server.mjs\"",
+    "dev:svs": "bash -c 'cd vocalido_server && source .venv/bin/activate && python -m uvicorn main:app --host 0.0.0.0 --port 5001 --reload'",
+    "omr": "node scripts/omr-server.mjs",
     "build": "vite build",
     "preview": "vite preview",
     "lint": "tsc --noEmit"
@@ -26,7 +30,8 @@
     "react-dom": "^19.2.3",
     "sharp": "^0.34.5",
     "soundfont-player": "^0.12.0",
-    "tone": "^15.1.22"
+    "tone": "^15.1.22",
+    "verovio": "^6.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

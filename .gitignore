@@ -2,6 +2,7 @@ node_modules
 dist
 .DS_Store
 .env
+.env.local
 .next
 build
 *.log
@@ -18,3 +19,20 @@ build
 **/__pycache__/
 .cache/
 .ipynb_checkpoints/
+
+# Large binary / vendor files
+public/verovio-toolkit.js
+vocalido_server/training/ASAP_Dataset.zip
+
+# Temporary / test files
+scratch/
+test_*.png
+output_teaser.png
+output.musicxml
+make_test_img.py
+Oemer-structure.md
+
+# Build outputs
+src/
+vocalido-server/
+plugins/acestep/

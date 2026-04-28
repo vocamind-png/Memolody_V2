@@ -3,8 +3,11 @@ import { Song } from '../types';
 import { getChromaticSolfege } from './SolfegeLogic';
 import { CoverGenerator } from './CoverGenerator';
 import { MidiParser } from './MidiParser';
-import { recognizeSheetMusic, recognizePDF, recognizeVerificationPass, omrWithAudiveris, isImageFile, isPDFFile } from './SheetMusicOCR';
+import { recognizeSheetMusic, recognizePDF, recognizeVerificationPass, omrWithOemer, isImageFile, isPDFFile } from './SheetMusicOCR';
+import { validateMusicXml } from './MusicXmlValidator';
+import { autoFixMusicXml } from './MusicXmlAutoFixer';
 import JSZip from 'jszip';
+import { FileConverter } from './FileConverter';
 
 export const detectEra = (composer: string): string => {
   const c = composer.toLowerCase();
@@ -15,56 +18,49 @@ export const detectEra = (composer: string): string => {
   return "Modern";
 };
 
-export const extractXmlString = async (input: File | Blob | string, onProgress?: (msg: string) => void): Promise<string> => {
-  if (typeof input === "string") return input;
+export const extractXmlString = async (
+  input: File | Blob | string,
+  onProgress?: (msg: string) => void
+): Promise<{ xml: string; bundle?: any | null }> => {
+  if (typeof input === 'string') return { xml: input, bundle: null };
   try {
-    // ── IMAGE file → 2-Pass OMR (Draft → Verify) ──────────────────────
+    // ── IMAGE file → Local AI OMR (Scorelens V2) ──────────────────
     if (input instanceof File && isImageFile(input)) {
       console.log('[OMR] 🖼️ Image file:', input.name, 'type:', input.type, 'size:', (input.size/1024).toFixed(0)+'KB');
-      
       try {
-        onProgress?.('🔬 กำลังประมวลผลด้วย Audiveris Engine...');
-        const result = await omrWithAudiveris(input);
-        console.log(`[OMR] ✅ Audiveris Transcribe Success: ${input.name}`);
-        return result.xml;
+        onProgress?.('🧠 ส่งเข้า ScoreLens V2 OMR...');
+        const result = await omrWithOemer(input);
+        console.log(`[OMR] ✅ ScoreLens V2 Transcribe Success: ${input.name}`);
+        return { xml: result.xml, bundle: result.bundle ?? null };
       } catch (err: any) {
-        const isConnError = err.message.includes('Failed to fetch') || err.message.includes('Load failed');
-        console.warn(`[OMR] Audiveris ${isConnError ? 'Server Offline' : 'Failed'} → Falling back to Gemini Vision:`, err.message);
-        
-        if (isConnError) {
-          onProgress?.('⚠️ Audiveris (Port 3003) ปิดอยู่... กำลังใช้ Gemini Vision แทน');
-        } else {
-          onProgress?.('🤖 Audiveris อ่านไม่ได้... กำลังสลับไปใช้ Gemini Vision');
-        }
-        
-        const result = await recognizeSheetMusic(input);
-        if (!result.xml || result.xml.length < 50) throw new Error('การอ่านโน้ตล้มเหลวทั้งสองระบบ กรุณาตรวจสอบภาพต้นฉบับครับ');
-        return result.xml;
+        throw new Error(`การอ่านโน้ตด้วย AI ล้มเหลว: ${err.message}`);
       }
     }
 
-    // ── PDF file → 2-Pass OMR (Draft → Verify) ─────────────────────
-    // ── PDF file → Single Pass ─────────────────────
+    // ── PDF file → Local AI OMR (Scorelens V2) ──────────────────
     if (input instanceof File && isPDFFile(input)) {
       console.log('[OMR] 📄 PDF file:', input.name, 'size:', (input.size/1024/1024).toFixed(1)+'MB');
-      
       try {
-        onProgress?.('📄 กำลังอ่าน PDF ด้วย Audiveris...');
-        const result = await omrWithAudiveris(input);
-        return result.xml;
+        onProgress?.('🧠 กำลังอ่าน PDF ด้วย ScoreLens V2 OMR...');
+        const result = await omrWithOemer(input);
+        return { xml: result.xml, bundle: result.bundle ?? null };
       } catch (err: any) {
-        const isConnError = err.message.includes('Failed to fetch') || err.message.includes('Load failed');
-        if (isConnError) {
-           onProgress?.('⚠️ Audiveris (Port 3003) ปิดอยู่... กำลังใช้ Gemini PDF Vision');
-        } else {
-           onProgress?.('🤖 กำลังใช้ Gemini PDF Vision...');
-        }
-        const result = await recognizePDF(input);
-        if (!result.xml || result.xml.length < 50) throw new Error('ไม่สามารถแปลง PDF เป็นโน้ตได้');
-        return result.xml;
+        throw new Error(`ไม่สามารถแปลง PDF เป็นโน้ตได้: ${err.message}`);
       }
     }
 
+    // ── EMK Proprietary Karaoke file ──────────────────
+    if (input instanceof File && input.name.toLowerCase().endsWith('.emk')) {
+      console.log('[Converter] 🎤 EMK file:', input.name);
+      onProgress?.('🎤 กำลังถอดรหัสไฟล์ EMK Karaoke...');
+      const result = await FileConverter.convertFile(input);
+      if (result.success && result.midiData) {
+        // Continue processing as MIDI
+        input = new File([result.midiData], result.fileName, { type: 'audio/midi' });
+      } else {
+        throw new Error(result.error || "ไม่สามารถถอดรหัสไฟล์ EMK ได้");
+      }
+    }
 
     const arrayBuffer = await input.arrayBuffer();
     const bytes = new Uint8Array(arrayBuffer);
@@ -72,7 +68,7 @@ export const extractXmlString = async (input: File | Blob | string, onProgress?:
     if (bytes[0] === 0x4D && bytes[1] === 0x54 && bytes[2] === 0x68 && bytes[3] === 0x64) {
       const fileName = (input as File).name || "MIDI_IMPORT";
       const generatedXml = await MidiParser.convertToMusicXml(arrayBuffer, fileName);
-      return injectSolfegeToXml(generatedXml, 'Ju Solfege Movable Doh');
+      return { xml: injectSolfegeToXml(generatedXml, 'Ju Solfege Movable Doh'), bundle: null };
     }
 
     const isZip = bytes[0] === 0x50 && bytes[1] === 0x4B;
@@ -90,9 +86,10 @@ export const extractXmlString = async (input: File | Blob | string, onProgress?:
         rootFilePath = xmlFiles.sort((a, b) => a.length - b.length)[0];
       }
       if (!rootFilePath || !zip.file(rootFilePath)) throw new Error("No valid MusicXML content found");
-      return await zip.file(rootFilePath)!.async('string');
+      const mxlXml = await zip.file(rootFilePath)!.async('string');
+      return { xml: mxlXml, bundle: null };
     }
-    return new TextDecoder().decode(arrayBuffer);
+    return { xml: new TextDecoder().decode(arrayBuffer), bundle: null };
   } catch (err: any) {
     // Re-throw with original message so callers can show it to user
     throw new Error(err?.message || "Failed to process file.");
@@ -104,8 +101,30 @@ const FIFTHS_TO_KEY: Record<number, string> = {
   0: "C", 1: "G", 2: "D", 3: "A", 4: "E", 5: "B", 6: "F#"
 };
 
-export const parseMusicXMLMetadata = async (input: File | Blob | string, generateCover: boolean = false, onProgress?: (msg: string) => void): Promise<{ metadata: Song, xmlData: string }> => {
-  const xmlText = await extractXmlString(input, onProgress);
+export const parseMusicXMLMetadata = async (
+  input: File | Blob | string,
+  generateCover: boolean = false,
+  onProgress?: (msg: string) => void
+): Promise<{ metadata: Song; xmlData: string; layoutBundle?: any | null }> => {
+  const { xml: rawXml, bundle } = await extractXmlString(input, onProgress);
+  let xmlText = rawXml;
+  console.log(`[MusicXmlParser] Raw XML received length: ${xmlText.length}`);
+  console.log(`[MusicXmlParser] First 500 chars of XML:\n${xmlText.substring(0, 500)}`);
+
+  // ── Music Theory Validation & Auto-Fix ──
+  try {
+    const report = validateMusicXml(xmlText);
+    console.log(`[MusicXmlParser] 🔬 Validation: ${report.summary}`);
+    if (report.score < 80 && report.autoFixable) {
+      onProgress?.('🔧 กำลังซ่อมโน้ตอัตโนมัติ...');
+      const fixResult = autoFixMusicXml(xmlText, report.errors);
+      xmlText = fixResult.xml;
+      console.log(`[MusicXmlParser] ✅ Auto-fix: ${fixResult.fixCount} fixes`);
+    }
+  } catch (valErr) {
+    console.warn('[MusicXmlParser] Validation skipped:', valErr);
+  }
+
   const parser = new DOMParser();
   const xmlDoc = parser.parseFromString(xmlText, "text/xml");
 
@@ -133,13 +152,31 @@ export const parseMusicXMLMetadata = async (input: File | Blob | string, generat
   let finalTitle = title;
   let finalComposer = composer;
 
-  const isGenericTitle = !title || title.toUpperCase() === "NEURAL PROJECT" || title.toUpperCase() === "UNTITLED";
-  if (isGenericTitle && typeof input !== 'string' && 'name' in input) {
-    finalTitle = (input as File).name.replace(/\.[^/.]+$/, "").replace(/_/g, " ");
+  const isGeneric = (t: string) => {
+    const l = (t || '').toLowerCase().trim();
+    return !l || l === 'untitled' || l === 'neural project' || l === 'score' || l === 'new score' || l === 'ore';
+  };
+
+  // ── [V2] Prefer AI-detected title/composer from typography bundle ───────────
+  if (bundle?.metadata?.title && bundle.metadata.title.length > 1 && !isGeneric(bundle.metadata.title)) {
+    finalTitle = bundle.metadata.title;
+  } else {
+    // If XML title is generic or empty, use filename
+    if (isGeneric(title) && typeof input !== 'string' && 'name' in input) {
+      let rawName = (input as File).name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+      // Capitalize first letter of each word
+      finalTitle = rawName.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+    }
+  }
+  
+  if (bundle?.metadata?.composer && bundle.metadata.composer !== 'T=') {
+    finalComposer = bundle.metadata.composer;
+  } else if (bundle?.metadata?.composer === 'T=') {
+    finalComposer = 'Unknown';
   }
 
-  if (!finalTitle) finalTitle = "NEURAL MASTERPIECE";
-  if (finalComposer.toUpperCase() === "MAESTRO") finalComposer = "UNKNOWN MAESTRO";
+  if (isGeneric(finalTitle)) finalTitle = 'NEURAL MASTERPIECE';
+  if (finalComposer.toUpperCase() === 'MAESTRO') finalComposer = 'UNKNOWN MAESTRO';
 
   const metronomeNode = xmlDoc.querySelector("per-minute");
   const bpmValue = metronomeNode ? parseInt(metronomeNode.textContent || "120") : 120;
@@ -147,18 +184,36 @@ export const parseMusicXMLMetadata = async (input: File | Blob | string, generat
   const fifthsNode = xmlDoc.querySelector("fifths");
   const fifths = fifthsNode ? parseInt(fifthsNode.textContent || "0") : 0;
 
+  // Check if input is a File (Image or PDF) to use as the cover image
+  let finalCoverUrl = `https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400`;
+  if (input instanceof File) {
+    if (isPDFFile(input) || input.type === 'application/pdf' || input.name.toLowerCase().endsWith('.pdf')) {
+      finalCoverUrl = 'pdf:' + URL.createObjectURL(input);
+    } else if (isImageFile(input) || input.type.startsWith('image/')) {
+      finalCoverUrl = URL.createObjectURL(input);
+    }
+  }
+
+  // Removed the date append logic from the display title to keep it clean.
+  const displayTitle = finalTitle;
+
   const metadata: Song = {
     id: `song-${Math.random().toString(36).substring(2, 11)}`,
-    title: finalTitle,
+    title: displayTitle,
     artist: finalComposer,
     bpm: isNaN(bpmValue) ? 120 : bpmValue,
     key: FIFTHS_TO_KEY[fifths] || "C",
     duration: 300,
     audioUrl: '',
-    coverUrl: `https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400`,
+    coverUrl: finalCoverUrl,
     isPremium: false,
     category: detectEra(finalComposer),
-    difficulty: 'Intermediate'
+    difficulty: 'Intermediate',
+    composer: finalComposer,
+    era: detectEra(finalComposer),
+    year: xmlDoc.querySelector("encoding-date")?.textContent?.split("-")[0] || 
+          xmlDoc.querySelector("copyright")?.textContent?.match(/\d{4}/)?.[0] || "",
+    instruments: Array.from(xmlDoc.querySelectorAll("part-name")).map(p => p.textContent?.trim() || "").filter(Boolean)
   };
 
   if (generateCover) {
@@ -172,7 +227,7 @@ export const parseMusicXMLMetadata = async (input: File | Blob | string, generat
     throw new Error("AI อ่านภาพนี้สำเร็จแต่ไม่พบตัวโน้ตดนตรี กรุณาลองใช้ภาพที่ชัดเจนกว่านี้ หรือใช้ปุ่ม Scan Full Page ครับ");
   }
 
-  return { metadata, xmlData: xmlText };
+  return { metadata, xmlData: xmlText, layoutBundle: bundle ?? null };
 };
 
 export const transposeMusicXml = (xmlString: string, transpose: number): string => {
@@ -251,7 +306,9 @@ export const transposeMusicXml = (xmlString: string, transpose: number): string 
       }
     }
   });
-  return new XMLSerializer().serializeToString(xmlDoc);
+  let transposed = new XMLSerializer().serializeToString(xmlDoc);
+  transposed = transposed.replace(/xmlns="[^"]*"/g, '');
+  return transposed;
 };
 
 /**
@@ -273,49 +330,55 @@ export const injectSolfegeToXml = (xmlString: string, mode: string): string => {
       const measures = part.querySelectorAll("measure");
 
       measures.forEach(measure => {
-        let currentChordIndex = 1;
-
         const fifthsNode = measure.querySelector("key fifths");
         if (fifthsNode) currentFifths = parseInt(fifthsNode.textContent || "0");
         const divNode = measure.querySelector("attributes divisions");
         if (divNode) divisions = parseInt(divNode.textContent || "1");
 
-        // Fixed-mode: any mode containing 'Fixed' (Fixed Do, Fixed Doh, etc.) uses tonic=C
         const isFixedMode = mode.includes('Fixed');
         const currentKey = isFixedMode ? 'C' : (FIFTHS_TO_KEY[currentFifths] || 'C');
-        const notes = measure.querySelectorAll("note");
+        const allNotes = Array.from(measure.querySelectorAll("note"));
 
-        let chordLyricIndex = 0; // tracks how many notes in current chord group have been labeled
-
-        notes.forEach(note => {
-          const isRest = note.querySelector("rest");
+        // ── Collect notes into chord groups ──
+        // Each group = [primaryNote, ...chordNotes] sharing the same beat
+        const chordGroups: Element[][] = [];
+        for (const note of allNotes) {
           const isChord = note.querySelector("chord") !== null;
-          const pitch = note.querySelector("pitch");
-          const duration = parseInt(note.querySelector("duration")?.textContent || "0");
-          const ratio = duration / divisions;
-
           if (!isChord) {
-            chordLyricIndex = 0; // reset for each new non-chord note
+            chordGroups.push([note]);
+          } else if (chordGroups.length > 0) {
+            chordGroups[chordGroups.length - 1].push(note);
+          }
+        }
+
+        const stepToSemitone: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+
+        // ── Process each chord group ──
+        for (const group of chordGroups) {
+          // Remove any pre-existing lyrics from ALL notes in this group
+          for (const note of group) {
+            note.querySelectorAll("lyric").forEach(l => l.remove());
           }
 
-          // Remove any pre-existing lyrics on this note
-          note.querySelectorAll("lyric").forEach(l => l.remove());
+          // Collect pitched note info with MIDI value for sorting
+          const pitchedInfos: Array<{
+            note: Element; step: string; effectiveAlter: number; midi: number; ratio: number;
+          }> = [];
 
-          if (!isRest && pitch) {
+          for (const note of group) {
+            const isRest = note.querySelector("rest");
+            const pitch = note.querySelector("pitch");
+            if (isRest || !pitch) continue;
+
             const step = pitch.querySelector("step")?.textContent || "C";
+            const octave = parseInt(pitch.querySelector("octave")?.textContent || "4");
             const explicitAlter = pitch.querySelector("alter")?.textContent;
             const xmlAlter = explicitAlter !== null && explicitAlter !== undefined
               ? parseInt(explicitAlter || "0")
-              : null; // null means no <alter> element — rely on key signature
+              : null;
 
-            // Compute effective alter: if XML has explicit <alter>, use it;
-            // otherwise, derive from key signature (flat key implied alterations)
             let effectiveAlter = xmlAlter ?? 0;
-
             if (xmlAlter === null) {
-              // No explicit alter — apply key signature implied flats/sharps
-              // Order of flats: B, E, A, D, G, C, F  (fifths: -1 to -7)
-              // Order of sharps: F, C, G, D, A, E, B  (fifths: +1 to +7)
               const flatOrder = ['B', 'E', 'A', 'D', 'G', 'C', 'F'];
               const sharpOrder = ['F', 'C', 'G', 'D', 'A', 'E', 'B'];
               if (currentFifths < 0) {
@@ -327,19 +390,33 @@ export const injectSolfegeToXml = (xmlString: string, mode: string): string => {
               }
             }
 
-            // Calculate solfege for this note (pass fifths so flat keys use flat-side names)
-            const solfegeText = getChromaticSolfege(step, effectiveAlter, currentKey, mode, ratio, currentFifths);
+            const duration = parseInt(note.querySelector("duration")?.textContent || "0");
+            const ratio = duration / divisions;
+            const midi = (octave + 1) * 12 + (stepToSemitone[step] || 0) + effectiveAlter;
+
+            pitchedInfos.push({ note, step, effectiveAlter, midi, ratio });
+          }
+
+          if (pitchedInfos.length === 0) continue;
+
+          // ── Sort by MIDI pitch DESCENDING ──
+          // Highest pitch → lyric number 1 (closest to staff in Verovio)
+          pitchedInfos.sort((a, b) => b.midi - a.midi);
+
+          // ── Assign solfege lyrics with correct vertical ordering ──
+          pitchedInfos.forEach((info, idx) => {
+            const solfegeText = getChromaticSolfege(
+              info.step, info.effectiveAlter, currentKey, mode, info.ratio, currentFifths
+            );
             if (!solfegeText) return;
 
-            // Create lyric with incrementing number so Verovio stacks them vertically
             const lyric = xmlDoc.createElement("lyric");
-            lyric.setAttribute("number", (chordLyricIndex + 1).toString());
+            lyric.setAttribute("number", (idx + 1).toString());
             lyric.setAttribute("placement", "below");
 
             const textElement = xmlDoc.createElement("text");
             textElement.textContent = solfegeText;
 
-            // Mode-specific styling
             if (mode === 'Jianpu') {
               textElement.setAttribute("font-weight", "bold");
               textElement.setAttribute("font-size", "6.0");
@@ -349,15 +426,16 @@ export const injectSolfegeToXml = (xmlString: string, mode: string): string => {
             }
 
             lyric.appendChild(textElement);
-            note.appendChild(lyric);
-
-            chordLyricIndex++;
-          }
-        });
+            info.note.appendChild(lyric);
+          });
+        }
       });
     });
 
-    return new XMLSerializer().serializeToString(xmlDoc);
+    let serialized = new XMLSerializer().serializeToString(xmlDoc);
+    // Verovio can fail silently if XMLSerializer injects xhtml namespaces for new elements
+    serialized = serialized.replace(/xmlns="[^"]*"/g, '');
+    return serialized;
   } catch (err) {
     console.error("Lyric Injection Failed:", err);
     return xmlString;

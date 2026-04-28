@@ -54,8 +54,10 @@ def main():
     vram = torch.cuda.get_device_properties(0).total_memory / 1e9
     config = {
         "raw_data_dir": DS_DIR, "binary_data_dir": f"{DS_DIR}_bin",
-        "max_batch_size": 48 if vram > 30 else 16,
-        "max_epochs": 2000, "num_ckpt_keep": 5,
+        "max_batch_size": 128 if vram > 30 else 32, # A100 has huge VRAM
+        "max_updates": 60000, # Target steps as requested
+        "num_ckpt_keep": 5,
+        "lr": 0.0004,
     }
     os.makedirs("/content/DiffSinger/usr/configs", exist_ok=True)
     with open("/content/DiffSinger/usr/configs/vocalido.yaml", "w") as f:
@@ -70,8 +72,8 @@ def main():
         start_time = time.time()
         while True:
             time.sleep(30)
-            if time.time() - start_time > 10800: # 180 MINUTES TIMEOUT LIMIT (Hard Kill Switch)
-                print("🛑 180-MINUTE TIMEOUT REACHED! Auto-killing job to safeguard budget.")
+            if time.time() - start_time > 43200: # 12 HOURS (43200s) SAFETY KILL SWITCH
+                print("🛑 12-HOUR TIMEOUT REACHED! Auto-killing job to safeguard budget.")
                 os._exit(1)
             save_progress("training", -1, "heartbeat", True)  # triggers safety checks
 

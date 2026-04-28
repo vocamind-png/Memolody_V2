@@ -124,7 +124,15 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
         if (!files || files.length === 0) return;
 
         const file = files[0];
-        if (file.type.startsWith('image/') || file.type === 'application/pdf') {
+        const isImageOrPdf = file.type.startsWith('image/') || file.type === 'application/pdf';
+        const isMusicFile = file.name.toLowerCase().endsWith('.emk') || 
+                           file.name.toLowerCase().endsWith('.mid') || 
+                           file.name.toLowerCase().endsWith('.midi') ||
+                           file.name.toLowerCase().endsWith('.xml') ||
+                           file.name.toLowerCase().endsWith('.musicxml') ||
+                           file.name.toLowerCase().endsWith('.mxl');
+
+        if (isImageOrPdf || isMusicFile) {
             handleFileSelected(file);
         }
     }, [handleFileSelected]);
@@ -172,8 +180,8 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
             setMessages(prev => [...prev, {
                 role: 'nimo',
                 content: preferredLanguage === 'th'
-                    ? `✅ แปลงสำเร็จค่ะ! เพลง **"${result.song.title}"** โดย ${result.song.artist} 🎶\n\n📊 Key: ${result.song.key} | BPM: ${result.song.bpm} | โน้ต: ${noteCount} ตัว\n\n💡 **Tip:** หากโน้ตบางจุดไม่ตรงกับต้นฉบับ สามารถแก้ไขได้ที่หน้า Studio ค่ะ\n\nระบบจะพาคุณไปหน้า Edit โดยอัตโนมัติ หรือกดปุ่มด้านล่างเพื่อเปิดได้เลยค่ะ ▶️`
-                    : `✅ Done! Song **"${result.song.title}"** by ${result.song.artist} 🎶\n\n📊 Key: ${result.song.key} | BPM: ${result.song.bpm} | Notes: ${noteCount}\n\n💡 **Tip:** If some notes differ from the original, you can edit them in Studio.\n\nAuto-navigating to Editor, or tap below to view ▶️`,
+                    ? `✅ แปลงสำเร็จค่ะ! เพลง **"${result.song.title}"** โดย ${result.song.artist} 🎶\n\n📊 Key: ${result.song.key} | BPM: ${result.song.bpm} | โน้ต: ${noteCount} ตัว\n\nระบบจะพาคุณไปหน้า Player โดยอัตโนมัติ หรือกดปุ่มด้านล่างเพื่อฟังได้เลยค่ะ ▶️`
+                    : `✅ Done! Song **"${result.song.title}"** by ${result.song.artist} 🎶\n\n📊 Key: ${result.song.key} | BPM: ${result.song.bpm} | Notes: ${noteCount}\n\nAuto-navigating to Player, or tap below to listen ▶️`,
                 timestamp: Date.now(),
                 actionData: { song: result.song, xmlData: result.xmlData }
             }]);
@@ -184,7 +192,7 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
             // Auto-navigate to player after a short delay
             setTimeout(async () => {
                 try {
-                    await onSongSelect?.(result.song, result.xmlData, 'edit');
+                    await onSongSelect?.(result.song, result.xmlData, 'listen');
                 } catch (err) {
                     console.error('[ScoreLens] Auto-navigate failed:', err);
                 }
@@ -409,11 +417,11 @@ New Message: ${userMsg}`;
                                 <div className="whitespace-pre-wrap leading-relaxed">{msg.content}</div>
                                 {msg.actionData && (
                                     <button 
-                                        onClick={() => onSongSelect?.(msg.actionData!.song, msg.actionData!.xmlData, 'edit')}
+                                        onClick={() => onSongSelect?.(msg.actionData!.song, msg.actionData!.xmlData, 'listen')}
                                         className="mt-3 w-full bg-cyan-500 hover:bg-cyan-400 text-black py-2.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all shadow-[0_0_15px_rgba(0,229,255,0.3)] active:scale-95"
                                     >
                                         <Music2 size={14} /> 
-                                        {preferredLanguage === 'th' ? 'เปิดดูโน้ต / แก้ไข (Edit)' : 'Open in Editor'}
+                                        {preferredLanguage === 'th' ? 'เปิดฟังเพลง (Listen)' : 'Open in Player'}
                                     </button>
                                 )}
                             </div>

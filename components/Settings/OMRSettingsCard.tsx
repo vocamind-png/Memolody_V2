@@ -46,7 +46,7 @@ You are an expert in Optical Music Recognition (OMR) and music theory.
 
 Task: Inspect the provided MusicXML against the score image. Find errors and return 99% accuracy.
 
-${focusMeasures ? `⚠️ Pay special attention to measures: ${focusMeasures} (marked as low-confidence by Audiveris)` : ''}
+${focusMeasures ? `⚠️ Pay special attention to measures: ${focusMeasures} (marked as low-confidence by OMR)` : ''}
 
 MusicXML Content:
 \`\`\`xml
@@ -235,7 +235,7 @@ const OMRSettingsCard: React.FC = () => {
             {
               measure: 4, type: 'rhythm', severity: 'high', applied: false,
               description: 'โน้ตใน Beat 3 ขาดจังหวะ ¼ — น่าจะเป็น Quarter Rest ที่หายไป',
-              reason: 'Audiveris อาจแยกแยะ Rest สีขาวกับ Background ไม่ออกเมื่อภาพมีความเปรียบต่างต่ำ',
+              reason: 'OMR อาจแยกแยะ Rest สีขาวกับ Background ไม่ออกเมื่อภาพมีความเปรียบต่างต่ำ',
               xmlSnippet: '<note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration><type>quarter</type></note>',
               correctedXml: '<note><rest/><duration>4</duration><type>quarter</type></note>',
             },
@@ -504,7 +504,7 @@ const OMRSettingsCard: React.FC = () => {
                   <span className="px-1.5 py-0.5 rounded text-[7px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/20">99% Accuracy Target</span>
                 </div>
                 <div className="text-[8px] text-zinc-400 leading-relaxed">
-                  อัปโหลด <strong>MusicXML</strong> (จาก Audiveris) + <strong>ภาพต้นฉบับ</strong> → AI จะตรวจสอบและแสดง XML Snippet ที่แก้ไขแล้วให้คุณ Apply ได้ทันที
+                  อัปโหลด <strong>MusicXML</strong> (จาก Oemer) + <strong>ภาพต้นฉบับ</strong> → AI จะตรวจสอบและแสดง XML Snippet ที่แก้ไขแล้วให้คุณ Apply ได้ทันที
                 </div>
               </div>
 
@@ -545,7 +545,7 @@ const OMRSettingsCard: React.FC = () => {
                   type="text"
                   value={focusMeasures}
                   onChange={e => setFocusMeasures(e.target.value)}
-                  placeholder="เช่น 4, 8, 12-16 (ห้องที่ Audiveris แจ้ง Low Confidence)"
+                  placeholder="เช่น 4, 8, 12-16 (ห้องที่ OMR แจ้ง Low Confidence)"
                   className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-xl text-[10px] text-white placeholder-zinc-600 focus:outline-none focus:border-violet-500 transition-colors"
                 />
               </div>
@@ -652,7 +652,7 @@ const OMRSettingsCard: React.FC = () => {
               {/* Tips */}
               {!inspectorResult && !inspecting && (
                 <div className="text-[8px] text-zinc-600 p-3 rounded-lg bg-zinc-900/50 border border-zinc-800 space-y-1.5">
-                  <div>💡 <strong className="text-zinc-400">เทคนิค 1:</strong> ระบุเลข Measure ที่ Audiveris วงสีแดง/เหลือง ในช่องด้านบน เพื่อให้ AI โฟกัสถูกจุด</div>
+                  <div>💡 <strong className="text-zinc-400">เทคนิค 1:</strong> ระบุเลข Measure ที่ OMR วงสีแดง/เหลือง ในช่องด้านบน เพื่อให้ AI โฟกัสถูกจุด</div>
                   <div>🎯 <strong className="text-zinc-400">เทคนิค 2:</strong> อัปโหลดทั้ง MusicXML + ภาพต้นฉบับพร้อมกัน AI จะเห็น Context ครบและตรวจสอบได้แม่นขึ้น</div>
                   <div>🔊 <strong className="text-zinc-400">เทคนิค 3:</strong> หลัง Apply Fix แล้ว ให้ลองเล่นเสียงเพื่อ Cross-Validate ว่าโน้ตกระโดดเกินธรรมชาติของนักร้องหรือไม่</div>
                 </div>

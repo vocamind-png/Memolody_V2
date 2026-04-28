@@ -1,7 +1,13 @@
 """
-Vocalido SVS Server v5.0 — AI Acoustic Model Engine
+Vocalido SVS Server v5.1 — AI Acoustic Model Engine
 Uses the trained neural network checkpoint for voice synthesis.
 Falls back to sample-based if model not available.
+
+Engine priority:
+  1. Voice Studio Sampler  (real WAV samples + timbre processing)
+  2. TIGER DiffSinger v106 (ONNX neural synthesis)
+  3. Custom AI model       (trained .ckpt via PyTorch)
+  4. Simple Pitch-Shift    (last resort fallback)
 """
 import os
 import time
@@ -17,7 +23,7 @@ except ImportError:
     print("[Warning] PyMuPDF (fitz) not found. PDF to XML conversion will be disabled.")
     FITZ_OK = False
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Body
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -25,7 +31,24 @@ from typing import List, Optional
 import uvicorn
 
 # ── Config ────────────────────────────────────────────────────────────────────
-VOICE_SOURCE_PATH = "/Users/paisan/Downloads/singeria_render.wav"
+_HERE = os.path.dirname(os.path.abspath(__file__))
+
+# Voice source: search multiple locations, never crash if missing
+_VOICE_SOURCE_CANDIDATES = [
+    os.path.join(_HERE, "voicebanks", "singeria_render.wav"),
+    os.path.join(_HERE, "..", "voicebanks", "singeria_render.wav"),
+    os.path.expanduser("~/Downloads/singeria_render.wav"),
+    os.path.expanduser("~/Downloads/singeria.wav"),
+]
+VOICE_SOURCE_PATH = next(
+    (p for p in _VOICE_SOURCE_CANDIDATES if os.path.isfile(p)), None
+)
+if VOICE_SOURCE_PATH:
+    print(f"[Config] ✅ Voice source found: {VOICE_SOURCE_PATH}")
+else:
+    print("[Config] ⚠️  Voice source WAV not found — simple fallback will use sine waves.")
+    print(f"[Config]    Put 'singeria_render.wav' in: {os.path.join(_HERE, 'voicebanks')}")
+
 VOICE_SOURCE_MIDI = 58.6  # B3 — detected from analysis
 SR = 44100
 BPM_DEFAULT = 120.0
@@ -34,9 +57,18 @@ app = FastAPI(title="Vocalido SVS Engine", version="5.1.0")
 os.makedirs("renders", exist_ok=True)
 os.makedirs("voicebanks", exist_ok=True)
 app.mount("/audio", StaticFiles(directory="renders"), name="audio")
+# Use absolute path for static assets relative to this file
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 @app.exception_handler(Exception)
+
+@app.get("/", response_class=HTMLResponse)
+async def read_root():
+    index_path = os.path.join(os.path.dirname(__file__), "static", "index.html")
+    with open(index_path, "r", encoding="utf-8") as f:
+        return HTMLResponse(content=f.read())
 async def global_exception_handler(request, exc):
     import traceback
     error_msg = traceback.format_exc()
@@ -60,14 +92,9 @@ _training_state = {
 }
 
 # ── Pre-load voice source ─────────────────────────────────────────────────────
-print("Loading voice source...")
-_voice_raw, _voice_sr = librosa.load(VOICE_SOURCE_PATH, sr=SR, mono=True)
-
-# Extract best 2-second voiced segment for use as base sample
 def _extract_base_sample(y, sr, duration=2.0):
     """Find a stable, voiced segment to use as pitch-shift source"""
-    # Analyze up to 5 minutes to find the best part
-    analysis_len = min(len(y), sr * 300) 
+    analysis_len = min(len(y), sr * 300)
     f0, voiced, _ = librosa.pyin(
         y[:analysis_len],
         fmin=librosa.note_to_hz('C2'),
@@ -75,33 +102,36 @@ def _extract_base_sample(y, sr, duration=2.0):
         sr=sr
     )
     valid_frames = np.where(~np.isnan(f0) & voiced)[0]
-    
+
     if len(valid_frames) == 0:
-        # Fallback to the loudest 2-second segment if pitch detection fails
         hop = 512
         rms = librosa.feature.rms(y=y, hop_length=hop)
         best_frame = np.argmax(rms)
         best_start = max(0, int(best_frame * hop - (sr * duration / 2)))
     else:
-        # Find longest run of consecutive voiced frames or just the most stable
-        best_start = valid_frames[len(valid_frames)//2] * 512 # Take middle of voiced
-    
+        best_start = valid_frames[len(valid_frames)//2] * 512
+
     n_samples = int(duration * sr)
     segment = y[best_start:best_start + n_samples].copy()
-    
     if len(segment) < n_samples:
         segment = np.pad(segment, (0, n_samples - len(segment)))
-    
-    # Normalize and boost
     peak = np.max(np.abs(segment))
     if peak > 0.001:
         segment = segment / peak * 0.95
-        
     return segment
 
-print("Extracting base voice sample (Deep analysis)...")
-_base_sample = _extract_base_sample(_voice_raw, SR, duration=2.0)
-print(f"✅ Voice source ready! Base sample: {len(_base_sample)/SR:.2f}s at MIDI {VOICE_SOURCE_MIDI:.1f}")
+# Load voice source — graceful fallback to sine wave if WAV not found
+if VOICE_SOURCE_PATH:
+    print("Loading voice source...")
+    _voice_raw, _voice_sr = librosa.load(VOICE_SOURCE_PATH, sr=SR, mono=True)
+    print("Extracting base voice sample (Deep analysis)...")
+    _base_sample = _extract_base_sample(_voice_raw, SR, duration=2.0)
+    print(f"✅ Voice source ready! Base sample: {len(_base_sample)/SR:.2f}s at MIDI {VOICE_SOURCE_MIDI:.1f}")
+else:
+    # Generate a sine-wave stand-in so the server still starts
+    print("[Fallback] Generating sine-wave base sample (no voice source WAV).")
+    _t = np.arange(int(SR * 2.0)) / SR
+    _base_sample = (0.5 * np.sin(2 * np.pi * 233.08 * _t)).astype(np.float32)  # A#3
 
 
 # ── Request Schema ────────────────────────────────────────────────────────────
@@ -209,14 +239,8 @@ async def synthesize(request: SynthesisRequest):
 
 # ----------------------------------------------------------------------
 # Model switch endpoint (used by UI)
+# (VocalidoAIEngine is imported below near line 360 — no duplicate import)
 # ----------------------------------------------------------------------
-from ai_engine import VocalidoAIEngine
-
-# Global engine instance (shared across requests)
-engine = VocalidoAIEngine(
-    checkpoints_dir=os.path.join(os.path.dirname(__file__), "checkpoints"),
-    default_model="vocalido_v1"
-)
 
 @app.post("/model/set")
 def set_model(payload: dict = Body(...)):
@@ -370,7 +394,7 @@ except Exception as _e:
 # Also load voice_studio as fallback
 try:
     from voice_studio import get_library, synthesize_phrase as studio_synthesize_phrase, synthesize_note as studio_synthesize_note, SR as STUDIO_SR
-    from audio_utils import audio_to_base64_wav, audio_to_base64_mp3
+    from audio_utils import audio_to_base64_wav, audio_to_base64_mp3  # absolute import (not a package)
     STUDIO_OK = True
     print("✅ Voice Studio loaded (sampler)")
 except Exception as _e:
@@ -559,7 +583,7 @@ def studio_synthesis(req: StudioSynthesisReq):
     outpath = os.path.join("renders", outname)
     os.makedirs("renders", exist_ok=True)
     
-    from audio_utils import save_audio_as_mp3
+    from audio_utils import save_audio_as_mp3  # absolute import
     success = save_audio_as_mp3(audio, outpath, sr=STUDIO_SR)
     
     if not success:
@@ -569,6 +593,72 @@ def studio_synthesis(req: StudioSynthesisReq):
         sf.write(outpath, audio, STUDIO_SR)
         
     return {"audio_url": f"/vocalido/audio/{outname}"}
+
+@app.post("/song/synthesize")
+async def song_synthesize(file: UploadFile = File(...), bpm: float = 120.0):
+    """Accept a MIDI file, convert notes to the internal format, and synthesize the full song.
+    The generated audio is saved to the renders folder and a URL is returned.
+    """
+    import io, pretty_midi
+    midi_bytes = await file.read()
+    midi = pretty_midi.PrettyMIDI(io.BytesIO(midi_bytes))
+    notes = []
+    for instrument in midi.instruments:
+        for n in instrument.notes:
+            notes.append({
+                "midi": n.pitch,
+                "duration": n.end - n.start,
+                "startTime": n.start,
+                "lyric": ""
+            })
+    notes.sort(key=lambda x: x["startTime"])
+    audio = synthesize_sample_based([VocalNote(**note) for note in notes], bpm=bpm)
+    outname = f"song_{int(time.time()*1000)}.wav"
+    outpath = os.path.join("renders", outname)
+    sf.write(outpath, audio, SR)
+    return {"audio_url": f"/vocalido/audio/{outname}"}
+
+# ----------------------------------------------------------------------
+# XML (MusicXML) synthesis endpoint – parses MusicXML and uses sample‑based engine
+# ----------------------------------------------------------------------
+@app.post("/xml/synthesize")
+async def xml_synthesize(file: UploadFile = File(...), bpm: float = 120.0):
+    """Accept a MusicXML file, convert to notes, synthesize, and return audio URL.
+    Uses sample‑based pitch‑shift synthesis (no phoneme data required).
+    """
+    import tempfile, music21
+    # Save uploaded XML to a temporary file for music21 to read
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xml")
+    content = await file.read()
+    tmp.write(content)
+    tmp.close()
+    try:
+        score = music21.converter.parse(tmp.name)
+        notes = []
+        for n in score.flat.notes:
+            if isinstance(n, music21.note.Note):
+                notes.append({
+                    "midi": n.pitch.midi,
+                    "duration": float(n.quarterLength),
+                    "startTime": float(n.offset),
+                    "lyric": ""
+                })
+            elif isinstance(n, music21.chord.Chord):
+                # Use the highest note of the chord for synthesis (simple fallback)
+                notes.append({
+                    "midi": max(p.midi for p in n.pitches),
+                    "duration": float(n.quarterLength),
+                    "startTime": float(n.offset),
+                    "lyric": ""
+                })
+        notes.sort(key=lambda x: x["startTime"])
+        audio = synthesize_sample_based([VocalNote(**note) for note in notes], bpm=bpm)
+        outname = f"xmlsong_{int(time.time()*1000)}.wav"
+        outpath = os.path.join("renders", outname)
+        sf.write(outpath, audio, SR)
+        return {"audio_url": f"/vocalido/audio/{outname}"}
+    finally:
+        import os; os.unlink(tmp.name)
 
 @app.post("/pdf/preview")
 async def get_pdf_preview(file: UploadFile = File(...)):

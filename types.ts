@@ -57,6 +57,11 @@ export interface Song {
   likes?: number;
   commentCount?: number;
   isLiked?: boolean;
+  genre?: string;
+  era?: string;
+  composer?: string;
+  year?: string;
+  instruments?: string[];
 }
 
 export interface SongFolder {

@@ -77,7 +77,7 @@ const PageLoader = () => {
   );
 };
 
-type ViewId = 'home' | 'library' | 'player' | 'profile' | 'forge' | 'distribution' | 'settings' | 'nimo' | 'presentation' | 'admin' | 'subscription' | 'vocalido';
+type ViewId = 'home' | 'library' | 'player' | 'profile' | 'forge' | 'distribution' | 'settings' | 'nimo' | 'presentation' | 'admin' | 'subscription';
 
 const INITIAL_LOOP_PRESETS: LoopPreset[] = [
   { id: 'intro', label: 'Intro', color: '#00e5ff', startBar: 1, endBar: 4, isActive: false },
@@ -108,7 +108,8 @@ const App: React.FC = () => {
   const [nimoMounted, setNimoMounted] = useState(false); // mount on first click only
   const [selectedSong, setSelectedSong] = useState<Song | null>(null);
   const [uploadedMusicXml, setUploadedMusicXml] = useState<string | null>(null);
-  const [userSongs, setUserSongs] = useState<{ metadata: Song, xmlData: string }[]>([]);
+  const [selectedLayoutBundle, setSelectedLayoutBundle] = useState<any | null>(null);
+  const [userSongs, setUserSongs] = useState<{ metadata: Song, xmlData: string, layoutBundle?: any | null }[]>([]);
   const userSongsRef = React.useRef(userSongs); // ref to avoid stale closure in callbacks
   const [tracks, setTracks] = useState<TrackState[]>([]);
   const [playerViewMode, setPlayerViewMode] = useState<'score' | 'pianoroll'>('score');
@@ -144,13 +145,24 @@ const App: React.FC = () => {
         if (songs.length === 0) {
           console.log('🌱 Project Empty: Seeding Vocalido Demo data...');
           for (const demo of DEMO_SONGS) {
-            await songStorage.saveSong(demo.metadata as any, demo.xmlData);
+            await songStorage.saveSong(demo.metadata as any, demo.xmlData, (demo as any).layoutBundle || null);
           }
           songs = await songStorage.getAllSongs();
         }
 
         userSongsRef.current = songs;
         setUserSongs(songs);
+
+        // ── Auto-select first song so Player/Edit always shows notes ──────────
+        // Pick the most-recently added song (last in list) as the startup default
+        if (songs.length > 0) {
+          const defaultSong = songs[songs.length - 1]; // most recent
+          setSelectedSong(defaultSong.metadata);
+          setUploadedMusicXml(defaultSong.xmlData || '');
+          setSelectedLayoutBundle(defaultSong.layoutBundle || null);
+          console.log(`[App] 🎵 Auto-selected: "${defaultSong.metadata.title}"`);
+        }
+
         setTimeout(() => triggerSync(), 5000);
       } catch (e) {
         console.error("Init Error:", e);
@@ -308,13 +320,21 @@ const App: React.FC = () => {
 
     setSelectedSong(song);
     setUploadedMusicXml(finalXml);
+    setSelectedLayoutBundle(owned?.layoutBundle || null);
 
     // Lazy-load Tone.js engine only when needed
     const engine = await getMusicEngine();
     engine.pause();
     engine.setTransportSeconds(0);
 
-    const parsed = engine.parseMusicXml(finalXml);
+    let parsed;
+    try {
+      parsed = engine.parseMusicXml(finalXml);
+    } catch (e) {
+      console.error('[App] Failed to parse MusicXML:', e);
+      parsed = { partNames: { 'P1': 'Track 1' }, trackClefs: {} }; // Safe fallback
+    }
+    
     let vocalTrackSelected = false;
     const trackIds = Object.keys(parsed.partNames);
     
@@ -386,15 +406,15 @@ const App: React.FC = () => {
           onLocalRefresh={handleLocalRefresh}
           isSyncing={isSyncing}
           onOpenNimo={(song, xml) => handleSongSelect(song, xml, 'studio', false, { main: 'player' })}
-          onImportToNimo={f => { setNimoFileToLoad(f); setNimoMounted(true); setIsNimoOpen(true); }}
+          onImportToNimo={f => { setPendingImportFile(f); setNimoMounted(true); setIsNimoOpen(true); }}
           onTogglePublic={handleTogglePublic}
           isAdmin={isAdmin}
           currentUserId={authUser?.id}
         />;
       case 'player':
-        return <PlayerPage song={selectedSong} musicXml={uploadedMusicXml} tracks={tracks} setTracks={setTracks} viewMode={playerViewMode} setViewMode={setPlayerViewMode} loopPresets={loopPresets} setLoopPresets={setLoopPresets} performanceMode={performanceMode} vocalidoAutoRender={vocalidoAutoRender} autoPlay={autoPlayOnLoad} onAutoPlayConsumed={() => setAutoPlayOnLoad(false)} />;
+        return <PlayerPage song={selectedSong} musicXml={uploadedMusicXml} layoutBundle={selectedLayoutBundle} tracks={tracks} setTracks={setTracks} viewMode={playerViewMode} setViewMode={setPlayerViewMode} loopPresets={loopPresets} setLoopPresets={setLoopPresets} performanceMode={performanceMode} vocalidoAutoRender={vocalidoAutoRender} autoPlay={autoPlayOnLoad} onAutoPlayConsumed={() => setAutoPlayOnLoad(false)} />;
       case 'forge':
-        return <StudioPage selectedSong={selectedSong} xmlData={uploadedMusicXml} tracks={tracks} setTracks={setTracks} onPublish={triggerSync} onExit={() => navigateTo('home')} />;
+        return <StudioPage selectedSong={selectedSong} xmlData={uploadedMusicXml} layoutBundle={selectedLayoutBundle} tracks={tracks} setTracks={setTracks} onPublish={triggerSync} onExit={() => navigateTo('home')} />;
       case 'profile':
         return <ProfilePage onEnterForge={() => navigateTo('forge')} userLibrary={userSongs} onSongSelect={handleSongSelect} onTriggerSync={triggerSync} isSyncing={isSyncing} onRefresh={triggerSync} preferredLanguage={preferredLanguage} setPreferredLanguage={handleLanguageChange} userCountry={userCountry} setUserCountry={handleCountryChange} userInstrument={userInstrument} setUserInstrument={handleInstrumentChange} />;
       case 'settings':
@@ -409,22 +429,6 @@ const App: React.FC = () => {
         return <AdminPage onRefresh={triggerSync} />;
       case 'subscription':
         return <PricingTiers />;
-      case 'vocalido':
-        return (
-          <div className="flex-1 flex flex-col overflow-hidden bg-[#0a0a0f]">
-            <div className="flex items-center gap-2 px-4 py-2 border-b border-white/5 shrink-0">
-              <Mic2 size={14} className="text-purple-400" />
-              <span className="text-[10px] font-black tracking-[0.15em] text-zinc-400">VOCALIDO <span className="text-purple-400">VOICE STUDIO</span></span>
-              <span className="ml-auto text-[9px] text-zinc-600">Sample-based voice synthesis • 29 notes • E3→D6</span>
-            </div>
-            <iframe
-              src="http://localhost:3000/voice-studio.html"
-              className="flex-1 w-full border-0"
-              title="Vocalido Voice Studio"
-              allow="autoplay; microphone"
-            />
-          </div>
-        );
       default:
         return null;
     }

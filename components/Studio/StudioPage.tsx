@@ -12,10 +12,13 @@ import EngraverCommandCenter from './EngraverCommandCenter';
 import { musicEngine } from '../../lib/MusicEngine';
 import { MidiWriter } from '../../lib/MidiWriter';
 import { PluginManager } from '../../plugins/core/manager';
+import { songStorage } from '../../lib/SongStorage';
+import { parseMusicXMLMetadata } from '../../lib/MusicXmlParser';
 
 interface StudioPageProps {
   selectedSong: Song | null;
   xmlData: string | null;
+  layoutBundle?: any | null;
   tracks: TrackState[];
   setTracks: React.Dispatch<React.SetStateAction<TrackState[]>>;
   onPublish: () => void;
@@ -37,7 +40,7 @@ function mapEngraverTool(toolId: string): { tool: EditTool; duration: NoteType |
 }
 
 const StudioPage: React.FC<StudioPageProps> = ({
-  selectedSong: initialSong, xmlData: initialXml, tracks, setTracks, onPublish, onExit
+  selectedSong: initialSong, xmlData: initialXml, layoutBundle, tracks, setTracks, onPublish, onExit
 }) => {
   const [currentProject, setCurrentProject] = useState<Song | null>(initialSong);
   const [xmlHistory, setXmlHistory] = useState<string[]>(initialXml ? [initialXml] : []);
@@ -123,6 +126,53 @@ const StudioPage: React.FC<StudioPageProps> = ({
             <PlusCircle size={32} className="text-cyan-400" />
             <span className="text-white font-black uppercase text-[9px] tracking-[0.3em]">New Project</span>
           </div>
+
+          {/* Import & Convert Card */}
+          <div
+            onClick={() => {
+              const input = document.createElement('input');
+              input.type = 'file';
+              input.multiple = true;
+              input.accept = '.emk,.mid,.midi,.xml,.musicxml';
+              input.onchange = async (e: any) => {
+                const files = Array.from(e.target.files as FileList);
+                if (files.length === 0) return;
+                
+                setIsPreparing(true);
+                setPrepLabel(`IMPORTING ${files.length} STREAMS...`);
+                
+                const { FileConverter } = await import('../../lib/FileConverter');
+                let successCount = 0;
+                
+                for (const file of files) {
+                  try {
+                    const res = await FileConverter.convertFile(file);
+                    if (!res.success || !res.midiData) continue;
+                    const midiFile = new File([res.midiData], res.fileName, { type: 'audio/midi' });
+                    const { metadata, xmlData, layoutBundle } = await parseMusicXMLMetadata(midiFile);
+                    metadata.origin = 'load';
+                    await songStorage.saveSong(metadata, xmlData, layoutBundle);
+                    successCount++;
+                  } catch (err) {
+                    console.error(`[Studio] Import failed for ${file.name}:`, err);
+                  }
+                }
+                
+                setIsPreparing(false);
+                if (successCount > 0) {
+                  onPublish();
+                  alert(`✅ Imported ${successCount} songs! You can find them in the HOME tab.`);
+                } else {
+                  alert('❌ Failed to import files.');
+                }
+              };
+              input.click();
+            }}
+            className="aspect-square bg-amber-500/5 border-2 border-dashed border-amber-500/20 rounded-[40px] flex flex-col items-center justify-center gap-4 cursor-pointer hover:bg-amber-500/10 transition-all active:scale-95"
+          >
+            <Download size={32} className="text-amber-500" />
+            <span className="text-amber-500 font-black uppercase text-[9px] tracking-[0.3em]">Import & Convert (.EMK)</span>
+          </div>
         </div>
       </div>
     );
@@ -168,6 +218,57 @@ const StudioPage: React.FC<StudioPageProps> = ({
           </div>
 
           <button
+            onClick={() => {
+              const input = document.createElement('input');
+              input.type = 'file';
+              input.multiple = true;
+              input.accept = '.emk,.mid,.midi,.xml,.musicxml';
+              input.onchange = async (e: any) => {
+                const files = Array.from(e.target.files as FileList);
+                if (files.length === 0) return;
+                setIsPreparing(true);
+                setPrepLabel(`IMPORTING ${files.length} STREAMS...`);
+                
+                const { FileConverter } = await import('../../lib/FileConverter');
+                let successCount = 0;
+                
+                for (const file of files) {
+                  try {
+                    // 1. Convert if EMK
+                    const res = await FileConverter.convertFile(file);
+                    if (!res.success || !res.midiData) continue;
+
+                    // 2. Wrap as File if it was a Blob from converter
+                    const midiFile = new File([res.midiData], res.fileName, { type: 'audio/midi' });
+
+                    // 3. Parse Metadata (converts MIDI to XML internally)
+                    const { metadata, xmlData, layoutBundle } = await parseMusicXMLMetadata(midiFile);
+                    
+                    // 4. Save to Database
+                    metadata.origin = 'load'; // Mark as user-imported
+                    await songStorage.saveSong(metadata, xmlData, layoutBundle);
+                    successCount++;
+                  } catch (err) {
+                    console.error(`[Studio] Failed to import ${file.name}:`, err);
+                  }
+                }
+                
+                setIsPreparing(false);
+                if (successCount > 0) {
+                  onPublish(); // Trigger refresh in App
+                  alert(`✅ Successfully imported ${successCount} songs to your library!`);
+                } else {
+                  alert(`❌ Failed to import files. Please check format.`);
+                }
+              };
+              input.click();
+            }}
+            className="px-4 h-8 bg-amber-500/10 border border-amber-500/20 text-amber-500 rounded-xl text-[8px] font-black uppercase hover:bg-amber-500 hover:text-black transition-all"
+          >
+            IMPORT CONVERTER
+          </button>
+
+          <button
             onClick={() => setShowExportModal(true)}
             className="px-5 h-8 bg-white text-black rounded-xl text-[9px] font-black uppercase shadow-lg active:scale-95 transition-all"
           >
@@ -191,6 +292,7 @@ const StudioPage: React.FC<StudioPageProps> = ({
             isEditable={true}
             onXmlChange={onXmlChange}
             onPageCountChange={setSvgPagesCount}
+            layoutBundle={layoutBundle}
           />
         </div>
 

@@ -7,6 +7,7 @@ import html2canvas from 'html2canvas';
 import { injectSolfegeToXml, transposeMusicXml } from '../../lib/MusicXmlParser';
 import { ScoreLayoutMode, TextAnnotation } from '../../types';
 import { musicEngine } from '../../lib/MusicEngine';
+import { computeLayoutSync, buildScrollSyncMap, syncScroll, type LayoutMap } from '../../lib/LayoutSyncService';
 
 interface BarMap {
   measureNumber: number;
@@ -73,6 +74,12 @@ interface ProScoreEditorProps {
   showLaserLine?: boolean;
   activeLoop?: { startBar: number, endBar: number, color: string } | null;
   performanceMode?: boolean;
+  /** [V2] Layout bundle from Scorelens-Engine_V2 for pixel-accurate layout sync */
+  layoutBundle?: {
+    layout_map: LayoutMap;
+    metadata?: { title?: string; composer?: string; tempo_bpm?: number | null };
+    typography?: any;
+  } | null;
 }
 
 export interface ProScoreEditorRef {
@@ -188,7 +195,7 @@ function detectAndInjectChords(xml: string): string {
         // ── Strategy 1: Simultaneous notes (original logic) ──────────────
         let foundSimultaneous = false;
         for (const [onset, semitones] of Array.from(onsetMap.entries())) {
-          const pcs = [...new Set(semitones.map(s => ((s % 12) + 12) % 12))].sort((a, b) => a - b);
+          const pcs = Array.from(new Set(semitones.map(s => ((s % 12) + 12) % 12))).sort((a, b) => a - b);
           if (pcs.length < 2) continue;
 
           const match = matchChord(pcs);
@@ -211,10 +218,10 @@ function detectAndInjectChords(xml: string): string {
         // and try to detect a chord from the combined pitch classes
         if (!foundSimultaneous && onsetMap.size > 0) {
           const allPcs = new Set<number>();
-          for (const semitones of onsetMap.values()) {
+          onsetMap.forEach(semitones => {
             semitones.forEach(s => allPcs.add(((s % 12) + 12) % 12));
-          }
-          const pcsArr = [...allPcs].sort((a, b) => a - b);
+          });
+          const pcsArr = Array.from(allPcs).sort((a, b) => a - b);
           if (pcsArr.length >= 3) {
             const match = matchChord(pcsArr);
             if (match) {
@@ -261,7 +268,8 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
   isEditable = false, activeNotationTool = 'select', onXmlChange,
   activeLoop = null,
   performanceMode = false,
-  lyricMode = 'Ju Solfege Movable Doh'
+  lyricMode = 'Ju Solfege Movable Doh',
+  layoutBundle = null,
 }, ref) => {
   // Detection for Mobile Devices (Centralized)
   const isMobile = useMemo(() => /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent), []);
@@ -651,7 +659,7 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
         }
       });
       if (volta1Measures.size > 0)
-        console.log('[Memolody] 🎼 Volta-1 measures:', [...volta1Measures]);
+        console.log('[Memolody] 🎼 Volta-1 measures:', Array.from(volta1Measures));
     } catch (e) { }
     volta1MeasuresRef.current = volta1Measures;
     syncPointsRef.current = firstPassPoints;
@@ -779,6 +787,22 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
     try {
       const vrvToolkit = vrvToolkitRef.current;
       let finalXml = transpose !== 0 ? transposeMusicXml(xmlData, transpose) : xmlData;
+      finalXml = finalXml.trim();
+
+      // ── Strip DOCTYPE & Entities — external DTD URLs cause Verovio to silently fail ──
+      // Some XMLs have multiple entities or nested DOCTYPEs, we use a robust multi-pass approach
+      if (!finalXml.startsWith('<?xml')) {
+        finalXml = '<?xml version="1.0" encoding="UTF-8"?>\n' + finalXml;
+      }
+      finalXml = finalXml
+        .replace(/<!DOCTYPE[^>]*(\[[\s\S]*?\])?>/gi, '')
+        .replace(/<!ENTITY[^>]*>/gi, '')
+        .trim();
+
+      console.log(`[ProScoreEditor] Rendering XML (${finalXml.length} chars). First 100: ${finalXml.substring(0, 100)}`);
+      if (finalXml.includes('<!DOCTYPE')) {
+        console.warn('[ProScoreEditor] Warning: DOCTYPE still present in XML after stripping.');
+      }
 
       // Inject Lyric based on mode
       if (lyricMode !== 'Close' && lyricMode !== 'Lyric') {
@@ -798,36 +822,87 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
         }
       }
 
+      // ── CRITICAL: Strip any remaining xmlns attributes ──
+      // Verovio expects standard MusicXML. If Gemini or DOMParser injected an HTML namespace, Verovio will silently render an empty page.
+      finalXml = finalXml.replace(/xmlns="[^"]*"/gi, '');
+
+      const hasEncodedBreaks = finalXml.includes('new-system="yes"');
+
+      // ── [V2] Layout Sync from Scorelens-Engine bundle ─────────────────────
+      let vrvScale = 45;
+      let vrvPageMarginTop = 60;
+      let vrvPageMarginBottom = 60;
+      let vrvPageMarginLeft = 40;
+      let vrvPageMarginRight = 40;
+      let vrvSpacingSystem = systemSpacing > 10 ? 10 : systemSpacing;
+      let vrvSpacingStaff = 10;
+
+      if (layoutBundle?.layout_map) {
+        try {
+          const containerW = containerRef.current?.offsetWidth || 900;
+          const syncInfo = computeLayoutSync(layoutBundle.layout_map, containerW);
+          const opts = syncInfo.verovioOptions;
+          vrvScale = opts.scale;
+          vrvPageMarginTop = opts.pageMarginTop;
+          vrvPageMarginBottom = opts.pageMarginBottom;
+          vrvPageMarginLeft = opts.pageMarginLeft;
+          vrvPageMarginRight = opts.pageMarginRight;
+          vrvSpacingSystem = opts.spacingSystem;
+          vrvSpacingStaff = opts.spacingStaff;
+          console.log(`[ProScoreEditor] 🎯 V2 Layout Sync applied: scale=${vrvScale}`);
+        } catch (syncErr) {
+          console.warn('[ProScoreEditor] Layout sync failed, using defaults:', syncErr);
+        }
+      }
+
       vrvToolkit.setOptions({
-        scale: 55,
+        scale: vrvScale,
         font: musicFont,
-        header: "none",
-        footer: "none",
+        header: 'none',
+        footer: 'none',
         adjustPageHeight: true,
         adjustPageWidth: false,
-        pageWidth: 2100,
-        pageHeight: 2970,
-        pageMarginTop: 80,
-        pageMarginBottom: 80,
-        pageMarginLeft: 50,
-        pageMarginRight: 50,
-        spacingSystem: systemSpacing,
-        spacingStaff: 18,
-        lyricTopMinMargin: 4.0,
-        lyricSize: 3.0,
+        pageWidth: 2800,
+        pageHeight: 3960,
+        pageMarginTop: vrvPageMarginTop,
+        pageMarginBottom: vrvPageMarginBottom,
+        pageMarginLeft: vrvPageMarginLeft,
+        pageMarginRight: vrvPageMarginRight,
+        spacingSystem: vrvSpacingSystem,
+        spacingStaff: vrvSpacingStaff,
+        lyricTopMinMargin: 2.0,
+        lyricSize: 4.5,
         stemWidth: stemThickness,
         barLineWidth: barlineThickness,
         staffLineWidth: stafflineThickness,
         svgViewBox: true,
-        breaks: 'auto',
+        breaks: hasEncodedBreaks ? 'encoded' : 'auto',
       });
 
       // Yield before Verovio parse (heavy WASM call)
       await new Promise<void>(r => setTimeout(r, 0));
       vrvToolkit.loadData(finalXml);
       vrvToolkit.redoLayout();
-
-      const pageCount = vrvToolkit.getPageCount();
+      let pageCount = vrvToolkit.getPageCount();
+      console.log(`[ProScoreEditor] Layout complete. Page count: ${pageCount}`);
+      
+      if (pageCount === 0) {
+        console.warn('[ProScoreEditor] Verovio returned 0 pages with processed XML. Retrying with RAW XML fallback...');
+        try {
+          vrvToolkit.loadData(xmlData.trim());
+          vrvToolkit.redoLayout();
+          pageCount = vrvToolkit.getPageCount();
+          console.log(`[ProScoreEditor] RAW XML fallback layout complete. Page count: ${pageCount}`);
+        } catch (fallbackErr) {
+          console.error('[ProScoreEditor] RAW XML fallback also failed', fallbackErr);
+        }
+        
+        if (pageCount === 0) {
+          console.error('[ProScoreEditor] CRITICAL: Verovio returned 0 pages even with RAW XML. XML is severely malformed.');
+          setError("The score could not be rendered (Empty Page Count). This usually happens if the MusicXML is missing measures or contains invalid structures.");
+        }
+      }
+      
       if (onPageCountChange) onPageCountChange(pageCount);
 
       // ── scaleHarmText helper ──────────────────────────────────────────────
@@ -1206,24 +1281,26 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
                   ))
                 }
               </div>
-              <div className="score-neural-header flex justify-between items-end pointer-none z-[1500] border-b-[0.5pt] border-black/10 pb-1 mb-2 mx-[10mm] mt-[10mm] shrink-0">
-                <div className="text-[6pt] font-bold text-black/30 uppercase tracking-widest italic leading-none">NEURAL SYNC: {lyricMode?.toUpperCase()}</div>
-                <div className="text-[7pt] font-black text-black uppercase italic leading-none">by <span className="text-cyan-600">MEMOLODY</span></div>
-                <div className="text-[5pt] font-black text-black/50 leading-none">PG {i + 1}</div>
+              <div className="score-neural-header flex justify-between items-end pointer-none z-[1500] border-b-[0.5pt] border-black/10 pb-1 mb-1 mx-[10mm] mt-[5mm] shrink-0">
+                <div className="text-[5pt] font-bold text-black/30 uppercase tracking-widest italic leading-none">NEURAL SYNC: {lyricMode?.toUpperCase()}</div>
+                <div className="text-[6pt] font-black text-black uppercase italic leading-none">by <span className="text-cyan-600">MEMOLODY</span></div>
+                <div className="text-[4pt] font-black text-black/50 leading-none">PG {i + 1}</div>
               </div>
 
               {i === 0 && (
-                <div className="w-full flex flex-col items-center pt-2 pb-6 px-[10mm] relative z-[2000] pointer-none shrink-0 border-b-[0.5pt] border-black/5 mb-6">
-                  <h1 className="font-black text-black uppercase tracking-[0.25em] text-center leading-none mb-3" style={{ fontSize: `${titleFontSize}pt` }}>{displayTitle}</h1>
-                  <div className="flex items-center gap-4">
-                    <div className="h-[0.3pt] w-12 bg-black/20" />
-                    <div className="text-[8pt] font-black text-black/60 uppercase tracking-[0.15em] italic leading-none">{displayArtist}</div>
-                    <div className="h-[0.3pt] w-12 bg-black/20" />
+                <div className="w-full flex flex-col items-center pt-2 pb-4 px-[10mm] relative z-[2000] pointer-none shrink-0 border-b-[0.5pt] border-black/5 mb-4">
+                  <h1 className="font-serif text-black text-center leading-tight mb-1" style={{ fontSize: `${titleFontSize || 16}pt`, fontWeight: 600 }}>{displayTitle}</h1>
+                  <div className="flex items-center gap-6">
+                    <div className="text-[9pt] font-serif text-black/70 italic leading-none">{displayArtist}</div>
                   </div>
                 </div>
               )}
 
-              <div dangerouslySetInnerHTML={{ __html: svg }} className="bg-white flex-1 w-full h-full overflow-hidden" />
+              <div 
+                dangerouslySetInnerHTML={{ __html: svg }} 
+                className="verovio-neural-svg bg-white w-full overflow-hidden" 
+                style={{ minHeight: '800px' }}
+              />
             </div>
           )), [svgPages, showBorders, isPreviewMode, localZoom, activeLoop, barMapsRef, lyricMode, titleFontSize, displayTitle, displayArtist])}
         </div>
