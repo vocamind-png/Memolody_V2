@@ -21,7 +21,7 @@ build
 .ipynb_checkpoints/
 
 # Large binary / vendor files
-public/verovio-toolkit.js
+# public/verovio-toolkit.js  ← re-included for Vercel build
 vocalido_server/training/ASAP_Dataset.zip
 
 # Temporary / test files
