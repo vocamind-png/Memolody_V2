@@ -21,8 +21,71 @@ import ChordPage from '../Chord/ChordPage';
 import { musicEngine } from '../../lib/MusicEngine';
 import { getChromaticSolfege } from '../../lib/SolfegeLogic';
 import { Song, TrackState, EffectInstance, LyricMode } from '../../types';
+import { nimoBrain } from '../../lib/NimoBrain';
 
 export type PlayerCardType = 'score' | 'pianoroll' | 'trackview' | 'memochord' | 'practice' | 'vocalido';
+
+const formatRenderLabel = (label: string, bpmPct: number) => {
+  const speedDiff = bpmPct - 100;
+  const diffStr = speedDiff > 0 ? `+${speedDiff}%` : speedDiff < 0 ? `${speedDiff}%` : '±0%';
+  if (label.includes('%')) {
+    return label.replace(/(\d+)%/, `$1% (${diffStr})`);
+  }
+  return `${label} (${diffStr})`;
+};
+
+const fixAudioUrl = (u: string) => {
+  if (typeof u !== 'string') return u;
+  let url = u;
+  
+  // If it's an absolute URL, convert it to a relative path
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    try {
+      const parsed = new URL(url);
+      url = parsed.pathname + parsed.search;
+    } catch (e) {
+      console.warn('[fixAudioUrl] Failed to parse absolute URL:', url, e);
+    }
+  }
+
+  // Rewrite prefixes to /studio/audio/
+  if (url.startsWith('/vocalido/audio/')) {
+    url = url.replace('/vocalido/audio/', '/studio/audio/');
+  } else if (url.startsWith('/audio/')) {
+    url = url.replace('/audio/', '/studio/audio/');
+  } else if (url.startsWith('/song_')) {
+    url = '/studio/audio' + url;
+  }
+  
+  // If it's a bare filename starting with song_
+  if (!url.startsWith('/studio/audio/')) {
+    const filename = url.split('/').pop() || '';
+    if (filename.startsWith('song_')) {
+      url = `/studio/audio/${filename}`;
+    }
+  }
+  
+  return url;
+};
+
+const mapToLyricMode = (modeStr: string): LyricMode => {
+  const normalized = (modeStr || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+  switch (normalized) {
+    case 'americanmovabledo': return 'American Movable Do';
+    case 'americanfixeddo': return 'American Fixed Do';
+    case 'britishmovabledoh': return 'British Movable Doh';
+    case 'britishfixeddoh': return 'British Fixed Doh';
+    case 'jusolfegemovabledoh': return 'Ju Solfege Movable Doh';
+    case 'jusolfegefixeddoh': return 'Ju Solfege Fixed Doh';
+    case 'jianpu': return 'Jianpu';
+    case 'kodaly': return 'Kodaly';
+    case 'kodalyrhythm': return 'Kodaly Rhythm';
+    case 'indiansargam': return 'Indian Sargam';
+    case 'lyric': return 'Lyric';
+    case 'close': return 'Close';
+    default: return 'British Fixed Doh';
+  }
+};
 
 const PlayerPage: React.FC<{
   song: Song | null; musicXml?: string | null; layoutBundle?: any | null; tracks: TrackState[]; setTracks: any;
@@ -49,12 +112,104 @@ const PlayerPage: React.FC<{
   const [renderTimer, setRenderTimer] = useState(0);
   const [renderError, setRenderError] = useState<string | null>(null);
 
+  // Debug Log Catcher State
+  const [debugLogs, setDebugLogs] = useState<{type: 'log' | 'warn' | 'error', text: string, time: string}[]>([]);
+  const [showDebugDrawer, setShowDebugDrawer] = useState(false);
+
+  useEffect(() => {
+    const originalLog = console.log;
+    const originalWarn = console.warn;
+    const originalError = console.error;
+
+    let logQueue: { type: string; message: string }[] = [];
+    let isSending = false;
+    let flushTimeout: NodeJS.Timeout | null = null;
+
+    const flushLogs = () => {
+      if (isSending || logQueue.length === 0) return;
+      isSending = true;
+      const batchToSend = [...logQueue];
+      logQueue = [];
+
+      fetch('/studio/api/client-log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ logs: batchToSend })
+      })
+      .catch(err => {
+        originalError("[Logger] Failed to send client logs:", err);
+      })
+      .finally(() => {
+        isSending = false;
+        if (logQueue.length > 0) {
+          flushTimeout = setTimeout(flushLogs, 500);
+        }
+      });
+    };
+
+    const addLog = (type: 'log' | 'warn' | 'error', ...args: any[]) => {
+      const text = args.map(arg => {
+        if (arg instanceof Error) {
+          return `${arg.message}\n${arg.stack}`;
+        }
+        if (typeof arg === 'object') {
+          try { return JSON.stringify(arg); } catch(e) { return String(arg); }
+        }
+        return String(arg);
+      }).join(' ');
+      
+      const time = new Date().toLocaleTimeString();
+      setDebugLogs(prev => [...prev.slice(-199), { type, text, time }]);
+
+      logQueue.push({ type, message: text });
+
+      if (!flushTimeout && !isSending) {
+        flushTimeout = setTimeout(() => {
+          flushTimeout = null;
+          flushLogs();
+        }, 500);
+      }
+    };
+
+    console.log = (...args) => {
+      originalLog(...args);
+      addLog('log', ...args);
+    };
+    console.warn = (...args) => {
+      originalWarn(...args);
+      addLog('warn', ...args);
+    };
+    console.error = (...args) => {
+      originalError(...args);
+      addLog('error', ...args);
+    };
+
+    const handleWindowError = (event: ErrorEvent) => {
+      addLog('error', `Unhandled window error: ${event.message} at ${event.filename}:${event.lineno}`);
+    };
+    const handleRejection = (event: PromiseRejectionEvent) => {
+      addLog('error', `Unhandled Promise Rejection: ${event.reason?.message || event.reason}`);
+    };
+
+    window.addEventListener('error', handleWindowError);
+    window.addEventListener('unhandledrejection', handleRejection);
+
+    return () => {
+      console.log = originalLog;
+      console.warn = originalWarn;
+      console.error = originalError;
+      window.removeEventListener('error', handleWindowError);
+      window.removeEventListener('unhandledrejection', handleRejection);
+      if (flushTimeout) clearTimeout(flushTimeout);
+    };
+  }, []);
+
   // Card Navigation State
   const [activeCard, setActiveCard] = useState<PlayerCardType>('score');
   const [isNavMenuVisible, setIsNavMenuVisible] = useState(false);
   
   // Original Image Split View State
-  const [isOriginalViewHidden, setIsOriginalViewHidden] = useState(false);
+  const [isOriginalViewHidden, setIsOriginalViewHidden] = useState(true); // Default hidden
 
   const [storedSinger, setStoredSinger] = useState<string | null>(null);
   const [svsEngine, setSvsEngine] = useState<'vocalido' | 'acestep'>('vocalido');
@@ -64,11 +219,207 @@ const PlayerPage: React.FC<{
 
   const [pluginBrowserTarget, setPluginBrowserTarget] = useState<{ trackId: string; slotIndex: number } | null>(null);
   const [editingPlugin, setEditingPlugin] = useState<{ trackId: string; slotIndex: number; plugin: EffectInstance } | null>(null);
+  const [synthProgress, setSynthProgress] = useState<{songId: string, progress: number, status: string} | null>(null);
+
+  // Voice Engines State
+  const [voiceEngines, setVoiceEngines] = useState<{id: string, name: string, type: string, lang: string}[]>([]);
+  const [activeEngineId, setActiveEngineId] = useState<string>('default');
+
+  // Stem Solo/Mute State for polyphonic choral lines
+  const [soloedStems, setSoloedStems] = useState<Record<string, number | null>>({});
+  const [availableStems, setAvailableStems] = useState<Record<string, number>>({});
+
+  const handleSoloStem = (trackId: string, stemIndex: number | null) => {
+    musicEngine.soloStem(trackId, stemIndex);
+    setSoloedStems(prev => ({ ...prev, [trackId]: stemIndex }));
+  };
+
+  // MemoSongRender: history of rendered speeds
+  const [renderHistory, setRenderHistory] = useState<{
+    bpmPercent: number;
+    songKey: string;
+    audioUrl: string;
+    label: string;
+    filename?: string;
+    lyricMode?: string;
+    engineId?: string;
+    voiceName?: string;
+    savedStemUrls?: string[];
+    renderedAt?: string;
+  }[]>([]);
+  // ── Track which MemoRender button is currently active ──
+  const [activeRenderKey, setActiveRenderKey] = useState<string | null>(null);
+  // ── Track which MemoRender info popup is open ──
+  const [memoInfoOpenKey, setMemoInfoOpenKey] = useState<string | null>(null);
+  // ── Persist render history to localStorage whenever it changes (song-specific) ──
+  useEffect(() => {
+    if (song?.id) {
+      try {
+        localStorage.setItem(`memo_render_history_${song.id}`, JSON.stringify(renderHistory));
+      } catch (e) {}
+    }
+  }, [renderHistory, song?.id]);
+  // Vocalido Setup modal
+  const [showVocalidoSetup, setShowVocalidoSetup] = useState(false);
+  const [showStemControls, setShowStemControls] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('memo_show_stem_controls') === 'true';
+    } catch (e) {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('memo_show_stem_controls', showStemControls ? 'true' : 'false');
+    } catch (e) {}
+  }, [showStemControls]);
+
+  const [collapseChords, setCollapseChords] = useState<boolean>(() => {
+    try {
+      const val = localStorage.getItem('vocalido_collapse_chords');
+      return val !== 'false'; // default is true
+    } catch (e) {
+      return true;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('vocalido_collapse_chords', collapseChords ? 'true' : 'false');
+    } catch (e) {}
+  }, [collapseChords]);
+  // Per-track vocal: muted tracks use piano
+  const [mutedVocalTracks, setMutedVocalTracks] = useState<Set<string>>(new Set());
+  // Active track for per-staff render
+  const [activeRenderTrackId, setActiveRenderTrackId] = useState<string>('');
 
   // Split View Resizer State
-  const [sidebarWidth, setSidebarWidth] = useState(40); // Percentage 0-100
+  const [sidebarWidth, setSidebarWidth] = useState(50); // 50% for equal comparison
   const [isResizing, setIsResizing] = useState(false);
   const splitContainerRef = useRef<HTMLDivElement>(null);
+  const scoreAreaRef = useRef<HTMLDivElement>(null);
+  const [staffYPositions, setStaffYPositions] = useState<number[]>([]);
+  const [expandedStemTrack, setExpandedStemTrack] = useState<string | null>(null);
+
+  const handleTogglePlay = async () => {
+    if (isRenderingVocal || isAudioLoading) return;
+    
+    // 🔊 CRITICAL: Start/Resume Tone.js context in the synchronous user gesture stack immediately
+    try {
+      if (Tone.context.state !== 'running') {
+        console.log("[PlayerPage] [Direct Gesture] Resuming Tone Context...");
+        Tone.start();
+        Tone.context.resume();
+      }
+    } catch (err) {
+      console.warn("[PlayerPage] Direct context resume failed:", err);
+    }
+
+    setIsAudioLoading(true);
+
+    // Safety timeout: Reset isAudioLoading after 15 seconds no matter what
+    const safetyTimeoutId = setTimeout(() => {
+      setIsAudioLoading(prev => {
+        if (prev) {
+          console.warn("[PlayerPage] ⚠️ Safety timeout: force-resetting isAudioLoading after 15s");
+          return false;
+        }
+        return prev;
+      });
+    }, 15000);
+
+    try {
+      try {
+        await Tone.start();
+        if (Tone.getContext().state !== 'running') {
+          console.log("[PlayerPage] Resuming Audio Context...");
+          await Tone.getContext().resume();
+        }
+      } catch (audioCtxError) {
+        console.warn("[PlayerPage] Audio context initialization failed:", audioCtxError);
+      }
+      
+      musicEngine.setMasterVolume(masterVolume);
+
+      const tState = musicEngine.transportState;
+      console.log("[PlayerPage] handleTogglePlay clicked. current transportState:", tState);
+
+      if (tState === 'started') {
+        console.log("[PlayerPage] Pausing playback...");
+        musicEngine.pause();
+        setIsPlaying(false);
+        clearTimeout(safetyTimeoutId);
+        setIsAudioLoading(false);
+        return;
+      }
+
+      if (tState === 'paused') {
+        console.log("[PlayerPage] Resuming playback...");
+        await musicEngine.resume();
+        setIsPlaying(true);
+        console.log("[PlayerPage] Resumed playback successfully!");
+        clearTimeout(safetyTimeoutId);
+        setIsAudioLoading(false);
+        return;
+      }
+
+      // Transport is 'stopped' — need to load and start
+      console.log("[PlayerPage] Loading song in MusicEngine...");
+      const updatedTracks = tracks.map(t => ({
+        ...t,
+        mode: (mutedVocalTracks.has(t.id) ? 'instrument' : t.mode) as 'instrument' | 'vocal'
+      }));
+      
+      // Set BPM before loading so countIn and synced players align
+      musicEngine.setBpm(currentBpm);
+      
+      await musicEngine.loadSong(parsedData.notes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn);
+      console.log("[PlayerPage] Song loaded! Starting MusicEngine...");
+      await musicEngine.start();
+      console.log("[PlayerPage] MusicEngine started successfully!");
+      setIsPlaying(true);
+    } catch (e) {
+      console.error('Playback Start Failed:', e);
+    } finally {
+      clearTimeout(safetyTimeoutId);
+      setIsAudioLoading(false);
+    }
+  };
+
+  // Auto-hide/show original view based on song type
+  useEffect(() => {
+    if (song?.coverUrl) {
+      if (song.coverUrl.startsWith('blob:') || song.coverUrl.startsWith('pdf:') || song.coverUrl.startsWith('data:')) {
+        setIsOriginalViewHidden(false);
+        setSidebarWidth(50);
+      } else {
+        setIsOriginalViewHidden(true);
+      }
+    }
+  }, [song?.id, song?.coverUrl]);
+
+  // Detect actual .staff Y positions from Verovio SVG → align mic buttons
+  useEffect(() => {
+    const container = scoreAreaRef.current;
+    if (!container) return;
+    const measure = () => {
+      const staves = Array.from(container.querySelectorAll('svg .staff, svg g.staff')) as SVGElement[];
+      if (staves.length === 0) return;
+      const containerTop = container.getBoundingClientRect().top;
+      // Group by unique Y (one per part per system — take first system only)
+      const seen = new Set<number>();
+      const ys: number[] = [];
+      for (const s of staves) {
+        const y = Math.round(s.getBoundingClientRect().top - containerTop);
+        if (!seen.has(y)) { seen.add(y); ys.push(y); }
+        if (ys.length >= tracks.length) break;
+      }
+      if (ys.length > 0) setStaffYPositions(ys);
+    };
+    const observer = new MutationObserver(() => setTimeout(measure, 100));
+    observer.observe(container, { childList: true, subtree: true });
+    measure();
+    return () => observer.disconnect();
+  }, [tracks.length, activeCard, musicXml]);
 
   // Mouse event handlers for resizing
   useEffect(() => {
@@ -122,10 +473,13 @@ const PlayerPage: React.FC<{
   }, [vocalTrack]);
 
   const activeVoiceName = useMemo(() => {
+    const trackEngineId = vocalTrack?.engineId || activeEngineId;
+    const found = voiceEngines.find(v => v.id === trackEngineId);
+    if (found) return found.name;
     if (vocalTrack?.instrument && vocalTrack.instrument !== 'Auto') return vocalTrack.instrument;
     if (storedSinger) return storedSinger;
     return 'Auto';
-  }, [vocalTrack, storedSinger]);
+  }, [vocalTrack, activeEngineId, voiceEngines, storedSinger]);
 
 
   // ── SONG CHANGE → Full engine reset (ONLY on song change) ─────────────────
@@ -141,8 +495,56 @@ const PlayerPage: React.FC<{
     setShowLoopMatrix(false);
     setRenderProgress(0);
     lastRenderedKeyRef.current = ''; 
-    setIsRenderingVocal(false); // Force reset on song change
+    setIsRenderingVocal(false);
+    setTracks([]); // <-- ADD THIS: clear tracks so auto-assign runs for the new song
     console.log(`[PlayerPage] 🎵 Song changed → engine cleared.`);
+
+    // Load render history for this song (from local storage first, then fetch from server)
+    if (song?.id) {
+      try {
+        const localHist = localStorage.getItem(`memo_render_history_${song.id}`);
+        if (localHist) {
+          const parsed = JSON.parse(localHist);
+          if (Array.isArray(parsed)) {
+            setRenderHistory(parsed.map((h: any) => ({
+              ...h,
+              lyricMode: mapToLyricMode(h.lyricMode),
+            })));
+          } else {
+            setRenderHistory([]);
+          }
+        } else {
+          setRenderHistory([]);
+        }
+      } catch (e) {
+        setRenderHistory([]);
+      }
+
+      fetch(`/studio/renders/${encodeURIComponent(song.id)}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          if (data?.renders?.length) {
+            setRenderHistory(data.renders.map((r: any) => ({
+              bpmPercent: r.bpm_pct,
+              songKey: r.song_key || 'C',
+              audioUrl: fixAudioUrl(r.url),
+              label: r.label,
+              filename: r.filename,
+              lyricMode: mapToLyricMode(r.lyric_mode),
+              engineId: r.engine_id,
+              voiceName: r.engine_id || 'Auto',
+              savedStemUrls: (r.saved_stem_urls || []).map((sUrl: string) => fixAudioUrl(sUrl)),
+            })));
+          } else {
+            // Note: only clear if server explicitly confirms no renders AND we don't have local ones
+            // Actually, server is the source of truth, but let's keep local if server fetch fails.
+            setRenderHistory([]);
+          }
+        })
+        .catch(() => {});
+    } else {
+      setRenderHistory([]);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [song?.id]);
 
@@ -154,23 +556,31 @@ const PlayerPage: React.FC<{
       const partIds = Object.keys(parsedData.partNames);
       if (partIds.length > 0) {
         console.log('[PlayerPage] 🎹 Auto-assigning track roles based on parsed notes');
+        // Restore last-used lyric mode from localStorage
+        const savedLyricMode = (() => { try { return localStorage.getItem('memo_lyric_mode') || ''; } catch { return ''; } })();
         const newTracks = partIds.map((id, index) => ({
           id,
           name: parsedData.partNames[id] || `Track ${index + 1}`,
           volume: 0.8,
+          pan: 0,
           isMuted: false,
+          isSolo: false,
           mode: index === 0 ? 'vocal' : 'instrument',
           instrument: index === 0 ? (activeVoiceName || 'Alto Female') : 'Piano',
-          lyricMode: activeLyricMode || 'British Fixed Doh',
-          effects: []
+          lyricMode: (savedLyricMode || activeLyricMode || 'British Fixed Doh') as LyricMode,
+          engineId: activeEngineId,
+          effects: Array(6).fill(null)
         }));
         setTracks(newTracks);
       }
     }
-  }, [parsedData.notes.length, parsedData.partNames, setTracks, activeVoiceName, activeLyricMode]);
+  }, [parsedData.notes.length, parsedData.partNames, setTracks, activeVoiceName, activeLyricMode, tracks.length]);
 
   // ── AUTO-RENDER: Direct trigger on song load or lyric mode change ────────────
   const autoRenderRef = useRef(false);
+  const tracksRep = useMemo(() => {
+    return tracks.map(t => `${t.id}:${t.mode}:${t.engineId || ''}`).join(',');
+  }, [tracks]);
   
   useEffect(() => {
     // Guard: only run when auto-render is enabled, iframe is loaded, and we have a song with XML, tracks are ready, and lyrics are not off
@@ -180,7 +590,7 @@ const PlayerPage: React.FC<{
     if (!parsedData.notes.length) return;
     if (tracks.length === 0) return; // Wait for tracks to populate
     
-    const currentKey = `${song.id}_${activeLyricMode}_${activeVoiceName}`;
+    const currentKey = `${song.id}_${activeLyricMode}_${activeEngineId}_${activeVoiceName}`;
     if (currentKey === lastRenderedKeyRef.current) return;
     
     console.log(`[Vocalido] 🚀 Auto-Render triggered: ${activeLyricMode} (${parsedData.notes.length} notes)`);
@@ -188,7 +598,7 @@ const PlayerPage: React.FC<{
     
     // Use a microtask to avoid stale closure issues
     autoRenderRef.current = true;
-  }, [vocalidoAutoRender, iframeLoaded, song?.id, musicXml, activeLyricMode, activeVoiceName, parsedData.notes.length, tracks.length]);
+  }, [vocalidoAutoRender, iframeLoaded, song?.id, musicXml, activeLyricMode, activeVoiceName, activeEngineId, parsedData.notes.length, tracks.length, tracksRep]);
   
   // Separate effect to actually call the function (avoids stale closure)
   useEffect(() => {
@@ -223,6 +633,136 @@ const PlayerPage: React.FC<{
       musicEngine.setBpm(xmlBpm);
     }
   }, [parsedData.metadata.bpm]);
+
+  // Stable refs for callbacks/state setters to prevent action registration loops
+  const handleTogglePlayRef = useRef(handleTogglePlay);
+  const setViewModeRef = useRef(setViewMode);
+  const setLoopPresetsRef = useRef(setLoopPresets);
+  const setCurrentBpmRef = useRef(setCurrentBpm);
+  const setMasterVolumeRef = useRef(setMasterVolume);
+
+  // Sync refs to latest values on every render
+  useEffect(() => {
+    handleTogglePlayRef.current = handleTogglePlay;
+    setViewModeRef.current = setViewMode;
+    setLoopPresetsRef.current = setLoopPresets;
+    setCurrentBpmRef.current = setCurrentBpm;
+    setMasterVolumeRef.current = setMasterVolume;
+  });
+
+  // Register Player-specific NimoBrain actions once on mount
+  useEffect(() => {
+    const unregPlay = nimoBrain.registerAction('play', async () => {
+      const state = musicEngine.transportState;
+      if (state !== 'started') {
+        await handleTogglePlayRef.current();
+      }
+    });
+
+    const unregPause = nimoBrain.registerAction('pause', async () => {
+      const state = musicEngine.transportState;
+      if (state === 'started') {
+        await handleTogglePlayRef.current();
+      }
+    });
+
+    const unregSetTempo = nimoBrain.registerAction('set_tempo', (params) => {
+      const bpm = params?.bpm;
+      if (bpm && bpm >= 20 && bpm <= 400) {
+        setCurrentBpmRef.current(bpm);
+        musicEngine.setBpm(bpm);
+      }
+    });
+
+    const unregSetVolume = nimoBrain.registerAction('set_volume', (params) => {
+      const level = params?.level;
+      if (level !== undefined && level >= 0 && level <= 1) {
+        setMasterVolumeRef.current(level);
+        musicEngine.setMasterVolume(level);
+      }
+    });
+
+    const unregToggleViewMode = nimoBrain.registerAction('toggle_view_mode', () => {
+      setViewModeRef.current((prev: any) => prev === 'score' ? 'pianoroll' : 'score');
+    });
+
+    const unregToggleLoop = nimoBrain.registerAction('toggle_loop', (params) => {
+      const enabled = params?.enabled !== false;
+      setLoopPresetsRef.current((p: any) => {
+        return p.map((x: any, idx: number) => {
+          if (enabled) {
+            return { ...x, isActive: idx === 0 };
+          } else {
+            return { ...x, isActive: false };
+          }
+        });
+      });
+    });
+
+    return () => {
+      unregPlay();
+      unregPause();
+      unregSetTempo();
+      unregSetVolume();
+      unregToggleViewMode();
+      unregToggleLoop();
+    };
+  }, []);
+
+  // Sync state to NimoBrain
+  useEffect(() => {
+    nimoBrain.updateState('isPlaying', isPlaying);
+    nimoBrain.updateState('currentBpm', currentBpm);
+    nimoBrain.updateState('masterVolume', masterVolume);
+    nimoBrain.updateState('viewMode', viewMode);
+  }, [isPlaying, currentBpm, masterVolume, viewMode]);
+
+  // Clean up state on unmount
+  useEffect(() => {
+    return () => {
+      nimoBrain.updateState('isPlaying', false);
+    };
+  }, []);
+
+  // Load engines and stored active engine
+  // Load engines and stored active engine
+  useEffect(() => {
+    let active = true;
+    const fetchEngines = async () => {
+      try {
+        const res = await fetch('/vocalido/studio/voices');
+        if (!res.ok) throw new Error('Not OK');
+        const data = await res.json();
+        if (active && data && data.voices) {
+          setVoiceEngines(data.voices);
+        }
+      } catch (err) {
+        console.warn("Could not fetch voice engines, retrying in 3s...", err);
+        if (active) {
+          setTimeout(fetchEngines, 3000);
+        }
+      }
+    };
+    fetchEngines();
+
+    try {
+      const storedEngine = localStorage.getItem('vocalido_active_engine');
+      if (storedEngine) setActiveEngineId(storedEngine);
+    } catch (e) {}
+
+    return () => {
+      active = false;
+    };
+  }, [song?.id]);
+
+  const handleEngineChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const newId = e.target.value;
+    setActiveEngineId(newId);
+    localStorage.setItem('vocalido_active_engine', newId);
+    setTracks((prev: any) => prev.map((t: any) => 
+      t.mode === 'vocal' ? { ...t, engineId: newId } : t
+    ));
+  };
 
   // Listen to cross-window storage changes and direct messages so Voice Name updates locally immediately
   useEffect(() => {
@@ -273,22 +813,47 @@ const PlayerPage: React.FC<{
       }));
       const notesMessage = { type: 'UPDATE_NOTES', notes: notesForStudio };
 
+      // 3. Send the active voice engine ID
+      const primaryTrackId = tracks.find(t => t.mode === 'vocal')?.id || tracks[0]?.id || 'P1';
+      const trackEngineId = tracks.find(t => t.id === primaryTrackId)?.engineId || activeEngineId;
+      const voiceMessage = { type: 'UPDATE_ACTIVE_VOICE', voice: trackEngineId };
+
       // Small timeout to ensure iframe's script has attached its listener after mount
       setTimeout(() => {
         if (!iframeRef.current || svsEngine !== 'vocalido') return;
         iframeRef.current.contentWindow?.postMessage(phraseMessage, '*');
         iframeRef.current.contentWindow?.postMessage(notesMessage, '*');
+        iframeRef.current.contentWindow?.postMessage(voiceMessage, '*');
       }, 800);
     }
-  }, [activeCard, currentPhraseToSing, parsedData.notes]);
+  }, [activeCard, currentPhraseToSing, parsedData.notes, activeEngineId, tracks]);
 
   useEffect(() => {
     musicEngine.setMasterVolume(masterVolume);
   }, [masterVolume]);
 
   useEffect(() => {
-    musicEngine.updateTrackStates(tracks);
-  }, [tracks]);
+    const syncTracks = async () => {
+      const updatedTracks = tracks.map(t => {
+        const isVocalMuted = mutedVocalTracks.has(t.id);
+        return {
+          ...t,
+          mode: (isVocalMuted ? 'instrument' : t.mode) as 'instrument' | 'vocal'
+        };
+      });
+
+      // Ensure sampler is loaded for any tracks that are now in 'instrument' mode
+      for (const t of updatedTracks) {
+        if (t.mode === 'instrument') {
+          await musicEngine.initSampler(t.id, t.name, t.pluginSettings, 'instrument');
+        }
+      }
+
+      musicEngine.updateTrackStates(updatedTracks);
+    };
+
+    syncTracks();
+  }, [tracks, mutedVocalTracks]);
 
   // ── Transpose change → reload engine with new semitone shift ──────────────
   useEffect(() => {
@@ -304,8 +869,12 @@ const PlayerPage: React.FC<{
     // Reload for BOTH playing and paused states
     if (parsedData.notes.length > 0) {
       setIsAudioLoading(true);
+      const updatedTracks = tracks.map(t => ({
+        ...t,
+        mode: (mutedVocalTracks.has(t.id) ? 'instrument' : t.mode) as 'instrument' | 'vocal'
+      }));
       musicEngine.ensureInitialized()
-        .then(() => musicEngine.loadSong(parsedData.notes, tracks, transpose, parsedData.timeSignature, isMetronomeOn))
+        .then(() => musicEngine.loadSong(parsedData.notes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn))
         .then(() => {
           musicEngine.setTransportSeconds(savedPos);
           if (wasPlaying) return musicEngine.start();
@@ -337,14 +906,35 @@ const PlayerPage: React.FC<{
     return ((lastNote.startTime + lastNote.duration) * 60) / (currentBpm || 75);
   }, [parsedData.notes, currentBpm, localSong.duration]);
 
-  const triggerVocalSynthesis = async () => {
-    if (isRenderingVocal || !musicXml || !parsedData.notes.length) return;
-    if (tracks.length === 0) return;
+  // ── Keyboard Shortcuts ──
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.altKey && e.key.toLowerCase() === 'r') {
+        e.preventDefault();
+        triggerVocalSynthesis(true);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  });
+
+  const triggerVocalSynthesis = async (forceRender: boolean = false) => {
+    if (isRenderingVocal) { console.warn('[Vocalido] ⛔ Render blocked: already rendering'); return; }
+    if (!musicXml) { console.warn('[Vocalido] ⛔ Render blocked: no musicXml'); return; }
+    if (!parsedData.notes.length) { console.warn('[Vocalido] ⛔ Render blocked: no notes parsed'); return; }
+    if (tracks.length === 0) { console.warn('[Vocalido] ⛔ Render blocked: no tracks'); return; }
 
     setRenderError(null);
     setIsRenderingVocal(true);
     setRenderProgress(0);
     setRenderTimer(0);
+
+    const wasPlaying = isPlaying || musicEngine.transportState === 'started';
+    const savedPos = musicEngine.transportSeconds;
+    if (wasPlaying) {
+      musicEngine.pause();
+      setIsPlaying(false);
+    }
 
     // Declare these BEFORE try so they are accessible in catch/finally
     const controller = new AbortController();
@@ -371,43 +961,149 @@ const PlayerPage: React.FC<{
       const stepMap: Record<string, number> = { 'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11 };
       
       const primaryTrackId = tracks.find(t => t.mode === 'vocal')?.id || tracks[0]?.id || 'P1';
-      const sourceNotes = parsedData.notes.filter(n => n.trackId === primaryTrackId).slice(0, 128); // Reduced to 128 for stability
+      // ✅ No slice limit — synthesize ALL notes so repeats/loops are included
+      let sourceNotes = parsedData.notes.filter(n => n.trackId === primaryTrackId);
+      
+      // ✅ Preserving all notes to support multi-voice harmony rendering
+      const sortedSource = [...sourceNotes].sort((a, b) => a.startTime - b.startTime);
+      sourceNotes = sortedSource;
+      
+      // ✅ Apply transpose semitone shift to every note's MIDI pitch
+      const transposeSemitones = transpose; // e.g. -12 for one octave down
       
       const notesToSynthesize = sourceNotes.map(n => {
-        let lyric = 'La';
+        let lyric = 'Doh'; // safe fallback — was 'La' which caused unexpected syllables
         try {
           const songKey = (parsedData.metadata as any)?.key || 'C';
-          lyric = getChromaticSolfege(
+          const songFifths = (parsedData.metadata as any)?.fifths ?? 0;
+          const computed = getChromaticSolfege(
             n.step || 'C', 
             n.alter || 0, 
             songKey, 
             activeLyricMode,
             n.duration / ((parsedData.timeSignature as any)?.beats || 4),
-            0 
-          ) || n.solfege || 'La';
+            songFifths 
+          );
+          
+          if (activeLyricMode === 'Lyric') {
+            lyric = n.lyric || 'ah';
+          } else if (activeLyricMode === 'Close') {
+            lyric = 'm';
+          } else {
+            lyric = computed || n.solfege || 'Doh';
+          }
+
+          // 🔍 Debug: log each note→lyric to browser console
+          console.log(`[SVS] ${n.step}${n.octave} alter=${n.alter} key=${songKey} mode=${activeLyricMode} → "${lyric}"`);
         } catch (e) {
           console.warn('[SVS] Solfege calc error:', e);
         }
         
         const safeStep = (n.step || 'C').toUpperCase();
+        const rawMidi = (n.octave + 1) * 12 + (stepMap[safeStep] || 0) + (n.alter || 0);
+        const transposedMidi = Math.max(24, Math.min(108, rawMidi + transposeSemitones)); // clamp to MIDI 24–108
         return {
-          pitch: (n.octave + 1) * 12 + (stepMap[safeStep] || 0) + (n.alter || 0),
+          pitch: transposedMidi,
+          midi: transposedMidi,
           duration: isNaN(n.duration) ? 0.5 : n.duration,
           startTime: isNaN(n.startTime) ? 0 : n.startTime,
           lyric
         };
       });
 
+      console.log(`[SVS] 🎼 ${sourceNotes.length} notes | transpose=${transposeSemitones} semitones`);
+
       console.log(`[SVS] 🎙️ Initializing ${svsEngine.toUpperCase()} Synthesis...`);
+      
+      const xmlBpm = (parsedData.metadata as any)?.bpm;
+      const actualBpm = xmlBpm || currentBpm || 120;
+
+      // CRITICAL: Set BPM in Tone.Transport BEFORE adding the vocal layer.
+      // If we don't do this, Tone.Player.sync() will record the default 120 BPM,
+      // and when we set it to actualBpm later, it will time-stretch (slow down) the audio!
+      await musicEngine.ensureInitialized();
+      musicEngine.setBpm(actualBpm);
+      setCurrentBpm(actualBpm);
 
       if (svsEngine === 'vocalido') {
+        const origBpm = (parsedData.metadata as any)?.bpm || 120;
+        const bpmPct = Math.round((actualBpm / origBpm) * 100);
+        const songKey = parsedData.metadata?.key || localSong.key || 'C';
+
+        const trackEngineId = tracks.find(t => t.id === primaryTrackId)?.engineId || activeEngineId;
+
+        // ── Cache check: skip render if key+bpm+mode+engine+voiceName already saved ─────
+        const currentVoiceName = activeVoiceName || 'Auto';
+        const targetVoice = collapseChords ? currentVoiceName : `${currentVoiceName}poly`;
+        const targetEngine = collapseChords ? (trackEngineId || 'default') : `${trackEngineId || 'default'}poly`;
+
+        const cached = renderHistory.find(
+          h => {
+            const hEng = (h.engineId || 'default').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+            const tEng = targetEngine.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+            const hVoice = (h.voiceName || 'Auto').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+            const tVoice = targetVoice.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+            
+            const hLyric = mapToLyricMode(h.lyricMode || 'British Fixed Doh');
+            const tLyric = mapToLyricMode(activeLyricMode);
+            
+            return h.bpmPercent === bpmPct && 
+                   h.songKey === songKey && 
+                   hLyric === tLyric &&
+                   (hEng === tEng || hVoice === tEng || hEng === tVoice || hVoice === tVoice);
+          }
+        );
+        const cachedKey = cached ? `${cached.bpmPercent}_${cached.songKey}_${cached.engineId||'default'}_${cached.lyricMode||''}_${cached.voiceName||'Auto'}` : null;
+        if (cached) {
+          console.log(`[MemoCache] ✅ Found cached render ${cached.label} (${activeLyricMode}, ${trackEngineId}, ${currentVoiceName}) — skipping GPU render`);
+          await musicEngine.ensureInitialized();
+          const cacheBusted = (() => { const fixed = fixAudioUrl(cached.audioUrl); return fixed.includes('?t=') ? fixed.replace(/\?t=\d+/, `?t=${Date.now()}`) : `${fixed}?t=${Date.now()}`; })();
+          const stemsWithBust = (cached.savedStemUrls || []).map((sUrl: string) => {
+            const fixed = fixAudioUrl(sUrl);
+            return fixed.includes('?t=') ? fixed.replace(/\?t=\d+/, `?t=${Date.now()}`) : `${fixed}?t=${Date.now()}`;
+          });
+          // Set track mode to vocal so Play button / loadSong works correctly
+          const updatedTracks = tracks.map((t: any) => 
+            t.id === primaryTrackId ? { ...t, mode: 'vocal' } as TrackState : t
+          );
+          setTracks(updatedTracks);
+
+          try {
+            setIsAudioLoading(true);
+            await musicEngine.addVocalLayer(primaryTrackId, cacheBusted, stemsWithBust);
+            setAvailableStems(prev => ({ ...prev, [primaryTrackId]: musicEngine.getAvailableStems(primaryTrackId) }));
+            setSoloedStems(prev => ({ ...prev, [primaryTrackId]: null }));
+
+            // Reload song to sync Tone.Part with new mode
+            await musicEngine.loadSong(parsedData.notes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn);
+            musicEngine.setTransportSeconds(savedPos);
+            if (wasPlaying) {
+              await musicEngine.start();
+              setIsPlaying(true);
+            }
+          } catch (e) {
+            console.error('[MemoCache] Failed to load cached vocal layer:', e);
+          } finally {
+            setIsAudioLoading(false);
+          }
+          if (cachedKey) setActiveRenderKey(cachedKey);
+          cleanupLocal();
+          setRenderProgress(100);
+          setTimeout(() => { setIsRenderingVocal(false); setActiveCard('score'); }, 600);
+          return;
+        }
+
         const resp = await fetch('/studio/preview', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           signal: controller.signal,
-          body: JSON.stringify({ 
-            notes: notesToSynthesize, 
-            params: { singer: activeVoiceName, bpm: currentBpm } 
+          body: JSON.stringify({
+            notes: notesToSynthesize,
+            params: { singer: activeVoiceName, bpm: actualBpm, transpose: transposeSemitones, voice: trackEngineId, return_stems: true, collapse_chords: collapseChords },
+            song_id: song?.id || '',
+            bpm_pct: bpmPct,
+            song_key: songKey,
+            lyric_mode: activeLyricMode,
           })
         });
         clearTimeout(timeoutId);
@@ -418,6 +1114,10 @@ const PlayerPage: React.FC<{
           if (result.audio_url) {
             // If server returned a URL, use it (prefixed with proxy if needed)
             url = result.audio_url.startsWith('http') ? result.audio_url : result.audio_url;
+          } else if (result.saved_url && !result.audio_b64) {
+            // Server-side cache hit — file already exists on disk, use saved_url directly
+            console.log(`[MemoCache] ✅ Server returned cached file: ${result.saved_url}`);
+            url = result.saved_url;
           } else if (result.audio_b64) {
             // If server returned base64, convert to Blob
             const binary = atob(result.audio_b64);
@@ -429,21 +1129,102 @@ const PlayerPage: React.FC<{
             throw new Error("Invalid synthesis response: no audio data");
           }
           
+          let stemUrls: string[] = [];
+          if (result.stems_b64 && result.stems_b64.length > 1) {
+            stemUrls = result.stems_b64.map((b64: string) => {
+              const binary = atob(b64);
+              const array = new Uint8Array(binary.length);
+              for (let i = 0; i < binary.length; i++) array[i] = binary.charCodeAt(i);
+              const blob = new Blob([array], { type: 'audio/wav' });
+              return URL.createObjectURL(blob);
+            });
+          }
+          
           // 🚀 Register with MusicEngine for persistence and sync
           console.log(`[Vocalido] 🎙️ Registering vocal layer to MusicEngine: ${primaryTrackId} via ${result.engine || 'unknown'}`);
-          await musicEngine.addVocalLayer(primaryTrackId, url);
           
+          const fixedFinalUrl = fixAudioUrl(result.saved_url || url);
+          const fixedSavedStemUrls = (result.saved_stem_urls || stemUrls || []).map((sUrl: string) => fixAudioUrl(sUrl));
+
+          const cacheBustedUrl = fixedFinalUrl.includes('?t=')
+            ? fixedFinalUrl.replace(/\?t=\d+/, `?t=${Date.now()}`)
+            : `${fixedFinalUrl}?t=${Date.now()}`;
+            
+          const stemsWithBust = fixedSavedStemUrls.map((sUrl: string) => {
+            return sUrl.includes('?t=') ? sUrl.replace(/\?t=\d+/, `?t=${Date.now()}`) : `${sUrl}?t=${Date.now()}`;
+          });
+          
+          // Close the render overlay immediately — don't block on audio loading
           setRenderProgress(100);
           cleanupLocal();
 
-          // Return to score view after a brief moment so user sees 100%
-          setTimeout(() => {
-            setIsRenderingVocal(false);
-            setActiveCard('score');   // ← Navigate back to sheet music
-          }, 800);
+          // Save to MemoSongRender history
+          const origBpmForHist = (parsedData.metadata as any)?.bpm || 120;
+          const bpmPctForHist = Math.round((actualBpm / origBpmForHist) * 100);
+          const songKeyForHist = parsedData.metadata?.key || localSong.key || 'C';
+          const filenameFromUrl = result.saved_url ? result.saved_url.split('/').pop() || '' : '';
+          const voiceNameForHist = activeVoiceName || 'Auto';
+          const storedVoiceName = collapseChords ? voiceNameForHist : `${voiceNameForHist}poly`;
+          const storedEngineId = collapseChords ? (trackEngineId || 'default') : `${trackEngineId || 'default'}poly`;
+          const shortVoice = voiceNameForHist !== 'Auto' ? ` · ${voiceNameForHist.split(/[\s_]/)[0]}${collapseChords ? '' : ' (poly)'}` : '';
+          const newLabel = result.label || `${songKeyForHist} ${bpmPctForHist}%${shortVoice}`;
+          const newEntryKey = `${bpmPctForHist}_${songKeyForHist}_${storedEngineId}_${activeLyricMode}_${storedVoiceName}`;
+          setRenderHistory(prev => {
+            // Replace same bpm+key+mode+engine+voice entry, keep others
+            const filtered = prev.filter(h => {
+              const hLyric = mapToLyricMode(h.lyricMode || 'British Fixed Doh');
+              const tLyric = mapToLyricMode(activeLyricMode);
+              return !(
+                h.bpmPercent === bpmPctForHist && 
+                h.songKey === songKeyForHist && 
+                hLyric === tLyric &&
+                (h.engineId || 'default') === storedEngineId &&
+                (h.voiceName || 'Auto') === storedVoiceName
+              );
+            });
+            return [{
+              bpmPercent: bpmPctForHist,
+              songKey: songKeyForHist,
+              audioUrl: fixedFinalUrl,
+              label: newLabel,
+              filename: filenameFromUrl,
+              lyricMode: activeLyricMode,
+              engineId: storedEngineId,
+              voiceName: storedVoiceName,
+              savedStemUrls: fixedSavedStemUrls,
+              renderedAt: new Date().toISOString(),
+            }, ...filtered].slice(0, 12);
+          });
+          setActiveRenderKey(newEntryKey);
 
-          // Auto-play if already playing
-          if (isPlaying) await musicEngine.resume();
+          setTimeout(() => { setIsRenderingVocal(false); setActiveCard('score'); }, 800);
+          
+          // Set the track mode to 'vocal' in React state so loadSong doesn't conflict
+          const updatedTracks = tracks.map((t: any) => 
+            t.id === primaryTrackId ? { ...t, mode: 'vocal' } as TrackState : t
+          );
+          setTracks(updatedTracks);
+
+          // Load audio — await it so it's ready before user presses play
+          try {
+            setIsAudioLoading(true);
+            await musicEngine.addVocalLayer(primaryTrackId, cacheBustedUrl, stemsWithBust);
+            setAvailableStems(prev => ({ ...prev, [primaryTrackId]: musicEngine.getAvailableStems(primaryTrackId) }));
+            setSoloedStems(prev => ({ ...prev, [primaryTrackId]: null }));
+            console.log(`[Vocalido] ✅ Audio loaded and ready for playback`);
+
+            // Reload song to sync Tone.Part with new mode
+            await musicEngine.loadSong(parsedData.notes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn);
+            musicEngine.setTransportSeconds(savedPos);
+            if (wasPlaying) {
+              await musicEngine.start();
+              setIsPlaying(true);
+            }
+          } catch (e) {
+            console.error(`[Vocalido] ❌ Failed to load audio:`, e);
+          } finally {
+            setIsAudioLoading(false);
+          }
 
         } else {
           const errorData = await resp.json().catch(() => ({}));
@@ -463,7 +1244,7 @@ const PlayerPage: React.FC<{
           body: JSON.stringify({
             prompt: singingPrompt,
             lyrics: notesToSynthesize.map(n => n.lyric).join('  '), 
-            bpm: currentBpm,
+            bpm: actualBpm,
             audio_duration: Math.max(30, Math.min(60, totalDurationSeconds + 2)), // Dynamic duration with buffer
             task_type: "text2music",
             model: 'acestep-v15-turbo'
@@ -509,7 +1290,31 @@ const PlayerPage: React.FC<{
                 
                 // 🚀 Register with MusicEngine for persistence and sync
                 console.log(`[ACE-Step] 🎙️ Registering vocal layer to MusicEngine: ${primaryTrackId}`);
-                await musicEngine.addVocalLayer(primaryTrackId, audioUrl);
+                const cacheBusted = audioUrl.includes('?t=') 
+                  ? audioUrl.replace(/\?t=\d+/, `?t=${Date.now()}`)
+                  : `${audioUrl}?t=${Date.now()}`;
+
+                const updatedTracks = tracks.map((t: any) => 
+                  t.id === primaryTrackId ? { ...t, mode: 'vocal' } as TrackState : t
+                );
+                setTracks(updatedTracks);
+
+                try {
+                  setIsAudioLoading(true);
+                  await musicEngine.addVocalLayer(primaryTrackId, cacheBusted);
+
+                  // Reload song to sync Tone.Part with new mode
+                  await musicEngine.loadSong(parsedData.notes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn);
+                  musicEngine.setTransportSeconds(savedPos);
+                  if (wasPlaying) {
+                    await musicEngine.start();
+                    setIsPlaying(true);
+                  }
+                } catch (e) {
+                  console.error('[ACE-Step] Failed to load vocal layer:', e);
+                } finally {
+                  setIsAudioLoading(false);
+                }
 
                 isDone = true;
                 setRenderProgress(100);
@@ -546,60 +1351,23 @@ const PlayerPage: React.FC<{
         setRenderError(null);
       }, 3000);
       cleanupLocal();
+    } finally {
+      // Safety: always ensure render state is reset after max 120s
+      setTimeout(() => {
+        setIsRenderingVocal(prev => {
+          if (prev) {
+            console.warn('[Vocalido] ⚠️ Safety timeout: force-resetting render state after 120s');
+            return false;
+          }
+          return prev;
+        });
+      }, 120000);
     }
   };
 
   const closeRenderOverlay = () => {
     setIsRenderingVocal(false);
     setRenderError(null);
-  };
-
-  const handleTogglePlay = async () => {
-    if (isRenderingVocal) return;
-    
-    await Tone.start();
-    if (Tone.getContext().state !== 'running') {
-      console.log("[PlayerPage] Resuming Audio Context...");
-      await Tone.getContext().resume();
-    }
-    musicEngine.setMasterVolume(masterVolume);
-
-    const tState = musicEngine.transportState;
-
-    if (tState === 'started') {
-      musicEngine.pause();
-      setIsPlaying(false);
-      return;
-    }
-
-    if (tState === 'paused') {
-      setIsAudioLoading(true);
-      try {
-        await musicEngine.resume();
-        setIsPlaying(true);
-      } catch (e) {
-        console.error('Resume failed:', e);
-      } finally {
-        setIsAudioLoading(false);
-      }
-      return;
-    }
-
-    setIsAudioLoading(true);
-    try {
-      await musicEngine.ensureInitialized();
-      const bpmToUse = (parsedData.metadata as any)?.bpm || currentBpm || 120;
-      musicEngine.setBpm(bpmToUse);
-      setCurrentBpm(bpmToUse);
-
-      await musicEngine.loadSong(parsedData.notes, tracks, transpose, parsedData.timeSignature, isMetronomeOn);
-      await musicEngine.start();
-      setIsPlaying(true);
-    } catch (e) {
-      console.error('Playback Start Failed:', e);
-    } finally {
-      setIsAudioLoading(false);
-    }
   };
 
   const beatsPerMeasure = Math.max(1, parsedData?.timeSignature?.beats || 4);
@@ -728,7 +1496,12 @@ const PlayerPage: React.FC<{
                           key={mode}
                           onClick={() => {
                             setTracks((prevTracks: any) => prevTracks.map((t: any) => ({ ...t, lyricMode: mode as LyricMode })));
+                            // Persist last-used mode to localStorage
+                            try { localStorage.setItem('memo_lyric_mode', mode); } catch {}
                             setIsNavMenuVisible(false);
+                            // Auto-render when singing mode changes
+                            lastRenderedKeyRef.current = '';
+                            setTimeout(() => triggerVocalSynthesis(), 150);
                           }}
                           className={`px-3 py-2 rounded-xl text-[8px] sm:text-[9px] font-black uppercase tracking-widest transition-all text-center flex items-center justify-center border
                             ${isActive ? 'bg-indigo-500 border-indigo-400 text-white shadow-lg' : 'bg-white/5 border-white/5 text-zinc-400 hover:text-white hover:bg-white/10'}`}
@@ -769,16 +1542,27 @@ const PlayerPage: React.FC<{
 
           <div className="w-px h-3 bg-white/10" />
 
-          {/* Settings & Toggle Area (Separated and larger) */}
+          {/* Settings & Toggle Area */}
           <div className="flex items-center gap-3 pl-1">
             <button
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                setSvsEngine(prev => prev === 'vocalido' ? 'acestep' : 'vocalido');
+                triggerVocalSynthesis(true);
               }}
-              className={`p-2 -m-2 rounded-full transition-all ${svsEngine === 'acestep' ? 'text-cyan-400 hover:bg-cyan-400/10' : 'text-purple-400 hover:bg-purple-400/10'}`}
-              title={`Switch to ${svsEngine === 'vocalido' ? 'ACE-Step' : 'Vocalido'}`}
+              className="px-3 py-1 -m-1 rounded-full text-[9px] font-black uppercase tracking-widest bg-white/5 border border-white/10 transition-all text-[#00e5ff] hover:bg-[#00e5ff] hover:text-black shadow-[0_0_10px_rgba(0,229,255,0.2)]"
+              title="Force Fresh AI Render (Clear Cache) / Shortcut: Option+R"
+            >
+              Render
+            </button>
+            <button
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setShowVocalidoSetup(true);
+              }}
+              className="p-2 -m-2 rounded-full transition-all text-zinc-400 hover:text-white hover:bg-white/10"
+              title="Vocalido Setup"
             >
               <SlidersHorizontal size={14} />
             </button>
@@ -860,12 +1644,316 @@ const PlayerPage: React.FC<{
 
         {/* ── MAIN CONTENT AREA (RIGHT SIDE IN SPLIT VIEW) ── */}
         <div className="flex-1 flex flex-col relative overflow-hidden pointer-events-auto">
-          {/* ProScoreEditor: Handles Score, MemoChord */}
+        {/* ── MEMO SONG RENDER: Speed Panel (left floating) ── */}
+        {renderHistory.length > 0 && activeCard === 'score' && (
+          <div className="absolute left-2 top-1/2 -translate-y-1/2 z-[3000] flex flex-col gap-1.5 pointer-events-auto">
+            <span className="text-[6px] font-black text-zinc-400 uppercase tracking-widest text-center mb-0.5">Memo Render</span>
+            {renderHistory.map((h) => {
+              const hKey = `${h.bpmPercent}_${h.songKey}_${h.engineId||'default'}_${h.lyricMode||''}_${h.voiceName||'Auto'}`;
+              const isActive = activeRenderKey === hKey;
+              const isInfoOpen = memoInfoOpenKey === hKey;
+              const shortDate = h.renderedAt ? new Date(h.renderedAt).toLocaleDateString('th-TH', { day:'2-digit', month:'2-digit' }) : null;
+              const speedDiff = h.bpmPercent - 100;
+              const diffStr = speedDiff > 0 ? `+${speedDiff}%` : speedDiff < 0 ? `${speedDiff}%` : '±0%';
+              return (
+                <div key={hKey} className="relative group">
+                  {/* Main render button */}
+                  <button
+                    onClick={async () => {
+                      const wasPlaying = isPlaying || musicEngine.transportState === 'started';
+                      const currentPos = musicEngine.transportSeconds;
+                      if (wasPlaying) {
+                        musicEngine.pause();
+                      }
+                      setIsAudioLoading(true);
+                      try {
+                        await musicEngine.ensureInitialized();
+
+                        // Set BPM first to prevent sync mismatch
+                        const origBpm = (parsedData?.metadata as any)?.bpm || song?.bpm || 120;
+                        const targetBpm = Math.round(((origBpm * h.bpmPercent) / 100) * 10) / 10;
+                        musicEngine.setBpm(targetBpm);
+                        setCurrentBpm(targetBpm);
+
+                        const fixedUrl = fixAudioUrl(h.audioUrl);
+                        const cacheBusted = fixedUrl.includes('?t=') 
+                          ? fixedUrl.replace(/\?t=\d+/, `?t=${Date.now()}`)
+                          : `${fixedUrl}?t=${Date.now()}`;
+                        const stemsWithBust = (h.savedStemUrls || []).map((sUrl: string) => {
+                          const fixedStem = fixAudioUrl(sUrl);
+                          return fixedStem.includes('?t=') ? fixedStem.replace(/\?t=\d+/, `?t=${Date.now()}`) : `${fixedStem}?t=${Date.now()}`;
+                        });
+                        
+                        const vocalTrack = tracks.find(t => t.mode === 'vocal');
+                        const trackId = vocalTrack ? vocalTrack.id : (tracks[0]?.id || 'P1');
+                        
+                        await musicEngine.addVocalLayer(trackId, cacheBusted, stemsWithBust);
+                        
+                        // Set the track mode to vocal so UI state reflects it
+                        const updatedTracks = tracks.map((t: any) => 
+                          t.id === trackId ? { ...t, mode: 'vocal' } as TrackState : t
+                        );
+                        setTracks(updatedTracks);
+                        
+                        setAvailableStems(prev => ({ ...prev, [trackId]: musicEngine.getAvailableStems(trackId) }));
+                        setSoloedStems(prev => ({ ...prev, [trackId]: null }));
+                        setActiveRenderKey(hKey);
+                        setMemoInfoOpenKey(null);
+                        
+                        // Call loadSong to sync and catch up
+                        await musicEngine.loadSong(parsedData.notes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn);
+                        
+                        musicEngine.setTransportSeconds(currentPos);
+                        if (wasPlaying) {
+                          await musicEngine.start();
+                          setIsPlaying(true);
+                        }
+                      } catch (err) {
+                        console.error("MemoRender hot-swap failed:", err);
+                      } finally {
+                        setIsAudioLoading(false);
+                      }
+                    }}
+                    title={`โหลด: ${formatRenderLabel(h.label, h.bpmPercent)}`}
+                    className={`w-auto px-3 h-10 rounded-xl text-[8px] font-black flex flex-col items-center justify-center border transition-all shadow-lg whitespace-nowrap
+                      ${ isActive
+                        ? 'bg-[#00e5ff] border-cyan-300 text-black shadow-[0_0_14px_rgba(0,229,255,0.55)] scale-[1.04]'
+                        : 'bg-zinc-800 border-zinc-600 text-zinc-200 hover:bg-zinc-700 hover:border-zinc-400 hover:text-white'
+                      }`}
+                  >
+                    <span className="leading-tight">{formatRenderLabel(h.label, h.bpmPercent)}</span>
+                    {isActive && <span className="text-[5px] mt-0.5 font-black tracking-widest opacity-70">▶ ACTIVE</span>}
+                  </button>
+
+                  {/* Info button (ⓘ) — top-left corner */}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setMemoInfoOpenKey(isInfoOpen ? null : hKey); }}
+                    className="absolute -top-1.5 -left-1.5 w-4 h-4 bg-zinc-700 hover:bg-zinc-500 text-zinc-300 hover:text-white rounded-full text-[7px] font-black items-center justify-center hidden group-hover:flex transition-all shadow-lg z-10"
+                    title="รายละเอียด / Info"
+                  >
+                    i
+                  </button>
+
+                  {/* Info popup tooltip */}
+                  {isInfoOpen && (
+                    <div
+                      className="absolute left-full ml-2 top-0 z-[9000] bg-[#0c0c12]/95 border border-white/20 rounded-2xl p-3 min-w-[180px] shadow-2xl backdrop-blur-lg text-[9px] flex flex-col gap-1.5"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="flex justify-between items-start mb-1">
+                        <span className="text-[8px] font-black text-cyan-400 uppercase tracking-widest">Render Info</span>
+                        <button onClick={() => setMemoInfoOpenKey(null)} className="text-zinc-500 hover:text-white text-[10px] leading-none">✕</button>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <div className="flex justify-between gap-3">
+                          <span className="text-zinc-500">เสียงร้อง</span>
+                          <span className="text-zinc-100 font-black text-right truncate max-w-[100px]">{h.voiceName || 'Auto'}</span>
+                        </div>
+                        <div className="flex justify-between gap-3">
+                          <span className="text-zinc-500">Tempo</span>
+                          <span className="text-zinc-100 font-black">{h.bpmPercent}% ({diffStr})</span>
+                        </div>
+                        <div className="flex justify-between gap-3">
+                          <span className="text-zinc-500">คีย์</span>
+                          <span className="text-zinc-100 font-black">{h.songKey}</span>
+                        </div>
+                        <div className="flex justify-between gap-3">
+                          <span className="text-zinc-500">โหมด</span>
+                          <span className="text-zinc-100 font-black truncate max-w-[100px]">{h.lyricMode || 'British Fixed Doh'}</span>
+                        </div>
+                        <div className="flex justify-between gap-3">
+                          <span className="text-zinc-500">Engine</span>
+                          <span className="text-zinc-100 font-black truncate max-w-[100px]">{h.engineId || 'default'}</span>
+                        </div>
+                        {shortDate && (
+                          <div className="flex justify-between gap-3">
+                            <span className="text-zinc-500">บันทึกเมื่อ</span>
+                            <span className="text-zinc-400">{shortDate}</span>
+                          </div>
+                        )}
+                        {isActive && (
+                          <div className="mt-1 px-2 py-1 bg-cyan-400/20 rounded-lg text-center text-cyan-400 font-black text-[8px] tracking-widest">▶ กำลังใช้งาน</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Delete button — appears on hover (×) */}
+                  <button
+                    onClick={() => {
+                      const confirmed = window.confirm(`ลบ Render "${formatRenderLabel(h.label, h.bpmPercent)}" สำหรับเพลงนี้ออกใช่ไหม?`);
+                      if (!confirmed) return;
+                      if (h.filename) fetch(`/studio/renders/${encodeURIComponent(h.filename)}`, { method: 'DELETE' }).catch(() => {});
+                      setRenderHistory(prev => prev.filter(x => `${x.bpmPercent}_${x.songKey}_${x.engineId||'default'}_${x.lyricMode||''}_${x.voiceName||'Auto'}` !== hKey));
+                      if (activeRenderKey === hKey) setActiveRenderKey(null);
+                      if (memoInfoOpenKey === hKey) setMemoInfoOpenKey(null);
+                    }}
+                    className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-rose-600 hover:bg-rose-500 text-white rounded-full text-[7px] font-black items-center justify-center hidden group-hover:flex transition-all shadow-lg"
+                    title="ลบ / Delete"
+                  >
+                    ×
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Close info popup when clicking outside */}
+        {memoInfoOpenKey && (
+          <div className="absolute inset-0 z-[8999]" onClick={() => setMemoInfoOpenKey(null)} />
+        )}
+
+        {/* ── TRACK MIC BUTTONS: pinned to actual staff Y positions ── */}
+        {activeCard === 'score' && tracks.length > 0 && (
+          <div className="absolute left-0 top-0 w-full h-full z-[3000] pointer-events-none">
+            {tracks.map((track, i) => {
+              const isMuted = mutedVocalTracks.has(track.id);
+              const baseTop = staffYPositions.length > 0 ? staffYPositions[0] : 60;
+              const yPos = staffYPositions[i] ?? (baseTop + i * 80);
+              return (
+                <div 
+                  key={track.id} 
+                  className="absolute left-1 z-50 flex flex-col gap-1 pointer-events-auto"
+                  style={{ top: `${yPos + 4}px` }}
+                >
+                  {/* Voice Model Selector (Above Vocal Button) */}
+                  <select
+                    className="h-3 w-16 px-0.5 bg-black/40 border border-white/5 text-[6px] text-white/50 rounded-sm focus:outline-none focus:border-cyan-500 cursor-pointer backdrop-blur-sm -mb-0.5"
+                    value={track.engineId || activeEngineId}
+                    onChange={(e) => {
+                      const newId = e.target.value;
+                      setTracks((prev: any) => prev.map((t: any) => 
+                        t.id === track.id ? { ...t, engineId: newId } : t
+                      ));
+                      if (track.mode === 'vocal') setActiveEngineId(newId);
+                    }}
+                    title="Select Voice Model for this track"
+                  >
+                    {voiceEngines.length > 0 ? (
+                      voiceEngines.map(eng => (
+                        <option key={eng.id} value={eng.id}>{eng.name}</option>
+                      ))
+                    ) : (
+                      <>
+                        <option value="default">Native English (Default)</option>
+                        {activeEngineId === 'jianpu' && (
+                          <option value="jianpu">Chinese Numeral (Jianpu)</option>
+                        )}
+                        {activeEngineId && activeEngineId !== 'default' && activeEngineId !== 'jianpu' && (
+                          <option value={activeEngineId}>{activeEngineId.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</option>
+                        )}
+                      </>
+                    )}
+                  </select>
+
+                  {/* Button Row */}
+                  <div className="flex flex-row gap-0.5 items-center">
+                    <button
+                      onClick={() => {
+                        setTracks((prev: any) => prev.map((t: any) => ({
+                          ...t, mode: t.id === track.id ? 'vocal' : t.mode
+                        })));
+                        setActiveRenderTrackId(track.id);
+                        triggerVocalSynthesis(true);
+                      }}
+                      className={`h-4 px-1.5 rounded-sm flex items-center gap-0.5 text-[6.5px] font-black uppercase transition-all border shadow-sm ${
+                        track.mode === 'vocal'
+                          ? 'bg-cyan-600 border-cyan-400 text-white'
+                          : 'bg-zinc-800 border-zinc-600 text-zinc-300 hover:text-cyan-400 hover:border-cyan-400/60'
+                      }`}
+                      title={`Render "${track.name}" as vocal`}
+                    >
+                      <Mic2 size={7} />
+                      {track.mode === 'vocal' ? 'Vocal' : 'Render'}
+                    </button>
+                    
+                    <button
+                      onClick={() => setMutedVocalTracks(prev => {
+                        const next = new Set(prev);
+                        next.has(track.id) ? next.delete(track.id) : next.add(track.id);
+                        return next;
+                      })}
+                      className={`w-4 h-4 rounded-sm border flex items-center justify-center transition-all ${
+                        !isMuted 
+                          ? 'bg-red-600 border-red-500 text-white shadow-[0_0_5px_rgba(220,38,38,0.5)]' 
+                          : 'bg-zinc-300 border-zinc-400 text-zinc-800 hover:bg-zinc-200'
+                      }`}
+                      title={isMuted ? 'Piano mode' : 'Vocal mode'}
+                    >
+                      {isMuted ? <span className="text-[7px]">🎹</span> : <Mic2 size={8} />}
+                    </button>
+
+                    {/* Stem Solo — hidden behind toggle to prevent accidental clicks */}
+                    {showStemControls && availableStems[track.id] > 0 && (() => {
+                      const stemTrackId = track.id;
+                      const isOpen = expandedStemTrack === stemTrackId;
+                      return (
+                        <div className="relative pointer-events-auto">
+                          {/* Tiny toggle: only shows a small diamond icon */}
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setExpandedStemTrack(isOpen ? null : stemTrackId); }}
+                            className={`w-4 h-4 rounded-sm flex items-center justify-center transition-all border text-[7px] font-black ${
+                              isOpen 
+                                ? 'bg-cyan-600 border-cyan-400 text-white shadow-[0_0_6px_rgba(6,182,212,0.5)]' 
+                                : soloedStems[stemTrackId] !== null
+                                  ? 'bg-amber-600 border-amber-400 text-white animate-pulse'
+                                  : 'bg-zinc-900/60 border-zinc-700/50 text-zinc-500 hover:text-cyan-400 hover:border-cyan-500/50'
+                            }`}
+                            title={isOpen ? 'Close stem panel' : `Stem Solo (${availableStems[stemTrackId]} parts)`}
+                          >
+                            ◆
+                          </button>
+                          {/* Expandable panel — only shows when toggled open */}
+                          {isOpen && (
+                            <div className="absolute left-5 top-0 flex flex-row gap-0.5 items-center bg-black/80 p-1 rounded-md border border-cyan-500/30 backdrop-blur-xl shadow-xl select-none z-[9000] animate-in fade-in duration-150">
+                              <span className="text-[5.5px] font-black text-cyan-400/80 uppercase px-0.5 whitespace-nowrap">Solo:</span>
+                              {Array.from({ length: availableStems[stemTrackId] }).map((_, idx) => {
+                                const isSoloed = soloedStems[stemTrackId] === idx;
+                                return (
+                                  <button
+                                    key={idx}
+                                    onClick={() => handleSoloStem(stemTrackId, isSoloed ? null : idx)}
+                                    className={`w-4 h-4 rounded text-[6.5px] font-black flex items-center justify-center transition-all border ${
+                                      isSoloed
+                                        ? 'bg-cyan-500 border-cyan-300 text-white shadow-[0_0_5px_rgba(6,182,212,0.4)]'
+                                        : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700 hover:border-zinc-500 hover:text-white'
+                                    }`}
+                                    title={isSoloed ? `Mute voice part ${idx + 1} and play all` : `Solo voice part ${idx + 1}`}
+                                  >
+                                    S{idx + 1}
+                                  </button>
+                                );
+                              })}
+                              {soloedStems[stemTrackId] !== null && (
+                                <button
+                                  onClick={() => handleSoloStem(stemTrackId, null)}
+                                  className="px-1 py-0.5 bg-rose-600 border border-rose-500 rounded text-[5px] font-black uppercase text-white hover:bg-rose-500 transition-all"
+                                  title="Play all voices together"
+                                >
+                                  All
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* ProScoreEditor: Handles Score, MemoChord */}
           <div
+            ref={scoreAreaRef}
             style={{
               display: (activeCard === 'score') ? 'flex' : 'none',
               flexDirection: 'column',
-              width: '100%', height: '100%'
+              width: '100%', height: '100%',
+              position: 'relative'
             }}
           >
           <ProScoreEditor
@@ -942,7 +2030,29 @@ const PlayerPage: React.FC<{
                     {renderError ? (
                       <span className="text-rose-400 truncate max-w-[200px]">{renderError}</span>
                     ) : (
-                      <>AI SINGER: <span className="text-cyan-400">{(activeVoiceName || 'Auto').toUpperCase()}</span></>
+                      <div className="flex items-center gap-2">
+                        <span>VOICE: <span className="text-cyan-400">{(activeVoiceName || 'Vocalido Soprano').toUpperCase()}</span></span>
+                        
+                        {/* Engine Selection Dropdown */}
+                        <div className="flex items-center space-x-2 mt-0">
+                          <span className="text-[8px] text-gray-400">🎤 MODEL:</span>
+                          <select 
+                            value={activeEngineId} 
+                            onChange={handleEngineChange}
+                            className="bg-gray-800 border border-gray-700 text-white text-[9px] rounded px-1.5 py-0.5 outline-none focus:border-cyan-400"
+                          >
+                            {voiceEngines.length > 0 ? (
+                              voiceEngines.map(v => (
+                                <option key={v.id} value={v.id}>{v.name} ({v.lang})</option>
+                              ))
+                            ) : (
+                              <option value="default">Native English (Default)</option>
+                            )}
+                          </select>
+                        </div>
+                        <span className="text-white/30">•</span>
+                        <span>SYS: <span className="text-emerald-400">{(activeLyricMode || 'Standard').toUpperCase()}</span></span>
+                      </div>
                     )}
                   </span>
                 </div>
@@ -992,6 +2102,9 @@ const PlayerPage: React.FC<{
               loopPresets={loopPresets}
               setLoopPresets={setLoopPresets}
               onExitTrackView={(card) => setActiveCard(card as any)}
+              soloedStems={soloedStems}
+              onSoloStem={handleSoloStem}
+              showStemControls={showStemControls}
             />
           </div>
         )}
@@ -1200,6 +2313,136 @@ const PlayerPage: React.FC<{
         </>
       )}
 
+      {/* ── VOCALIDO SETUP MODAL ── */}
+      {showVocalidoSetup && (
+        <div className="fixed inset-0 z-[9500] bg-black/80 backdrop-blur-xl flex items-center justify-center p-4" onClick={(e) => { if (e.target === e.currentTarget) setShowVocalidoSetup(false); }}>
+          <div className="w-full max-w-md bg-[#0c0c0e] border border-white/10 rounded-[40px] p-6 shadow-2xl">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-black uppercase text-white tracking-tighter flex items-center gap-3">
+                <Mic2 size={20} className="text-cyan-400" /> Vocalido Setup
+              </h3>
+              <button onClick={() => setShowVocalidoSetup(false)} className="w-10 h-10 bg-white/10 rounded-full flex items-center justify-center text-zinc-400 hover:text-white transition-all">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-4">
+              {/* Engine toggle */}
+              <div className="flex flex-col gap-2">
+                <span className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">Synthesis Engine</span>
+                <div className="flex gap-2">
+                  {(['vocalido', 'acestep'] as const).map(eng => (
+                    <button key={eng} onClick={() => setSvsEngine(eng)}
+                      className={`flex-1 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border ${
+                        svsEngine === eng ? 'bg-cyan-500 border-cyan-400 text-white shadow-lg' : 'bg-white/5 border-white/5 text-zinc-400 hover:text-white hover:bg-white/10'
+                      }`}>
+                      {eng === 'vocalido' ? '🎤 Vocalido' : '⚡ ACE-Step'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Jianpu info */}
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
+                <p className="text-[9px] font-black text-zinc-300 uppercase tracking-widest mb-1">Active Mode: <span className="text-cyan-400">{activeLyricMode}</span></p>
+                <p className="text-[9px] text-zinc-500">
+                  {activeLyricMode === 'Jianpu' ? '🇨🇳 Using Chinese phoneme engine (Jianpu 简谱)' : '🌐 Using English/Solfège phoneme engine'}
+                </p>
+              </div>
+
+              {/* Render speed history */}
+              {renderHistory.length > 0 && (
+                <div className="flex flex-col gap-2">
+                  <span className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">Render Speed History</span>
+                  <div className="flex flex-wrap gap-2">
+                    {renderHistory.map(h => (
+                      <span key={`${h.bpmPercent}_${h.engineId || 'default'}_${h.lyricMode || ''}`} className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-full text-[10px] font-black text-zinc-300">
+                        {formatRenderLabel(h.label, h.bpmPercent)}
+                      </span>
+                    ))}
+                  </div>
+                  <button onClick={() => { setRenderHistory([]); if (song?.id) { localStorage.removeItem(`memo_render_history_${song.id}`); } }}
+                    className="text-[8px] text-zinc-600 underline text-right">Clear History</button>
+                </div>
+              )}
+
+              {/* Monophonic Mode Toggle */}
+              <div className="flex items-center justify-between bg-white/5 border border-white/10 rounded-2xl p-4">
+                <div className="flex flex-col gap-0.5 max-w-[70%]">
+                  <span className="text-[9px] font-black text-zinc-300 uppercase tracking-widest flex items-center gap-1.5">
+                    Monophonic Mode <span className="px-1 py-0.5 bg-cyan-500/20 text-cyan-400 rounded text-[7px] font-black uppercase">แนะนำ</span>
+                  </span>
+                  <span className="text-[8px] text-zinc-500">ยุบโน้ตประสาน (Chords) ให้เหลือเฉพาะแนวทำนองเดี่ยว ป้องกันการเรนเดอร์ล้มเหลว/Timeout สำหรับเพลงที่มีคอร์ดหนาแน่น</span>
+                </div>
+                <button
+                  onClick={() => setCollapseChords(prev => !prev)}
+                  className={`w-10 h-6 rounded-full p-1 transition-all ${
+                    collapseChords ? 'bg-cyan-500' : 'bg-zinc-800'
+                  } flex items-center`}
+                >
+                  <div
+                    className={`w-4 h-4 bg-white rounded-full transition-all shadow-md transform ${
+                      collapseChords ? 'translate-x-4' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* Stem Controls Toggle */}
+              <div className="flex items-center justify-between bg-white/5 border border-white/10 rounded-2xl p-4">
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[9px] font-black text-zinc-300 uppercase tracking-widest">Advanced Stem Controls</span>
+                  <span className="text-[8px] text-zinc-500">Show multi-track split/solo features (◆ button)</span>
+                </div>
+                <button
+                  onClick={() => setShowStemControls(prev => !prev)}
+                  className={`w-10 h-6 rounded-full p-1 transition-all ${
+                    showStemControls ? 'bg-cyan-500' : 'bg-zinc-800'
+                  } flex items-center`}
+                >
+                  <div
+                    className={`w-4 h-4 bg-white rounded-full transition-all shadow-md transform ${
+                      showStemControls ? 'translate-x-4' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* Voice Attributions & Credits */}
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-4 flex flex-col gap-2.5">
+                <span className="text-[9px] font-black text-zinc-400 uppercase tracking-widest flex items-center gap-1.5">
+                  <Sparkles size={10} className="text-cyan-400" /> Voice Credits & Attributions
+                </span>
+                
+                <div className="flex flex-col gap-2 text-[8px] text-zinc-400 leading-relaxed">
+                  {/* Lotte V Credit */}
+                  <div className="border-b border-white/5 pb-2">
+                    <span className="text-zinc-200 font-bold">星野ハナミ (Hoshino Hanami)</span>
+                    <p className="mt-0.5">Voice Provider: <span className="text-cyan-400">Lotte V (ロッテ・ヴィー)</span></p>
+                    <p>Official Website: <a href="https://lottev.moe/" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">lottev.moe</a></p>
+                    <p className="text-[7.5px] text-zinc-500 mt-0.5">Terms of Use specified in the model folder.</p>
+                  </div>
+                  
+                  {/* System Defaults */}
+                  <div>
+                    <span className="text-zinc-300 font-bold">System Default Voices</span>
+                    <p className="mt-0.5">• English: Trained on the open-source GTSinger dataset.</p>
+                    <p>• Chinese: Trained on the open-source Opencpop dataset.</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Open Voice Studio */}
+              <button
+                onClick={() => { setShowVocalidoSetup(false); setActiveCard('vocalido'); }}
+                className="w-full py-3 rounded-2xl bg-gradient-to-r from-cyan-500 to-blue-500 text-white text-[11px] font-black uppercase tracking-widest shadow-lg hover:opacity-90 transition-all">
+                Open Voice Studio →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {song && showMixer && (
         <div className="fixed inset-0 z-[9000] bg-black/85 backdrop-blur-xl flex items-center justify-center p-4 pointer-events-auto" onClick={(e) => { if (e.target === e.currentTarget) setShowMixer(false); }}>
           <div className="w-full max-w-3xl bg-[#0c0c0e] border border-white/10 rounded-[40px] p-6 shadow-2xl max-h-[80vh] overflow-y-auto">
@@ -1238,6 +2481,87 @@ const PlayerPage: React.FC<{
         setTracks((prev: any) => prev.map((t: any) => t.id === trackId ? { ...t, effects: [...(t.effects || []).slice(0, slotIndex), ...(t.effects || []).slice(slotIndex + 1)] } : t));
         setEditingPlugin(null);
       }} />}
+
+      {/* Floating Debug Button */}
+      <button
+        onClick={() => setShowDebugDrawer(prev => !prev)}
+        className="fixed bottom-4 right-4 z-[9999] bg-zinc-800 hover:bg-zinc-700 text-white rounded-full w-10 h-10 shadow-lg border border-white/20 flex items-center justify-center pointer-events-auto transition-transform hover:scale-105 active:scale-95"
+        title="Toggle Debug Console"
+      >
+        <span className="text-[10px] font-bold text-red-400">DEBUG</span>
+      </button>
+
+      {/* Debug Drawer Panel */}
+      {showDebugDrawer && (
+        <div className="fixed bottom-0 left-0 right-0 h-[40vh] bg-[#0c0c0e] border-t border-white/10 z-[9998] flex flex-col font-mono text-xs text-zinc-300 pointer-events-auto shadow-2xl animate-in slide-in-from-bottom duration-250">
+          {/* Header */}
+          <div className="flex items-center justify-between px-4 py-2 bg-zinc-900 border-b border-white/10 shrink-0">
+            <div className="flex items-center gap-4">
+              <span className="font-bold text-cyan-400">🖥️ Memolody Audio & SVS System Logs</span>
+              <span className="text-[10px] text-zinc-500">
+                Context: <strong className={Tone.context.state === 'running' ? 'text-green-400' : 'text-yellow-400'}>{Tone.context.state}</strong>
+                {' | '}
+                Transport: <strong className="text-cyan-400">{musicEngine.transportState}</strong>
+                {' | '}
+                Time: <strong className="text-white">{musicEngine.transportSeconds.toFixed(2)}s</strong>
+                {' | '}
+                Audio Loading: <strong className={isAudioLoading ? 'text-yellow-400' : 'text-zinc-400'}>{String(isAudioLoading)}</strong>
+                {' | '}
+                Rendering Vocal: <strong className={isRenderingVocal ? 'text-red-400' : 'text-zinc-400'}>{String(isRenderingVocal)}</strong>
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={() => {
+                  try {
+                    console.log("[Debug] Attempting manual Tone.js start/resume...");
+                    Tone.start();
+                    Tone.context.resume();
+                  } catch(e) {
+                    console.error("[Debug] Manual resume failed:", e);
+                  }
+                }} 
+                className="px-2 py-1 bg-cyan-600 hover:bg-cyan-500 text-white rounded text-[10px] font-bold"
+              >
+                Resume AudioContext
+              </button>
+              <button 
+                onClick={() => setDebugLogs([])} 
+                className="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white rounded text-[10px]"
+              >
+                Clear
+              </button>
+              <button 
+                onClick={() => setShowDebugDrawer(false)} 
+                className="p-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white rounded animate-none"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          </div>
+
+          {/* Logs scroll area */}
+          <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-1 select-text">
+            {debugLogs.length === 0 ? (
+              <div className="text-zinc-600 italic">No logs captured yet... Try playing or rendering.</div>
+            ) : (
+              debugLogs.map((log, idx) => (
+                <div key={idx} className="flex items-start gap-2 leading-relaxed whitespace-pre-wrap border-b border-white/5 pb-1">
+                  <span className="text-[10px] text-zinc-500 shrink-0 select-none">[{log.time}]</span>
+                  <span className={`shrink-0 font-bold ${
+                    log.type === 'error' ? 'text-red-500' : log.type === 'warn' ? 'text-yellow-500' : 'text-cyan-500'
+                  }`}>
+                    [{log.type.toUpperCase()}]
+                  </span>
+                  <span className={log.type === 'error' ? 'text-red-400 font-medium' : log.type === 'warn' ? 'text-yellow-300' : 'text-zinc-300'}>
+                    {log.text}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
