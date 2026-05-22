@@ -34,6 +34,34 @@ const formatRenderLabel = (label: string, bpmPct: number) => {
   return `${label} (${diffStr})`;
 };
 
+const getCustomBackendUrl = () => {
+  if (typeof window === 'undefined') return '';
+  const url = localStorage.getItem('memolody_custom_backend_url');
+  if (!url) return '';
+  let cleanUrl = url.trim();
+  if (cleanUrl.endsWith('/')) {
+    cleanUrl = cleanUrl.slice(0, -1);
+  }
+  return cleanUrl;
+};
+
+const getFetchUrl = (path: string) => {
+  const customBackend = getCustomBackendUrl();
+  if (!customBackend) return path;
+
+  let cleanPath = path;
+  if (!cleanPath.startsWith('/')) {
+    cleanPath = '/' + cleanPath;
+  }
+
+  // If path is /vocalido/studio/voices, map to /studio/voices on the local SVS server
+  if (cleanPath.startsWith('/vocalido/')) {
+    cleanPath = cleanPath.substring('/vocalido'.length);
+  }
+
+  return `${customBackend}${cleanPath}`;
+};
+
 const fixAudioUrl = (u: string) => {
   if (typeof u !== 'string') return u;
   let url = u;
@@ -63,6 +91,11 @@ const fixAudioUrl = (u: string) => {
     if (filename.startsWith('song_')) {
       url = `/studio/audio/${filename}`;
     }
+  }
+  
+  const customBackend = getCustomBackendUrl();
+  if (customBackend) {
+    return `${customBackend}${url}`;
   }
   
   return url;
@@ -131,7 +164,7 @@ const PlayerPage: React.FC<{
       const batchToSend = [...logQueue];
       logQueue = [];
 
-      fetch('/studio/api/client-log', {
+      fetch(getFetchUrl('/studio/api/client-log'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ logs: batchToSend })
@@ -212,6 +245,18 @@ const PlayerPage: React.FC<{
   const [isOriginalViewHidden, setIsOriginalViewHidden] = useState(true); // Default hidden
 
   const [storedSinger, setStoredSinger] = useState<string | null>(null);
+  const [customBackendUrl, setCustomBackendUrl] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('memolody_custom_backend_url') || '';
+    }
+    return '';
+  });
+
+  const handleCustomBackendUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setCustomBackendUrl(val);
+    localStorage.setItem('memolody_custom_backend_url', val);
+  };
   const [svsEngine, setSvsEngine] = useState<'vocalido' | 'acestep'>('vocalido');
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -520,7 +565,7 @@ const PlayerPage: React.FC<{
         setRenderHistory([]);
       }
 
-      fetch(`/studio/renders/${encodeURIComponent(song.id)}`)
+      fetch(getFetchUrl(`/studio/renders/${encodeURIComponent(song.id)}`))
         .then(r => r.ok ? r.json() : null)
         .then(data => {
           if (data?.renders?.length) {
@@ -730,7 +775,7 @@ const PlayerPage: React.FC<{
     let active = true;
     const fetchEngines = async () => {
       try {
-        const res = await fetch('/vocalido/studio/voices');
+        const res = await fetch(getFetchUrl('/vocalido/studio/voices'));
         if (!res.ok) throw new Error('Not OK');
         const data = await res.json();
         if (active && data && data.voices) {
@@ -1093,7 +1138,7 @@ const PlayerPage: React.FC<{
           return;
         }
 
-        const resp = await fetch('/studio/preview', {
+        const resp = await fetch(getFetchUrl('/studio/preview'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           signal: controller.signal,
@@ -1783,7 +1828,7 @@ const PlayerPage: React.FC<{
                     onClick={() => {
                       const confirmed = window.confirm(`ลบ Render "${formatRenderLabel(h.label, h.bpmPercent)}" สำหรับเพลงนี้ออกใช่ไหม?`);
                       if (!confirmed) return;
-                      if (h.filename) fetch(`/studio/renders/${encodeURIComponent(h.filename)}`, { method: 'DELETE' }).catch(() => {});
+                      if (h.filename) fetch(getFetchUrl(`/studio/renders/${encodeURIComponent(h.filename)}`), { method: 'DELETE' }).catch(() => {});
                       setRenderHistory(prev => prev.filter(x => `${x.bpmPercent}_${x.songKey}_${x.engineId||'default'}_${x.lyricMode||''}_${x.voiceName||'Auto'}` !== hKey));
                       if (activeRenderKey === hKey) setActiveRenderKey(null);
                       if (memoInfoOpenKey === hKey) setMemoInfoOpenKey(null);
@@ -2340,6 +2385,23 @@ const PlayerPage: React.FC<{
                     </button>
                   ))}
                 </div>
+              </div>
+
+              {/* Custom SVS Backend URL */}
+              <div className="flex flex-col gap-1.5 bg-white/5 border border-white/10 rounded-2xl p-4">
+                <span className="text-[9px] font-black text-zinc-300 uppercase tracking-widest flex items-center gap-1.5">
+                  Custom SVS Backend URL
+                </span>
+                <span className="text-[8px] text-zinc-500">
+                  สำหรับใช้งานบน Vercel/มือถือ ให้กรอก HTTPS Tunnel URL (เช่น Serveo / Localtunnel)
+                </span>
+                <input
+                  type="text"
+                  value={customBackendUrl}
+                  onChange={handleCustomBackendUrlChange}
+                  placeholder="https://your-tunnel.serveo.net"
+                  className="mt-1 w-full bg-[#0c0c0e] border border-white/10 focus:border-cyan-500 rounded-xl px-3 py-2 text-[10px] text-white focus:outline-none transition-all placeholder:text-zinc-600"
+                />
               </div>
 
               {/* Jianpu info */}

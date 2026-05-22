@@ -1,0 +1,12 @@
+
+# ── DiffSinger Requirements for Python 3.13 ──────────────────────────────────
+pyyaml
+pytorch-lightning
+librosa
+praat-parselmouth>=0.4.3
+einops
+click
+torchmetrics
+lightning-utilities
+scipy
+numpy

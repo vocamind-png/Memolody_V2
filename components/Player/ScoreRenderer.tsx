@@ -42,8 +42,23 @@ const ScoreRenderer = forwardRef(({ xmlData, currentTime, duration, notes, zoom 
           autoResize: true, drawTitle: false, pageFormat: "A4", renderLyrics: true,
           followCursor: false, lyricAlignment: "center", lyricPosition: "below"
         });
+        // Override the default lyric font size in OSMD Engine
+        try {
+            osmdRef.current.setOptions({
+                drawingParameters: "default",
+            });
+            if (osmdRef.current.EngravingRules) {
+                osmdRef.current.EngravingRules.LyricsHeight = 1.0; 
+                osmdRef.current.EngravingRules.LyricOverlapAllowed = false;
+            }
+            if (osmdRef.current.rules) {
+                osmdRef.current.rules.LyricsHeight = 1.0;
+                osmdRef.current.rules.LyricOverlapAllowed = false;
+            }
+        } catch(e) {}
       }
       await osmdRef.current.load(xmlData);
+
       osmdRef.current.Zoom = zoom;
       osmdRef.current.render();
 
@@ -135,6 +150,14 @@ const ScoreRenderer = forwardRef(({ xmlData, currentTime, duration, notes, zoom 
         </div>
         <button onClick={() => { const ctx = canvasRef.current?.getContext('2d'); ctx?.clearRect(0,0,9999,9999); }} className="p-2 text-zinc-500 hover:text-red-400"><Trash2 size={14} /></button>
       </div>
+
+      <style>{`
+        /* Reduce lyric font size and prevent overlap */
+        .vf-lyrictxt, .vf-lyric-text, text[font-family="Times New Roman"], text[font-family="serif"] {
+          font-size: 8px !important;
+          letter-spacing: -0.5px !important;
+        }
+      `}</style>
 
       <div ref={containerRef} className="flex-1 w-full overflow-auto relative pt-32 pb-48 no-scrollbar z-[100]">
         {/* Layer 2: Indigo Cursor */}

@@ -555,7 +555,7 @@ def verify_measure_duration(measures_dict, time_sig):
                 # Simple fix: if off by exactly 50% of the last note, it might be a missing dot
                 if diff > 0:
                     for sym in reversed(measure.symbols):
-                        if hasattr(sym, 'has_dot') and not sym.has_dot:
+                        if hasattr(sym, 'has_dot') and not sym.has_dot and hasattr(sym, 'duration'):
                             # If adding a dot fixes it exactly, do it!
                             if sym.duration * 0.5 == diff:
                                 sym.has_dot = True

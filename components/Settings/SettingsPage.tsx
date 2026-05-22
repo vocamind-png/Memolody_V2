@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import * as Tone from 'tone';
-import { Settings2, Volume2, Cpu, Mic, Activity, Keyboard, MonitorSpeaker, Command, Monitor, Zap, Bot, Play, Sparkles } from 'lucide-react';
+import { Settings2, Volume2, Cpu, Mic, Activity, Keyboard, MonitorSpeaker, Command, Monitor, Zap, Bot, Play, Sparkles, Lock, Key, Copy, Check } from 'lucide-react';
 import VocalidoTrainingCard from './VocalidoTrainingCard';
 import CreditsCard from './CreditsCard';
 import AudioEngineSettings from './AudioEngineSettings';
 import OMRSettingsCard from './OMRSettingsCard';
+import { encryptString } from '../../lib/NimoBrain';
 
 interface SettingsPageProps {
     onBack?: () => void;
@@ -26,6 +27,49 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, on
     const [audioOutput, setAudioOutput] = useState('default');
     const [sampleRate, setSampleRate] = useState('auto');
     const [bufferSize, setBufferSize] = useState('256');
+
+    // Remote Passcode & Command Encrypter State
+    const [passcode, setPasscode] = useState(() => {
+        if (typeof window !== 'undefined') {
+            return window.localStorage.getItem('nimo_remote_passcode') || 'paisan123';
+        }
+        return 'paisan123';
+    });
+    const [actionToEncrypt, setActionToEncrypt] = useState('');
+    const [passcodeToEncrypt, setPasscodeToEncrypt] = useState(passcode);
+    const [encryptedResult, setEncryptedResult] = useState('');
+    const [copied, setCopied] = useState(false);
+
+    const handleSavePasscode = (newPasscode: string) => {
+        setPasscode(newPasscode);
+        setPasscodeToEncrypt(newPasscode);
+        if (typeof window !== 'undefined') {
+            window.localStorage.setItem('nimo_remote_passcode', newPasscode);
+        }
+    };
+
+    const handleEncrypt = () => {
+        if (!actionToEncrypt) return;
+        const cipher = encryptString(actionToEncrypt, passcodeToEncrypt);
+        setEncryptedResult(`paisan:enc:${cipher}`);
+        setCopied(false);
+    };
+
+    const handleCopy = () => {
+        if (!encryptedResult) return;
+        navigator.clipboard.writeText(encryptedResult);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+    };
+
+    const PRESETS = [
+        { label: 'เล่นเพลง (Play)', value: 'play' },
+        { label: 'หยุดชั่วคราว (Pause)', value: 'pause' },
+        { label: 'หน้าเล่นเพลง (View Player)', value: 'navigate_to_page?view=player' },
+        { label: 'หน้าแต่งเพลง (View Forge)', value: 'navigate_to_page?view=forge' },
+        { label: 'เพิ่มความเร็ว (Tempo 140)', value: 'set_tempo?tempo=140' },
+        { label: 'ปรับเสียง (Volume 80%)', value: 'set_volume?volume=0.8' },
+    ];
 
     // Dynamic Device Lists
     const [deviceList, setDeviceList] = useState<MediaDeviceInfo[]>([]);
@@ -541,6 +585,127 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, on
                                     <div className="h-px flex-1 bg-zinc-800" />
                                 </div>
                                 <OMRSettingsCard />
+                            </div>
+
+                            {/* ── Nimo Remote Control & Security ── */}
+                            <div className="mt-12 p-6 rounded-[28px] bg-gradient-to-br from-zinc-950/80 via-black/90 to-zinc-950/80 border border-cyan-500/20 hover:border-cyan-500/40 transition-all shadow-[0_0_30px_rgba(6,182,212,0.05)] relative overflow-hidden group">
+                                <div className="absolute top-0 right-0 w-64 h-64 bg-cyan-500/5 rounded-full blur-[80px] pointer-events-none group-hover:bg-cyan-500/10 transition-all" />
+                                
+                                <div className="flex items-center gap-3 mb-6">
+                                    <div className="w-10 h-10 rounded-full bg-cyan-500/10 flex items-center justify-center border border-cyan-500/20">
+                                        <Lock size={18} className="text-cyan-400" />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-sm font-black uppercase tracking-widest text-white italic">Nimo Remote Control & Security</h3>
+                                        <p className="text-[9px] text-zinc-500 uppercase tracking-widest mt-0.5">ระบบควบคุมระยะไกลและการเข้าถึงพิเศษสำหรับคุณ paisan</p>
+                                    </div>
+                                    <div className="ml-auto flex items-center gap-2 px-3 py-1 bg-emerald-500/10 border border-emerald-500/30 rounded-full">
+                                        <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />
+                                        <span className="text-[8px] font-black uppercase tracking-widest text-emerald-400">Polling Active</span>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-6">
+                                    {/* Passcode input */}
+                                    <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-4">
+                                        <label className="text-[10px] font-black uppercase tracking-widest text-zinc-400 mb-2 block flex items-center gap-2">
+                                            <Key size={12} className="text-cyan-400" />
+                                            รหัสผ่านลับควบคุม (Passcode)
+                                        </label>
+                                        <div className="relative">
+                                            <input 
+                                                type="text" 
+                                                value={passcode} 
+                                                onChange={(e) => handleSavePasscode(e.target.value)}
+                                                placeholder="ใส่รหัสผ่านลับ เช่น paisan123..."
+                                                className="w-full bg-black/60 border border-white/10 rounded-xl pl-10 pr-4 py-3 text-sm text-zinc-200 focus:outline-none focus:border-cyan-500/50 transition-all font-mono tracking-widest"
+                                            />
+                                            <Key className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" size={16} />
+                                        </div>
+                                        <p className="text-[8px] text-zinc-500 uppercase tracking-wider mt-2">
+                                            บันทึกอัตโนมัติลงใน LocalStorage (ใช้สำหรับสั่งการผ่านช่องแชทด้วยคำนำหน้า <span className="text-zinc-300 font-mono">paisan:&lt;รหัส&gt;:&lt;คำสั่ง&gt;</span> หรือควบคุมผ่าน API ระยะไกล)
+                                        </p>
+                                    </div>
+
+                                    {/* Encrypter Utility */}
+                                    <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-5 space-y-4">
+                                        <div>
+                                            <h4 className="text-xs font-black uppercase tracking-widest text-zinc-300">Command Encrypter Utility</h4>
+                                            <p className="text-[9px] text-zinc-500 uppercase tracking-wider mt-1">เครื่องมือช่วยเข้ารหัสคำสั่ง (XOR + Base64) สำหรับใช้เป็นคำสั่งลับลับสุดยอด</p>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div className="space-y-3">
+                                                <div>
+                                                    <label className="text-[8px] font-black uppercase tracking-widest text-zinc-400 mb-1.5 block">คำสั่งระบบ (Action String)</label>
+                                                    <input 
+                                                        type="text" 
+                                                        value={actionToEncrypt}
+                                                        onChange={(e) => setActionToEncrypt(e.target.value)}
+                                                        placeholder="เช่น play, pause, navigate_to_page?view=forge"
+                                                        className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-xs text-zinc-300 focus:outline-none focus:border-cyan-500/50 transition-all font-mono"
+                                                    />
+                                                </div>
+
+                                                <div>
+                                                    <label className="text-[8px] font-black uppercase tracking-widest text-zinc-400 mb-1.5 block">รหัสผ่านที่ใช้เข้ารหัส (Encryption Passcode)</label>
+                                                    <input 
+                                                        type="text" 
+                                                        value={passcodeToEncrypt}
+                                                        onChange={(e) => setPasscodeToEncrypt(e.target.value)}
+                                                        className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-xs text-zinc-300 focus:outline-none focus:border-cyan-500/50 transition-all font-mono tracking-widest"
+                                                    />
+                                                </div>
+
+                                                <button
+                                                    onClick={handleEncrypt}
+                                                    disabled={!actionToEncrypt}
+                                                    className="w-full py-2.5 bg-gradient-to-r from-cyan-500 to-blue-500 disabled:from-cyan-500/20 disabled:to-blue-500/20 text-black disabled:text-zinc-600 text-[10px] font-black uppercase tracking-widest rounded-xl hover:shadow-[0_0_20px_rgba(6,182,212,0.3)] transition-all flex items-center justify-center gap-2 cursor-pointer border-0"
+                                                >
+                                                    <Lock size={12} /> เข้ารหัสคำสั่ง (Encrypt Action)
+                                                </button>
+                                            </div>
+
+                                            <div className="flex flex-col justify-between">
+                                                <div className="flex-1 flex flex-col">
+                                                    <label className="text-[8px] font-black uppercase tracking-widest text-zinc-400 mb-1.5 block">ผลลัพธ์คำสั่งลับเข้ารหัส (Encrypted Output)</label>
+                                                    <textarea 
+                                                        readOnly
+                                                        value={encryptedResult}
+                                                        placeholder="ผลลัพธ์ที่แปลงแล้วจะแสดงที่นี่..."
+                                                        className="flex-1 min-h-[80px] w-full bg-black/60 border border-white/10 rounded-xl p-3 text-[10px] text-zinc-300 font-mono focus:outline-none resize-none"
+                                                    />
+                                                </div>
+
+                                                {encryptedResult && (
+                                                    <button
+                                                        onClick={handleCopy}
+                                                        className={`mt-2 w-full py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 border transition-all ${copied ? 'bg-emerald-500/20 border-emerald-500/30 text-emerald-400' : 'bg-white/5 border-white/10 hover:bg-white/10 text-white'}`}
+                                                    >
+                                                        {copied ? <Check size={12} /> : <Copy size={12} />}
+                                                        {copied ? 'คัดลอกสำเร็จ (Copied!)' : 'คัดลอกลงคลิปบอร์ด (Copy Command)'}
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {/* Presets suggestions */}
+                                        <div className="pt-2 border-t border-white/5">
+                                            <span className="text-[8px] font-black uppercase tracking-widest text-zinc-500 mb-2 block">คลิกเพื่อเลือกคำสั่งด่วน (Preset Actions)</span>
+                                            <div className="flex flex-wrap gap-2">
+                                                {PRESETS.map((p, idx) => (
+                                                    <button
+                                                        key={idx}
+                                                        onClick={() => setActionToEncrypt(p.value)}
+                                                        className="px-2.5 py-1 bg-white/5 hover:bg-cyan-500/10 hover:border-cyan-500/30 border border-white/5 rounded-lg text-[9px] text-zinc-400 hover:text-cyan-400 transition-all font-mono cursor-pointer"
+                                                    >
+                                                        {p.label}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
 
                             {/* ── NEW: Neural Link Advanced Settings ── */}

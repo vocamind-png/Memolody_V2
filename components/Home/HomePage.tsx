@@ -420,7 +420,7 @@ const HomePage: React.FC<HomePageProps> = ({
       await songStorage.saveSong(metadata, xmlData, layoutBundle);
       await onLocalRefresh();
       onRefresh();
-      // Go straight to player
+      // Go straight to player BEFORE hiding processing overlay
       onSongSelect(metadata, xmlData, 'listen');
       setIsProcessing(false); 
       setProcessingMsg('');
@@ -548,7 +548,7 @@ const HomePage: React.FC<HomePageProps> = ({
     const file = fileList[0];
 
     const isPdf = /\.pdf$/i.test(file.name) || file.type === 'application/pdf';
-    const isImg = /\.(jpg|jpeg|png|webp)$/i.test(file.name) || file.type.startsWith('image/');
+    const isImg = /\.(jpg|jpeg|png|webp|heic|heif)$/i.test(file.name) || file.type.startsWith('image/');
 
     if (isPdf || isImg) {
       // Route to ScoreSelectionModal for cropping
@@ -562,7 +562,7 @@ const HomePage: React.FC<HomePageProps> = ({
     processImport(fileList);
   };
 
-  const processImport = async (files: File | File[] | Blob, originalFileName?: string) => {
+  const processImport = async (files: File | File[] | Blob, originalFileName?: string, startPage?: number, endPage?: number) => {
     console.log('[Import] 🚀 processImport called:', { files, originalFileName });
     setProcessingError(null);
     setIsProcessing(true);
@@ -591,7 +591,7 @@ const HomePage: React.FC<HomePageProps> = ({
         setProcessingMsg('🤖 Pass 1: Gemini กำลังอ่านโน้ต...');
 
         console.log('[Import] Calling parseMusicXMLMetadata...');
-        const { metadata, xmlData, layoutBundle } = await parseMusicXMLMetadata(f, false, (msg) => setProcessingMsg(msg));
+        const { metadata, xmlData, layoutBundle } = await parseMusicXMLMetadata(f, false, (msg) => setProcessingMsg(msg), startPage, endPage);
         console.log('[Import] ✅ parseMusicXMLMetadata returned:', metadata.title, '| xmlData length:', xmlData.length);
 
         setProcessingMsg('💾 กำลังบันทึกลง My Songs...');
@@ -633,10 +633,12 @@ const HomePage: React.FC<HomePageProps> = ({
 
       if (lastMetadata && lastXml) {
         console.log('[Import] 🎵 Navigating to Player with:', lastMetadata.title);
-        // Clear background state before navigating
+        
+        // Go straight to player BEFORE hiding processing overlay to prevent Home bounce
+        onSongSelect(lastMetadata, lastXml, 'listen');
+        
         setIsProcessing(false);
         setProcessingMsg('');
-        onSongSelect(lastMetadata, lastXml, 'listen');
       } else {
         setIsProcessing(false);
         setProcessingMsg('');
@@ -807,7 +809,7 @@ const HomePage: React.FC<HomePageProps> = ({
             type="file"
             multiple
             className="hidden"
-            accept=".xml,.musicxml,.mxl,.mid,.midi,.pdf,.png,.jpg,.jpeg"
+            accept=".xml,.musicxml,.mxl,.mid,.midi,.pdf,.png,.jpg,.jpeg,.webp,.heic,.heif"
             onChange={handleImport}
           />
         </div>
@@ -1129,7 +1131,7 @@ const HomePage: React.FC<HomePageProps> = ({
               className="w-full h-14 bg-cyan-500 text-black rounded-2xl font-black uppercase tracking-widest text-xs active:scale-95 transition-transform">
               Select Files
             </button>
-            <input ref={fileInputRef} type="file" multiple className="hidden" accept=".xml,.musicxml,.mxl,.mid,.midi,.pdf,.png,.jpg,.jpeg,.webp" onChange={handleImport} />
+            <input ref={fileInputRef} type="file" multiple className="hidden" accept=".xml,.musicxml,.mxl,.mid,.midi,.pdf,.png,.jpg,.jpeg,.webp,.heic,.heif" onChange={handleImport} />
           </div>
         </div>
       )}
@@ -1216,12 +1218,12 @@ const HomePage: React.FC<HomePageProps> = ({
       {pendingSelectionFile && (
         <ScoreSelectionModal
           file={pendingSelectionFile}
-          onConfirm={(croppedBlob) => {
+          onConfirm={(croppedBlob, startPage, endPage) => {
             const fileName = pendingSelectionFile.name;
             console.log('[ScoreSelection] ✅ onConfirm called. croppedBlob:', croppedBlob, 'type:', croppedBlob instanceof File ? (croppedBlob as File).type : 'Blob', 'size:', croppedBlob.size);
             setPendingSelectionFile(null); // close modal
             // processImport handles the rest (Gemini Vision → save → Player)
-            processImport(croppedBlob, fileName);
+            processImport(croppedBlob, fileName, startPage, endPage);
           }}
           onCancel={() => setPendingSelectionFile(null)}
         />

@@ -85,6 +85,7 @@ export interface TrackState {
   pluginId?: 'memolody-sampler' | 'svs-vocal' | null;
   pluginSettings?: any;
   effects: (EffectInstance | null)[];
+  engineId?: string;
 }
 
 export interface ParsedNote {

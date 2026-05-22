@@ -36,3 +36,25 @@ Oemer-structure.md
 src/
 vocalido-server/
 plugins/acestep/
+
+# GCS / Cloud credentials — never commit
+vocalido_server/training/credentials/
+*.json.key
+gcs_*.json
+
+# Untracked heavy assets
+ScoreLens_V3_Core/
+Scorelens_Engine_V3/
+english_voicebanks/
+omr_output_archive/
+
+# Build outputs inside vocalido_server/static
+vocalido_server/static/assets/
+vocalido_server/static/index.html
+vocalido_server/static/sw.js
+vocalido_server/static/workbox-ec65da8e.js
+vocalido_server/static/registerSW.js
+vocalido_server/static/verovio-toolkit.js
+
+# Zip archives
+*.zip

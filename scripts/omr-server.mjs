@@ -89,35 +89,35 @@ async function runOemer(imagePath) {
   const outputDir = path.join(os.tmpdir(), `scorelens_${Date.now()}`);
   fs.mkdirSync(outputDir, { recursive: true });
 
-  console.log(`[ScoreLens V2] Processing: ${path.basename(imagePath)}`);
-  // ── Use Scorelens-Engine_V2 (improved engine with Layout Map + Typography) ──
-  const cmd = `cd "${PROJECT_ROOT}" && "${PYTHON_BIN}" -m Scorelens_Engine_V2.ete "${imagePath}" -o "${outputDir}" --without-deskew 2>&1`;
+  console.log(`[ScoreLens V3] Processing: ${path.basename(imagePath)}`);
+  const outFile = path.join(outputDir, 'output.xml');
+  const cmd = `cd "${PROJECT_ROOT}" && "${PYTHON_BIN}" ScoreLens_V3_Core/pipeline.py "${imagePath}" --output "${outFile}" --json 2>&1`;
 
+  let stdoutStr = '';
   try {
-    const { stdout } = await execAsync(cmd, { timeout: 600000 }); // 10min — DL inference on CPU
-    console.log('[ScoreLens V2] Done:', stdout.slice(-200).trim());
+    const { stdout } = await execAsync(cmd, { timeout: 600000 });
+    stdoutStr = stdout;
+    console.log('[ScoreLens V3] Done');
   } catch (err) {
-    console.error('SCORE_LENS_V2_FULL_ERROR:\n', err.stdout);
+    console.error('SCORE_LENS_V3_ERROR:\n', err.stdout);
     const detail = (err.stderr || err.stdout || err.message || '').slice(-2000);
     try { fs.rmSync(outputDir, { recursive: true, force: true }); } catch {}
-    throw new Error(`ScoreLens V2 failed: ${detail}`);
+    throw new Error(`ScoreLens V3 failed: ${detail}`);
   }
 
-  const xmlFile = fs.readdirSync(outputDir).find(f => f.endsWith('.musicxml') || f.endsWith('.xml'));
-  if (!xmlFile) throw new Error('ScoreLens V2 produced no MusicXML output');
+  if (!fs.existsSync(outFile)) throw new Error('ScoreLens V3 produced no MusicXML output');
+  const xml = fs.readFileSync(outFile, 'utf-8');
 
-  const xml = fs.readFileSync(path.join(outputDir, xmlFile), 'utf-8');
-
-  // ── [V2] Read JSON Bundle (Layout Map + Metadata + Typography) ──────────
   let bundle = null;
-  const jsonFile = fs.readdirSync(outputDir).find(f => f.endsWith('_bundle.json'));
-  if (jsonFile) {
-    try {
-      bundle = JSON.parse(fs.readFileSync(path.join(outputDir, jsonFile), 'utf-8'));
-      console.log(`[ScoreLens V2] 📦 Bundle loaded: ${bundle.metadata?.title || 'untitled'}`);
-    } catch (jsonErr) {
-      console.warn('[ScoreLens V2] Bundle JSON parse error:', jsonErr.message);
+  try {
+    // Attempt to extract JSON from stdout (pipeline.py with --json outputs valid JSON)
+    const jsonMatch = stdoutStr.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      bundle = JSON.parse(jsonMatch[0]);
+      console.log(`[ScoreLens V3] 📦 Stats loaded. Mode: ${bundle.mode_used}`);
     }
+  } catch (err) {
+    console.warn('[ScoreLens V3] Failed to parse JSON stats from stdout', err.message);
   }
 
   try { fs.rmSync(outputDir, { recursive: true, force: true }); } catch {}
@@ -424,11 +424,102 @@ with open('${stitchTmpOut}', 'w', encoding='utf-8') as f:
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
-    engine: 'ScoreLens-Engine V2 (MIT License)', 
-    version: '2.0.0',
-    features: ['image-enhancement', 'scorelens-v2-dl', 'layout-map', 'typography-ocr', 'music-theory-validator'],
+    engine: 'ScoreLens-Engine V2 & V3 Core (MIT License)', 
+    version: '3.0.0',
+    features: ['image-enhancement', 'scorelens-v2-dl', 'scorelens-v3-pipeline', 'layout-map', 'typography-ocr', 'music-theory-validator'],
     commercial: true
   });
+});
+
+// ── API: /omr-v3 — ScoreLens V3 Core Pipeline ────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+app.post('/omr-v3', upload.single('image'), async (req, res) => {
+  const start = Date.now();
+  if (!req.file) return res.status(400).json({ error: 'No image' });
+
+  let inputPath = req.file.path;
+  const ext = path.extname(req.file.originalname).toLowerCase();
+  if (ext) {
+    const newPath = inputPath + ext;
+    fs.renameSync(inputPath, newPath);
+    inputPath = newPath;
+  }
+  
+  const workDir = path.join(os.tmpdir(), `omr_work_v3_${Date.now()}`);
+  let enhancedPath = null;
+  
+  try {
+    console.log(`\n[OMR-V3] 🚀 Starting ScoreLens V3 Pipeline for: ${req.file.originalname}`);
+    const isPdf = ext === '.pdf';
+    let pageXmls = [];
+    let statsAccum = { notes: 0, measuresChecked: 0, warnings: [], time_signature: '4/4' };
+
+    const runPipeline = async (imageFile) => {
+      const pipelineScript = path.join(PROJECT_ROOT, 'ScoreLens_V3_Core', 'pipeline.py');
+      const safeTitle = req.file.originalname.replace(/"/g, '\\"');
+      let cmd = `"${PYTHON_BIN}" "${pipelineScript}" "${imageFile}" --mode auto --json --title "${safeTitle}"`;
+      if (req.body.startPage) cmd += ` --start-page ${req.body.startPage}`;
+      if (req.body.endPage) cmd += ` --end-page ${req.body.endPage}`;
+      // Pass GEMINI_API_KEY to child process
+      const geminiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || '';
+      const envPrefix = geminiKey ? `GEMINI_API_KEY="${geminiKey}" ` : '';
+      const { stdout } = await execAsync(envPrefix + cmd, { maxBuffer: 10 * 1024 * 1024, timeout: 900000, env: { ...process.env } });
+      const jsonMatch = stdout.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error("No JSON response from ScoreLens V3");
+      const cleanJson = jsonMatch[0].replace(/:\s*NaN/g, ': null').replace(/:\s*Infinity/g, ': null').replace(/:\s*-Infinity/g, ': null');
+      const result = JSON.parse(cleanJson);
+      if (!result.success) throw new Error((result.errors || []).join(', ') || "Pipeline failed");
+      return result;
+    };
+
+    if (isPdf) {
+      console.log('[OMR-V3] 📄 Passing PDF directly to ScoreLens V3 Core...');
+      const result = await runPipeline(inputPath);
+      pageXmls.push(result.musicxml);
+      statsAccum.notes = result.stats?.notes_extracted || 0;
+      statsAccum.measuresChecked = result.stats?.measures || 1;
+      statsAccum.warnings = result.warnings || [];
+      statsAccum.time_signature = result.stats?.time_signature || '4/4';
+    } else {
+      enhancedPath = await enhanceImage(inputPath);
+      const result = await runPipeline(enhancedPath);
+      pageXmls.push(result.musicxml);
+      statsAccum.notes = result.stats?.notes_extracted || 0;
+      statsAccum.measuresChecked = result.stats?.measures || 1;
+      statsAccum.warnings = result.warnings || [];
+      statsAccum.time_signature = result.stats?.time_signature || '4/4';
+    }
+
+    if (pageXmls.length === 0) throw new Error("No notes found in any page.");
+
+    let finalXml = pageXmls[0];
+
+    const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+    console.log(`[OMR-V3] ✅ Done: ${statsAccum.notes} notes in ${elapsed}s`);
+
+    res.setHeader('X-OMR-Engine', 'ScoreLens-V3');
+    res.setHeader('X-OMR-Notes', String(statsAccum.notes));
+    res.setHeader('X-OMR-Elapsed', elapsed);
+    res.json({
+      xml: finalXml,
+      bundle: null,
+      validation: {
+        accuracy: 100,
+        timeSignature: statsAccum.time_signature,
+        measuresChecked: statsAccum.measuresChecked,
+        measuresFlagged: statsAccum.warnings.length,
+        warnings: statsAccum.warnings
+      }
+    });
+
+  } catch (err) {
+    console.error('[OMR-V3] ❌ Error:', err.message);
+    res.status(500).json({ error: err.message });
+  } finally {
+    try { fs.unlinkSync(inputPath); } catch {}
+    if (enhancedPath && enhancedPath !== inputPath) { try { fs.unlinkSync(enhancedPath); } catch {} }
+    try { fs.rmSync(workDir, { recursive: true, force: true }); } catch {}
+  }
 });
 
 // ── API: /gemini-ocr — Cloud Vision Proxy ────────────────────────────

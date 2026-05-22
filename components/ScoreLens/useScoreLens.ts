@@ -70,40 +70,40 @@ export const useScoreLens = () => {
         return { song: metadata, xmlData, originalImageUrl: undefined };
       }
 
-      // ══ Step 1: Gemini Vision (Primary — Dual-Pass) ══
+      // ══ Step 1: PDF → ScoreLens V3 (Primary — Layout-accurate) ══
       let xmlContent = '';
+      let layoutBundleResult: any = null;
 
       if (isPdf) {
-        setProgress('📄 กำลังให้ Gemini AI อ่านโน้ตจาก PDF... (รอสักครู่)');
-        console.log('[ScoreLens] PDF → Gemini Vision...');
+        // ── Primary: ScoreLens V3 pipeline (injects <print new-system/new-page> for exact layout matching) ──
+        setProgress('🔬 ScoreLens V3 กำลังอ่าน PDF และวิเคราะห์โครงสร้างโน้ต...');
+        console.log('[ScoreLens] PDF → ScoreLens V3 pipeline (primary)...');
         try {
-          const result = await recognizePDF(file);
-          xmlContent = result.xml;
-          console.log('[ScoreLens] ✅ Gemini PDF:', result.message);
-          setProgress(`✨ Gemini อ่าน PDF สำเร็จ — ${result.message}`);
-        } catch (geminiErr: any) {
-          console.warn('[ScoreLens] ⚠️ Gemini PDF failed:', geminiErr.message);
-          // ── Fallback 1: Gemini Melody-Only (more reliable for complex multi-part scores) ──
+          const v3Result = await omrWithOemer(file);
+          xmlContent = v3Result.xml;
+          layoutBundleResult = v3Result.bundle;
+          console.log('[ScoreLens] ✅ ScoreLens V3 PDF:', v3Result.message);
+          setProgress(`✨ ScoreLens V3 อ่าน PDF สำเร็จ — ${v3Result.message}`);
+        } catch (v3Err: any) {
+          console.warn('[ScoreLens] ⚠️ ScoreLens V3 failed, falling back to Gemini:', v3Err.message);
+          // ── Fallback 1: Gemini Vision ──
+          setProgress('📄 กำลังให้ Gemini AI อ่านโน้ตจาก PDF... (รอสักครู่)');
           try {
-            setProgress('🎵 Gemini อ่านทำนองหลัก...');
-            const melodyResult = await recognizeMelodyOnly(file);
-            xmlContent = melodyResult.xml;
-            console.log('[ScoreLens] ✅ Melody-Only:', melodyResult.message);
-            setProgress(`✨ ${melodyResult.message}`);
-          } catch (melodyErr: any) {
-            console.warn('[ScoreLens] Melody-Only failed:', melodyErr.message);
-            // ── Fallback 2: Oemer (last resort) + verification pass ──
-            setProgress('⚠️ กำลังลอง Oemer AI...');
-            const oemerResult = await omrWithOemer(file);
-            xmlContent = oemerResult.xml;
+            const result = await recognizePDF(file);
+            xmlContent = result.xml;
+            console.log('[ScoreLens] ✅ Gemini PDF:', result.message);
+            setProgress(`✨ Gemini อ่าน PDF สำเร็จ — ${result.message}`);
+          } catch (geminiErr: any) {
+            console.warn('[ScoreLens] ⚠️ Gemini PDF failed:', geminiErr.message);
+            // ── Fallback 2: Gemini Melody-Only ──
             try {
-              setProgress('🔍 ตรวจสอบโน้ตด้วย Gemini AI...');
-              const verified = await recognizeVerificationPass(file, xmlContent);
-              xmlContent = verified.xml;
-              setProgress(`✨ ตรวจสอบแล้ว — ${verified.message}`);
-            } catch (verifyErr: any) {
-              console.warn('[ScoreLens] Verification failed, using Oemer XML:', verifyErr.message);
-              setProgress(`🧠 Oemer: ${oemerResult.message} (ไม่สามารถตรวจสอบ)`);
+              setProgress('🎵 Gemini อ่านทำนองหลัก...');
+              const melodyResult = await recognizeMelodyOnly(file);
+              xmlContent = melodyResult.xml;
+              console.log('[ScoreLens] ✅ Melody-Only:', melodyResult.message);
+              setProgress(`✨ ${melodyResult.message}`);
+            } catch (melodyErr: any) {
+              throw new Error(`ไม่สามารถอ่าน PDF ได้จากทุก engine:\n• ScoreLens V3: ${v3Err.message}\n• Gemini: ${geminiErr.message}\n• Melody: ${melodyErr.message}`);
             }
           }
         }

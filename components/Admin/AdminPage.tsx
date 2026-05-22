@@ -177,7 +177,7 @@ const AdminPage: React.FC<AdminPageProps> = ({ onMusicXmlUpload, onRestoreMaster
 
           <div className="flex flex-col items-center">
             <div className="w-full max-w-[320px] aspect-square p-2">
-                <input type="file" ref={smartInputRef} className="hidden" multiple accept=".xml,.mxl,.musicxml,.pdf,.png,.jpg,.jpeg,.mid,.midi" onChange={handleSmartImport} />
+                <input type="file" ref={smartInputRef} className="hidden" multiple accept=".xml,.mxl,.musicxml,.pdf,.png,.jpg,.jpeg,.webp,.heic,.heif,.mid,.midi" onChange={handleSmartImport} />
                 <button 
                     onClick={() => !isImporting && smartInputRef.current?.click()}
                     className={`btn-import-3d w-full h-full ${isImporting ? 'pointer-events-none opacity-80' : ''}`}

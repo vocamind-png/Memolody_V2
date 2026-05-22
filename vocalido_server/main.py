@@ -22,8 +22,8 @@ try:
 except ImportError:
     print("[Warning] PyMuPDF (fitz) not found. PDF to XML conversion will be disabled.")
     FITZ_OK = False
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Body
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi import FastAPI, APIRouter, UploadFile, File, Form, HTTPException, Request, Body
+from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -57,18 +57,19 @@ app = FastAPI(title="Vocalido SVS Engine", version="5.1.0")
 os.makedirs("renders", exist_ok=True)
 os.makedirs("voicebanks", exist_ok=True)
 app.mount("/audio", StaticFiles(directory="renders"), name="audio")
+# Mount renders also at /vocalido/audio (frontend uses this prefix)
+app.mount("/vocalido/audio", StaticFiles(directory="renders"), name="vocalido_audio")
+# Mount renders also at /studio/audio (used when /studio proxy is active)
+app.mount("/studio/audio", StaticFiles(directory="renders"), name="studio_audio")
 # Use absolute path for static assets relative to this file
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
+# Mount built frontend assets at root paths so index.html references work
+app.mount("/assets", StaticFiles(directory=os.path.join(static_dir, "assets")), name="assets")
+app.mount("/images", StaticFiles(directory=os.path.join(static_dir, "images")), name="images")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 @app.exception_handler(Exception)
-
-@app.get("/", response_class=HTMLResponse)
-async def read_root():
-    index_path = os.path.join(os.path.dirname(__file__), "static", "index.html")
-    with open(index_path, "r", encoding="utf-8") as f:
-        return HTMLResponse(content=f.read())
 async def global_exception_handler(request, exc):
     import traceback
     error_msg = traceback.format_exc()
@@ -78,12 +79,60 @@ async def global_exception_handler(request, exc):
         content={"error": "Internal Server Error", "detail": str(exc), "traceback": error_msg},
     )
 
+@app.get("/", response_class=HTMLResponse)
+async def read_root():
+    index_path = os.path.join(os.path.dirname(__file__), "static", "index.html")
+    with open(index_path, "r", encoding="utf-8") as f:
+        return HTMLResponse(content=f.read())
+
+@app.get("/voice-studio.html", response_class=HTMLResponse)
+async def read_voice_studio():
+    p = os.path.join(os.path.dirname(__file__), "static", "voice-studio.html")
+    with open(p, "r", encoding="utf-8") as f:
+        return HTMLResponse(content=f.read())
+
+@app.get("/{filename}.html", response_class=HTMLResponse)
+async def read_html(filename: str):
+    """Serve any .html file from static/ directory."""
+    p = os.path.join(os.path.dirname(__file__), "static", f"{filename}.html")
+    if os.path.isfile(p):
+        with open(p, "r", encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
+    return HTMLResponse(content="Not Found", status_code=404)
+
+@app.get("/{filename}.js")
+async def read_js(filename: str):
+    """Serve root-level .js files (registerSW.js, sw.js, workbox) from static/."""
+    p = os.path.join(os.path.dirname(__file__), "static", f"{filename}.js")
+    if os.path.isfile(p):
+        with open(p, "rb") as f:
+            from fastapi.responses import Response
+            return Response(content=f.read(), media_type="application/javascript")
+    return JSONResponse({"detail": "Not Found"}, status_code=404)
+
+@app.get("/manifest.webmanifest")
+async def read_manifest():
+    p = os.path.join(os.path.dirname(__file__), "static", "manifest.webmanifest")
+    if os.path.isfile(p):
+        with open(p, "r", encoding="utf-8") as f:
+            from fastapi.responses import Response
+            return Response(content=f.read(), media_type="application/manifest+json")
+    return JSONResponse({"detail": "Not Found"}, status_code=404)
+
+@app.get("/song_{filename}")
+async def serve_root_song(filename: str):
+    path = os.path.join("renders", f"song_{filename}")
+    if os.path.isfile(path):
+        return FileResponse(path)
+    return JSONResponse({"detail": "Not Found"}, status_code=404)
+
+
 # ── Training State (in-memory, updated by Colab via /training/update) ─────────
 _training_state = {
-    "projectPct": 25,       # Overall project % (0–100)
-    "trainingPct": 0,       # Current training pipeline % (0–100)
-    "status": "preparing",  # preparing | training | exporting | done | error
-    "engine": "sampler",    # sampler | diffsinger
+    "projectPct": 100,      # Overall project % (0–100)
+    "trainingPct": 100,     # Current training pipeline % (0–100)
+    "status": "done",       # preparing | training | exporting | done | error
+    "engine": "diffsinger",    # sampler | diffsinger
     "gpu_active": False,
     "est_cost_usd": 0.0,
     "last_heartbeat": None, # timestamp of last Colab ping
@@ -94,7 +143,7 @@ _training_state = {
 # ── Pre-load voice source ─────────────────────────────────────────────────────
 def _extract_base_sample(y, sr, duration=2.0):
     """Find a stable, voiced segment to use as pitch-shift source"""
-    analysis_len = min(len(y), sr * 300)
+    analysis_len = min(len(y), sr * 5)
     f0, voiced, _ = librosa.pyin(
         y[:analysis_len],
         fmin=librosa.note_to_hz('C2'),
@@ -217,6 +266,43 @@ def synthesize_sample_based(notes, bpm=120.0):
         output = (output / peak * 0.85).astype(np.float32)
     
     return output
+
+
+# ── Remote Control Endpoints ──────────────────────────────────────────────────
+class RemoteCommandRequest(BaseModel):
+    passcode: str
+    command: str
+    params: Optional[dict] = None
+
+# Global memory queue for remote control commands
+remote_commands_list = []
+
+@app.post("/api/remote/command")
+async def post_remote_command(payload: RemoteCommandRequest):
+    cmd_id = str(uuid.uuid4())
+    cmd_data = {
+        "id": cmd_id,
+        "passcode": payload.passcode,
+        "command": payload.command,
+        "params": payload.params or {},
+        "timestamp": time.time()
+    }
+    remote_commands_list.append(cmd_data)
+    print(f"[RemoteControl] Queued remote command: {payload.command} (ID: {cmd_id})")
+    return {"status": "ok", "message": "Command queued", "id": cmd_id}
+
+@app.get("/api/remote/commands")
+async def get_remote_commands():
+    return {"commands": remote_commands_list}
+
+@app.post("/api/remote/clear")
+async def clear_remote_commands(command_ids: List[str] = Body(..., embed=True)):
+    global remote_commands_list
+    original_len = len(remote_commands_list)
+    remote_commands_list = [c for c in remote_commands_list if c["id"] not in command_ids]
+    cleared_count = original_len - len(remote_commands_list)
+    print(f"[RemoteControl] Cleared {cleared_count} commands")
+    return {"status": "ok", "cleared": cleared_count}
 
 
 # ── Synthesis Endpoint ────────────────────────────────────────────────────────
@@ -372,7 +458,119 @@ async def set_engine(body: dict):
 import sys as _sys
 _sys.path.insert(0, os.path.dirname(__file__))
 
+# English: vocalido_gtsinger_en 100k — trained overnight May 18-19 on GTSinger dataset
+# Full English phoneme coverage from professional singing corpus
+DS_CKPT_PATH = os.path.join(os.path.dirname(__file__), 'training', 'DiffSinger', 'checkpoints', 'vocalido_gtsinger_en', 'model_ckpt_steps_160000.ckpt')
+DS_BASE_CFG_PATH = os.path.join(os.path.dirname(__file__), 'training', 'DiffSinger', 'checkpoints', 'vocalido_gtsinger_en', 'config.yaml')
+
+# Jianpu (Chinese) 160k Checkpoint Path
+DS_JIANPU_CKPT_PATH = os.path.join(os.path.dirname(__file__), 'training', 'DiffSinger', 'checkpoints', 'vocalido_jianpu', 'model_ckpt_steps_160000.ckpt')
+DS_JIANPU_CFG_PATH  = os.path.join(os.path.dirname(__file__), 'training', 'DiffSinger', 'checkpoints', 'vocalido_jianpu', 'config.yaml')
+
 CHECKPOINT_PATH = os.path.join(os.path.dirname(__file__), 'voicebanks', 'vocalido_master', 'acoustic_final.ckpt')
+
+# Initialize English DiffSinger Engines dynamically
+_ds_engines = {}
+DS_ENGINE_OK = False
+_ds_engine = None
+
+english_voicebanks_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'english_voicebanks')
+
+# Load the default one first (if it exists)
+print(f"[DEBUG] Checking for DiffSinger (Default English) model at: {DS_CKPT_PATH}")
+if os.path.exists(DS_CKPT_PATH):
+    try:
+        from ds_engine import DiffSingerEngine
+        _ds_engine = DiffSingerEngine(DS_CKPT_PATH)
+        DS_ENGINE_OK = _ds_engine.is_ready
+        if DS_ENGINE_OK:
+            _ds_engines['default'] = _ds_engine
+            print(f"✅ DiffSinger Engine (Default English) loaded successfully!")
+    except Exception as e:
+        import traceback
+        print(f"❌ [CRITICAL] Failed to load Default DiffSinger Engine: {e}")
+        traceback.print_exc()
+else:
+    print(f"⚠️  DiffSinger (English) default model NOT found at {DS_CKPT_PATH}")
+
+# Load downloaded voicebanks
+# Load downloaded voicebanks
+def find_diffsinger_model(directory):
+    for root, dirs, files in os.walk(directory):
+        ckpt_path = None
+        for f in files:
+            if f.endswith('.ckpt') or f == 'acoustic.onnx':
+                ckpt_path = os.path.join(root, f)
+                break
+        if ckpt_path:
+            if ckpt_path.endswith('.onnx'):
+                return ckpt_path, None
+            config_path = os.path.join(root, 'config.yaml')
+            if not os.path.exists(config_path):
+                config_path = os.path.join(root, 'dsdict.yaml')
+            if os.path.exists(config_path):
+                return ckpt_path, config_path
+    return None, None
+
+# Store lazy voice paths for on-demand loading
+_lazy_voice_paths = {}  # voice_name -> (ckpt_path, config_path)
+
+if os.path.exists(english_voicebanks_dir):
+    for entry in os.listdir(english_voicebanks_dir):
+        voice_path = os.path.join(english_voicebanks_dir, entry)
+        if os.path.isdir(voice_path):
+            voice_name = entry
+            ckpt, cfg = find_diffsinger_model(voice_path)
+            if ckpt:
+                print(f"[DEBUG] 📂 Found {voice_name} model at: {ckpt}")
+                if ckpt.endswith('.onnx'):
+                    # Load only the first ONNX voice eagerly (Lotte V), rest are lazy
+                    if not any(isinstance(e, __import__('ds_onnx_engine', fromlist=['DiffSingerONNXEngine']).DiffSingerONNXEngine) for e in _ds_engines.values()):
+                        try:
+                            from ds_onnx_engine import DiffSingerONNXEngine
+                            engine = DiffSingerONNXEngine(os.path.dirname(ckpt), language='en')
+                            if engine.is_ready:
+                                _ds_engines[voice_name.lower()] = engine
+                                print(f"✅ DiffSinger Engine ({voice_name}) loaded successfully!")
+                                DS_ENGINE_OK = True
+                        except Exception as e:
+                            print(f"❌ Failed to load {voice_name}: {e}")
+                    else:
+                        _lazy_voice_paths[voice_name.lower()] = (ckpt, cfg)
+                        print(f"📋 Registered lazy voice: {voice_name} (will load on first use)")
+                else:
+                    try:
+                        from ds_engine import DiffSingerEngine
+                        engine = DiffSingerEngine(ckpt, config_path=cfg, language='en')
+                        if engine.is_ready:
+                            _ds_engines[voice_name.lower()] = engine
+                            print(f"✅ DiffSinger Engine ({voice_name}) loaded successfully!")
+                            DS_ENGINE_OK = True
+                            if _ds_engine is None:
+                                _ds_engine = engine
+                    except Exception as e:
+                        print(f"❌ Failed to load {voice_name}: {e}")
+
+# Initialize Jianpu (Chinese) DiffSinger Engine
+DS_JIANPU_OK = False
+_ds_jianpu_engine = None
+print(f"[DEBUG] Checking for DiffSinger (Jianpu/Chinese) model at: {DS_JIANPU_CKPT_PATH}")
+if os.path.exists(DS_JIANPU_CKPT_PATH):
+    print("[DEBUG] 📂 Jianpu model found. Attempting to load...")
+    try:
+        from ds_engine import DiffSingerEngine
+        _ds_jianpu_engine = DiffSingerEngine(DS_JIANPU_CKPT_PATH, config_path=DS_JIANPU_CFG_PATH, language='zh')
+        DS_JIANPU_OK = _ds_jianpu_engine.is_ready
+        if DS_JIANPU_OK:
+            print(f"✅ DiffSinger Jianpu (Chinese 160k) loaded successfully!")
+        else:
+            print("⚠️  Jianpu Engine: Instance created but is_ready is False.")
+    except Exception as e:
+        import traceback
+        print(f"❌ [CRITICAL] Failed to load Jianpu Engine: {e}")
+        traceback.print_exc()
+else:
+    print(f"⚠️  DiffSinger (Jianpu) model NOT found at {DS_JIANPU_CKPT_PATH}")
 
 try:
     from ai_engine import VocalidoAIEngine
@@ -380,16 +578,12 @@ try:
     CP_DIR = os.path.dirname(os.path.dirname(CHECKPOINT_PATH))
     MD_NAME = os.path.basename(os.path.dirname(CHECKPOINT_PATH))
     _ai_engine = VocalidoAIEngine(CP_DIR, MD_NAME, VOICE_SOURCE_PATH)
-    AI_OK = _ai_engine.is_ready
-    if AI_OK:
-        print("✅ AI Voice Engine loaded (trained model)")
-    else:
-        print("⚠️  AI Engine: model not ready")
-except Exception as _e:
-    import traceback; traceback.print_exc()
     AI_OK = False
     _ai_engine = None
-    print(f"⚠️  AI Engine failed: {_e}")
+    print(f"⚠️  AI Engine disabled temporarily to avoid untrained model Tap noise.")
+except Exception as _e:
+    AI_OK = False
+    _ai_engine = None
 
 # Also load voice_studio as fallback
 try:
@@ -410,10 +604,23 @@ except Exception as _e:
     LYRICS_OK = False
     print(f"⚠️  Lyrics Engine: {_e}")
 
+class ClientLogItem(BaseModel):
+    type: str
+    message: str
+
+class ClientLogReq(BaseModel):
+    type: str = ""
+    message: str = ""
+    logs: list[ClientLogItem] = []
+
 class StudioPreviewReq(BaseModel):
     phrase: str = ""
     notes: list = []
     params: dict = {}
+    song_id: str = ""   # ← for permanent per-song save
+    bpm_pct: int = 100  # ← e.g. 100, 75, 50
+    song_key: str = "C" # ← e.g. "C", "G", "Bb" — included in filename/label
+    lyric_mode: str = "default"  # ← e.g. "Jianpu", "Ju Solfege Movable Doh"
 
 class StudioNoteReq(BaseModel):
     midi: int = 60
@@ -442,6 +649,49 @@ def parse_phrase(phrase):
                 notes.append({'midi':(int(m.group(3))+1)*12+n,'duration':0.75})
     return notes
 
+def collapse_to_monophonic(notes: list) -> list:
+    if not notes:
+        return []
+    
+    # Sort notes by startTime (ascending), then by pitch/midi (descending)
+    def get_pitch(n):
+        return float(n.get("midi") or n.get("pitch") or 60)
+    
+    def get_start(n):
+        return float(n.get("startTime", 0.0))
+        
+    sorted_notes = sorted(notes, key=lambda x: (get_start(x), -get_pitch(x)))
+    
+    monophonic_notes = []
+    
+    for n in sorted_notes:
+        start = get_start(n)
+        pitch = get_pitch(n)
+        dur = float(n.get("duration", 0.5))
+        
+        # If there are notes starting at the exact same time (within a very small epsilon, e.g. 0.005 beats),
+        # we only keep the first one (which has the highest pitch).
+        if monophonic_notes:
+            last_n = monophonic_notes[-1]
+            last_start = get_start(last_n)
+            if abs(start - last_start) < 0.005:
+                continue
+                
+            # If this note starts after the last note's start time, but BEFORE the last note ends:
+            last_end = last_start + float(last_n.get("duration", 0.5))
+            if start < last_end - 0.005:
+                # Overlap! We truncate the last note's duration so it ends exactly where this note starts.
+                new_dur = start - last_start
+                last_n["duration"] = max(0.01, new_dur)
+        
+        n_copy = dict(n)
+        n_copy["startTime"] = start
+        n_copy["duration"] = dur
+        n_copy["midi"] = pitch
+        monophonic_notes.append(n_copy)
+        
+    return monophonic_notes
+
 @app.get("/studio/library")
 def studio_library():
     info = {
@@ -459,6 +709,25 @@ def studio_library():
             info["range_max"] = max(lib.keys())
     return info
 
+@app.post("/studio/api/client-log")
+def studio_client_log(req: ClientLogReq):
+    log_lines = []
+    if req.logs:
+        for log in req.logs:
+            log_lines.append(f"[{log.type.upper()}] {log.message}\n")
+    elif req.type and req.message:
+        log_lines.append(f"[{req.type.upper()}] {req.message}\n")
+        
+    if not log_lines:
+        return {"status": "ok"}
+        
+    log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "client_logs.log")
+    with open(log_path, "a", encoding="utf-8") as f:
+        for log_line in log_lines:
+            print(f"🖥️ [CLIENT] {log_line.strip()}")
+            f.write(log_line)
+    return {"status": "ok"}
+
 @app.post("/studio/preview")
 def studio_preview(req: StudioPreviewReq):
     notes = []
@@ -475,7 +744,56 @@ def studio_preview(req: StudioPreviewReq):
     
     if not notes:
         return JSONResponse({"error": "No valid notes"}, status_code=400)
+
+    # Apply monophonic collapsing if requested
+    collapse_chords = req.params.get('collapse_chords', True)
+    if isinstance(collapse_chords, str):
+        collapse_chords = collapse_chords.lower() == 'true'
     
+    if collapse_chords:
+        notes = collapse_to_monophonic(notes)
+
+    # ── SERVER-SIDE CACHE CHECK ────────────────────────────────────────────────
+    # If a rendered file already exists on disk for this exact combination,
+    # return it immediately without spending GPU time on re-rendering.
+    import re as _re_cache
+    if req.song_id:
+        _safe_id   = _re_cache.sub(r'[^a-zA-Z0-9_-]', '_', req.song_id)[:40]
+        _safe_key  = _re_cache.sub(r'[^a-zA-Z0-9]', '', req.song_key or 'C')[:4]
+        _safe_lm   = _re_cache.sub(r'[^a-zA-Z0-9]', '', req.lyric_mode or 'default')[:30]
+        _raw_vc    = req.params.get('voice', 'default') or 'default'
+        if not collapse_chords:
+            _raw_vc = f"{_raw_vc}poly"
+        _safe_vc   = _re_cache.sub(r'[^a-zA-Z0-9]', '', _raw_vc)[:20]
+        _cached_name = f"song_{_safe_id}_{_safe_key}_{req.bpm_pct}_{_safe_lm}_{_safe_vc}.mp3"
+        _cached_path = os.path.join("renders", _cached_name)
+        if os.path.isfile(_cached_path) and os.path.getsize(_cached_path) > 1000:
+            print(f"[Cache] ✅ Found existing render on disk: {_cached_name} — skipping GPU synthesis")
+            _cached_url = f"/vocalido/audio/{_cached_name}"
+            # Also check for existing stems
+            _cached_stem_urls = []
+            for _si in range(10):  # max 10 stems
+                _stem_name = _cached_name.replace('.mp3', f'_stem_{_si}.mp3')
+                if os.path.isfile(os.path.join("renders", _stem_name)):
+                    _cached_stem_urls.append(f"/vocalido/audio/{_stem_name}")
+                else:
+                    break
+            return {
+                "audio_b64": None,
+                "mime_type": "audio/mpeg",
+                "stems_b64": [],
+                "saved_stem_urls": _cached_stem_urls,
+                "duration": 0,
+                "notes": len(notes),
+                "engine": "cached",
+                "saved_url": _cached_url,
+                "song_id": req.song_id,
+                "bpm_pct": req.bpm_pct,
+                "song_key": req.song_key,
+                "label": f"{req.song_key} / {req.bpm_pct}% / {req.params.get('singer', 'Auto').upper()}",
+                "cached": True,
+            }
+
     # Check if lyrics are present
     has_lyrics = any(n.get('lyric') and str(n.get('lyric')).strip() not in ('-', '~', '_', 'rest') for n in notes)
     
@@ -486,74 +804,374 @@ def studio_preview(req: StudioPreviewReq):
     
     audio = None
     engine_name = "unknown"
+    requested_voice = req.params.get('voice', 'default') if req.params else 'default'
+    import re as _re_main
+    is_jianpu_mode = (requested_voice == 'jianpu') or any(
+        isinstance(n.get('lyric'), str) and _re_main.match(r"^[#b♯♭]?[1-7]$", n.get('lyric').strip())
+        for n in notes
+    )
+    stems_audio = []
 
-    # 1. Try Voice Studio (Sampler) - Most reliable human sound
-    if STUDIO_OK:
-        print(f"[Studio] 🎤 Sampler Synthesis: {len(notes)} notes...")
-        lib = get_library()
-        if lib:
+    # ── STRICT MODE ISOLATION ──────────────────────────────────────────────────
+    # Jianpu (Chinese) voice is EXCLUSIVELY for Jianpu mode.
+    # English engines must NEVER be used in Jianpu mode, and vice versa.
+
+    if is_jianpu_mode:
+        # ── JIANPU MODE: Chinese engine only, no English fallback ─────────────
+        if DS_JIANPU_OK and _ds_jianpu_engine:
+            print(f"[Jianpu] 🎤 Chinese Neural Synthesis (160k): {len(notes)} notes...")
             try:
-                audio = studio_synthesize_phrase(notes, lib, req.params)
-                engine_name = "studio_sampler"
+                return_stems = str(req.params.get("return_stems", "false")).lower() == "true"
+                res = _ds_jianpu_engine.synthesize_phrase(notes, req.params)
+                if return_stems and isinstance(res, tuple):
+                    audio, stems_audio = res
+                else:
+                    audio = res
+                if audio is not None:
+                    engine_name = "diffsinger_jianpu_160k"
             except Exception as e:
-                print(f"[Studio] ❌ Synthesis Failed: {e}")
+                print(f"[Jianpu] ❌ Error: {e}")
                 audio = None
-    
-    # 2. Try Neural AI Engine - If Sampler not ready or failed
-    if audio is None and AI_OK and _ai_engine and _ai_engine.model:
-        print(f"[AI Engine] 🎤 Neural Synthesis: {len(notes)} notes...")
-        try:
-            audio = _ai_engine.synthesize_phrase(notes, req.params)
-            # Integrity check: is it silence or noise?
-            if audio is not None and np.max(np.abs(audio)) < 0.01:
-                print("[AI Engine] ⚠️ Output too quiet. Falling back.")
+        if audio is None:
+            # Jianpu engine failed or not loaded — return error, do NOT fall back to English
+            return JSONResponse(
+                status_code=503,
+                content={"error": "Chinese (Jianpu) vocal engine is not available. Please check the Jianpu model checkpoint."
+                         " English engines will not be used in Jianpu mode."}
+            )
+    else:
+        # ── ENGLISH / SOLFÈGE MODE: English engine only, Jianpu engine BLOCKED ─
+        target_voice = requested_voice.lower()
+        print(f"[DEBUG] Synthesis request: DS_ENGINE_OK={DS_ENGINE_OK}, voice={requested_voice}")
+        
+        _target_engine = _ds_engine
+        if target_voice in _ds_engines:
+            _target_engine = _ds_engines[target_voice]
+        elif target_voice in _lazy_voice_paths:
+            # Lazy load this voice on first use
+            ckpt, cfg = _lazy_voice_paths[target_voice]
+            print(f"[LazyLoad] 🔄 Loading voice '{target_voice}' on demand...")
+            try:
+                from ds_onnx_engine import DiffSingerONNXEngine
+                engine = DiffSingerONNXEngine(os.path.dirname(ckpt), language='en')
+                if engine.is_ready:
+                    _ds_engines[target_voice] = engine
+                    _target_engine = engine
+                    del _lazy_voice_paths[target_voice]
+                    print(f"[LazyLoad] ✅ Voice '{target_voice}' loaded successfully!")
+            except Exception as e:
+                print(f"[LazyLoad] ❌ Failed to load '{target_voice}': {e}")
+        elif _ds_engines:
+            _target_engine = list(_ds_engines.values())[-1] # Fallback
+            
+        if audio is None and _target_engine and _target_engine.is_ready:
+            print(f"[DiffSinger] 🎤 English Neural Synthesis ({target_voice}): {len(notes)} notes...")
+            try:
+                return_stems = str(req.params.get("return_stems", "false")).lower() == "true"
+                res = _target_engine.synthesize_phrase(notes, req.params)
+                if return_stems and isinstance(res, tuple):
+                    audio, stems_audio = res
+                else:
+                    audio = res
+                
+                if audio is not None:
+                    engine_name = f"diffsinger_{target_voice}"
+            except Exception as e:
+                print(f"[DiffSinger] ❌ Error: {e}")
                 audio = None
-            else:
-                engine_name = "ai_neural"
-        except Exception as e:
-            print(f"[AI Engine] ❌ Synthesis Failed: {e}")
-            audio = None
 
-    # 3. Try Lyrics TTS Engine (only if specified or as fallback for lyrics)
-    if audio is None and LYRICS_OK and has_lyrics:
-        print(f"[Lyrics SVS] 🎤 TTS Synthesis: {len(notes)} notes...")
-        try:
+        # 1. Try Voice Studio (Sampler) — English only fallback
+        if audio is None and STUDIO_OK:
+            print(f"[Studio] 🎤 Sampler Synthesis: {len(notes)} notes...")
+            lib = get_library()
+            if lib:
+                try:
+                    audio = studio_synthesize_phrase(notes, lib, req.params)
+                    engine_name = "studio_sampler"
+                except Exception as e:
+                    print(f"[Studio] ❌ Synthesis Failed: {e}")
+                    audio = None
+        
+        # 2. Try Neural AI Engine — English only fallback
+        if audio is None and AI_OK and _ai_engine and _ai_engine.model:
+            print(f"[AI Engine] 🎤 Neural Synthesis: {len(notes)} notes...")
+            try:
+                audio = _ai_engine.synthesize_phrase(notes, req.params)
+                # Integrity check: is it silence or noise?
+                if audio is not None and np.max(np.abs(audio)) < 0.01:
+                    print("[AI Engine] ⚠️ Output too quiet. Falling back.")
+                    audio = None
+                else:
+                    engine_name = "ai_neural"
+            except Exception as e:
+                print(f"[AI Engine] ❌ Synthesis Failed: {e}")
+                audio = None
+
+        # 3. Try Lyrics TTS Engine (English only — never in Jianpu mode)
+        if audio is None and LYRICS_OK and has_lyrics:
+            print(f"[Lyrics SVS] 🎤 TTS Synthesis: {len(notes)} notes...")
+            try:
+                audio = synthesize_lyrics_phrase(notes, req.params)
+                engine_name = "lyrics_tts"
+            except Exception as e:
+                print(f"[Lyrics SVS] ❌ Error: {e}")
+                audio = None
+
+        # 4. Final Fallback (English only — never in Jianpu mode)
+        if audio is None or np.max(np.abs(audio)) < 0.005:
+            print(f"[Fallback] 🎤 Using basic pitch-shift synthesis.")
             v_notes = [VocalNote(
                 pitch=int(n.get('pitch', 60) or 60),
                 duration=float(n.get('duration', 0.5) or 0.5),
                 startTime=float(n.get('startTime',0) or 0),
                 lyric=str(n.get('lyric', 'La') or 'La')
             ) for n in notes]
-            audio = synthesize_lyrics_phrase(v_notes, req.params)
-            engine_name = "lyrics_tts"
-        except Exception as e:
-            print(f"[Lyrics SVS] ❌ Error: {e}")
-            audio = None
+            audio = synthesize_sample_based(v_notes, bpm=req.params.get('bpm', 120))
+            engine_name = "simple_fallback"
 
-    # 4. Final Fallback: Simple Sample-Based Shift
-    if audio is None or np.max(np.abs(audio)) < 0.005:
-        print(f"[Fallback] 🎤 Using basic pitch-shift synthesis.")
-        v_notes = [VocalNote(
-            pitch=int(n.get('pitch', 60) or 60),
-            duration=float(n.get('duration', 0.5) or 0.5),
-            startTime=float(n.get('startTime',0) or 0),
-            lyric=str(n.get('lyric', 'La') or 'La')
-        ) for n in notes]
-        audio = synthesize_sample_based(v_notes, bpm=req.params.get('bpm', 120))
-        engine_name = "simple_fallback"
+    # ── Persist render to disk FIRST (fast) then return URL ──────────────────
+    # Skip expensive base64 encoding — client uses saved_url for playback
+    import re as _re2
+    import time as _time
+    os.makedirs("renders", exist_ok=True)
+    if req.song_id:
+        safe_id  = _re2.sub(r'[^a-zA-Z0-9_-]', '_', req.song_id)[:40]
+        safe_key = _re2.sub(r'[^a-zA-Z0-9]', '', req.song_key or 'C')[:4]
+        safe_lyric_mode = _re2.sub(r'[^a-zA-Z0-9]', '', req.lyric_mode or 'default')[:30]
+        raw_voice = req.params.get('voice', 'default') or 'default'
+        if not collapse_chords:
+            raw_voice = f"{raw_voice}poly"
+        safe_voice = _re2.sub(r'[^a-zA-Z0-9]', '', raw_voice)[:20]
+        saved_name = f"song_{safe_id}_{safe_key}_{req.bpm_pct}_{safe_lyric_mode}_{safe_voice}.mp3"
+    else:
+        saved_name = f"render_{int(_time.time()*1000)}.mp3"
+    saved_path = os.path.join("renders", saved_name)
+    try:
+        from audio_utils import save_audio_as_mp3
+        if not save_audio_as_mp3(audio, saved_path, sr=SR):
+            saved_name = saved_name.replace('.mp3', '.wav')
+            saved_path = saved_path.replace('.mp3', '.wav')
+            import soundfile as sf
+            sf.write(saved_path, audio, SR)
+        saved_url = f"/vocalido/audio/{saved_name}"
+        print(f"[studio/preview] 💾 Saved: {saved_name}")
+    except Exception as _se:
+        print(f"[studio/preview] ⚠️ Save failed: {_se}")
+        saved_url = None
 
-    b64, mime = audio_to_base64_mp3(audio)
+    # Save stems to disk (skip base64 — client uses saved_stem_urls)
+    saved_stem_urls = []
+    if stems_audio:
+        for idx, stem in enumerate(stems_audio):
+            if stem is not None and saved_url:
+                stem_ext = ".wav" if saved_url.endswith(".wav") else ".mp3"
+                stem_name = saved_name.replace(stem_ext, f"_stem_{idx}{stem_ext}")
+                stem_path = os.path.join("renders", stem_name)
+                try:
+                    if stem_ext == ".mp3":
+                        from audio_utils import save_audio_as_mp3
+                        save_audio_as_mp3(stem, stem_path, sr=SR)
+                    else:
+                        import soundfile as sf
+                        sf.write(stem_path, stem, SR)
+                    saved_stem_urls.append(f"/vocalido/audio/{stem_name}")
+                except Exception as _stem_err:
+                    print(f"⚠️ Failed to save stem {idx}: {_stem_err}")
+
     return {
-        "audio_b64": b64, 
-        "mime_type": mime, 
-        "duration": float(len(audio)) / SR, 
-        "notes": len(notes), 
-        "engine": engine_name
+        "audio_b64": None,
+        "mime_type": "audio/mpeg",
+        "stems_b64": [],
+        "saved_stem_urls": saved_stem_urls,
+        "duration": float(len(audio)) / SR,
+        "notes": len(notes),
+        "engine": engine_name,
+        "saved_url": saved_url,
+        "song_id": req.song_id,
+        "bpm_pct": req.bpm_pct,
+        "song_key": req.song_key,
+        "label": f"{req.song_key} / {req.bpm_pct}% / {req.params.get('singer', 'Auto').upper()}",
     }
+
+def get_vocal_modes(path):
+    if not path:
+        return []
+    # If path is a file, take its directory
+    if os.path.isfile(path):
+        model_dir = os.path.dirname(path)
+    else:
+        model_dir = path
+        
+    search_dirs = [
+        os.path.join(model_dir, "embeds", "acoustic"),
+        os.path.join(model_dir, "dsmain", "embeds", "acoustic"),
+        model_dir
+    ]
+    
+    for d in search_dirs:
+        if os.path.exists(d):
+            # Find all .emb files, strip extension, capitalize them nicely
+            files = [f[:-4].title() for f in os.listdir(d) if f.endswith('.emb')]
+            if files:
+                return sorted(files)
+    return []
+
+@app.get("/studio/voices")
+def get_voices():
+    """Return a list of available AI voices."""
+    voices = []
+    
+    # 1. Default GTSinger
+    if _ds_engine and _ds_engine.is_ready:
+        voices.append({"id": "default", "name": "Native English (Default)", "type": "DiffSinger", "lang": "en", "vocal_modes": []})
+        
+    # 2. Dynamic Downloaded Voices (Lotte V, Opencpop, etc.)
+    for v_id, engine in _ds_engines.items():
+        if v_id != "default" and engine.is_ready:
+            name_label = v_id.replace("_", " ").title()
+            if "lotte" in v_id.lower() or "ai_dol" in v_id.lower():
+                name_label = f"Lotte V Model ({name_label})"
+            
+            # Find vocal modes
+            model_dir = getattr(engine, 'model_dir', None)
+            vocal_modes = get_vocal_modes(model_dir) if model_dir else []
+            if not vocal_modes:
+                vocal_modes = get_vocal_modes(os.path.join(english_voicebanks_dir, v_id))
+                
+            voices.append({"id": v_id, "name": name_label, "type": "DiffSinger", "lang": "en", "vocal_modes": vocal_modes})
+    
+    # 3. Lazy-loadable voices (not yet loaded into memory)
+    for v_id in _lazy_voice_paths:
+        name_label = v_id.replace("_", " ").title()
+        ckpt, cfg = _lazy_voice_paths[v_id]
+        vocal_modes = get_vocal_modes(os.path.dirname(ckpt))
+        voices.append({"id": v_id, "name": f"{name_label} ⏳", "type": "DiffSinger", "lang": "en", "vocal_modes": vocal_modes})
+            
+    # 4. Jianpu Chinese engine
+    if DS_JIANPU_OK and _ds_jianpu_engine:
+        voices.append({"id": "jianpu", "name": "Chinese Numeral (Jianpu 简谱)", "type": "DiffSinger", "lang": "zh", "vocal_modes": []})
+            
+    return {"ok": True, "voices": voices}
+
+@app.get("/studio/renders/{song_id}")
+def list_renders(song_id: str):
+    """List all saved renders for a given song_id."""
+    import re as _re3
+    os.makedirs("renders", exist_ok=True)
+    safe_id = _re3.sub(r'[^a-zA-Z0-9_-]', '_', song_id)[:40]
+    prefix = f"song_{safe_id}_"
+    files = [f for f in os.listdir("renders") if f.startswith(prefix) and not "_stem_" in f]
+    result = []
+    for f in sorted(files):
+        # Filename formats:
+        # New format: song_<id>_<key>_<pct>_<lyric_mode>_<voice>.mp3
+        # Old format: song_<id>_<key>_<pct>.mp3
+        # Legacy format: song_<id>_bpm<pct>.mp3
+        stem_ext = ".wav" if f.endswith(".wav") else ".mp3"
+        base_name = f.replace(stem_ext, "")
+        parts = base_name.split("_")
+        
+        voice = "default"
+        lyric_mode = "default"
+        
+        if len(parts) >= 6 and parts[-3].isdigit():
+            voice = parts[-1]
+            lyric_mode = parts[-2]
+            bpm_pct = int(parts[-3])
+            key_part = parts[-4]
+            label = f"{key_part} {bpm_pct}%"
+        else:
+            # Fallback to old formats
+            m = _re3.search(r'_([A-Za-z0-9]{1,4})_(\d+)(?:_|$)', base_name)
+            if m:
+                key_part = m.group(1)
+                bpm_pct  = int(m.group(2))
+                label    = f"{key_part} {bpm_pct}%"
+            else:
+                m2 = _re3.search(r'_bpm(\d+)', base_name)
+                bpm_pct = int(m2.group(1)) if m2 else 0
+                key_part = 'C'
+                label = f"{bpm_pct}%"
+            
+        # Find any matching stems on disk
+        stems_prefix = f"{base_name}_stem_"
+        stem_files = sorted([sf for sf in os.listdir("renders") if sf.startswith(stems_prefix)])
+        saved_stem_urls = [f"/vocalido/audio/{sf}" for sf in stem_files]
+
+        result.append({
+            "filename": f, 
+            "url": f"/vocalido/audio/{f}",
+            "bpm_pct": bpm_pct, 
+            "song_key": key_part, 
+            "lyric_mode": lyric_mode,
+            "engine_id": voice,
+            "label": label,
+            "saved_stem_urls": saved_stem_urls
+        })
+    return {"renders": result, "song_id": song_id}
+
+@app.delete("/studio/renders/{filename}")
+def delete_render(filename: str):
+    """Delete a saved render file."""
+    import re as _re
+    if not _re.match(r'^[a-zA-Z0-9_.-]+$', filename):
+        return JSONResponse({"error": "Invalid filename"}, status_code=400)
+    fpath = os.path.join("renders", filename)
+    if os.path.exists(fpath):
+        os.remove(fpath)
+        # Also remove stems
+        stem_ext = ".wav" if filename.endswith(".wav") else ".mp3"
+        base_name = filename.replace(stem_ext, "")
+        for sf in os.listdir("renders"):
+            if sf.startswith(f"{base_name}_stem_"):
+                try:
+                    os.remove(os.path.join("renders", sf))
+                except Exception:
+                    pass
+        return {"ok": True, "deleted": filename}
+    return JSONResponse({"error": "File not found"}, status_code=404)
 
 @app.post("/studio/preview-note")
 def studio_preview_note(req: StudioNoteReq):
-    # Use Voice Studio (real voice) as primary
+    # Check if a specific neural engine is selected/requested in params
+    requested_voice = req.params.get("voice", "default").lower() if req.params else "default"
+    
+    # Check if target_voice maps to one of our loaded or lazy-loadable DiffSinger engines
+    _target_engine = None
+    if requested_voice != "default" or 'lotte_v_ai_dol' in _ds_engines:
+        target_id = requested_voice
+        if target_id == 'default' and 'lotte_v_ai_dol' in _ds_engines:
+            target_id = 'lotte_v_ai_dol'
+            
+        if target_id in _ds_engines:
+            _target_engine = _ds_engines[target_id]
+        elif target_id in _lazy_voice_paths:
+            # Lazy load the voice on note preview
+            ckpt, cfg = _lazy_voice_paths[target_id]
+            print(f"[LazyLoad-Note] 🔄 Loading voice '{target_id}' on demand...")
+            try:
+                from ds_onnx_engine import DiffSingerONNXEngine
+                engine = DiffSingerONNXEngine(os.path.dirname(ckpt), language='en')
+                if engine.is_ready:
+                    _ds_engines[target_id] = engine
+                    _target_engine = engine
+                    del _lazy_voice_paths[target_id]
+                    print(f"[LazyLoad-Note] ✅ Loaded successfully for note preview!")
+            except Exception as e:
+                print(f"[LazyLoad-Note] ❌ Failed to load: {e}")
+                
+    if _target_engine:
+        # Synthesize using DiffSinger ONNX engine (it takes a phrase notes list)
+        notes = [{'midi': req.midi, 'duration': req.duration, 'startTime': 0.0, 'lyric': 'doh'}]
+        try:
+            audio = _target_engine.synthesize_phrase(notes, req.params)
+            if audio is not None:
+                b64, mime = audio_to_base64_mp3(audio)
+                return {"audio_b64": b64, "mime_type": mime, "midi": req.midi, "engine": "diffsinger"}
+        except Exception as e:
+            print(f"[PreviewNote] DiffSinger synth failed: {e}")
+
+    # Fallback to default sampler or basic AI engine if DiffSinger is not requested/available
     if STUDIO_OK:
         audio = studio_synthesize_note(req.midi, req.duration, get_library(), req.params)
         b64, mime = audio_to_base64_mp3(audio)
@@ -690,6 +1308,25 @@ async def get_pdf_preview(file: UploadFile = File(...)):
     except Exception as e:
         print(f"❌ [PDF Preview Error] {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to process PDF: {str(e)}")
+
+
+# ── /vocalido/* prefix — frontend calls use this prefix ──────────────────────
+# Mirror all routes under /vocalido so that requests like
+# POST /vocalido/studio/preview work identically to POST /studio/preview
+_vocalido_router = APIRouter(prefix="/vocalido")
+_vocalido_router.add_api_route("/studio/preview",      studio_preview,      methods=["POST"])
+_vocalido_router.add_api_route("/studio/api/client-log", studio_client_log, methods=["POST"])
+_vocalido_router.add_api_route("/studio/preview-note", studio_preview_note, methods=["POST"])
+_vocalido_router.add_api_route("/studio/synthesis",    studio_synthesis,    methods=["POST"])
+_vocalido_router.add_api_route("/studio/library",      studio_library,      methods=["GET"])
+_vocalido_router.add_api_route("/v1/synthesis",        synthesize,          methods=["POST"])
+_vocalido_router.add_api_route("/health",              health,              methods=["GET"])
+_vocalido_router.add_api_route("/training/status",     training_status,     methods=["GET"])
+_vocalido_router.add_api_route("/training/update",     training_update,     methods=["POST"])
+_vocalido_router.add_api_route("/model/set",           set_model,           methods=["POST"])
+_vocalido_router.add_api_route("/training/set-engine", set_engine,          methods=["POST"])
+app.include_router(_vocalido_router)
+print("[Routes] ✅ /vocalido/* prefix routes registered")
 
 if __name__ == "__main__":
     print("=" * 55)

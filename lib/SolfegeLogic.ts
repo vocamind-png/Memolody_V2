@@ -17,7 +17,7 @@ const SOLFEGE_MAPS: Record<string, Record<number, string>> = {
     0: 'Doh', 1: 'Di', 2: 'Ray', 3: 'Ri', 4: 'Me', 5: 'Fah', 6: 'Fi', 7: 'Soh', 8: 'Si', 9: 'Lah', 10: 'Li', 11: 'Ti'
   },
   'Ju': {
-    0: 'Doh', 1: 'di', 2: 'Re', 3: 'ri', 4: 'Me', 5: 'Fah', 6: 'fi', 7: 'Sol', 8: 'si', 9: 'Lah', 10: 'li', 11: 'Ti'
+    0: 'Do', 1: 'Di', 2: 'Re', 3: 'Ri', 4: 'Mi', 5: 'Fa', 6: 'Fi', 7: 'Sol', 8: 'Si', 9: 'La', 10: 'Li', 11: 'Ti'
   },
   'Sargam': {
     0: 'Sa', 1: 're', 2: 'Re', 3: 'ga', 4: 'Ga', 5: 'ma', 6: 'Ma', 7: 'Pa', 8: 'dha', 9: 'Dha', 10: 'ni', 11: 'Ni'
@@ -42,7 +42,7 @@ const SOLFEGE_FLAT_MAPS: Record<string, Record<number, string>> = {
     0: 'Doh', 1: 'Raw', 2: 'Ray', 3: 'Maw', 4: 'Me', 5: 'Fah', 6: 'Saw', 7: 'Soh', 8: 'Law', 9: 'Lah', 10: 'Taw', 11: 'Ti'
   },
   'Ju': {
-    0: 'Doh', 1: 'ra', 2: 'Re', 3: 'me', 4: 'Me', 5: 'Fah', 6: 'se', 7: 'Sol', 8: 'le', 9: 'Lah', 10: 'te', 11: 'Ti'
+    0: 'Do', 1: 'Ru', 2: 'Re', 3: 'Mu', 4: 'Mi', 5: 'Fa', 6: 'Su', 7: 'Sol', 8: 'Lu', 9: 'La', 10: 'Tu', 11: 'Ti'
   },
   'Sargam': {
     0: 'Sa', 1: 're', 2: 'Re', 3: 'ga', 4: 'Ga', 5: 'ma', 6: 'Ma', 7: 'Pa', 8: 'dha', 9: 'Dha', 10: 'ni', 11: 'Ni'

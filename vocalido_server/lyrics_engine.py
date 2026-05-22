@@ -14,12 +14,32 @@ SR = 44100
 # Voice settings
 TH_VOICE = "th-TH-PremwadeeNeural"  # Thai female
 EN_VOICE = "en-US-AriaNeural"       # English female
+ZH_VOICE = "zh-CN-XiaoxiaoNeural"   # Chinese female
+
+# Phonetic map for English solfège lyrics to pronounce correctly in edge-tts
+SOLFEGE_MAP = {
+    'do': 'doh',
+    're': 'ray',
+    'mi': 'mee',
+    'me': 'mee',
+    'fa': 'fah',
+    'sol': 'soh',
+    'so': 'soh',
+    'la': 'lah',
+    'ti': 'tee',
+    'si': 'see'
+}
 
 
 def _detect_language(text: str) -> str:
     """Simple language detection"""
     thai_chars = sum(1 for c in text if '\u0E00' <= c <= '\u0E7F')
-    return 'th' if thai_chars > len(text) * 0.3 else 'en'
+    if thai_chars > len(text) * 0.2:
+        return 'th'
+    chinese_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+    if chinese_chars > len(text) * 0.2:
+        return 'zh'
+    return 'en'
 
 
 async def _tts_to_audio(text: str, voice: str, rate: str = "+0%") -> np.ndarray:
@@ -64,8 +84,19 @@ def synthesize_lyrics_phrase(notes: list, params: dict = None) -> np.ndarray:
     if not notes:
         return np.zeros(SR, dtype=np.float32)
     
+    def get_val(obj, key, default=None):
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        val = getattr(obj, key, None)
+        if val is None and hasattr(obj, 'get'):
+            try:
+                val = obj.get(key, None)
+            except Exception:
+                pass
+        return val if val is not None else default
+
     # Calculate total duration
-    max_time = max((n.get('startTime', 0) + n.get('duration', 0.5)) for n in notes)
+    max_time = max((get_val(n, 'startTime', 0) + get_val(n, 'duration', 0.5)) for n in notes)
     total_samples = int((max_time * beat_sec + 1.0) * SR)
     output = np.zeros(total_samples, dtype=np.float32)
     
@@ -74,10 +105,10 @@ def synthesize_lyrics_phrase(notes: list, params: dict = None) -> np.ndarray:
     loop = asyncio.new_event_loop()
     
     for note in notes:
-        midi = note.get('midi') or note.get('pitch') or 60
-        dur_beats = note.get('duration', 0.5)
-        start_beats = note.get('startTime', 0)
-        lyric = note.get('lyric', '').strip()
+        midi = get_val(note, 'midi') or get_val(note, 'pitch') or 60
+        dur_beats = get_val(note, 'duration', 0.5)
+        start_beats = get_val(note, 'startTime', 0)
+        lyric = get_val(note, 'lyric', '').strip()
         
         if not lyric or lyric in ('-', '~', '_', 'rest', ''):
             continue
@@ -90,10 +121,98 @@ def synthesize_lyrics_phrase(notes: list, params: dict = None) -> np.ndarray:
         try:
             # Detect language and select voice
             lang = _detect_language(lyric)
-            voice = TH_VOICE if lang == 'th' else EN_VOICE
+            if lang == 'th':
+                voice = TH_VOICE
+                tts_lyric = lyric
+            elif lang == 'zh':
+                voice = ZH_VOICE
+                tts_lyric = lyric
+            else:
+                voice = EN_VOICE
+                lyric_clean = lyric.lower().strip()
+                pc = int(midi) % 12
+                
+                # Check for Kodaly single-letter abbreviations
+                if lyric_clean == 'd':
+                    phonetic = 'doh'
+                elif lyric_clean == 'r':
+                    phonetic = 'ray'
+                elif lyric_clean == 'm':
+                    phonetic = 'mee'
+                elif lyric_clean == 'f':
+                    phonetic = 'fah'
+                elif lyric_clean == 's':
+                    phonetic = 'soh'
+                elif lyric_clean == 'l':
+                    phonetic = 'lah'
+                elif lyric_clean == 't':
+                    phonetic = 'tee'
+                # Disambiguate 'me' (E natural vs E flat)
+                elif lyric_clean == 'me':
+                    phonetic = 'mee' if pc == 4 else 'may'
+                # Sharp Chromatic syllables
+                elif lyric_clean == 'di':
+                    phonetic = 'dee'
+                elif lyric_clean == 'ri':
+                    phonetic = 'ree'
+                elif lyric_clean == 'fi':
+                    phonetic = 'fee'
+                elif lyric_clean == 'si':
+                    phonetic = 'see'
+                elif lyric_clean == 'li':
+                    phonetic = 'lee'
+                # Flat Chromatic syllables (American)
+                elif lyric_clean == 'ra':
+                    phonetic = 'rah'
+                elif lyric_clean == 'se':
+                    phonetic = 'say'
+                elif lyric_clean == 'le':
+                    phonetic = 'lay'
+                elif lyric_clean == 'te':
+                    phonetic = 'tay'
+                # Flat Chromatic syllables (British)
+                elif lyric_clean == 'raw':
+                    phonetic = 'rah'
+                elif lyric_clean == 'maw':
+                    phonetic = 'mah'
+                elif lyric_clean == 'saw':
+                    phonetic = 'say' if pc == 6 else 'saw'
+                elif lyric_clean == 'law':
+                    phonetic = 'lay' if pc == 8 else 'law'
+                elif lyric_clean == 'taw':
+                    phonetic = 'tay' if pc == 10 else 'taw'
+                # Flat Chromatic syllables (Ju)
+                elif lyric_clean == 'ru':
+                    phonetic = 'roo'
+                elif lyric_clean == 'mu':
+                    phonetic = 'moo'
+                elif lyric_clean == 'su':
+                    phonetic = 'soo'
+                elif lyric_clean == 'lu':
+                    phonetic = 'loo'
+                elif lyric_clean == 'tu':
+                    phonetic = 'too'
+                # Standard Solfege Syllables
+                elif lyric_clean in ('do', 'doh'):
+                    phonetic = 'doh'
+                elif lyric_clean in ('re', 'ray'):
+                    phonetic = 'ray'
+                elif lyric_clean in ('mi', 'mee'):
+                    phonetic = 'mee'
+                elif lyric_clean in ('fa', 'fah'):
+                    phonetic = 'fah'
+                elif lyric_clean in ('sol', 'soh', 'so'):
+                    phonetic = 'soh'
+                elif lyric_clean in ('la', 'lah'):
+                    phonetic = 'lah'
+                elif lyric_clean in ('ti', 'tee'):
+                    phonetic = 'tee'
+                else:
+                    phonetic = lyric
+                tts_lyric = phonetic
             
             # Generate speech for the lyric
-            speech = loop.run_until_complete(_tts_to_audio(lyric, voice))
+            speech = loop.run_until_complete(_tts_to_audio(tts_lyric, voice))
             
             if len(speech) < 100:
                 continue

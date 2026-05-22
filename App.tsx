@@ -20,6 +20,7 @@ import { CloudSyncService } from './lib/CloudSyncService';
 import { Song, TrackState } from './types';
 import { LoopPreset } from './components/Player/LoopMatrixModal';
 import { useAuth, hasAccess } from './lib/useAuth';
+import { nimoBrain } from './lib/NimoBrain';
 
 // ── Lazy-load ALL heavy page components ──
 const HomePage = lazy(() => import('./components/Home/HomePage'));
@@ -67,7 +68,7 @@ const PageLoader = () => {
     const t = setTimeout(() => {
       console.warn('[Memolody] Lazy chunk timeout — reloading...');
       window.location.reload();
-    }, 12000);
+    }, 30000);
     return () => clearTimeout(t);
   }, []);
   return (
@@ -139,6 +140,10 @@ const App: React.FC = () => {
       try {
         await songStorage.init();
         await initPlugins(); // Initialize the Plugin System (including Vocalido)
+
+        // Clean up legacy hardcoded demo song if present
+        await songStorage.permanentDeleteSong('demo-vocal-01');
+
         let songs = await songStorage.getAllSongs();
 
         // 🌱 SEED DATA: If library is empty, add demo songs
@@ -383,10 +388,71 @@ const App: React.FC = () => {
 
   const handleLanguageChange = (lang: 'th' | 'en') => { setPreferredLanguage(lang); localStorage.setItem('nimo_lang', lang); };
   const handleCountryChange = (c: string) => { setUserCountry(c); localStorage.setItem('nimo_country', c); };
-  const handleInstrumentChange = (i: string) => { setUserInstrument(i); localStorage.setItem('nimo_instrument', i); };
+  const handleInstrumentChange = (i: string) => { setUserInstrument(i as any); localStorage.setItem('nimo_instrument', i); };
   const handleTogglePerformanceMode = (v: boolean) => { setPerformanceMode(v); localStorage.setItem('nimo_perf_mode', String(v)); };
 
+  // Synchronize App State to NimoBrain
+  useEffect(() => {
+    nimoBrain.updateState('currentView', currentView);
+    nimoBrain.updateState('selectedSong', selectedSong);
+    nimoBrain.updateState('preferredLanguage', preferredLanguage);
+    nimoBrain.updateState('userInstrument', userInstrument);
+    nimoBrain.updateState('songLibrary', userSongs.map(s => ({
+      id: s.metadata.id,
+      title: s.metadata.title,
+      artist: s.metadata.artist,
+      category: s.metadata.category
+    })));
+  }, [currentView, selectedSong, preferredLanguage, userInstrument, userSongs]);
 
+  // Start remote polling
+  useEffect(() => {
+    nimoBrain.startRemotePolling();
+  }, []);
+
+  // Register central NimoBrain actions
+  useEffect(() => {
+    const unregNavigate = nimoBrain.registerAction('navigate_to_page', (params) => {
+      const view = params?.view;
+      if (view) {
+        navigateTo(view as any);
+      }
+    });
+
+    const unregPlaySong = nimoBrain.registerAction('play_song', async (params) => {
+      const title = params?.songTitle;
+      if (!title) return;
+      
+      const songs = userSongsRef.current;
+      const found = songs.find(s => s.metadata.title.toLowerCase().includes(title.toLowerCase()));
+      if (found) {
+        await handleSongSelect(found.metadata, found.xmlData, 'listen');
+      } else {
+        throw new Error(`Song not found: ${title}`);
+      }
+    });
+
+    const unregChangeLang = nimoBrain.registerAction('change_language', (params) => {
+      const lang = params?.lang;
+      if (lang === 'th' || lang === 'en') {
+        handleLanguageChange(lang);
+      }
+    });
+
+    const unregChangeInstrument = nimoBrain.registerAction('change_instrument', (params) => {
+      const instrument = params?.instrument;
+      if (['piano', 'violin', 'voice', 'guitar'].includes(instrument)) {
+        handleInstrumentChange(instrument);
+      }
+    });
+
+    return () => {
+      unregNavigate();
+      unregPlaySong();
+      unregChangeLang();
+      unregChangeInstrument();
+    };
+  }, [navigateTo, handleSongSelect]);
 
   const renderPage = () => {
     switch (currentView) {

@@ -825,15 +825,25 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
       // ── CRITICAL: Strip any remaining xmlns attributes ──
       // Verovio expects standard MusicXML. If Gemini or DOMParser injected an HTML namespace, Verovio will silently render an empty page.
       finalXml = finalXml.replace(/xmlns="[^"]*"/gi, '');
+      
+      // ── CRITICAL: Strip layout-breaking metadata ──
+      // Remove tags that cause Verovio to allocate massive white spaces at the top of pages
+      finalXml = finalXml.replace(/<defaults>[\s\S]*?<\/defaults>/gi, '');
+      finalXml = finalXml.replace(/<work>[\s\S]*?<\/work>/gi, '');
+      finalXml = finalXml.replace(/<identification>[\s\S]*?<\/identification>/gi, '');
+      finalXml = finalXml.replace(/<credit[^>]*>[\s\S]*?<\/credit>/gi, '');
+      // Strip layout distances embedded inside measures that force gaps
+      finalXml = finalXml.replace(/<system-layout[^>]*>[\s\S]*?<\/system-layout>/gi, '');
+      finalXml = finalXml.replace(/<page-layout[^>]*>[\s\S]*?<\/page-layout>/gi, '');
 
       const hasEncodedBreaks = finalXml.includes('new-system="yes"');
 
       // ── [V2] Layout Sync from Scorelens-Engine bundle ─────────────────────
       let vrvScale = 45;
-      let vrvPageMarginTop = 60;
-      let vrvPageMarginBottom = 60;
-      let vrvPageMarginLeft = 40;
-      let vrvPageMarginRight = 40;
+      let vrvPageMarginTop = 0;  // ZERO: title is rendered by React, not Verovio
+      let vrvPageMarginBottom = 10;
+      let vrvPageMarginLeft = 400;   // Increased significantly to give room for instrument names
+      let vrvPageMarginRight = 200;  // Increased to prevent right edge from touching the screen
       let vrvSpacingSystem = systemSpacing > 10 ? 10 : systemSpacing;
       let vrvSpacingStaff = 10;
 
@@ -870,8 +880,9 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
         pageMarginRight: vrvPageMarginRight,
         spacingSystem: vrvSpacingSystem,
         spacingStaff: vrvSpacingStaff,
+        justifyVertically: false,
         lyricTopMinMargin: 2.0,
-        lyricSize: 4.5,
+        lyricSize: 2.7,
         stemWidth: stemThickness,
         barLineWidth: barlineThickness,
         staffLineWidth: stafflineThickness,
@@ -915,11 +926,35 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
           if (harmIdx === -1) { result += svg.slice(pos); break; }
           let gStart = harmIdx;
           while (gStart > 0 && svg[gStart] !== '<') gStart--;
-          let depth = 0, gEnd = gStart;
+          
+          let gEnd = harmIdx + HARM_CLASS.length; // Fallback to prevent infinite loop
+          let depth = 0;
           for (let k = gStart; k < svg.length - 1; k++) {
-            if (svg[k] === '<' && svg[k + 1] !== '/') depth++;
-            else if (svg[k] === '<' && svg[k + 1] === '/') { depth--; if (depth === 0) { gEnd = svg.indexOf('>', k) + 1; break; } }
+            if (svg[k] === '<' && svg[k + 1] !== '/') {
+              // Check if it's a self-closing tag by looking ahead for '/>' before next '<'
+              const nextClose = svg.indexOf('>', k);
+              const nextOpen = svg.indexOf('<', k + 1);
+              if (nextClose !== -1 && svg[nextClose - 1] === '/' && (nextOpen === -1 || nextClose < nextOpen)) {
+                // Self closing tag, don't increment depth
+                k = nextClose; // Skip to the end of this tag
+                continue;
+              }
+              depth++;
+            }
+            else if (svg[k] === '<' && svg[k + 1] === '/') { 
+              depth--; 
+              if (depth <= 0) { 
+                gEnd = svg.indexOf('>', k) + 1; 
+                break; 
+              } 
+            }
           }
+          
+          // CRITICAL: Ensure `pos` strictly increases to prevent infinite loops!
+          if (gEnd <= gStart) {
+            gEnd = harmIdx + HARM_CLASS.length;
+          }
+
           result += svg.slice(pos, gStart);
           const harmGroup = svg.slice(gStart, gEnd);
           result += harmGroup
@@ -1288,8 +1323,8 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
               </div>
 
               {i === 0 && (
-                <div className="w-full flex flex-col items-center pt-2 pb-4 px-[10mm] relative z-[2000] pointer-none shrink-0 border-b-[0.5pt] border-black/5 mb-4">
-                  <h1 className="font-serif text-black text-center leading-tight mb-1" style={{ fontSize: `${titleFontSize || 16}pt`, fontWeight: 600 }}>{displayTitle}</h1>
+                <div className="w-full flex flex-col items-center pt-1 pb-1 px-[10mm] relative z-[2000] pointer-none shrink-0 mb-0">
+                  <h1 className="font-serif text-black text-center leading-tight mb-0.5" style={{ fontSize: `${titleFontSize || 16}pt`, fontWeight: 600 }}>{displayTitle}</h1>
                   <div className="flex items-center gap-6">
                     <div className="text-[9pt] font-serif text-black/70 italic leading-none">{displayArtist}</div>
                   </div>
@@ -1299,7 +1334,6 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
               <div 
                 dangerouslySetInnerHTML={{ __html: svg }} 
                 className="verovio-neural-svg bg-white w-full overflow-hidden" 
-                style={{ minHeight: '800px' }}
               />
             </div>
           )), [svgPages, showBorders, isPreviewMode, localZoom, activeLoop, barMapsRef, lyricMode, titleFontSize, displayTitle, displayArtist])}

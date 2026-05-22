@@ -25,7 +25,7 @@ export class CloudSyncService {
       let response;
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout
+        const timeoutId = setTimeout(() => controller.abort(), 120000); // 120s timeout
 
         response = await fetch(fetchUrl, {
           method: 'GET',
@@ -35,7 +35,7 @@ export class CloudSyncService {
         clearTimeout(timeoutId);
       } catch (err: any) {
         if (err.name === 'AbortError') {
-          throw new Error("TIMEOUT: การเชื่อมต่อคลาวด์ใช้เวลานานเกินไปค่ะ (5s)");
+          throw new Error("TIMEOUT: การเชื่อมต่อคลาวด์ใช้เวลานานเกินไปค่ะ (120s)");
         }
         // This catch handles network errors (e.g., DNS, connection refused, CORS preflight failures)
         throw new Error("NETWORK_FAILURE: การเชื่อมต่อคลาวด์ขัดข้องค่ะ กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ตหรือนโยบายความปลอดภัย (CORS) นะคะ");

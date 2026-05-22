@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Vocalido Voice Test</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+      background: #0a0a0b; color: #fff; font-family: system-ui, sans-serif; 
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      min-height: 100vh; gap: 24px; padding: 20px;
+    }
+    h1 { font-size: 28px; font-weight: 900; letter-spacing: 2px; }
+    h1 span { color: #00e5ff; }
+    .status { 
+      padding: 12px 24px; border-radius: 12px; font-size: 14px; font-weight: 700;
+      background: #111; border: 1px solid #333; min-width: 300px; text-align: center;
+    }
+    .status.ok { border-color: #0f0; color: #0f0; }
+    .status.err { border-color: #f00; color: #f00; }
+    .status.loading { border-color: #ff0; color: #ff0; }
+    button {
+      padding: 16px 40px; border-radius: 16px; border: none; cursor: pointer;
+      font-size: 18px; font-weight: 900; text-transform: uppercase; letter-spacing: 2px;
+      transition: all 0.2s;
+    }
+    button:hover { transform: scale(1.05); }
+    button:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+    .btn-play { background: #00e5ff; color: #000; }
+    .btn-scale { background: #7c3aed; color: #fff; }
+    .btn-long { background: #10b981; color: #fff; }
+    .log {
+      background: #111; border: 1px solid #333; border-radius: 12px; padding: 16px;
+      width: 100%; max-width: 600px; height: 200px; overflow-y: auto;
+      font-family: monospace; font-size: 12px; line-height: 1.6;
+    }
+    .log .ok { color: #0f0; }
+    .log .err { color: #f44; }
+    .log .info { color: #0af; }
+    audio { width: 100%; max-width: 500px; }
+  </style>
+</head>
+<body>
+  <h1>🎤 <span>VOCALIDO</span> VOICE TEST</h1>
+  
+  <div id="serverStatus" class="status loading">Checking server...</div>
+  
+  <div style="display:flex; gap:12px; flex-wrap:wrap; justify-content:center;">
+    <button class="btn-play" onclick="testSimple()">▶ Do Re Mi</button>
+    <button class="btn-scale" onclick="testScale()">▶ Full Scale</button>
+    <button class="btn-long" onclick="testMelody()">▶ Melody</button>
+  </div>
+  
+  <audio id="player" controls></audio>
+  
+  <div id="log" class="log"></div>
+
+  <script>
+    const logEl = document.getElementById('log');
+    const playerEl = document.getElementById('player');
+    const statusEl = document.getElementById('serverStatus');
+
+    function log(msg, type = 'info') {
+      const line = document.createElement('div');
+      line.className = type;
+      line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      logEl.appendChild(line);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    // Check server on load
+    async function checkServer() {
+      try {
+        const resp = await fetch('/studio/library');
+        if (resp.ok) {
+          const data = await resp.json();
+          statusEl.textContent = `✅ Server Online — ${data.count} voice samples loaded`;
+          statusEl.className = 'status ok';
+          log(`Server OK: ${data.count} samples, range MIDI ${data.range_min}-${data.range_max}`, 'ok');
+        } else {
+          throw new Error(`HTTP ${resp.status}`);
+        }
+      } catch(e) {
+        statusEl.textContent = `❌ Server Offline — ${e.message}`;
+        statusEl.className = 'status err';
+        log(`Server check failed: ${e.message}`, 'err');
+      }
+    }
+    checkServer();
+
+    async function synthesize(notes, label) {
+      log(`Synthesizing "${label}": ${notes.length} notes...`);
+      const start = Date.now();
+      
+      try {
+        const resp = await fetch('/studio/preview', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            notes: notes,
+            params: { singer: 'Auto', bpm: 120 }
+          })
+        });
+
+        if (!resp.ok) {
+          const errText = await resp.text();
+          log(`Server error ${resp.status}: ${errText.slice(0, 100)}`, 'err');
+          return;
+        }
+
+        const data = await resp.json();
+        const elapsed = Date.now() - start;
+        
+        if (data.audio_b64) {
+          log(`✅ Got audio! ${data.notes || notes.length} notes, ${(data.duration || 0).toFixed(1)}s, rendered in ${elapsed}ms`, 'ok');
+          
+          const audioSrc = 'data:audio/wav;base64,' + data.audio_b64;
+          playerEl.src = audioSrc;
+          playerEl.play();
+          log('▶ Playing audio...', 'ok');
+        } else if (data.error) {
+          log(`Error: ${data.error}`, 'err');
+        } else {
+          log(`Unexpected response: ${JSON.stringify(data).slice(0, 200)}`, 'err');
+        }
+      } catch(e) {
+        log(`Fetch failed: ${e.message}`, 'err');
+      }
+    }
+
+    function testSimple() {
+      synthesize([
+        { pitch: 60, duration: 1.0, startTime: 0, lyric: 'Do' },
+        { pitch: 62, duration: 1.0, startTime: 1, lyric: 'Re' },
+        { pitch: 64, duration: 1.0, startTime: 2, lyric: 'Mi' },
+      ], 'Do Re Mi');
+    }
+
+    function testScale() {
+      synthesize([
+        { pitch: 60, duration: 0.5, startTime: 0, lyric: 'Do' },
+        { pitch: 62, duration: 0.5, startTime: 0.5, lyric: 'Re' },
+        { pitch: 64, duration: 0.5, startTime: 1, lyric: 'Mi' },
+        { pitch: 65, duration: 0.5, startTime: 1.5, lyric: 'Fa' },
+        { pitch: 67, duration: 0.5, startTime: 2, lyric: 'Sol' },
+        { pitch: 69, duration: 0.5, startTime: 2.5, lyric: 'La' },
+        { pitch: 71, duration: 0.5, startTime: 3, lyric: 'Ti' },
+        { pitch: 72, duration: 1.0, startTime: 3.5, lyric: 'Do' },
+      ], 'Full Scale C4-C5');
+    }
+
+    function testMelody() {
+      // Twinkle Twinkle Little Star
+      synthesize([
+        { pitch: 60, duration: 1, startTime: 0, lyric: 'Do' },
+        { pitch: 60, duration: 1, startTime: 1, lyric: 'Do' },
+        { pitch: 67, duration: 1, startTime: 2, lyric: 'Sol' },
+        { pitch: 67, duration: 1, startTime: 3, lyric: 'Sol' },
+        { pitch: 69, duration: 1, startTime: 4, lyric: 'La' },
+        { pitch: 69, duration: 1, startTime: 5, lyric: 'La' },
+        { pitch: 67, duration: 2, startTime: 6, lyric: 'Sol' },
+        { pitch: 65, duration: 1, startTime: 8, lyric: 'Fa' },
+        { pitch: 65, duration: 1, startTime: 9, lyric: 'Fa' },
+        { pitch: 64, duration: 1, startTime: 10, lyric: 'Mi' },
+        { pitch: 64, duration: 1, startTime: 11, lyric: 'Mi' },
+        { pitch: 62, duration: 1, startTime: 12, lyric: 'Re' },
+        { pitch: 62, duration: 1, startTime: 13, lyric: 'Re' },
+        { pitch: 60, duration: 2, startTime: 14, lyric: 'Do' },
+      ], 'Twinkle Twinkle');
+    }
+  </script>
+</body>
+</html>

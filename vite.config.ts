@@ -52,6 +52,13 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           secure: false,
         },
+        // --- ROOT-LEVEL SONG RENDERED FILES → Local server ---
+        '/song_': {
+          target: 'http://localhost:5001',
+          changeOrigin: true,
+          secure: false,
+          rewrite: (path) => `/studio/audio${path}`
+        },
         // --- GEMINI API PROXY (bypass CORS/referrer restrictions) ---
         '/gemini-api': {
           target: 'https://generativelanguage.googleapis.com',
@@ -83,6 +90,7 @@ export default defineConfig(({ mode }) => {
         workbox: {
           // Cache all JS/CSS/HTML assets aggressively
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+          globIgnores: ['**/verovio-toolkit.js'],
           // Runtime cache for API calls
           runtimeCaching: [
             {
@@ -110,6 +118,8 @@ export default defineConfig(({ mode }) => {
       alias: { '@': path.resolve(__dirname, '.') }
     },
     build: {
+      outDir: process.env.VERCEL ? 'dist' : 'vocalido_server/static',
+      emptyOutDir: true,
       target: 'es2020',
       chunkSizeWarningLimit: 800,
       rollupOptions: {

@@ -31,9 +31,9 @@ if check_port 5001; then
   sleep 1
 fi
 
-if check_port 3000; then
-  echo -e "${YELLOW}⚠️  Port 3000 already in use. Killing old process...${NC}"
-  lsof -ti :3000 | xargs kill -9 2>/dev/null || true
+if check_port 3100; then
+  echo -e "${YELLOW}⚠️  Port 3100 already in use. Killing old process...${NC}"
+  lsof -ti :3100 | xargs kill -9 2>/dev/null || true
   sleep 1
 fi
 
@@ -59,9 +59,10 @@ trap cleanup EXIT INT TERM
 echo -e "${GREEN}▶ Starting Vocalido SVS server on port 5001...${NC}"
 cd "$SERVER_DIR"
 source "$VENV/bin/activate"
+export PYTHONUNBUFFERED=1
 python -m uvicorn main:app --host 0.0.0.0 --port 5001 --reload \
-  --log-level info \
-  2>&1 | sed "s/^/  ${CYAN}[SVS]${NC} /" &
+  --reload-exclude ".venv/*" --reload-exclude "checkpoints/*" --reload-exclude "renders/*" --reload-exclude "voicebanks/*" --reload-exclude "__pycache__/*" \
+  --log-level info 2>&1 &
 SVS_PID=$!
 echo -e "  PID: $SVS_PID"
 
@@ -79,11 +80,11 @@ for i in {1..20}; do
   fi
 done
 
-# ── 2. Start Vite dev server (React frontend) on port 3000 ───────
+# ── 2. Start Vite dev server (React frontend) on port 3100 ───────
 echo ""
-echo -e "${GREEN}▶ Starting Memolody V2 frontend on port 3000...${NC}"
+echo -e "${GREEN}▶ Starting Memolody V2 frontend on port 3100...${NC}"
 cd "$ROOT_DIR"
-npm run dev 2>&1 | sed "s/^/  ${CYAN}[VITE]${NC} /" &
+npm run dev 2>&1 &
 VITE_PID=$!
 echo -e "  PID: $VITE_PID"
 
@@ -93,7 +94,7 @@ echo ""
 echo -e "${CYAN}╔══════════════════════════════════════════════════════╗${NC}"
 echo -e "${CYAN}║   ✅ All services running!                           ║${NC}"
 echo -e "${CYAN}╠══════════════════════════════════════════════════════╣${NC}"
-echo -e "${CYAN}║   🌐 Frontend:   http://localhost:3000               ║${NC}"
+echo -e "${CYAN}║   🌐 Frontend:   http://localhost:3100               ║${NC}"
 echo -e "${CYAN}║   🎤 SVS Server: http://localhost:5001/health        ║${NC}"
 echo -e "${CYAN}║   📡 Vocalido:   → localhost:5001 (local mode)       ║${NC}"
 echo -e "${CYAN}║   🎵 Studio:     → localhost:5001/studio/*           ║${NC}"

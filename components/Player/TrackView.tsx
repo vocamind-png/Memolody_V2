@@ -28,6 +28,9 @@ interface TrackViewProps {
   loopPresets: LoopPreset[];
   setLoopPresets: any;
   onExitTrackView?: (card: string) => void;
+  soloedStems?: Record<string, number | null>;
+  onSoloStem?: (trackId: string, stemIndex: number | null) => void;
+  showStemControls?: boolean;
 }
 
 const MIDIClip: React.FC<{ notes: ParsedNote[]; pixelsPerSecond: number; isMuted: boolean, trackHeight: number, onDoubleClick?: () => void }> = ({ notes, pixelsPerSecond, isMuted, trackHeight, onDoubleClick }) => {
@@ -96,7 +99,7 @@ const MiniRotaryPan = ({ value, onChange }: { value: number; onChange: (val: num
   );
 };
 
-const TrackView: React.FC<TrackViewProps> = ({ song, musicXml, tracks, setTracks, onTrackDoubleClick, loopPresets, setLoopPresets, onExitTrackView }) => {
+const TrackView: React.FC<TrackViewProps> = ({ song, musicXml, tracks, setTracks, onTrackDoubleClick, loopPresets, setLoopPresets, onExitTrackView, soloedStems, onSoloStem, showStemControls }) => {
   const [pixelsPerSecond, setPixelsPerSecond] = useState(60);
   const [trackHeight, setTrackHeight] = useState(220); // 👈 changed to 220 to fit channel strip items
   const [currentTime, setCurrentTime] = useState(0);
@@ -449,6 +452,35 @@ const TrackView: React.FC<TrackViewProps> = ({ song, musicXml, tracks, setTracks
                         <button onClick={() => setTracks(prev => prev.map(t => t.id === track.id ? { ...t, isMuted: !t.isMuted, isSolo: !t.isMuted ? false : t.isSolo } : t))} className={`flex-1 h-6 rounded-lg text-[8px] font-black border transition-all ${track.isMuted ? 'bg-rose-600 border-rose-400 text-white shadow-lg' : 'bg-zinc-900 border-white/5 text-zinc-600'}`}>M</button>
                         <button onClick={() => setTracks(prev => prev.map(t => t.id === track.id ? { ...t, isSolo: !t.isSolo, isMuted: !t.isSolo ? false : t.isMuted } : t))} className={`flex-1 h-6 rounded-lg text-[8px] font-black border transition-all ${track.isSolo ? 'bg-amber-400 border-amber-300 text-black shadow-lg' : 'bg-zinc-900 border-white/5 text-zinc-600'}`}>S</button>
                       </div>
+                      
+                      {(() => {
+                        const availableStems = musicEngine.getAvailableStems(track.id);
+                        const activeStem = soloedStems ? (soloedStems[track.id] ?? null) : musicEngine.getActiveStem(track.id);
+                        if (showStemControls && availableStems > 1) {
+                          return (
+                            <div className="flex gap-0.5">
+                              {Array.from({ length: availableStems }).map((_, i) => (
+                                <button
+                                  key={i}
+                                  onClick={() => {
+                                    const nextStem = activeStem === i ? null : i;
+                                    if (onSoloStem) {
+                                      onSoloStem(track.id, nextStem);
+                                    } else {
+                                      musicEngine.soloStem(track.id, nextStem);
+                                    }
+                                  }}
+                                  title={`Solo Stem ${i+1}`}
+                                  className={`flex-1 h-5 rounded flex items-center justify-center text-[7px] font-bold border transition-all ${activeStem === i ? 'bg-cyan-500 border-cyan-400 text-black shadow-[0_0_8px_#06b6d4]' : 'bg-black/40 border-white/10 text-cyan-500/70 hover:bg-white/10 hover:text-cyan-400'}`}
+                                >
+                                  S{i + 1}
+                                </button>
+                              ))}
+                            </div>
+                          );
+                        }
+                        return null;
+                      })()}
                       <button onClick={() => cycleTrackMode(track)} className={`flex items-center gap-2 px-2 h-7 rounded-xl border border-white/10 transition-all active:scale-95 group/mode ${currentCfg.color}`}>
                         <currentCfg.icon size={12} className="text-white/80" />
                         <span className="text-[7px] font-black text-white uppercase tracking-widest">{currentCfg.label}</span>

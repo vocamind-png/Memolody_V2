@@ -1037,7 +1037,8 @@ export function autoFixMusicXml(
   totalFixes += fixMissingNoteTypes(xmlDoc, fixLog);
 
   // 10. Auto-beam eighth/16th notes according to correct time signature rules
-  totalFixes += fixBeaming(xmlDoc, fixLog);
+  // DISABLED: Malformed beams cause OSMD to silently fail to render.
+  // totalFixes += fixBeaming(xmlDoc, fixLog);
 
   // 11. Clean metadata titles
   totalFixes += fixMetadataTitles(xmlDoc, fixLog);

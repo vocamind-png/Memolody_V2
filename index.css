@@ -168,3 +168,9 @@ svg { max-width: 100%; height: auto; }
 @media print {
   .no-print { display: none !important; }
 }
+/* OSMD Lyrics font size override */
+.vf-lyrictxt, .vf-lyric-text, text[font-family*='Times New Roman'], text[font-family*='serif'] {
+    font-size: 10px !important;
+    letter-spacing: -0.5px !important;
+}
+

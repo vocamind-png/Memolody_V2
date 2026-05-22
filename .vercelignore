@@ -1,0 +1,30 @@
+# Exclude backend and voice banks from frontend Vercel deployment
+**/vocalido_server/**
+**/english_voicebanks/**
+**/ScoreLens_V3_Core/**
+**/Scorelens-Engine_V2/**
+**/Scorelens_Engine_V3/**
+**/omr_output_archive/**
+**/plugins/acestep/checkpoints/**
+**/plugins/acestep/.venv/**
+**/plugins/acestep/.cache/**
+**/checkpoints/**
+
+# Other heavy files & logs
+omr_server.log
+frontend.log
+scratch/
+.venv/
+venv/
+node_modules/
+dist/
+*.zip
+*.tar.gz
+*.tgz
+*.wav
+*.mp3
+*.onnx
+*.ckpt
+*.safetensors
+*.pdf
+*.log

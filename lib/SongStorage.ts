@@ -298,7 +298,7 @@ export class SongStorage {
    * [NEURAL IMPORT V2.1 - COMPATIBILITY MODE]
    * ปรับปรุงให้รองรับข้อมูลทั้งแบบเก่า (Legacy) และแบบใหม่ (NIMO-CORE)
    */
-  async importNeuralCore(jsonStringOrObject: string | any): Promise<void> {
+  async importNeuralCore(jsonStringOrObject: string | any, onProgress?: (percent: number) => void): Promise<void> {
     let bundle: any;
     if (typeof jsonStringOrObject === 'string') {
       try {
@@ -316,7 +316,7 @@ export class SongStorage {
     // 1. ถ้าเป็น NIMO-CORE ให้เอาจาก bundle.data.songs
     // 2. ถ้าเป็น Array ตรงๆ ให้ใช้เลย
     // 3. ถ้าเป็นไฟล์ที่มี field 'songs' ให้ใช้ field นั้น
-    let songsToImport = [];
+    let songsToImport: any[] = [];
     if (bundle.protocol === 'NIMO-CORE' && bundle.data?.songs) {
       songsToImport = bundle.data.songs;
     } else if (Array.isArray(bundle)) {
@@ -329,31 +329,81 @@ export class SongStorage {
 
     if (songsToImport.length === 0) return;
 
-    const tx = db.transaction([this.storeName, this.deletedStore], 'readwrite');
-    const songStore = tx.objectStore(this.storeName);
-    const delStore = tx.objectStore(this.deletedStore);
+    // ดึง existing keys และ deleted IDs ก่อนเพื่อลดการเขียนข้อมูลซ้ำและข้ามเพลงที่ลบไปแล้ว
+    const { existingKeys, deletedKeys } = await new Promise<{ existingKeys: Set<string>, deletedKeys: Set<string> }>((resolve, reject) => {
+      const tx = db.transaction([this.storeName, this.deletedStore], 'readonly');
+      const songStore = tx.objectStore(this.storeName);
+      const delStore = tx.objectStore(this.deletedStore);
 
-    // Get all deleted IDs first to skip them
-    const deletedIdsRequest = delStore.getAll();
-    deletedIdsRequest.onsuccess = () => {
-      const deletedIds = new Set((deletedIdsRequest.result || []).map((d: any) => d.id));
+      const existingReq = songStore.getAllKeys();
+      const deletedReq = delStore.getAll();
 
-      songsToImport.forEach((s: any) => {
-        const id = s.metadata?.id || s.id;
-        if (!id || deletedIds.has(String(id))) return; // SKIP deleted songs
-
-        if (s.metadata && s.metadata.id) {
-          songStore.put(s);
-        } else if (s.id && s.title) {
-          songStore.put({ metadata: s, xmlData: s.xmlData || '' });
-        }
-      });
-    };
-
-    return new Promise((resolve, reject) => {
-      tx.oncomplete = () => resolve();
+      tx.oncomplete = () => {
+        const eKeys = new Set((existingReq.result || []).map((k: any) => String(k)));
+        const dKeys = new Set((deletedReq.result || []).map((d: any) => String(d.id)));
+        resolve({ existingKeys: eKeys, deletedKeys: dKeys });
+      };
       tx.onerror = () => reject(tx.error);
     });
+
+    // กรองเอาเฉพาะเพลงใหม่ที่ไม่ได้ถูกลบ
+    const newSongs: any[] = [];
+    for (const s of songsToImport) {
+      const rawId = s.metadata?.id || s.id;
+      if (!rawId) continue;
+      const idStr = String(rawId);
+
+      if (existingKeys.has(idStr) || deletedKeys.has(idStr)) {
+        continue; // ข้ามเพลงที่มีอยู่แล้ว หรือเพลงที่ผู้ใช้ลบไปแล้ว
+      }
+
+      if (s.metadata && s.metadata.id) {
+        newSongs.push({
+          ...s,
+          metadata: {
+            ...s.metadata,
+            id: idStr
+          }
+        });
+      } else if (s.id && s.title) {
+        newSongs.push({
+          metadata: {
+            ...s,
+            id: idStr
+          },
+          xmlData: s.xmlData || ''
+        });
+      }
+    }
+
+    console.log(`[importNeuralCore] Found ${newSongs.length} new songs out of ${songsToImport.length} total.`);
+    if (newSongs.length === 0) return;
+
+    // ทยอยบันทึกข้อมูลเป็นชุดๆ ละ 5,000 เพลง พร้อมหน่วงเวลาสั้นๆ เพื่อเลี่ยงการบล็อก main thread บนหน้าจอ
+    const BATCH_SIZE = 5000;
+    for (let i = 0; i < newSongs.length; i += BATCH_SIZE) {
+      const chunk = newSongs.slice(i, i + BATCH_SIZE);
+      
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction([this.storeName], 'readwrite');
+        const songStore = tx.objectStore(this.storeName);
+
+        chunk.forEach(s => {
+          songStore.put(s);
+        });
+
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+
+      if (onProgress) {
+        const progressPercent = Math.min(100, Math.round(((i + chunk.length) / newSongs.length) * 100));
+        onProgress(progressPercent);
+      }
+
+      // หน่วงเวลาสั้นๆ เพื่อให้เบราว์เซอร์ได้อัปเดต UI และไม่ทำให้แอปค้าง/กระตุก
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
   }
 }
 

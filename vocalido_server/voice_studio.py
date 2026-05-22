@@ -58,8 +58,13 @@ def load_library():
                 audio = librosa.resample(audio, orig_sr=sr, target_sr=SR)
             # Parse MIDI note from filename
             note_name = name.replace('s', '#')  # Cs4 → C#4
-            midi = librosa_note_to_midi(note_name)
-            lib[midi] = {'audio': audio, 'name': note_name, 'file': str(f)}
+            try:
+                midi = librosa_note_to_midi(note_name)
+                lib[midi] = {'audio': audio, 'name': note_name, 'file': str(f)}
+            except Exception as e:
+                # If it's not a note name (like "singeria_render"), just skip it silently
+                # print(f"[Studio] Skip {f}: Not a valid note name")
+                continue
         except Exception as e:
             print(f"[Studio] Skip {f}: {e}")
     print(f"[Studio] Loaded {len(lib)} samples: MIDI {min(lib.keys()) if lib else '?'}-{max(lib.keys()) if lib else '?'}")

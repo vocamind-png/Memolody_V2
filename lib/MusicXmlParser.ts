@@ -20,29 +20,37 @@ export const detectEra = (composer: string): string => {
 
 export const extractXmlString = async (
   input: File | Blob | string,
-  onProgress?: (msg: string) => void
+  onProgress?: (msg: string) => void,
+  startPage?: number,
+  endPage?: number
 ): Promise<{ xml: string; bundle?: any | null }> => {
   if (typeof input === 'string') return { xml: input, bundle: null };
   try {
-    // ── IMAGE file → Local AI OMR (Scorelens V2) ──────────────────
+    // ── IMAGE file ──────────────────
     if (input instanceof File && isImageFile(input)) {
       console.log('[OMR] 🖼️ Image file:', input.name, 'type:', input.type, 'size:', (input.size/1024).toFixed(0)+'KB');
       try {
-        onProgress?.('🧠 ส่งเข้า ScoreLens V2 OMR...');
-        const result = await omrWithOemer(input);
-        console.log(`[OMR] ✅ ScoreLens V2 Transcribe Success: ${input.name}`);
-        return { xml: result.xml, bundle: result.bundle ?? null };
+        if (input.name.startsWith('cropped_')) {
+          onProgress?.('🧠 ส่งเข้า Gemini Vision OMR (Cropped)...');
+          const result = await recognizeSheetMusic(input);
+          return { xml: result.xml, bundle: null };
+        } else {
+          onProgress?.('🧠 ส่งเข้า ScoreLens V3 OMR...');
+          const result = await omrWithOemer(input);
+          console.log(`[OMR] ✅ ScoreLens V3 Transcribe Success: ${input.name}`);
+          return { xml: result.xml, bundle: result.bundle ?? null };
+        }
       } catch (err: any) {
         throw new Error(`การอ่านโน้ตด้วย AI ล้มเหลว: ${err.message}`);
       }
     }
 
-    // ── PDF file → Local AI OMR (Scorelens V2) ──────────────────
+    // ── PDF file → Local AI OMR (Scorelens V3) ──────────────────
     if (input instanceof File && isPDFFile(input)) {
-      console.log('[OMR] 📄 PDF file:', input.name, 'size:', (input.size/1024/1024).toFixed(1)+'MB');
+      console.log(`[OMR] 📄 PDF file: ${input.name} size: ${(input.size/1024/1024).toFixed(1)}MB (Pages: ${startPage || 1} to ${endPage || 'end'})`);
       try {
-        onProgress?.('🧠 กำลังอ่าน PDF ด้วย ScoreLens V2 OMR...');
-        const result = await omrWithOemer(input);
+        onProgress?.('🧠 กำลังอ่าน PDF ด้วย ScoreLens V3 OMR...');
+        const result = await omrWithOemer(input, startPage, endPage);
         return { xml: result.xml, bundle: result.bundle ?? null };
       } catch (err: any) {
         throw new Error(`ไม่สามารถแปลง PDF เป็นโน้ตได้: ${err.message}`);
@@ -104,9 +112,11 @@ const FIFTHS_TO_KEY: Record<number, string> = {
 export const parseMusicXMLMetadata = async (
   input: File | Blob | string,
   generateCover: boolean = false,
-  onProgress?: (msg: string) => void
+  onProgress?: (msg: string) => void,
+  startPage?: number,
+  endPage?: number
 ): Promise<{ metadata: Song; xmlData: string; layoutBundle?: any | null }> => {
-  const { xml: rawXml, bundle } = await extractXmlString(input, onProgress);
+  const { xml: rawXml, bundle } = await extractXmlString(input, onProgress, startPage, endPage);
   let xmlText = rawXml;
   console.log(`[MusicXmlParser] Raw XML received length: ${xmlText.length}`);
   console.log(`[MusicXmlParser] First 500 chars of XML:\n${xmlText.substring(0, 500)}`);

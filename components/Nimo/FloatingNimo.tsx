@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Send, Mic, MicOff, MessageCircle } from 'lucide-react';
+import { X, Send, Mic, MicOff, MessageCircle, Sparkles } from 'lucide-react';
 import { NIMO_IDENTITY_IMAGE } from '../../constants';
+import { nimoBrain } from '../../lib/NimoBrain';
 
 interface Msg { role: 'user' | 'nimo'; text: string; }
 
@@ -23,6 +24,8 @@ export const FloatingNimoContent: React.FC<Props> = ({
     const [input, setInput] = useState('');
     const [busy, setBusy] = useState(false);
     const [listening, setListening] = useState(false);
+    const [speaking, setSpeaking] = useState(false);
+    const [handsFree, setHandsFree] = useState(() => localStorage.getItem('nimo_hands_free') === 'true');
     const [status, setStatus] = useState('');
     const [permState, setPermState] = useState<'prompt' | 'granted' | 'denied'>('prompt');
     
@@ -30,6 +33,14 @@ export const FloatingNimoContent: React.FC<Props> = ({
     const usedMic = useRef(false);
     const listRef = useRef<HTMLDivElement>(null);
     const recRef = useRef<any>(null);
+
+    const handsFreeRef = useRef(handsFree);
+    const busyRef = useRef(busy);
+    const speakingRef = useRef(speaking);
+
+    useEffect(() => { handsFreeRef.current = handsFree; }, [handsFree]);
+    useEffect(() => { busyRef.current = busy; }, [busy]);
+    useEffect(() => { speakingRef.current = speaking; }, [speaking]);
 
     // Initial permission check
     useEffect(() => {
@@ -44,15 +55,22 @@ export const FloatingNimoContent: React.FC<Props> = ({
         }
     }, []);
 
+    const startListening = () => {
+        if (listening || speakingRef.current || busyRef.current) return;
+        try {
+            if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+            recRef.current?.start();
+        } catch (e) {
+            console.warn('[startListening Error]', e);
+        }
+    };
+
     const requestPermission = () => {
-        // SYNCHRONOUS call is required by Android Chrome. Do not use async/await here!
         try {
             setStatus(preferredLanguage === 'th' ? '⏳ กำลังเตรียม...' : '⏳ Preparing...');
             if ('speechSynthesis' in window) window.speechSynthesis.cancel();
             
             setPermState('granted'); // hide banner
-            
-            // The start() method itself triggers the permission prompt natively
             recRef.current?.start();
         } catch (e) {
             setPermState('denied');
@@ -65,8 +83,8 @@ export const FloatingNimoContent: React.FC<Props> = ({
         setMsgs([{ 
             role: 'nimo', 
             text: preferredLanguage === 'th'
-                ? 'สวัสดีค่ะ! Nimo พร้อมช่วยแล้ว ถามเรื่องแอพหรือดนตรีได้เลยนะคะ 🎵'
-                : "Hi! I'm Nimo 🎵 Ask me about the app or music theory!" 
+                ? 'สวัสดีค่ะ! Nimo พร้อมช่วยแล้ว ถามเรื่องแอพหรือสั่งการด้วยเสียงได้เลยนะคะ 🎵'
+                : "Hi! I'm Nimo 🎵 Ask me about the app or give me voice commands!" 
         }]);
     }, [preferredLanguage]);
 
@@ -103,12 +121,21 @@ export const FloatingNimoContent: React.FC<Props> = ({
             if (e.error === 'not-allowed') {
                 setStatus(preferredLanguage === 'th' ? '🔴 ไม่ได้รับอนุญาตให้ใช้ไมค์' : '🔴 Mic Permission Denied');
             } else {
-                setStatus(preferredLanguage === 'th' ? `❌ ขออภัย ลองใหม่อีกครั้ง (${e.error})` : `❌ Error: ${e.error}`);
+                // If it's a no-speech error, handle quietly if hands-free is enabled
+                if (e.error === 'no-speech') {
+                    setStatus('');
+                } else {
+                    setStatus(preferredLanguage === 'th' ? `❌ ขออภัย ลองใหม่อีกครั้ง (${e.error})` : `❌ Error: ${e.error}`);
+                }
             }
         };
         r.onend = () => {
             setListening(false);
-            // Don't clear success status immediately
+            if (handsFreeRef.current && !busyRef.current && !speakingRef.current) {
+                setTimeout(() => {
+                    startListening();
+                }, 500);
+            }
         };
         recRef.current = r;
     }, [preferredLanguage]);
@@ -125,14 +152,7 @@ export const FloatingNimoContent: React.FC<Props> = ({
             setListening(false);
         } else {
             setStatus(preferredLanguage === 'th' ? '⏳ กำลังเปิดไมค์...' : '⏳ Opening...');
-            try {
-                if ('speechSynthesis' in window) window.speechSynthesis.cancel();
-                // Synchronous start
-                recRef.current?.start();
-            } catch (err: any) {
-                console.error('[Mic Start Error]', err);
-                setStatus(preferredLanguage === 'th' ? '❌ เกิดข้อผิดพลาดโปรดลองใหม่' : '❌ Mic start failed');
-            }
+            startListening();
         }
     };
 
@@ -140,22 +160,50 @@ export const FloatingNimoContent: React.FC<Props> = ({
     const fixPronunciation = (text: string) => 
         text.replace(/Memolody/gi, 'เมมโมโลดี้').replace(/Nimo/gi, 'นิโม่');
 
-    // Simple keyword detection for explicit speech requests
-    const checkSpeechReq = (text: string) => 
-        /พูด|อ่านให้ฟัง|ออกเสียง|speak|read.?aloud|say.?it/i.test(text);
-
     const sendMsg = async (override?: string) => {
         const text = (override ?? input).trim();
         if (!text || busy) return;
 
         const wasVoice = usedMic.current;
-        const wantSpeech = checkSpeechReq(text);
         usedMic.current = false; // Reset for next
 
         setInput('');
         setBusy(true);
         setStatus('');
         setMsgs(prev => [...prev, { role: 'user', text }]);
+
+        // Check for secret command override
+        if (typeof window !== 'undefined' && window.NimoBrain && window.NimoBrain.processSecretCommand(text)) {
+            const isMale = voiceType === 'teen_boy' || voiceType === 'adult_man';
+            const confirmationText = preferredLanguage === 'th' 
+                ? (isMale ? 'ดำเนินการคำสั่งลับสำเร็จแล้วครับ' : 'ดำเนินการคำสั่งลับสำเร็จแล้วค่ะ') 
+                : 'Secret command override executed.';
+                
+            setMsgs(prev => [...prev, { role: 'nimo', text: confirmationText }]);
+            setBusy(false);
+
+            if ((wasVoice || handsFree) && 'speechSynthesis' in window) {
+                window.speechSynthesis.cancel();
+                setSpeaking(true);
+                const u = new SpeechSynthesisUtterance(fixPronunciation(confirmationText));
+                u.lang = preferredLanguage === 'th' ? 'th-TH' : 'en-US';
+                u.rate = 1.05;
+                u.onend = () => {
+                    setSpeaking(false);
+                    if (handsFreeRef.current) {
+                        setTimeout(() => startListening(), 400);
+                    }
+                };
+                u.onerror = () => {
+                    setSpeaking(false);
+                    if (handsFreeRef.current) {
+                        setTimeout(() => startListening(), 400);
+                    }
+                };
+                window.speechSynthesis.speak(u);
+            }
+            return;
+        }
 
         try {
             const key = process.env.GEMINI_API_KEY || '';
@@ -164,20 +212,59 @@ export const FloatingNimoContent: React.FC<Props> = ({
             const isMale = voiceType === 'teen_boy' || voiceType === 'adult_man';
             const suffix = isMale ? 'ครับ' : 'ค่ะ';
             
+            // Get current app state from registry
+            const appState = typeof window !== 'undefined' && window.NimoBrain 
+                ? window.NimoBrain.getState() 
+                : {};
+            const appStateStr = JSON.stringify(appState, null, 2);
+
             // System instructions
             const sys = preferredLanguage === 'th'
-                ? `คุณคือ Nimo ผู้ช่วย AI ของแอพ เมมโมโลดี้ (Memolody)
-แอพนี้ใช้ฝึกอ่านตัวโน้ตด้วยระบบ Solfege (Movable Do / Fixed Do)
-ฟีเจอร์หลัก: 1. ดูโน้ต XML 2. ฟังเสียง MIDI 3. ฝึกร้อง 4. Piano Roll 5. บันทึกเพลง
-แนวทางการตอบ: ตอบภาษาไทยให้ครบถ้วน ชัดเจน ห้ามตัดจบกลางคำ ลงท้ายด้วย${suffix} เสมอ`
-                : `You are Nimo, AI for Memolody app.
-The app is a music notation/sight-reading tool using Solfege.
-Features: XML Viewer, MIDI engine, Pitch training, Piano Roll, Saved songs.
-Instructions: Reply in English, be complete and helpful. Never cut off mid-sentence.`;
+                ? `คุณคือ Nimo AI ผู้ช่วยอัจฉริยะส่วนกลางของแอพพลิเคชัน Memolody V2
+คุณทำหน้าที่เป็นแกนสมองหลัก ควบคุม UI ปุ่มกด และการเล่นดนตรีผ่านคำสั่งเสียงของผู้ใช้
 
-            // Use gemini-1.5-flash which is standard and stable
+สถานะปัจจุบันของแอพพลิเคชัน (Application State):
+${appStateStr}
+
+ฟีเจอร์และคำสั่งที่คุณควบคุมได้ผ่านทาง actions (ห้ามใช้คำสั่งที่ไม่มีในรายการนี้):
+1. 'navigate_to_page': เปลี่ยนหน้าเพจ (params: { view: 'home' | 'player' | 'forge' | 'settings' | 'profile' })
+2. 'play_song': ค้นหาและเล่นเพลงจากคลังเพลง (params: { songTitle: string })
+3. 'play': เริ่มเล่นเพลงหรือเล่นเสียงดนตรี (ไม่มี params)
+4. 'pause': หยุดเพลงชั่วคราว (ไม่มี params)
+5. 'set_tempo': ปรับความเร็วเพลง BPM (params: { bpm: number [20-400] })
+6. 'set_volume': ปรับความดังเสียงหลัก (params: { level: number [0.0 - 1.0] })
+7. 'change_language': สลับภาษาการแสดงผล (params: { lang: 'th' | 'en' })
+8. 'change_instrument': เปลี่ยนเครื่องดนตรี (params: { instrument: 'piano' | 'violin' | 'voice' | 'guitar' })
+9. 'toggle_view_mode': สลับโหมด Score และ Piano Roll (ไม่มี params)
+10. 'toggle_loop': เปิด/ปิดโหมดลูปเสียง (params: { enabled: boolean })
+
+การตอบกลับ:
+คุณต้องตอบกลับเป็น JSON ที่สอดคล้องกับ JSON Schema ที่กำหนดเท่านั้น โดยมีสองฟิลด์:
+- 'reply': ข้อความตอบกลับที่กระชับและเป็นมิตรเพื่อแสดงผลและใช้พูดออกเสียงผ่าน TTS (ภาษาไทยลงท้ายด้วย ${suffix} เสมอ)
+- 'actions': รายการคำสั่ง (Array of action objects) ที่ต้องการรันตามความต้องการของผู้ใช้ ถ้าไม่มีให้ใช้ []`
+                : `You are Nimo, central AI brain for Memolody app.
+You control the application's limbs (playback, settings, navigation, volume, tempo) via voice commands.
+
+Current Application State:
+${appStateStr}
+
+Supported Actions:
+1. 'navigate_to_page': Change page view (params: { view: 'home' | 'player' | 'forge' | 'settings' | 'profile' })
+2. 'play_song': Search and play a song from library (params: { songTitle: string })
+3. 'play': Start playback/audio engine (no params)
+4. 'pause': Pause playback (no params)
+5. 'set_tempo': Adjust tempo BPM (params: { bpm: number [20-400] })
+6. 'set_volume': Adjust master volume level (params: { level: number [0.0 - 1.0] })
+7. 'change_language': Change settings language (params: { lang: 'th' | 'en' })
+8. 'change_instrument': Set main instrument track (params: { instrument: 'piano' | 'violin' | 'voice' | 'guitar' })
+9. 'toggle_view_mode': Switch between Score Sheet and Piano Roll views (no params)
+10. 'toggle_loop': Enable or disable playback looping (params: { enabled: boolean })
+
+You must output valid JSON matching the schema. If no system controls are requested, return an empty array for actions.`;
+
+            // Use gemini-3.5-flash JSON mode
             const res = await fetch(
-                `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`,
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${key}`,
                 {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -185,9 +272,28 @@ Instructions: Reply in English, be complete and helpful. Never cut off mid-sente
                         system_instruction: { parts: [{ text: sys }] },
                         contents: [{ role: 'user', parts: [{ text: text }] }],
                         generationConfig: {
-                            maxOutputTokens: 1024, // High limit to prevent truncation
-                            temperature: 0.7,
+                            maxOutputTokens: 1024,
+                            temperature: 0.4,
                             topP: 0.95,
+                            responseMimeType: "application/json",
+                            responseSchema: {
+                                type: "OBJECT",
+                                properties: {
+                                    reply: { type: "STRING" },
+                                    actions: {
+                                        type: "ARRAY",
+                                        items: {
+                                            type: "OBJECT",
+                                            properties: {
+                                                type: { type: "STRING" },
+                                                params: { type: "OBJECT" }
+                                            },
+                                            required: ["type"]
+                                        }
+                                    }
+                                },
+                                required: ["reply", "actions"]
+                            }
                         }
                     })
                 }
@@ -202,22 +308,64 @@ Instructions: Reply in English, be complete and helpful. Never cut off mid-sente
             const reply = json?.candidates?.[0]?.content?.parts?.[0]?.text;
             if (!reply) throw new Error('AI returned no response');
 
-            setMsgs(prev => [...prev, { role: 'nimo', text: reply }]);
+            let parsedRes = { reply: '', actions: [] as any[] };
+            try {
+                parsedRes = JSON.parse(reply);
+            } catch(e) {
+                parsedRes = { reply: reply, actions: [] };
+            }
 
-            // TTS Logic: ONLY if user explicitly asked OR used voice AND user settings allow
-            // For now, we only speak if user explicitly says "speak" or similar.
-            if (wantSpeech && 'speechSynthesis' in window) {
+            const cleanReply = parsedRes.reply || reply;
+            setMsgs(prev => [...prev, { role: 'nimo', text: cleanReply }]);
+
+            // Execute Actions
+            if (parsedRes.actions && Array.isArray(parsedRes.actions)) {
+                for (const act of parsedRes.actions) {
+                    if (act.type) {
+                        try {
+                            if (window.NimoBrain) {
+                                await window.NimoBrain.executeAction(act.type, act.params);
+                            }
+                        } catch (err) {
+                            console.error(`[NimoAction Error] Failed executing ${act.type}:`, err);
+                        }
+                    }
+                }
+            }
+
+            // Speak response if using voice or in hands-free mode
+            if ((wasVoice || handsFree) && 'speechSynthesis' in window) {
                 window.speechSynthesis.cancel();
-                const u = new SpeechSynthesisUtterance(preferredLanguage === 'th' ? fixPronunciation(reply) : reply);
+                setSpeaking(true);
+                const u = new SpeechSynthesisUtterance(preferredLanguage === 'th' ? fixPronunciation(cleanReply) : cleanReply);
                 u.lang = preferredLanguage === 'th' ? 'th-TH' : 'en-US';
-                u.rate = 1.0;
+                u.rate = 1.05;
+                u.onend = () => {
+                    setSpeaking(false);
+                    if (handsFreeRef.current) {
+                        setTimeout(() => startListening(), 400);
+                    }
+                };
+                u.onerror = () => {
+                    setSpeaking(false);
+                    if (handsFreeRef.current) {
+                        setTimeout(() => startListening(), 400);
+                    }
+                };
                 window.speechSynthesis.speak(u);
+            } else {
+                if (handsFree) {
+                    setTimeout(() => startListening(), 400);
+                }
             }
 
         } catch (e: any) {
             console.error('[Nimo Error]', e);
-            const errMsg = preferredLanguage === 'th' ? `⚠️ ผิดพลาด: ${e.message}` : `⚠️ Error: ${e.message}`;
+            const errMsg = preferredLanguage === 'th' ? `⚠️ เกิดข้อผิดพลาด: ${e.message}` : `⚠️ Error: ${e.message}`;
             setMsgs(prev => [...prev, { role: 'nimo', text: errMsg }]);
+            if (handsFree) {
+                setTimeout(() => startListening(), 500);
+            }
         } finally {
             setBusy(false);
         }
@@ -246,6 +394,17 @@ Instructions: Reply in English, be complete and helpful. Never cut off mid-sente
                 : { bottom: 24, right: 24, width: 360, height: 560, borderRadius: 28 }
             }
         >
+            <style>{`
+                @keyframes wave {
+                    0%, 100% { transform: scaleY(0.3); }
+                    50% { transform: scaleY(1.3); }
+                }
+                .animate-wave {
+                    animation: wave 0.8s ease-in-out infinite;
+                    transform-origin: center;
+                }
+            `}</style>
+
             {/* Header */}
             <div className="shrink-0 flex items-center justify-between px-4 py-3 bg-white/[0.03] border-b border-white/5">
                 <div className="flex items-center gap-3">
@@ -254,20 +413,45 @@ Instructions: Reply in English, be complete and helpful. Never cut off mid-sente
                     </div>
                     <div>
                         <p className="text-white font-black italic uppercase text-xs tracking-tighter flex items-center gap-1.5">
-                            NIMO AI <span className="text-[9px] text-zinc-500 font-normal">v1.4</span>
+                            NIMO BRAIN <span className="text-[9px] text-cyan-400 font-bold tracking-widest">v2.0</span>
                         </p>
                         <p className="text-cyan-400 text-[9px] font-bold uppercase tracking-widest flex items-center gap-1">
                             <span className={`w-1.5 h-1.5 rounded-full ${busy ? 'bg-amber-500 animate-pulse' : 'bg-cyan-500'}`} />
-                            {busy ? 'Processing...' : 'Online'}
+                            {busy ? 'Processing...' : (listening ? 'Listening...' : 'Online')}
                         </p>
                     </div>
                 </div>
-                <button 
-                    onClick={() => setIsOpen(false)} 
-                    className="w-8 h-8 flex items-center justify-center text-zinc-500 hover:text-white active:scale-75 transition-all"
-                >
-                    <X size={20} />
-                </button>
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={() => {
+                            const val = !handsFree;
+                            setHandsFree(val);
+                            localStorage.setItem('nimo_hands_free', String(val));
+                            if (val) {
+                                setStatus(preferredLanguage === 'th' ? '🎙️ เปิดโหมดแฮนด์ฟรีแล้ว' : '🎙️ Hands-free mode enabled');
+                                startListening();
+                            } else {
+                                setStatus(preferredLanguage === 'th' ? '🎙️ ปิดโหมดแฮนด์ฟรี' : '🎙️ Hands-free mode disabled');
+                                try { recRef.current?.stop(); } catch(e){}
+                            }
+                        }}
+                        className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider transition-all border flex items-center gap-1 ${
+                            handsFree 
+                                ? 'bg-cyan-500 border-cyan-400 text-black shadow-[0_0_10px_rgba(0,229,255,0.4)]' 
+                                : 'bg-white/5 border-white/10 text-zinc-400 hover:text-zinc-300'
+                        }`}
+                        title={preferredLanguage === 'th' ? 'โหมดคุยต่อเนื่องแฮนด์ฟรี' : 'Hands-Free Continuous Mode'}
+                    >
+                        <Sparkles size={10} />
+                        {preferredLanguage === 'th' ? 'คุยต่อเนื่อง' : 'Hands-free'}
+                    </button>
+                    <button 
+                        onClick={() => setIsOpen(false)} 
+                        className="w-8 h-8 flex items-center justify-center text-zinc-500 hover:text-white active:scale-75 transition-all"
+                    >
+                        <X size={20} />
+                    </button>
+                </div>
             </div>
 
             {/* Chat List */}
@@ -288,6 +472,18 @@ Instructions: Reply in English, be complete and helpful. Never cut off mid-sente
                         </div>
                     </div>
                 ))}
+                
+                {/* Visual waves animation when listening or speaking */}
+                {(listening || speaking) && (
+                    <div className="flex items-center gap-1.5 justify-center py-2 h-10">
+                        <span className={`w-1 rounded-full animate-wave [animation-delay:0.1s] ${listening ? 'h-6 bg-red-400' : 'h-4 bg-cyan-400'}`} />
+                        <span className={`w-1 rounded-full animate-wave [animation-delay:0.2s] ${listening ? 'h-8 bg-red-400' : 'h-6 bg-cyan-400'}`} />
+                        <span className={`w-1 rounded-full animate-wave [animation-delay:0.3s] ${listening ? 'h-4 bg-red-400' : 'h-5 bg-cyan-400'}`} />
+                        <span className={`w-1 rounded-full animate-wave [animation-delay:0.4s] ${listening ? 'h-7 bg-red-400' : 'h-7 bg-cyan-400'}`} />
+                        <span className={`w-1 rounded-full animate-wave [animation-delay:0.5s] ${listening ? 'h-5 bg-red-400' : 'h-4 bg-cyan-400'}`} />
+                    </div>
+                )}
+
                 {/* Mic Onboarding Banner */}
                 {permState === 'prompt' && !busy && (
                     <div className="mx-4 my-2 p-5 bg-cyan-500/10 border-2 border-dashed border-cyan-500/30 rounded-[24px] text-center shadow-xl animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -328,7 +524,7 @@ Instructions: Reply in English, be complete and helpful. Never cut off mid-sente
                         value={input}
                         onChange={e => setInput(e.target.value)}
                         onKeyDown={e => e.key === 'Enter' && !busy && sendMsg()}
-                        placeholder={preferredLanguage === 'th' ? "ถาม Nimo ได้เลย..." : "Ask Nimo something..."}
+                        placeholder={preferredLanguage === 'th' ? "สั่ง Nimo ด้วยเสียงหรือพิมพ์..." : "Command Nimo with voice or text..."}
                         disabled={busy}
                         className="flex-1 bg-transparent border-none outline-none text-white text-sm placeholder:text-zinc-600 disabled:opacity-50 min-w-0"
                     />

@@ -3,7 +3,7 @@ import { X, Check, Maximize, ScanLine } from 'lucide-react';
 
 interface ScoreSelectionModalProps {
   file: File;
-  onConfirm: (croppedBlob: Blob | File) => void;
+  onConfirm: (croppedBlob: Blob | File, startPage?: number, endPage?: number) => void;
   onCancel: () => void;
 }
 
@@ -16,6 +16,8 @@ const ScoreSelectionModal: React.FC<ScoreSelectionModalProps> = ({ file, onConfi
   const [isDragging, setIsDragging] = useState(false);
   const [dragType, setDragType] = useState<'move' | 'resize-br' | null>(null);
   const [startPos, setStartPos] = useState({ x: 0, y: 0, rect: { x: 0, y: 0, w: 0, h: 0 } });
+  const [currentPage, setCurrentPage] = useState(1);
+  const [numPages, setNumPages] = useState(1);
   const containerRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
 
@@ -73,9 +75,13 @@ const ScoreSelectionModal: React.FC<ScoreSelectionModalProps> = ({ file, onConfi
 
         const pdf = await pdfjs.getDocument({ data: bytes }).promise;
         if (cancelled) return;
+        
+        if (!cancelled) {
+          setNumPages(pdf.numPages);
+        }
 
-        // Step 3: Render page 1 into an offscreen canvas
-        const page = await pdf.getPage(1);
+        // Step 3: Render current page into an offscreen canvas
+        const page = await pdf.getPage(currentPage);
         if (cancelled) return;
 
         const viewport = page.getViewport({ scale: 2.0 });
@@ -100,7 +106,7 @@ const ScoreSelectionModal: React.FC<ScoreSelectionModalProps> = ({ file, onConfi
 
     renderPdf();
     return () => { cancelled = true; };
-  }, [file, isPdf]);
+  }, [file, isPdf, currentPage]);
 
   // ── Drag handlers ──────────────────────────────────────────────────────────
   const handleMouseDown = (e: React.MouseEvent, type: 'move' | 'resize-br') => {
@@ -139,8 +145,11 @@ const ScoreSelectionModal: React.FC<ScoreSelectionModalProps> = ({ file, onConfi
 
   // ── Process crop ───────────────────────────────────────────────────────────
   const handleProcess = (fullPage = false) => {
-    // If scanning full page, just pass the original file prop immediately
+    // If scanning full page, ask for confirmation to prevent accidental long scans
     if (fullPage) {
+      if (!window.confirm("คุณต้องการสแกนโน้ต 'ทั้งไฟล์' ใช่หรือไม่?\n\n(หากไฟล์มีหลายหน้า การสแกนทั้งหมดอาจใช้เวลานาน แนะนำให้เลือกสแกนเฉพาะหน้าที่ต้องการทีละหน้า)")) {
+        return;
+      }
       console.log('[ScoreSelection] Processing FULL PAGE scan...');
       onConfirm(file);
       return;
@@ -214,13 +223,17 @@ const ScoreSelectionModal: React.FC<ScoreSelectionModalProps> = ({ file, onConfi
 
     if (imageSrc) {
       return (
-        <div className="relative shadow-2xl" style={{ display: 'inline-block', maxWidth: '100%', maxHeight: '100%' }}>
+        <div className="relative shadow-2xl" style={{ display: 'inline-block', maxWidth: '100%' }}>
           <img
             ref={imageRef}
             src={imageSrc}
             alt="Score preview"
-            className="block max-w-full max-h-[60vh] rounded-sm"
-            style={{ opacity: isCropMode ? 0.55 : 1 }}
+            className="block rounded-sm"
+            style={{ 
+              maxWidth: '100%', 
+              maxHeight: 'calc(min(85vh, 700px) - 200px)', 
+              opacity: isCropMode ? 0.55 : 1 
+            }}
             draggable={false}
           />
 
@@ -288,6 +301,27 @@ const ScoreSelectionModal: React.FC<ScoreSelectionModalProps> = ({ file, onConfi
         {/* Footer */}
         <div className="px-6 py-4 border-t border-white/5 bg-white/[0.015] flex items-center justify-between shrink-0">
           <div className="flex items-center gap-4 text-xs">
+            {isPdf && numPages > 1 && (
+              <div className="flex items-center gap-3 bg-white/5 px-3 py-1.5 rounded-xl border border-white/10">
+                <button 
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="w-7 h-7 rounded-full hover:bg-white/10 disabled:opacity-30 flex items-center justify-center text-white font-black"
+                >
+                  &larr;
+                </button>
+                <span className="text-white text-[10px] font-black uppercase tracking-widest">
+                  Page {currentPage} / {numPages}
+                </span>
+                <button 
+                  onClick={() => setCurrentPage(p => Math.min(numPages, p + 1))}
+                  disabled={currentPage === numPages}
+                  className="w-7 h-7 rounded-full hover:bg-white/10 disabled:opacity-30 flex items-center justify-center text-white font-black"
+                >
+                  &rarr;
+                </button>
+              </div>
+            )}
             {isCropMode && (
               <>
                 <span className="text-zinc-600 uppercase tracking-widest font-bold text-[9px]">Selection</span>
@@ -308,18 +342,33 @@ const ScoreSelectionModal: React.FC<ScoreSelectionModalProps> = ({ file, onConfi
               {isCropMode ? 'Cancel Crop' : 'Cancel'}
             </button>
             {!isCropMode && (
-              <button
-                onClick={() => handleProcess(true)}
-                disabled={!imageSrc}
-                title="สแกนภาพทั้งหน้า (Full Page) — ส่งไฟล์ต้นฉบับทั้งหมดให้ AI"
-                className="bg-white/5 hover:bg-white/10 text-zinc-300 px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 border border-white/10 transition-all active:scale-95"
-              >
-                <Maximize size={14} />
-                <span className="flex flex-col items-start leading-none gap-0.5">
-                  <span>Scan Full Page</span>
-                  <span className="text-[7px] text-zinc-600 font-bold normal-case tracking-normal">ส่งทั้งหน้าให้ AI อ่าน</span>
-                </span>
-              </button>
+              <>
+                {isPdf && numPages > 1 && (
+                  <button
+                    onClick={() => onConfirm(file, currentPage, currentPage)}
+                    disabled={!imageSrc}
+                    className="bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 border border-indigo-500/30 transition-all active:scale-95"
+                  >
+                    <Maximize size={14} />
+                    <span className="flex flex-col items-start leading-none gap-0.5">
+                      <span>Scan Page {currentPage}</span>
+                      <span className="text-[7px] text-indigo-400 font-bold normal-case tracking-normal">สแกนเฉพาะหน้านี้</span>
+                    </span>
+                  </button>
+                )}
+                <button
+                  onClick={() => handleProcess(true)}
+                  disabled={!imageSrc}
+                  title="สแกนภาพทั้งหน้า (Full Page) — ส่งไฟล์ต้นฉบับทั้งหมดให้ AI"
+                  className="bg-white/5 hover:bg-white/10 text-zinc-300 px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 border border-white/10 transition-all active:scale-95"
+                >
+                  <Maximize size={14} />
+                  <span className="flex flex-col items-start leading-none gap-0.5">
+                    <span>{isPdf && numPages > 1 ? 'Scan All Pages' : 'Scan Full Page'}</span>
+                    <span className="text-[7px] text-zinc-600 font-bold normal-case tracking-normal">ส่ง{isPdf && numPages > 1 ? 'ทุกหน้า' : 'ทั้งหน้า'}ให้ AI อ่าน</span>
+                  </span>
+                </button>
+              </>
             )}
             <button
               onClick={() => {

@@ -571,17 +571,20 @@ export async function recognizeMelodyOnly(file: File): Promise<OCRResult> {
 }
 
 /**
- * Local ScoreLens V2 OMR server (port 3003) — MIT License, commercial-safe
+ * Local ScoreLens V3 OMR server (port 3003) — MIT License, commercial-safe
  * Returns MusicXML + LayoutMap bundle from Scorelens-Engine_V2
  */
-export async function omrWithOemer(file: File): Promise<OCRResult> {
+export async function omrWithOemer(file: File, startPage?: number, endPage?: number): Promise<OCRResult> {
   const formData = new FormData();
   formData.append('image', file);
+  if (startPage) formData.append('startPage', startPage.toString());
+  if (endPage) formData.append('endPage', endPage.toString());
 
-  const res = await fetch('http://localhost:3003/omr', {
+  // Send to local Memolody OMR Node.js Server (ScoreLens V3 Core Pipeline)
+  const res = await fetch('http://localhost:3003/omr-v3', {
     method: 'POST',
     body: formData,
-    signal: AbortSignal.timeout(600000), // 600s: DL inference on CPU
+    signal: AbortSignal.timeout(1800000), // 1800s (30m): DL inference on CPU
   });
 
   if (!res.ok) {
@@ -603,7 +606,7 @@ export async function omrWithOemer(file: File): Promise<OCRResult> {
   const { xml, bundle } = data;
 
   if (!xml || !xml.includes('<score-partwise')) {
-    throw new Error('Invalid MusicXML from ScoreLens V2');
+    throw new Error('Invalid MusicXML from ScoreLens V3');
   }
 
   // 🧪 Validation: Ensure we actually have measures
@@ -611,28 +614,28 @@ export async function omrWithOemer(file: File): Promise<OCRResult> {
   const xmlDoc = parser.parseFromString(xml, 'text/xml');
   const measures = xmlDoc.getElementsByTagName('measure');
   if (measures.length === 0) {
-    throw new Error('ScoreLens V2 อ่านภาพสำเร็จแต่ไม่พบตัวโน้ตดนตรี กรุณาลองใช้ภาพที่ชัดเจนกว่านี้');
+    throw new Error('ScoreLens V3 อ่านภาพสำเร็จแต่ไม่พบตัวโน้ตดนตรี กรุณาลองใช้ภาพที่ชัดเจนกว่านี้');
   }
 
   const noteCount = (xml.match(/<note/g) || []).length;
-  if (noteCount < 5) throw new Error(`ScoreLens V2 found only ${noteCount} notes`);
+  if (noteCount < 5) throw new Error(`ScoreLens V3 found only ${noteCount} notes`);
 
   // Log bundle info if available
   if (bundle?.layout_map) {
     const lm = bundle.layout_map;
     console.log(
-      `[ScoreLens V2] 📐 Layout: ${lm.systems?.length || 0} systems | ` +
+      `[ScoreLens V3] 📐 Layout: ${lm.systems?.length || 0} systems | ` +
       `staff_space=${lm.avg_staff_space}px | system_dist=${lm.avg_system_distance}px`
     );
   }
   if (bundle?.metadata?.title) {
-    console.log(`[ScoreLens V2] 🎼 Detected title: "${bundle.metadata.title}"`);
+    console.log(`[ScoreLens V3] 🎼 Detected title: "${bundle.metadata.title}"`);
   }
 
   return {
     xml,
     confidence: noteCount > 20 ? 'high' : 'medium',
-    message: `ScoreLens V2 อ่านได้ ${noteCount} โน้ต`,
+    message: `ScoreLens V3 อ่านได้ ${noteCount} โน้ต`,
     bundle: bundle || null,
   };
 }

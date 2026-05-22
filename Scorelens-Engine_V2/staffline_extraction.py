@@ -446,6 +446,9 @@ def extract_line(pred, x_offset, line_threshold=0.8):
             lines[closest_cen].add_point(y, x+x_offset)
 
     # Assign labels
+    if not groups:
+        return np.array(lines)[valid_centers], norm
+
     last_group = groups[0]
     cur_line_id = 0
     idx = 0
@@ -466,7 +469,7 @@ def extract_line(pred, x_offset, line_threshold=0.8):
 
 
 def filter_line_peaks(peaks, norm, max_gap_ratio=1.5):
-    valid_peaks = np.array([True for _ in range(len(peaks))])
+    valid_peaks = np.ones(len(peaks), dtype=bool)
 
     # Filter by height
     for idx, p in enumerate(peaks):

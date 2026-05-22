@@ -135,10 +135,12 @@ export function computeLayoutSync(
 
   const toVrvUnits = (px: number) => Math.round(px / pxPerVrvUnit);
 
-  const pageMarginLeft = Math.max(20, Math.min(300, toVrvUnits(marginLeftPx)));
-  const pageMarginRight = Math.max(20, Math.min(300, toVrvUnits(marginRightPx)));
-  const pageMarginTop = Math.max(40, Math.min(400, toVrvUnits(marginTopPx)));
-  const pageMarginBottom = Math.max(40, Math.min(400, toVrvUnits(marginBottomPx)));
+  const pageMarginLeft = Math.max(600, toVrvUnits(marginLeftPx));
+  const pageMarginRight = Math.max(400, toVrvUnits(marginRightPx));
+  // ── FIX: Do not inherit massive top/bottom margins from the PDF's title block.
+  // Instead, use tight vertical margins because our HTML React components handle the title.
+  const pageMarginTop = 0;
+  const pageMarginBottom = 20;
 
   // ── 3. Compute inter-system spacing ─────────────────────────────────────
   // Verovio `spacingSystem` = distance between consecutive systems in internal units.
@@ -155,6 +157,10 @@ export function computeLayoutSync(
     Math.round((y / (image_height || 1)) * 1000) / 1000
   );
 
+  // We use containerWidthPx because the image is scaled to fit the container
+  const pageWidth = Math.round(toVrvUnits(containerWidthPx));
+  const pageHeight = image_height ? Math.round(toVrvUnits(containerWidthPx * (image_height / (image_width || 1)))) : 3960;
+
   const verovioOptions: VerovioLayoutOptions = {
     scale,
     pageMarginTop,
@@ -163,13 +169,13 @@ export function computeLayoutSync(
     pageMarginRight,
     spacingSystem,
     spacingStaff,
-    pageWidth: VRV_PAGE_WIDTH,
-    pageHeight: VRV_PAGE_HEIGHT,
+    pageWidth,
+    pageHeight,
   };
 
   console.log(
     `[LayoutSync] 🎯 Scale: ${scale} | Margins: T${pageMarginTop} B${pageMarginBottom} L${pageMarginLeft} R${pageMarginRight}` +
-    ` | spacingSystem: ${spacingSystem} | systems: ${systemCount} | tracks/system: ${tracksPerSystem}`
+    ` | spacingSystem: ${spacingSystem} | pageWidth: ${pageWidth}`
   );
 
   return {

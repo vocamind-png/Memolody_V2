@@ -74,6 +74,34 @@ export class SoundBankEngine {
             const connectTarget = (isMobile ? masterBus : (this.sharedReverb || masterBus));
 
             // Piano Sampler Engine — use fewer samples for faster loading
+            console.log(`[SoundBankEngine] Creating Tone.Sampler for trackId=${trackId}...`);
+            let resolved = false;
+
+            const timeoutId = setTimeout(() => {
+                if (!resolved) {
+                    resolved = true;
+                    console.warn(`[SoundBankEngine] ⚠️ Sampler loading timed out (8s) for trackId=${trackId}, falling back to basic Synth`);
+                    try {
+                        sampler.dispose();
+                    } catch (err) {
+                        console.warn("[SoundBankEngine] Failed to dispose timed-out sampler:", err);
+                    }
+
+                    const channel = new Tone.Channel(0, 0).connect(connectTarget);
+                    const meter = new Tone.Meter().connect(channel);
+                    const fallbackSynth = new Tone.PolySynth(Tone.Synth, {
+                        oscillator: { type: "triangle" },
+                        envelope: { attack: 0.02, decay: 0.3, sustain: 0.4, release: 1.0 }
+                    });
+                    fallbackSynth.connect(channel);
+
+                    trackSamplers.set(trackId, fallbackSynth);
+                    trackChannels.set(trackId, channel);
+                    trackMeters.set(trackId, meter);
+                    resolve();
+                }
+            }, 8000);
+
             const sampler = new Tone.Sampler({
                 urls: {
                     A0: "A0.mp3",
@@ -99,6 +127,10 @@ export class SoundBankEngine {
                 release: 1.2,
                 baseUrl: "https://tonejs.github.io/audio/salamander/",
                 onload: () => {
+                    if (resolved) return;
+                    resolved = true;
+                    clearTimeout(timeoutId);
+                    console.log(`[SoundBankEngine] Tone.Sampler loaded successfully for trackId=${trackId}`);
                     const channel = new Tone.Channel(0, 0).connect(connectTarget);
                     const meter = new Tone.Meter().connect(channel);
                     sampler.connect(channel);
@@ -109,17 +141,21 @@ export class SoundBankEngine {
                     resolve();
                 },
                 onerror: (e) => {
-                    console.error("Sampler loading failed, falling back to basic Synth:", e);
+                    if (resolved) return;
+                    resolved = true;
+                    clearTimeout(timeoutId);
+                    console.error(`[SoundBankEngine] Sampler loading failed for trackId=${trackId}, falling back to basic Synth:`, e);
+                    const channel = new Tone.Channel(0, 0).connect(connectTarget);
+                    const meter = new Tone.Meter().connect(channel);
                     const fallbackSynth = new Tone.PolySynth(Tone.Synth, {
                         oscillator: { type: "triangle" },
                         envelope: { attack: 0.02, decay: 0.3, sustain: 0.4, release: 1.0 }
-                    }).connect(masterBus!);
-
-                    const channel = new Tone.Channel(0, 0).connect(masterBus!);
+                    });
                     fallbackSynth.connect(channel);
 
                     trackSamplers.set(trackId, fallbackSynth);
                     trackChannels.set(trackId, channel);
+                    trackMeters.set(trackId, meter);
                     resolve();
                 }
             });

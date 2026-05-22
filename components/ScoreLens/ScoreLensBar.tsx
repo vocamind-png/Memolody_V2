@@ -37,7 +37,7 @@ const ScoreLensBar: React.FC<ScoreLensBarProps> = ({
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/png,image/jpeg,image/jpg,image/webp,application/pdf"
+        accept="image/png,image/jpeg,image/jpg,image/webp,image/heic,image/heif,.heic,.heif,application/pdf"
         className="hidden"
         onChange={handleFileChange}
       />

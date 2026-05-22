@@ -264,9 +264,12 @@ def extract(args):
     title = typo_result.title or basename.capitalize()
     composer = typo_result.composer or "Unknown"
 
-    builder = MusicXMLBuilder(title=title, time_sig=typo_result.time_signature)
+    # Detect tempo from OCR; fall back to 120 if not found
+    detected_tempo = typo_result.tempo_bpm if typo_result.tempo_bpm else 120
+
+    builder = MusicXMLBuilder(title=title, time_sig=typo_result.time_signature, tempo=detected_tempo)
     builder.build()
-    xml = builder.to_musicxml()
+    xml = builder.to_musicxml(tempo=detected_tempo)
 
     # ── [V2] Compute integrity hash ───────────────────────────────────────
     integrity_hash = hashlib.sha256(xml).hexdigest()

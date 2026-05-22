@@ -533,11 +533,12 @@ class AddMeasure(Action):
 
 
 class AddInit(Action):
-    def __init__(self, measure: Measure, time_sig: tuple[int, int] = (4, 4), **kwargs):
+    def __init__(self, measure: Measure, time_sig: tuple[int, int] = (4, 4), tempo: int = 120, **kwargs):
         super().__init__(**kwargs)
         assert measure.at_beginning
         self.measure = measure
         self.time_sig = time_sig  # (beats, beat_type) inferred from rhythm analysis
+        self.tempo = tempo
 
     def perform(self, parent_elem=None):
         self.ctx.key = self.measure.get_key()
@@ -569,6 +570,17 @@ class AddInit(Action):
             clef_elem = decode_clef(clef)
             clef_elem = list(clef_elem)[0]
             attr.append(clef_elem)
+
+        # ── Tempo direction (inside first measure, per MusicXML spec) ──
+        direction = SubElement(elem, 'direction', attrib={'placement': 'above'})
+        dir_type = SubElement(direction, 'direction-type')
+        metro = SubElement(dir_type, 'metronome', attrib={'parentheses': 'no'})
+        beat_unit = SubElement(metro, 'beat-unit')
+        beat_unit.text = 'quarter'
+        per_min = SubElement(metro, 'per-minute')
+        per_min.text = str(self.tempo)
+        SubElement(direction, 'sound', attrib={'tempo': str(self.tempo)})
+        logger.info("[MusicXML] Writing tempo: %d BPM", self.tempo)
 
         if parent_elem is not None:
             parent_elem.append(elem)
@@ -654,11 +666,12 @@ def infer_time_signature(measures_dict: dict) -> tuple[int, int]:
 
 
 class MusicXMLBuilder:
-    def __init__(self, title=None, time_sig=None):
+    def __init__(self, title=None, time_sig=None, tempo=120):
         self.measures: dict[int, list[Measure]] = {}
         self.actions: list[Action] = []
         self.title: str = title
         self.time_sig: tuple[int, int] = time_sig  # Can be (beats, beat_type)
+        self.tempo: int = tempo  # BPM detected from OCR
 
     def build(self):
         # Fetch parameters
@@ -689,7 +702,7 @@ class MusicXMLBuilder:
             return
 
         first_measure = self.measures[0][0]
-        self.actions.append(AddInit(first_measure, time_sig=self.time_sig))
+        self.actions.append(AddInit(first_measure, time_sig=self.time_sig, tempo=self.tempo))
 
         cur_key = first_measure.get_key()
         cur_clefs = first_measure.get_track_clef()
@@ -806,14 +819,21 @@ class MusicXMLBuilder:
                 mm = gen_measure(buffer, grp, num, at_beginning, double_barline)
                 self.measures[grp].append(mm)
 
-    def to_musicxml(self, tempo=90):
+    def to_musicxml(self, tempo=120):
+        # Update tempo on the stored AddInit action (tempo is now written inside measure)
+        for action in self.actions:
+            if isinstance(action, AddInit):
+                action.tempo = tempo
+                break
+
         score = Element('score-partwise', attrib={'version': '4.0'})
         work = build_work(self.title)
         iden = build_identity()
         part_list = build_part_list()
         score.extend([work, iden, part_list])
         part = SubElement(score, 'part', attrib={'id': 'P1'})
-        sound = SubElement(part, "sound", attrib={"tempo": str(tempo)})
+        # NOTE: <sound> element removed from part level — now written inside first measure
+        # per MusicXML spec (direction element belongs inside a measure)
 
         measure = None
         for action in self.actions:
@@ -1023,6 +1043,11 @@ def decode_note(note, clef_type, is_chord=False, voice=1) -> Element:
     alter = SubElement(pitch, 'alter')
     octave = SubElement(pitch, 'octave')
     alter.text = '0'
+    
+    if note.staff_line_pos is None:
+        logger.warning(f"Note has no staff_line_pos, defaulting to 4")
+        note.staff_line_pos = 4
+        
     pos = int(note.staff_line_pos)
     if clef_type == ClefType.G_CLEF:
         order = G_CLEF_POS_TO_PITCH
