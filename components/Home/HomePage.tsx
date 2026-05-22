@@ -674,84 +674,7 @@ const HomePage: React.FC<HomePageProps> = ({
         {/* ── TWO BUTTONS ROW: Camera (left) + Import (right) ── */}
         <div className="flex gap-3">
 
-          {/* LEFT — Camera Capture Button */}
-          <button
-            id="camera-capture-btn"
-            onClick={() => setShowCamera(true)}
-            className="group relative flex-1 h-[88px] rounded-[24px] overflow-hidden active:scale-[0.97] transition-all duration-200 select-none"
-            style={{
-              background: 'linear-gradient(145deg, #1c1206, #2a1a07, #1a1205)',
-              boxShadow: '0 8px 0px rgba(0,0,0,0.8), 0 12px 32px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,200,80,0.15), 0 0 0 1px rgba(180,120,20,0.3)',
-            }}
-          >
-            {/* Amber leather texture overlay */}
-            <div className="absolute inset-0 opacity-20" style={{
-              backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,180,50,0.04) 2px, rgba(255,180,50,0.04) 4px)',
-            }} />
-            {/* Amber top shine */}
-            <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-amber-400/40 to-transparent" />
-            {/* Shimmer hover */}
-            <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500" style={{
-              background: 'linear-gradient(120deg, transparent 20%, rgba(255,200,80,0.08) 50%, transparent 80%)',
-            }} />
-
-            <div className="relative flex flex-col items-center justify-center gap-1.5 h-full">
-              {/* 3D Camera Body */}
-              <div className="relative" style={{ perspective: '180px' }}>
-                <div style={{ transform: 'rotateX(10deg)', transformStyle: 'preserve-3d' }}>
-                  {/* Camera body rect */}
-                  <div className="relative w-[44px] h-[30px]">
-                    {/* Top aluminum section (top 40%) */}
-                    <div className="absolute top-0 left-0 right-0 h-[40%] rounded-t-[5px]" style={{
-                      background: 'linear-gradient(to bottom, #e5e7eb, #9ca3af)',
-                      boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.4)',
-                    }}>
-                      {/* Mode dial */}
-                      <div className="absolute right-1 top-0.5 w-2.5 h-2.5 rounded-full" style={{
-                        background: 'conic-gradient(#374151, #9ca3af, #374151, #6b7280)',
-                        boxShadow: '0 1px 2px rgba(0,0,0,0.5)',
-                      }} />
-                    </div>
-                    {/* Bottom black leather section (bottom 60%) */}
-                    <div className="absolute bottom-0 left-0 right-0 h-[60%] rounded-b-[5px]" style={{
-                      background: '#0a0a0a',
-                      boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.6)',
-                      backgroundImage: 'repeating-linear-gradient(45deg, rgba(255,255,255,0.015) 0px, rgba(255,255,255,0.015) 1px, transparent 1px, transparent 5px)',
-                    }} />
-                    {/* Lens ring (chrome) */}
-                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[20px] h-[20px] rounded-full flex items-center justify-center" style={{
-                      background: 'conic-gradient(#374151, #9ca3af, #e5e7eb, #9ca3af, #374151)',
-                      boxShadow: '0 0 0 1px rgba(0,0,0,0.8), 0 2px 8px rgba(0,0,0,0.9)',
-                    }}>
-                      {/* Lens glass */}
-                      <div className="w-[12px] h-[12px] rounded-full" style={{
-                        background: 'radial-gradient(circle at 35% 30%, #1e3a5f 0%, #0a1830 50%, #020810 100%)',
-                        boxShadow: 'inset 0 1px 3px rgba(80,160,255,0.4)',
-                      }}>
-                        <div className="w-[4px] h-[4px] rounded-full ml-[2px] mt-[1px]" style={{
-                          background: 'radial-gradient(circle, rgba(180,220,255,0.7) 0%, transparent 100%)',
-                        }} />
-                      </div>
-                    </div>
-                    {/* Shutter button (top right) */}
-                    <div className="absolute -top-1 right-2 w-[6px] h-[6px] rounded-full" style={{
-                      background: 'linear-gradient(to bottom, #d1d5db, #6b7280)',
-                      boxShadow: '0 1px 2px rgba(0,0,0,0.7)',
-                    }} />
-                  </div>
-                </div>
-              </div>
-              <p className="text-[9px] font-black text-amber-400 uppercase tracking-[0.15em] leading-tight">Scan Score</p>
-              <p className="text-[6px] font-bold text-amber-500/50 uppercase tracking-widest">Photo → XML · Gemini AI</p>
-            </div>
-
-            {/* Bottom shadow depth */}
-            <div className="absolute bottom-0 left-3 right-3 h-[2px]" style={{
-              background: 'rgba(0,0,0,0.5)', filter: 'blur(2px)',
-            }} />
-          </button>
-
-          {/* RIGHT — Import File Button */}
+          {/* Import File Button */}
           <button
             id="file-import-btn"
             onClick={() => cameraInputRef.current?.click()}
@@ -941,8 +864,8 @@ const HomePage: React.FC<HomePageProps> = ({
             <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2 px-1">
               {recentSongs.map(item => (
                 <div key={item.metadata.id} onClick={() => onSongSelect(item.metadata, item.xmlData, 'listen')}
-                  className="shrink-0 w-32 aspect-square rounded-2xl overflow-hidden relative group/card hover:scale-[1.03] active:scale-95 transition-all shadow-lg hover:shadow-xl hover:shadow-cyan-500/10 border border-white/10">
-                  <AbstractCover seed={item.metadata.title || item.metadata.id} size={256} />
+                  className="shrink-0 w-24 aspect-square rounded-2xl overflow-hidden relative group/card hover:scale-[1.03] active:scale-95 transition-all shadow-lg hover:shadow-xl hover:shadow-cyan-500/10 border border-white/10">
+                  <AbstractCover seed={item.metadata.title || item.metadata.id} size={192} />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
                   <div className="absolute inset-0 flex flex-col justify-between p-3">
                     <div className="flex items-center justify-between">

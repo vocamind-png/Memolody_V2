@@ -18,6 +18,9 @@
 html {
   font-size: 125%;
 }
+@media (max-width: 639px) {
+  html { font-size: 100%; }
+}
 
 /* ═══ RESET ═══ */
 *, *::before, *::after { box-sizing: border-box; }

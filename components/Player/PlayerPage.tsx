@@ -257,7 +257,7 @@ const PlayerPage: React.FC<{
     setCustomBackendUrl(val);
     localStorage.setItem('memolody_custom_backend_url', val);
   };
-  const [svsEngine, setSvsEngine] = useState<'vocalido' | 'acestep'>('vocalido');
+  // SVS Engine: Vocalido only (ACE-Step removed)
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const [iframeLoaded, setIframeLoaded] = useState(false);
@@ -523,7 +523,7 @@ const PlayerPage: React.FC<{
     if (found) return found.name;
     if (vocalTrack?.instrument && vocalTrack.instrument !== 'Auto') return vocalTrack.instrument;
     if (storedSinger) return storedSinger;
-    return 'Auto';
+    return 'Lotte V';
   }, [vocalTrack, activeEngineId, voiceEngines, storedSinger]);
 
 
@@ -1275,120 +1275,9 @@ const PlayerPage: React.FC<{
           const errorData = await resp.json().catch(() => ({}));
           throw new Error(errorData.error || `Vocalido Error: ${resp.status}`);
         }
-      } else {
-        // ACE-Step 1.5 ASYNC POLLING WORKFLOW
-        const voiceToUse = (activeVoiceName === 'Auto' || !activeVoiceName) ? 'alto female' : activeVoiceName;
-        
-        // High-fidelity prompt to reduce breathing artifacts and ensure singing
-        const singingPrompt = `(RAW SOLO VOCAL:2.2), A crystal clear professional ${voiceToUse} singer, performing a studio-quality a capella vocal track, singing the lyrics with perfect pitch and clear articulation, dry recording, no background noise, expressive and melodic.`;
-
-        const submitResp = await fetch('http://localhost:8001/release_task', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: controller.signal,
-          body: JSON.stringify({
-            prompt: singingPrompt,
-            lyrics: notesToSynthesize.map(n => n.lyric).join('  '), 
-            bpm: actualBpm,
-            audio_duration: Math.max(30, Math.min(60, totalDurationSeconds + 2)), // Dynamic duration with buffer
-            task_type: "text2music",
-            model: 'acestep-v15-turbo'
-          })
-        });
-
-        if (!submitResp.ok) throw new Error(`ACE Submission Failed: ${submitResp.status}`);
-        
-        const submitData = await submitResp.json();
-        const taskId = submitData.data?.task_id;
-        if (!taskId) throw new Error("ACE-Step: No Task ID returned");
-
-        console.log(`[ACE-Step] ⏳ Task Queued: ${taskId}. Polling...`);
-
-        // Start Polling Loop
-        let isDone = false;
-        let pollCount = 0;
-        while (!isDone && pollCount < 60) { // Max 2 minutes
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          pollCount++;
-
-          const pollResp = await fetch('http://localhost:8001/query_result', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ task_id_list: [taskId] })
-          });
-
-            if (pollResp.ok) {
-              const pollData = await pollResp.json();
-              console.log(`[ACE-Step] Polling Data:`, pollData);
-              const taskResult = pollData.data?.[0];
-            
-            if (taskResult?.status === 1) { // Success
-              const resultData = JSON.parse(taskResult.result);
-              const resultObj = resultData[0];
-              const filePath = resultObj.file;
-              if (filePath) {
-                const audioUrl = filePath.startsWith('http') 
-                  ? filePath 
-                  : (filePath.startsWith('/') ? `http://localhost:8001${filePath}` : `http://localhost:8001/v1/audio?path=${encodeURIComponent(filePath)}`);
-                
-                console.log(`[ACE-Step] 🎵 Final Audio URL: ${audioUrl}`);
-                
-                // 🚀 Register with MusicEngine for persistence and sync
-                console.log(`[ACE-Step] 🎙️ Registering vocal layer to MusicEngine: ${primaryTrackId}`);
-                const cacheBusted = audioUrl.includes('?t=') 
-                  ? audioUrl.replace(/\?t=\d+/, `?t=${Date.now()}`)
-                  : `${audioUrl}?t=${Date.now()}`;
-
-                const updatedTracks = tracks.map((t: any) => 
-                  t.id === primaryTrackId ? { ...t, mode: 'vocal' } as TrackState : t
-                );
-                setTracks(updatedTracks);
-
-                try {
-                  setIsAudioLoading(true);
-                  await musicEngine.addVocalLayer(primaryTrackId, cacheBusted);
-
-                  // Reload song to sync Tone.Part with new mode
-                  await musicEngine.loadSong(parsedData.notes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn);
-                  musicEngine.setTransportSeconds(savedPos);
-                  if (wasPlaying) {
-                    await musicEngine.start();
-                    setIsPlaying(true);
-                  }
-                } catch (e) {
-                  console.error('[ACE-Step] Failed to load vocal layer:', e);
-                } finally {
-                  setIsAudioLoading(false);
-                }
-
-                isDone = true;
-                setRenderProgress(100);
-                setTimeout(() => {
-                  setIsRenderingVocal(false);
-                  setActiveCard('score'); // Bounce back to notes
-                  cleanupLocal();
-                }, 800); 
-
-                // Auto-play if already playing
-                if (isPlaying) await musicEngine.resume();
-              }
-            } else if (taskResult?.status === 2) { // Failed
-              const errorMsg = taskResult.error || "ACE-Step: Task Failed on server";
-              setRenderError(errorMsg);
-              setTimeout(() => setIsRenderingVocal(false), 2000);
-              throw new Error(errorMsg);
-            } else {
-              // Update status text if available
-              if (taskResult?.progress_text) {
-                console.log(`[ACE-Step] ${taskResult.progress_text}`);
-              }
-            }
-          }
-        }
-        if (!isDone) throw new Error("ACE-Step: Generation Timed Out");
       }
     } catch (e: any) {
-      console.error(`[${svsEngine.toUpperCase()}] Error:`, e);
+      console.error(`[VOCALIDO] Error:`, e);
       setRenderError(e.message || "Synthesis Failed");
       // Auto-close after 3 seconds so the user can see the error but doesn't get stuck
       setTimeout(() => {
@@ -1580,7 +1469,7 @@ const PlayerPage: React.FC<{
             }}
           >
             <span className={`text-[10px] font-black uppercase tracking-[0.2em] transition-colors ${activeCard === 'vocalido' ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'}`}>
-              {svsEngine === 'vocalido' ? 'VOCALIDO' : 'ACE-STEP'}
+              VOCALIDO
             </span>
             <ChevronDown size={14} className={`text-zinc-500 transition-transform duration-300 ${activeCard === 'vocalido' ? 'rotate-180' : ''}`} />
           </button>
@@ -1688,7 +1577,7 @@ const PlayerPage: React.FC<{
         )}
 
         {/* ── MAIN CONTENT AREA (RIGHT SIDE IN SPLIT VIEW) ── */}
-        <div className="flex-1 flex flex-col relative overflow-hidden pointer-events-auto">
+        <div className="flex-1 flex flex-col relative overflow-hidden pointer-events-auto pb-[120px]">
         {/* ── MEMO SONG RENDER: Speed Panel (left floating) ── */}
         {renderHistory.length > 0 && activeCard === 'score' && (
           <div className="absolute left-2 top-1/2 -translate-y-1/2 z-[3000] flex flex-col gap-1.5 pointer-events-auto">
@@ -1910,7 +1799,7 @@ const PlayerPage: React.FC<{
                       title={`Render "${track.name}" as vocal`}
                     >
                       <Mic2 size={7} />
-                      {track.mode === 'vocal' ? 'Vocal' : 'Render'}
+                      {track.mode === 'vocal' ? (activeVoiceName || 'Lotte V') : 'Render'}
                     </button>
                     
                     <button
@@ -2192,9 +2081,9 @@ const PlayerPage: React.FC<{
             )}
             <iframe
               ref={iframeRef}
-              src={svsEngine === 'vocalido' ? "/voice-studio.html" : "http://localhost:7860"}
+              src="/voice-studio.html"
               className={`w-full h-full border-0 transition-opacity duration-500 ${iframeLoaded ? 'opacity-100' : 'opacity-0'}`}
-              title={svsEngine === 'vocalido' ? "Vocalido Voice Studio" : "ACE-Step 1.5 Engine"}
+              title="Vocalido Voice Studio"
               allow="autoplay; microphone"
               onLoad={() => {
                 console.log("[PlayerPage] 🎙️ Voice Studio iframe loaded");
@@ -2226,7 +2115,7 @@ const PlayerPage: React.FC<{
 
           {/* Main Transport Container - Slides away completely */}
           <div id="transport-container" className={`fixed inset-x-0 z-[5000] flex flex-col items-center px-3 no-print gap-1.5 pointer-events-none transition-transform duration-500 ease-[cubic-bezier(0.2,1,0.2,1)] ${isTransportHidden ? 'translate-y-[200%]' : 'translate-y-0'}`}
-            style={{ bottom: 'min(env(safe-area-inset-bottom, 16px), 16px)' }}>
+            style={{ bottom: 'max(env(safe-area-inset-bottom, 8px), 8px)' }}>
             <div className="w-full max-w-[500px] bg-[#0c0c0e]/90 backdrop-blur-2xl px-3 h-9 rounded-full border border-white/10 shadow-[0_10px_30px_rgba(0,0,0,0.8)] flex items-center gap-3 pointer-events-auto">
               {/* Eye Toggle on the far left - Trigger to hide */}
               <button
@@ -2372,20 +2261,6 @@ const PlayerPage: React.FC<{
             </div>
 
             <div className="flex flex-col gap-4">
-              {/* Engine toggle */}
-              <div className="flex flex-col gap-2">
-                <span className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">Synthesis Engine</span>
-                <div className="flex gap-2">
-                  {(['vocalido', 'acestep'] as const).map(eng => (
-                    <button key={eng} onClick={() => setSvsEngine(eng)}
-                      className={`flex-1 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border ${
-                        svsEngine === eng ? 'bg-cyan-500 border-cyan-400 text-white shadow-lg' : 'bg-white/5 border-white/5 text-zinc-400 hover:text-white hover:bg-white/10'
-                      }`}>
-                      {eng === 'vocalido' ? '🎤 Vocalido' : '⚡ ACE-Step'}
-                    </button>
-                  ))}
-                </div>
-              </div>
 
               {/* Custom SVS Backend URL */}
               <div className="flex flex-col gap-1.5 bg-white/5 border border-white/10 rounded-2xl p-4">
