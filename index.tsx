@@ -8,7 +8,7 @@ if (!rootElement) {
   throw new Error("Could not find root element to mount to");
 }
 
-import { SettingsProvider } from './src/hooks/useAppSettings';
+import { SettingsProvider } from './lib/useAppSettings';
 
 const root = ReactDOM.createRoot(rootElement);
 root.render(
