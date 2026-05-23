@@ -282,6 +282,9 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
   // Laser
   const laserRafRef = useRef<number>(0);
   const laserPrevPageRef = useRef<number>(-1);
+  const laserPrevSystemKeyRef = useRef<string>(''); // tracks current system key e.g. "page_systemId"
+  const laserCurrentPageRef = useRef<number>(-1); // tracks current sweep page for zoom-scroll
+  const laserCurrentRelXRef = useRef<number>(0);  // tracks current laser X (0-1) for zoom-scroll
 
   const [localZoom, setLocalZoom] = useState(1.0);
   const initialDistanceRef = useRef<number | null>(null);
@@ -1020,6 +1023,7 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
     let sweepPage = 0;
     let sweepTop = 0;
     let sweepHeight = 0;
+    let sweepSystemId = '';
 
     const tick = () => {
       laserRafRef.current = requestAnimationFrame(tick);
@@ -1053,6 +1057,7 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
         sweepPage = bar.pageIndex;
         sweepTop = bar.y;
         sweepHeight = bar.height;
+        sweepSystemId = bar.systemId;
       }
 
       // ── Compute progress from REAL elapsed seconds ──────────────
@@ -1073,25 +1078,47 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
           el.style.display = 'none';
         }
       }
+      // Track current laser position for zoom-scroll re-centering
+      laserCurrentRelXRef.current = relX;
 
-      // Auto-scroll when page changes
-      if (laserPrevPageRef.current !== sweepPage) {
+      // Auto-scroll vertically when system row (staff line) changes
+      const systemKey = `${sweepPage}_${sweepSystemId}`;
+      if (laserPrevSystemKeyRef.current !== systemKey) {
         const scrollArea = scrollAreaRef.current;
         const pageEl = containerRef.current?.children[sweepPage] as HTMLElement | undefined;
         if (scrollArea && pageEl) {
-          const areaRect = scrollArea.getBoundingClientRect();
-          const pageRect = pageEl.getBoundingClientRect();
-          const targetScrollTop = scrollArea.scrollTop + (pageRect.top - areaRect.top);
-          // Reset horizontal scroll to 0 (left edge) so the start of system on the next page is visible
-          scrollArea.scrollTo({ top: targetScrollTop, left: 0, behavior: 'smooth' });
+          // Center the active system row vertically in the viewport
+          const systemCenterY = pageEl.offsetTop + (sweepTop + sweepHeight / 2) * pageEl.offsetHeight;
+          const targetScrollTop = Math.max(0, systemCenterY - scrollArea.clientHeight / 2);
+          
+          // Smooth scroll vertically to center the staff row
+          scrollArea.scrollTo({ top: targetScrollTop, behavior: 'smooth' });
         }
-        laserPrevPageRef.current = sweepPage;
+        laserPrevSystemKeyRef.current = systemKey;
       }
+
+      // Horizontal follow: continuously keep the laser centered horizontally when zoomed
+      const scrollArea = scrollAreaRef.current;
+      const pageEl = containerRef.current?.children[sweepPage] as HTMLElement | undefined;
+      if (scrollArea && pageEl && scrollArea.scrollWidth > scrollArea.clientWidth) {
+        const pageWidth = pageEl.offsetWidth;
+        const laserPixelX = relX * pageWidth;
+        const halfViewW = scrollArea.clientWidth / 2;
+        const targetScrollLeft = Math.max(0, laserPixelX - halfViewW);
+        
+        // Direct assignment for real-time tracking (instant scroll matching tick frame)
+        scrollArea.scrollLeft = targetScrollLeft;
+      }
+
+      // Always track current sweep page (for zoom-triggered re-scroll)
+      laserCurrentPageRef.current = sweepPage;
+      laserPrevPageRef.current = sweepPage;
     };
 
     const hideAll = () => {
       currentBarKey = '';
       laserPrevPageRef.current = -1;
+      laserPrevSystemKeyRef.current = '';
       for (let i = 0; i < svgPages.length; i++) {
         const el = document.getElementById(`bar-laser-${i}`);
         if (el) el.style.display = 'none';
@@ -1105,7 +1132,8 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
       cancelAnimationFrame(laserRafRef.current);
       hideAll();
     };
-  }, [isPlaying, showLaser, svgPages.length]);
+  // localZoom in deps: when user zooms, restart laser loop so it re-scrolls to active bar
+  }, [isPlaying, showLaser, svgPages.length, localZoom]);
 
 
 
