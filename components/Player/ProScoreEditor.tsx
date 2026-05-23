@@ -814,10 +814,10 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
 
       // ── Chord symbols: skip in edit mode (not needed and slows down) ──────
       if (!isEditable) {
-        if (finalXml.includes('<harmony')) {
+        if (/<harmony/i.test(finalXml)) {
           finalXml = finalXml
-            .replace(/(<harmony[^>]*)\s+print-frame="no"/g, '$1')
-            .replace(/(<harmony[^>]*)\s+print-object="no"/g, '$1');
+            .replace(/(<harmony[^>]*)\s+print-frame=["']?no["']?/gi, '$1')
+            .replace(/(<harmony[^>]*)\s+print-object=["']?no["']?/gi, '$1');
         } else {
           // yield to browser before heavy O(n²) chord detection
           await new Promise<void>(r => setTimeout(r, 0));
@@ -1250,6 +1250,13 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
         }
         .xml-overlay-container { position: relative; width: 100%; height: auto; }
         g.harm { overflow: visible; }
+        /* Force chord symbols (harmony) text to be black, bold, and fully visible on white sheet background */
+        g.harm text, g.harm tspan, g.harmony text, g.harmony tspan {
+            fill: #000000 !important;
+            font-weight: 900 !important;
+            opacity: 1 !important;
+            display: block !important;
+        }
         /* ── Indigo Bar Laser — subtle magnifying glass lens ── */
         .bar-laser {
           position: absolute;
