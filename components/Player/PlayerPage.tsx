@@ -504,6 +504,9 @@ const PlayerPage: React.FC<{
           console.log("[PlayerPage] Resuming Audio Context...");
           await Tone.getContext().resume();
         }
+        // Unlock vocal audio elements synchronously inside user gesture
+        const primaryTrackId = tracks.find(t => t.mode === 'vocal')?.id || tracks[0]?.id || 'P1';
+        musicEngine.unlockVocalAudio(primaryTrackId);
       } catch (audioCtxError) {
         console.warn("[PlayerPage] Audio context initialization failed:", audioCtxError);
       }
@@ -1101,6 +1104,10 @@ const PlayerPage: React.FC<{
     setRenderProgress(0);
     setRenderTimer(0);
     setRenderStatusText('');
+
+    // Pre-unlock the HTMLAudioElement synchronously inside user click gesture
+    const primaryTrackId = tracks.find(t => t.mode === 'vocal')?.id || tracks[0]?.id || 'P1';
+    musicEngine.unlockVocalAudio(primaryTrackId);
 
     const wasPlaying = isPlaying || musicEngine.transportState === 'started';
     const savedPos = musicEngine.transportSeconds;
