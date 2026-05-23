@@ -98,10 +98,58 @@ def _get_engine():
         return None
 
 
-def numpy_to_base64_wav(audio_np, sr=44100):
-    buffer = io.BytesIO()
-    sf.write(buffer, audio_np, sr, format='WAV')
-    return base64.b64encode(buffer.getvalue()).decode('utf-8')
+def numpy_to_base64_compressed(audio_np, sr=44100, preferred_format='MP3'):
+    """
+    Compress numpy float32 audio to MP3 or OGG to save bandwidth, 
+    falling back to WAV if compression libraries are unavailable.
+    """
+    # 1. Try writing directly using soundfile (modern libsndfile supports MP3/OGG)
+    for fmt, mime in [('MP3', 'audio/mpeg'), ('OGG', 'audio/ogg')]:
+        if preferred_format and fmt != preferred_format:
+            continue
+        try:
+            buffer = io.BytesIO()
+            sf.write(buffer, audio_np, sr, format=fmt)
+            return base64.b64encode(buffer.getvalue()).decode('utf-8'), mime
+        except Exception as e:
+            print(f"[RunPod Handler] direct {fmt} write failed: {e}")
+            
+    # Try the alternate format if the preferred one failed
+    for fmt, mime in [('MP3', 'audio/mpeg'), ('OGG', 'audio/ogg')]:
+        if preferred_format and fmt == preferred_format:
+            continue
+        try:
+            buffer = io.BytesIO()
+            sf.write(buffer, audio_np, sr, format=fmt)
+            return base64.b64encode(buffer.getvalue()).decode('utf-8'), mime
+        except Exception as e:
+            pass
+
+    # 2. Try pydub MP3 export as a fallback
+    try:
+        from pydub import AudioSegment
+        audio_clamped = np.clip(audio_np, -1.0, 1.0)
+        audio_int16 = (audio_clamped * 32767).astype(np.int16)
+        seg = AudioSegment(
+            audio_int16.tobytes(),
+            frame_rate=sr,
+            sample_width=2,
+            channels=1
+        )
+        buffer = io.BytesIO()
+        seg.export(buffer, format="mp3", bitrate="192k")
+        return base64.b64encode(buffer.getvalue()).decode('utf-8'), "audio/mpeg"
+    except Exception as e:
+        print(f"[RunPod Handler] pydub MP3 fallback failed: {e}")
+
+    # 3. Ultimate fallback: uncompressed WAV
+    try:
+        buffer = io.BytesIO()
+        sf.write(buffer, audio_np, sr, format='WAV')
+        return base64.b64encode(buffer.getvalue()).decode('utf-8'), "audio/wav"
+    except Exception as e:
+        print(f"[RunPod Handler] WAV fallback failed: {e}")
+        raise e
 
 
 def handler(job):
@@ -129,24 +177,27 @@ def handler(job):
             
         audio_b64 = None
         stems_b64 = []
+        mime_type = "audio/wav"
         
         if return_stems and isinstance(result, tuple):
             main_audio, stems_audio = result
-            audio_b64 = numpy_to_base64_wav(main_audio, eng.sr)
-            stems_b64 = [numpy_to_base64_wav(s, eng.sr) for s in stems_audio]
+            audio_b64, mime_type = numpy_to_base64_compressed(main_audio, eng.sr)
+            # Compress all stems to the same format
+            stems_compressed = [numpy_to_base64_compressed(s, eng.sr) for s in stems_audio]
+            stems_b64 = [s[0] for s in stems_compressed]
         else:
             if isinstance(result, tuple):
                 audio = result[0]
             else:
                 audio = result
-            audio_b64 = numpy_to_base64_wav(audio, eng.sr)
+            audio_b64, mime_type = numpy_to_base64_compressed(audio, eng.sr)
             
-        print("[RunPod Handler] Synthesis complete. Returning base64 audio.")
+        print(f"[RunPod Handler] Synthesis complete. Returning base64 audio compressed as {mime_type}.")
         audio_len = len(result[0] if isinstance(result, tuple) else result)
         
         return {
             "audio_b64": audio_b64,
-            "mime_type": "audio/wav",
+            "mime_type": mime_type,
             "stems_b64": stems_b64,
             "duration": float(audio_len) / eng.sr,
             "engine": "diffsinger_onnx_runpod"

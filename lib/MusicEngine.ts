@@ -944,36 +944,31 @@ export class MusicEngine {
     await this.ensureInitialized();
     console.log("[MusicEngine] start() ensureInitialized done, transport state:", Tone.Transport.state);
     if (Tone.Transport.state !== 'started') {
-      const TRANSPORT_DELAY_MS = 100;
-      const startTime = Tone.now() + (TRANSPORT_DELAY_MS / 1000);
       const songOffset = Math.max(0, Tone.Transport.seconds - this.countInDuration);
       console.log("[MusicEngine] starting Tone.Transport, songOffset=", songOffset);
-      Tone.Transport.start(startTime);
-      console.log("[MusicEngine] Tone.Transport started!");
-
-      // Start HTMLAudio vocal layers at the correct song position
+      
+      // Start HTMLAudio vocal layers synchronously at the correct song position
       this.vocalAudioElements.forEach((audio) => {
         try {
           audio.currentTime = Math.min(songOffset, Math.max(0, (isFinite(audio.duration) ? audio.duration - 0.01 : 0)));
-          // Delay play() by same TRANSPORT_DELAY_MS to stay in sync with piano
-          setTimeout(() => {
-            audio.play().catch(e => console.warn('[MusicEngine] Vocal audio.play() failed:', e));
-          }, TRANSPORT_DELAY_MS);
+          audio.play().catch(e => console.warn('[MusicEngine] Vocal audio.play() failed:', e));
         } catch (e) { console.warn('[MusicEngine] Vocal start error:', e); }
       });
 
+      // Start Tone.Transport immediately
+      Tone.Transport.start();
+      console.log("[MusicEngine] Tone.Transport started!");
+
       // Start unsynced vocal players (stems)
-      this.updateVocalPlaybackState(startTime);
+      this.updateVocalPlaybackState(Tone.now());
     }
   }
 
-  // Resume from paused position
-  async resume() {
-    await this.ensureInitialized();
+  // Resume from paused position (synchronous version for user gesture compliance)
+  resume() {
+    this.ensureInitialized().catch(e => console.error('[MusicEngine] resume init failed:', e));
     if (Tone.Transport.state === 'paused') {
       const offset = Math.max(0, Tone.Transport.seconds - this.countInDuration);
-      const startTime = Tone.now() + 0.05;
-      Tone.Transport.start(startTime);
 
       this.vocalAudioElements.forEach(audio => {
         try {
@@ -982,8 +977,10 @@ export class MusicEngine {
         } catch (e) { console.warn('[MusicEngine] Vocal resume error:', e); }
       });
 
+      Tone.Transport.start();
+
       // Resume unsynced vocal players (stems)
-      this.updateVocalPlaybackState(startTime);
+      this.updateVocalPlaybackState(Tone.now());
     }
   }
 

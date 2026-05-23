@@ -159,6 +159,13 @@ const ScoreEditOverlay: React.FC<ScoreEditOverlayProps> = ({
   const isDraggingNote = useRef(false);
   const dragSemis = useRef(0);
 
+  // Scroll/Drag state for empty space
+  const isScrollingRef = useRef(false);
+  const dragStartRef = useRef<{ x: number; y: number } | null>(null);
+  const scrollStartRef = useRef<{ left: number; top: number } | null>(null);
+  const hasMovedRef = useRef(false);
+  const wasScrollingRef = useRef(false);
+
   // ── Find note hits ─────────────────────────────────────────────────
   const getNoteHits = useCallback(() => {
     if (!containerRef.current) return [];
@@ -248,7 +255,18 @@ const ScoreEditOverlay: React.FC<ScoreEditOverlayProps> = ({
   const onOverlayMouseDown = useCallback((e: React.MouseEvent) => {
     if (!isEditable || !xmlData) return;
     const hit = hitTest(e.clientX, e.clientY);
-    if (!hit) return;
+    if (!hit) {
+      // Empty space -> scroll/drag
+      const scrollContainer = containerRef.current?.querySelector('.memolody-scrollbar') as HTMLElement | null;
+      if (scrollContainer) {
+        isScrollingRef.current = true;
+        dragStartRef.current = { x: e.clientX, y: e.clientY };
+        scrollStartRef.current = { left: scrollContainer.scrollLeft, top: scrollContainer.scrollTop };
+        hasMovedRef.current = false;
+        wasScrollingRef.current = false;
+      }
+      return;
+    }
 
     if (activeTool === 'eraser') {
       if (containerRef.current) highlightNote(containerRef.current, hit.svgId, false);
@@ -269,7 +287,24 @@ const ScoreEditOverlay: React.FC<ScoreEditOverlayProps> = ({
   }, [isEditable, xmlData, activeTool, hitTest, selectNote, selected, containerRef, onXmlChange]);
 
   const onOverlayMouseMove = useCallback((e: React.MouseEvent) => {
-    if (!isEditable || dragStartY.current === null || !dragStartPitch.current || !selected) return;
+    if (!isEditable) return;
+
+    if (isScrollingRef.current && dragStartRef.current && scrollStartRef.current) {
+      const scrollContainer = containerRef.current?.querySelector('.memolody-scrollbar') as HTMLElement | null;
+      if (scrollContainer) {
+        const dx = e.clientX - dragStartRef.current.x;
+        const dy = e.clientY - dragStartRef.current.y;
+        if (Math.hypot(dx, dy) > 3) {
+          hasMovedRef.current = true;
+        }
+        scrollContainer.style.scrollBehavior = 'auto';
+        scrollContainer.scrollLeft = scrollStartRef.current.left - dx;
+        scrollContainer.scrollTop = scrollStartRef.current.top - dy;
+      }
+      return;
+    }
+
+    if (dragStartY.current === null || !dragStartPitch.current || !selected) return;
     const deltaY = dragStartY.current - e.clientY; // positive = up = higher pitch
     const semis = Math.round(deltaY / 10);          // 10px per semitone
     if (Math.abs(deltaY) > 5) isDraggingNote.current = true;
@@ -281,9 +316,23 @@ const ScoreEditOverlay: React.FC<ScoreEditOverlayProps> = ({
       // Live preview: just update selected display, commit on mouseup
       setSelected(s => s ? { ...s, step, octave, alter } : null);
     }
-  }, [isEditable, selected]);
+  }, [isEditable, selected, containerRef]);
 
   const onOverlayMouseUp = useCallback((e: React.MouseEvent) => {
+    if (isScrollingRef.current) {
+      isScrollingRef.current = false;
+      dragStartRef.current = null;
+      scrollStartRef.current = null;
+      if (hasMovedRef.current) {
+        wasScrollingRef.current = true;
+      }
+      const scrollContainer = containerRef.current?.querySelector('.memolody-scrollbar') as HTMLElement | null;
+      if (scrollContainer) {
+        scrollContainer.style.scrollBehavior = '';
+      }
+      return;
+    }
+
     if (dragStartY.current === null || !dragStartPitch.current || !selected || !xmlData) {
       dragStartY.current = null;
       return;
@@ -298,9 +347,13 @@ const ScoreEditOverlay: React.FC<ScoreEditOverlayProps> = ({
     dragStartY.current = null;
     dragStartPitch.current = null;
     isDraggingNote.current = false;
-  }, [selected, xmlData, commitPitch]);
+  }, [selected, xmlData, commitPitch, containerRef]);
 
   const onOverlayClick = useCallback((e: React.MouseEvent) => {
+    if (wasScrollingRef.current) {
+      wasScrollingRef.current = false;
+      return; // was scrolling drag, do nothing
+    }
     if (isDraggingNote.current) return; // was a drag, not a click
     const hit = hitTest(e.clientX, e.clientY);
     if (!hit && selected) {
@@ -309,6 +362,107 @@ const ScoreEditOverlay: React.FC<ScoreEditOverlayProps> = ({
       setSelected(null);
     }
   }, [hitTest, selected, containerRef]);
+
+  // ── Touch handlers ─────────────────────────────────────────────────
+  const onOverlayTouchStart = useCallback((e: React.TouchEvent) => {
+    if (!isEditable || !xmlData) return;
+    const touch = e.touches[0];
+    const hit = hitTest(touch.clientX, touch.clientY);
+    if (!hit) {
+      // Empty space -> scroll/drag
+      const scrollContainer = containerRef.current?.querySelector('.memolody-scrollbar') as HTMLElement | null;
+      if (scrollContainer) {
+        isScrollingRef.current = true;
+        dragStartRef.current = { x: touch.clientX, y: touch.clientY };
+        scrollStartRef.current = { left: scrollContainer.scrollLeft, top: scrollContainer.scrollTop };
+        hasMovedRef.current = false;
+        wasScrollingRef.current = false;
+      }
+      return;
+    }
+
+    if (activeTool === 'eraser') {
+      if (containerRef.current) highlightNote(containerRef.current, hit.svgId, false);
+      const doc = new DOMParser().parseFromString(xmlData, 'text/xml');
+      deleteNoteFromDoc(doc, hit.xmlIndex);
+      onXmlChange(new XMLSerializer().serializeToString(doc), 'Erase note');
+      if (selected?.svgId === hit.svgId) setSelected(null);
+      return;
+    }
+
+    // SELECT note on touch
+    selectNote(hit);
+    dragStartY.current = touch.clientY;
+    dragSemis.current = 0;
+    const data = parsePitch(xmlData, hit.xmlIndex);
+    dragStartPitch.current = data ? { step: data.step, octave: data.octave, alter: data.alter } : null;
+    isDraggingNote.current = false;
+  }, [isEditable, xmlData, activeTool, hitTest, selectNote, selected, containerRef, onXmlChange]);
+
+  const onOverlayTouchMove = useCallback((e: React.TouchEvent) => {
+    if (!isEditable) return;
+    const touch = e.touches[0];
+
+    if (isScrollingRef.current && dragStartRef.current && scrollStartRef.current) {
+      const scrollContainer = containerRef.current?.querySelector('.memolody-scrollbar') as HTMLElement | null;
+      if (scrollContainer) {
+        const dx = touch.clientX - dragStartRef.current.x;
+        const dy = touch.clientY - dragStartRef.current.y;
+        if (Math.hypot(dx, dy) > 3) {
+          hasMovedRef.current = true;
+        }
+        scrollContainer.style.scrollBehavior = 'auto';
+        scrollContainer.scrollLeft = scrollStartRef.current.left - dx;
+        scrollContainer.scrollTop = scrollStartRef.current.top - dy;
+      }
+      if (e.cancelable) e.preventDefault();
+      return;
+    }
+
+    if (dragStartY.current === null || !dragStartPitch.current || !selected) return;
+    const deltaY = dragStartY.current - touch.clientY;
+    const semis = Math.round(deltaY / 10);
+    if (Math.abs(deltaY) > 5) isDraggingNote.current = true;
+    if (semis !== dragSemis.current) {
+      dragSemis.current = semis;
+      const { step, octave, alter } = transposePitch(
+        dragStartPitch.current.step, dragStartPitch.current.octave, dragStartPitch.current.alter, semis
+      );
+      setSelected(s => s ? { ...s, step, octave, alter } : null);
+    }
+    if (e.cancelable) e.preventDefault();
+  }, [isEditable, selected, containerRef]);
+
+  const onOverlayTouchEnd = useCallback((e: React.TouchEvent) => {
+    if (isScrollingRef.current) {
+      isScrollingRef.current = false;
+      dragStartRef.current = null;
+      scrollStartRef.current = null;
+      if (hasMovedRef.current) {
+        wasScrollingRef.current = true;
+      }
+      const scrollContainer = containerRef.current?.querySelector('.memolody-scrollbar') as HTMLElement | null;
+      if (scrollContainer) {
+        scrollContainer.style.scrollBehavior = '';
+      }
+      return;
+    }
+
+    if (dragStartY.current === null || !dragStartPitch.current || !selected || !xmlData) {
+      dragStartY.current = null;
+      return;
+    }
+    if (isDraggingNote.current && dragSemis.current !== 0) {
+      const { step, octave, alter } = transposePitch(
+        dragStartPitch.current.step, dragStartPitch.current.octave, dragStartPitch.current.alter, dragSemis.current
+      );
+      commitPitch(step, octave, alter, selected.xmlIndex);
+      setSelected(s => s ? { ...s, step, octave, alter } : null);
+    }
+    dragStartY.current = null;
+    dragStartPitch.current = null;
+    isDraggingNote.current = false;
+  }, [selected, xmlData, commitPitch, containerRef]);
 
   // ── Keyboard ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -358,6 +512,9 @@ const ScoreEditOverlay: React.FC<ScoreEditOverlayProps> = ({
         onMouseMove={onOverlayMouseMove}
         onMouseUp={onOverlayMouseUp}
         onClick={onOverlayClick}
+        onTouchStart={onOverlayTouchStart}
+        onTouchMove={onOverlayTouchMove}
+        onTouchEnd={onOverlayTouchEnd}
       />
 
       {/* Drag pitch indicator stripe */}

@@ -515,15 +515,22 @@ const PlayerPage: React.FC<{
   const handleTogglePlay = async () => {
     if (isRenderingVocal || isAudioLoading) return;
     
-    // 🔊 CRITICAL: Start/Resume Tone.js context in the synchronous user gesture stack immediately
+    // 🔊 CRITICAL: Start/Resume Tone.js context and unlock HTMLAudio elements in the synchronous user gesture stack immediately
     try {
       if (Tone.context.state !== 'running') {
         console.log("[PlayerPage] [Direct Gesture] Resuming Tone Context...");
         Tone.start();
         Tone.context.resume();
       }
+      
+      // Unlock all active vocal audio elements synchronously inside the user gesture
+      tracks.forEach(t => {
+        if (t.mode === 'vocal') {
+          musicEngine.unlockVocalAudio(t.id);
+        }
+      });
     } catch (err) {
-      console.warn("[PlayerPage] Direct context resume failed:", err);
+      console.warn("[PlayerPage] Direct context resume/unlock failed:", err);
     }
 
     setIsAudioLoading(true);
@@ -546,9 +553,6 @@ const PlayerPage: React.FC<{
           console.log("[PlayerPage] Resuming Audio Context...");
           await Tone.getContext().resume();
         }
-        // Unlock vocal audio elements synchronously inside user gesture
-        const primaryTrackId = tracks.find(t => t.mode === 'vocal')?.id || tracks[0]?.id || 'P1';
-        musicEngine.unlockVocalAudio(primaryTrackId);
       } catch (audioCtxError) {
         console.warn("[PlayerPage] Audio context initialization failed:", audioCtxError);
       }
@@ -568,8 +572,17 @@ const PlayerPage: React.FC<{
       }
 
       if (tState === 'paused') {
+        // If we are at or near the end of the song, reset to 0 before resuming
+        const currentPos = musicEngine.transportSeconds;
+        if (currentPos >= totalDurationSeconds - 0.2) {
+          console.log("[PlayerPage] Near end of song, resetting to 0 before play");
+          musicEngine.setTransportSeconds(0);
+          musicEngine.currentMeasure = '';
+          musicEngine.currentNoteTime = 0;
+        }
+
         console.log("[PlayerPage] Resuming playback...");
-        await musicEngine.resume();
+        musicEngine.resume(); // Called synchronously (no await) for Safari compliance!
         setIsPlaying(true);
         console.log("[PlayerPage] Resumed playback successfully!");
         clearTimeout(safetyTimeoutId);
@@ -928,6 +941,11 @@ const PlayerPage: React.FC<{
   const setLoopPresetsRef = useRef(setLoopPresets);
   const setCurrentBpmRef = useRef(setCurrentBpm);
   const setMasterVolumeRef = useRef(setMasterVolume);
+  const setShowMixerRef = useRef(setShowMixer);
+  const setIsMetronomeOnRef = useRef(setIsMetronomeOn);
+  const setTransposeRef = useRef(setTranspose);
+  const handleToggleFavoriteRef = useRef(handleToggleFavorite);
+  const isMetronomeOnRef = useRef(isMetronomeOn);
 
   // Sync refs to latest values on every render
   useEffect(() => {
@@ -936,6 +954,11 @@ const PlayerPage: React.FC<{
     setLoopPresetsRef.current = setLoopPresets;
     setCurrentBpmRef.current = setCurrentBpm;
     setMasterVolumeRef.current = setMasterVolume;
+    setShowMixerRef.current = setShowMixer;
+    setIsMetronomeOnRef.current = setIsMetronomeOn;
+    setTransposeRef.current = setTranspose;
+    handleToggleFavoriteRef.current = handleToggleFavorite;
+    isMetronomeOnRef.current = isMetronomeOn;
   });
 
   // Register Player-specific NimoBrain actions once on mount
@@ -987,6 +1010,27 @@ const PlayerPage: React.FC<{
       });
     });
 
+    const unregToggleMixer = nimoBrain.registerAction('toggle_mixer', () => {
+      setShowMixerRef.current(prev => !prev);
+    });
+
+    const unregToggleMetronome = nimoBrain.registerAction('toggle_metronome', () => {
+      const next = !isMetronomeOnRef.current;
+      setIsMetronomeOnRef.current(next);
+      musicEngine.toggleMetronome(next);
+    });
+
+    const unregSetTranspose = nimoBrain.registerAction('set_transpose', (params) => {
+      const val = params?.transpose ?? params?.steps;
+      if (val !== undefined && typeof val === 'number') {
+        setTransposeRef.current(val);
+      }
+    });
+
+    const unregToggleFavorite = nimoBrain.registerAction('toggle_favorite', async () => {
+      await handleToggleFavoriteRef.current();
+    });
+
     return () => {
       unregPlay();
       unregPause();
@@ -994,6 +1038,10 @@ const PlayerPage: React.FC<{
       unregSetVolume();
       unregToggleViewMode();
       unregToggleLoop();
+      unregToggleMixer();
+      unregToggleMetronome();
+      unregSetTranspose();
+      unregToggleFavorite();
     };
   }, []);
 
@@ -1003,7 +1051,11 @@ const PlayerPage: React.FC<{
     nimoBrain.updateState('currentBpm', currentBpm);
     nimoBrain.updateState('masterVolume', masterVolume);
     nimoBrain.updateState('viewMode', viewMode);
-  }, [isPlaying, currentBpm, masterVolume, viewMode]);
+    nimoBrain.updateState('showMixer', showMixer);
+    nimoBrain.updateState('isMetronomeOn', isMetronomeOn);
+    nimoBrain.updateState('transpose', transpose);
+    nimoBrain.updateState('isFavorite', isFavorite);
+  }, [isPlaying, currentBpm, masterVolume, viewMode, showMixer, isMetronomeOn, transpose, isFavorite]);
 
   // Clean up state on unmount
   useEffect(() => {
@@ -1497,7 +1549,7 @@ const PlayerPage: React.FC<{
               const binary = atob(b64);
               const array = new Uint8Array(binary.length);
               for (let i = 0; i < binary.length; i++) array[i] = binary.charCodeAt(i);
-              const blob = new Blob([array], { type: 'audio/wav' });
+              const blob = new Blob([array], { type: result.mime_type || 'audio/wav' });
               return URL.createObjectURL(blob);
             });
           }
