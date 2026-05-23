@@ -621,6 +621,8 @@ class StudioPreviewReq(BaseModel):
     bpm_pct: int = 100  # ← e.g. 100, 75, 50
     song_key: str = "C" # ← e.g. "C", "G", "Bb" — included in filename/label
     lyric_mode: str = "default"  # ← e.g. "Jianpu", "Ju Solfege Movable Doh"
+    owner_id: str = ""  # ← for user-isolation cache
+    is_public: bool = True  # ← for user-isolation cache
 
 class StudioNoteReq(BaseModel):
     midi: int = 60
@@ -765,7 +767,13 @@ def studio_preview(req: StudioPreviewReq):
         if not collapse_chords:
             _raw_vc = f"{_raw_vc}poly"
         _safe_vc   = _re_cache.sub(r'[^a-zA-Z0-9]', '', _raw_vc)[:20]
-        _cached_name = f"song_{_safe_id}_{_safe_key}_{req.bpm_pct}_{_safe_lm}_{_safe_vc}.mp3"
+        
+        _is_private = (not req.is_public) and bool(req.owner_id)
+        if _is_private:
+            _safe_owner = _re_cache.sub(r'[^a-zA-Z0-9_-]', '_', req.owner_id)[:40]
+            _cached_name = f"song_{_safe_owner}_{_safe_id}_{_safe_key}_{req.bpm_pct}_{_safe_lm}_{_safe_vc}.mp3"
+        else:
+            _cached_name = f"song_{_safe_id}_{_safe_key}_{req.bpm_pct}_{_safe_lm}_{_safe_vc}.mp3"
         _cached_path = os.path.join("renders", _cached_name)
         if os.path.isfile(_cached_path) and os.path.getsize(_cached_path) > 1000:
             print(f"[Cache] ✅ Found existing render on disk: {_cached_name} — skipping GPU synthesis")
@@ -942,7 +950,13 @@ def studio_preview(req: StudioPreviewReq):
         if not collapse_chords:
             raw_voice = f"{raw_voice}poly"
         safe_voice = _re2.sub(r'[^a-zA-Z0-9]', '', raw_voice)[:20]
-        saved_name = f"song_{safe_id}_{safe_key}_{req.bpm_pct}_{safe_lyric_mode}_{safe_voice}.mp3"
+        
+        is_private = (not req.is_public) and bool(req.owner_id)
+        if is_private:
+            safe_owner = _re2.sub(r'[^a-zA-Z0-9_-]', '_', req.owner_id)[:40]
+            saved_name = f"song_{safe_owner}_{safe_id}_{safe_key}_{req.bpm_pct}_{safe_lyric_mode}_{safe_voice}.mp3"
+        else:
+            saved_name = f"song_{safe_id}_{safe_key}_{req.bpm_pct}_{safe_lyric_mode}_{safe_voice}.mp3"
     else:
         saved_name = f"render_{int(_time.time()*1000)}.mp3"
     saved_path = os.path.join("renders", saved_name)
@@ -1054,13 +1068,25 @@ def get_voices():
     return {"ok": True, "voices": voices}
 
 @app.get("/studio/renders/{song_id}")
-def list_renders(song_id: str):
+def list_renders(song_id: str, owner_id: Optional[str] = None):
     """List all saved renders for a given song_id."""
     import re as _re3
     os.makedirs("renders", exist_ok=True)
     safe_id = _re3.sub(r'[^a-zA-Z0-9_-]', '_', song_id)[:40]
-    prefix = f"song_{safe_id}_"
-    files = [f for f in os.listdir("renders") if f.startswith(prefix) and not "_stem_" in f]
+    
+    global_prefix = f"song_{safe_id}_"
+    private_prefix = None
+    if owner_id:
+        safe_owner = _re3.sub(r'[^a-zA-Z0-9_-]', '_', owner_id)[:40]
+        private_prefix = f"song_{safe_owner}_{safe_id}_"
+        
+    files = []
+    for f in os.listdir("renders"):
+        if f.endswith((".mp3", ".wav")) and not "_stem_" in f:
+            if f.startswith(global_prefix):
+                files.append(f)
+            elif private_prefix and f.startswith(private_prefix):
+                files.append(f)
     result = []
     for f in sorted(files):
         # Filename formats:
@@ -1111,11 +1137,30 @@ def list_renders(song_id: str):
     return {"renders": result, "song_id": song_id}
 
 @app.delete("/studio/renders/{filename}")
-def delete_render(filename: str):
+def delete_render(filename: str, owner_id: Optional[str] = None, song_id: Optional[str] = None):
     """Delete a saved render file."""
     import re as _re
     if not _re.match(r'^[a-zA-Z0-9_.-]+$', filename):
         return JSONResponse({"error": "Invalid filename"}, status_code=400)
+        
+    # Security/caching ownership check:
+    # If the file has a private owner format song_{owner_id}_{song_id}_...
+    # we verify that the query parameter owner_id matches.
+    if filename.startswith("song_") and song_id:
+        safe_id = _re.sub(r'[^a-zA-Z0-9_-]', '_', song_id)[:40]
+        global_prefix = f"song_{safe_id}_"
+        
+        # If it doesn't match the global prefix, it must be private.
+        if not filename.startswith(global_prefix):
+            # Verify if owner_id is provided and if it matches the private prefix.
+            private_prefix = None
+            if owner_id:
+                safe_owner = _re.sub(r'[^a-zA-Z0-9_-]', '_', owner_id)[:40]
+                private_prefix = f"song_{safe_owner}_{safe_id}_"
+            
+            if not private_prefix or not filename.startswith(private_prefix):
+                return JSONResponse({"error": "Unauthorized. This render belongs to another user."}, status_code=403)
+
     fpath = os.path.join("renders", filename)
     if os.path.exists(fpath):
         os.remove(fpath)

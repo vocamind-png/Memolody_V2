@@ -24,6 +24,7 @@ import { getChromaticSolfege } from '../../lib/SolfegeLogic';
 import { Song, TrackState, EffectInstance, LyricMode, SongFolder } from '../../types';
 import { songStorage } from '../../lib/SongStorage';
 import { nimoBrain } from '../../lib/NimoBrain';
+import { useAuth } from '../../lib/useAuth';
 
 export type PlayerCardType = 'score' | 'pianoroll' | 'trackview' | 'memochord' | 'practice' | 'vocalido';
 
@@ -282,6 +283,7 @@ const PlayerPage: React.FC<{
   onAutoPlayConsumed?: () => void; // ← clears the flag in App.tsx
   onSongUpdate?: (updatedSong: Song) => void;
 }> = ({ song, musicXml, layoutBundle, tracks, setTracks, viewMode = 'score', setViewMode, loopPresets, setLoopPresets, performanceMode, vocalidoAutoRender, autoPlay, onAutoPlayConsumed, onSongUpdate }) => {
+  const { authUser } = useAuth();
   const [isPlaying, setIsPlaying] = useState(false);
   
   // Favorites & Folder state
@@ -862,7 +864,7 @@ const PlayerPage: React.FC<{
         setRenderHistory([]);
       }
 
-      svsFetch(getFetchUrl(`/studio/renders/${encodeURIComponent(song.id)}`))
+      svsFetch(getFetchUrl(`/studio/renders/${encodeURIComponent(song.id)}?owner_id=${encodeURIComponent(authUser?.id || '')}`))
         .then(r => r.ok ? r.json() : null)
         .then(data => {
           if (data?.renders?.length) {
@@ -1565,7 +1567,7 @@ const PlayerPage: React.FC<{
         const synthParams = { singer: activeVoiceName, bpm: actualBpm, transpose: transposeSemitones, voice: trackEngineId, return_stems: true, collapse_chords: collapseChords };
         
         // Determine if we should try local server first
-        const shouldTryLocal = false; // Disable local server fallback unconditionally for v2.1 (use RunPod directly)
+        const shouldTryLocal = true; // Enable local/cloud server check for Hybrid Caching
 
         let usedRunPod = false;
 
@@ -1587,6 +1589,8 @@ const PlayerPage: React.FC<{
                 bpm_pct: bpmPct,
                 song_key: songKey,
                 lyric_mode: activeLyricMode,
+                owner_id: song?.ownerId || authUser?.id || '',
+                is_public: song?.isPublic ?? true,
               })
             });
             clearTimeout(localTimeout);
@@ -2234,7 +2238,7 @@ const PlayerPage: React.FC<{
                         onClick={() => {
                           const confirmed = window.confirm(`ลบ Render "${formatRenderLabel(h.label, h.bpmPercent)}" สำหรับเพลงนี้ออกใช่ไหม?`);
                           if (!confirmed) return;
-                          if (h.filename) svsFetch(getFetchUrl(`/studio/renders/${encodeURIComponent(h.filename)}`), { method: 'DELETE' }).catch(() => {});
+                          if (h.filename) svsFetch(getFetchUrl(`/studio/renders/${encodeURIComponent(h.filename)}?owner_id=${encodeURIComponent(authUser?.id || '')}&song_id=${encodeURIComponent(localSong.id)}`), { method: 'DELETE' }).catch(() => {});
                           setRenderHistory(prev => prev.filter(x => `${x.bpmPercent}_${x.songKey}_${x.engineId||'default'}_${x.lyricMode||''}_${x.voiceName||'Auto'}` !== hKey));
                           if (activeRenderKey === hKey) setActiveRenderKey(null);
                           if (memoInfoOpenKey === hKey) setMemoInfoOpenKey(null);
