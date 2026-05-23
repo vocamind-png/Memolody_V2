@@ -1212,6 +1212,9 @@ const PlayerPage: React.FC<{
 
         const cached = renderHistory.find(
           h => {
+            // 🚫 Never use cached renders with blob: URLs — they expire on page reload
+            if (!h.audioUrl || h.audioUrl.startsWith('blob:')) return false;
+
             const hEng = (h.engineId || 'default').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
             const tEng = targetEngine.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
             const hVoice = (h.voiceName || 'Auto').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
@@ -1230,10 +1233,14 @@ const PlayerPage: React.FC<{
         if (cached) {
           console.log(`[MemoCache] ✅ Found cached render ${cached.label} (${activeLyricMode}, ${trackEngineId}, ${currentVoiceName}) — skipping GPU render`);
           await musicEngine.ensureInitialized();
-          const cacheBusted = (() => { const fixed = fixAudioUrl(cached.audioUrl); return fixed.includes('?t=') ? fixed.replace(/\?t=\d+/, `?t=${Date.now()}`) : `${fixed}?t=${Date.now()}`; })();
+          // For permanent URLs: add cache-bust param. Blob URLs must NOT have params added.
+          const fixedUrl = fixAudioUrl(cached.audioUrl);
+          const cacheBusted = fixedUrl.startsWith('blob:') ? fixedUrl
+            : (fixedUrl.includes('?t=') ? fixedUrl.replace(/\?t=\d+/, `?t=${Date.now()}`) : `${fixedUrl}?t=${Date.now()}`);
           const stemsWithBust = (cached.savedStemUrls || []).map((sUrl: string) => {
             const fixed = fixAudioUrl(sUrl);
-            return fixed.includes('?t=') ? fixed.replace(/\?t=\d+/, `?t=${Date.now()}`) : `${fixed}?t=${Date.now()}`;
+            return fixed.startsWith('blob:') ? fixed
+              : (fixed.includes('?t=') ? fixed.replace(/\?t=\d+/, `?t=${Date.now()}`) : `${fixed}?t=${Date.now()}`);
           });
           // Set track mode to vocal so Play button / loadSong works correctly
           const updatedTracks = tracks.map((t: any) => 
@@ -1765,7 +1772,7 @@ const PlayerPage: React.FC<{
         )}
 
         {/* ── MAIN CONTENT AREA (RIGHT SIDE IN SPLIT VIEW) ── */}
-        <div className="flex-1 flex flex-col relative overflow-hidden pointer-events-auto pb-[80px]">
+        <div className="flex-1 flex flex-col relative overflow-hidden pointer-events-auto pb-[124px]">
         {/* ── MEMO SONG RENDER: Speed Panel (left floating) ── */}
         {renderHistory.length > 0 && activeCard === 'score' && (
           <div className="absolute left-2 top-1/2 -translate-y-1/2 z-[3000] flex flex-col gap-1.5 pointer-events-auto">
@@ -1798,12 +1805,14 @@ const PlayerPage: React.FC<{
                         setCurrentBpm(targetBpm);
 
                         const fixedUrl = fixAudioUrl(h.audioUrl);
-                        const cacheBusted = fixedUrl.includes('?t=') 
-                          ? fixedUrl.replace(/\?t=\d+/, `?t=${Date.now()}`)
-                          : `${fixedUrl}?t=${Date.now()}`;
+                        const cacheBusted = fixedUrl.startsWith('blob:') ? fixedUrl
+                          : (fixedUrl.includes('?t=') 
+                            ? fixedUrl.replace(/\?t=\d+/, `?t=${Date.now()}`)
+                            : `${fixedUrl}?t=${Date.now()}`);
                         const stemsWithBust = (h.savedStemUrls || []).map((sUrl: string) => {
                           const fixedStem = fixAudioUrl(sUrl);
-                          return fixedStem.includes('?t=') ? fixedStem.replace(/\?t=\d+/, `?t=${Date.now()}`) : `${fixedStem}?t=${Date.now()}`;
+                          return fixedStem.startsWith('blob:') ? fixedStem
+                            : (fixedStem.includes('?t=') ? fixedStem.replace(/\?t=\d+/, `?t=${Date.now()}`) : `${fixedStem}?t=${Date.now()}`);
                         });
                         
                         const vocalTrack = tracks.find(t => t.mode === 'vocal');

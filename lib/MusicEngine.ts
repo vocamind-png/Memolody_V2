@@ -443,118 +443,83 @@ export class MusicEngine {
   async addVocalLayer(trackId: string, audioUrl: string, stemUrls?: string[]) {
     // Increment generation — any previous in-flight loads become stale
     const myGeneration = ++this._vocalGeneration;
-    console.log(`[MusicEngine] 🎤 addVocalLayer gen=${myGeneration} track=${trackId}, url=${audioUrl.substring(0, 60)}..., stems=${stemUrls?.length || 0}`);
+    console.log(`[MusicEngine] 🎤 addVocalLayer gen=${myGeneration} track=${trackId}, url=${audioUrl.substring(0, 60)}...`);
 
     // Ensure Tone.js context and masterBus are initialized
     await this.ensureInitialized();
 
-    // Clean up old Tone.Player layers
+    // ── Clean up old vocal resources ──────────────────────────────────────────
     this.clearVocalLayers(trackId);
 
-    // Ensure track channel exists so the players can connect to it immediately
+    // Remove old HTML audio element for this track (if any)
+    const existingAudio = this.vocalAudioElements.get(trackId);
+    if (existingAudio) {
+      existingAudio.pause();
+      existingAudio.src = '';
+      this.vocalAudioElements.delete(trackId);
+    }
+
+    // Ensure track channel exists so the volume/pan/meter routing works
     if (!this.trackChannels.has(trackId) && this.masterBus) {
-      console.log(`[MusicEngine] 🎤 creating channel/meter for vocal trackId=${trackId} inside addVocalLayer`);
       const channel = new Tone.Channel(0, 0).connect(this.masterBus);
       const meter = new Tone.Meter().connect(channel);
       this.trackChannels.set(trackId, channel);
       this.trackMeters.set(trackId, meter);
     }
 
-    // Wrap in a timeout to prevent hanging forever
-    const LOAD_TIMEOUT_MS = 30000;
-    
-    return new Promise<void>((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
-        console.warn(`[MusicEngine] ⚠️ addVocalLayer gen=${myGeneration} timed out — resolving anyway`);
-        resolve();
-      }, LOAD_TIMEOUT_MS);
+    // ── PRIMARY: Use HTMLAudioElement (works reliably on iOS Safari & all browsers) ──
+    // This approach is simpler and far more reliable than Tone.Player for blob URLs.
+    return new Promise<void>((resolve) => {
+      const audio = new Audio();
+      audio.preload = 'auto';
+      audio.crossOrigin = 'anonymous';
 
-      const player = new Tone.Player({
-        url: audioUrl,
-        onload: () => {
-          // Check if this generation is still current
-          if (myGeneration !== this._vocalGeneration) {
-            console.log(`[MusicEngine] 🗑️ Stale gen=${myGeneration} (current=${this._vocalGeneration}) — disposing player`);
-            player.dispose();
-            clearTimeout(timeoutId);
-            resolve();
-            return;
-          }
-
-          console.log(`[MusicEngine] 🎤 Vocal loaded gen=${myGeneration} duration=${player.buffer.duration.toFixed(2)}s`);
-
-          // Connect to track channel to inherit track volume, pan, and effects
-          const channel = this.trackChannels.get(trackId);
-          if (channel) {
-            player.connect(channel);
-          } else if (this.masterBus) {
-            player.connect(this.masterBus);
-          } else {
-            player.toDestination();
-          }
-          
-          this.trackVocalLayers.set(trackId, [player]);
-          // Mute the MIDI sampler — vocal replaces instrument playback
-          this.trackModes.set(trackId, 'vocal');
-
-          // ── KEY FIX: Sync player to Transport so it plays automatically when Transport starts ──
-          // The countInDuration offset aligns the vocal audio with note scheduling.
-          const countIn = this.countInDuration || 0;
-          player.sync().start(countIn);
-          console.log(`[MusicEngine] 🔗 Vocal player synced to Transport at offset=${countIn}s`);
-          
-          // Load individual stems if provided (only if > 1 stem — single stem is same as main)
-          if (stemUrls && stemUrls.length > 1) {
-            const stems: Tone.Player[] = [];
-            let loadedStems = 0;
-            stemUrls.forEach((sUrl, idx) => {
-              const stemPlayer = new Tone.Player({
-                url: sUrl,
-                onload: () => {
-                  if (myGeneration !== this._vocalGeneration) {
-                    stemPlayer.dispose();
-                    loadedStems++;
-                    if (loadedStems === stemUrls.length) { clearTimeout(timeoutId); resolve(); }
-                    return;
-                  }
-                  const stemChannel = this.trackChannels.get(trackId);
-                  if (stemChannel) stemPlayer.connect(stemChannel);
-                  else if (this.masterBus) stemPlayer.connect(this.masterBus);
-                  else stemPlayer.toDestination();
-                  stemPlayer.volume.value = -100; // Muted by default
-                  // Sync stems to Transport too
-                  stemPlayer.sync().start(countIn);
-                  
-                  stems[idx] = stemPlayer;
-                  loadedStems++;
-                  if (loadedStems === stemUrls.length) {
-                    this.trackVocalStems.set(trackId, stems);
-                    this.updateVocalPlaybackState();
-                    console.log(`[MusicEngine] ✅ Vocal synced gen=${myGeneration} for ${trackId} with ${stemUrls.length} stems`);
-                    clearTimeout(timeoutId);
-                    resolve();
-                  }
-                },
-                onerror: (e) => {
-                  console.error(`[MusicEngine] ❌ Stem ${idx} load error:`, e);
-                  loadedStems++;
-                  if (loadedStems === stemUrls.length) { clearTimeout(timeoutId); resolve(); }
-                }
-              });
-            });
-          } else {
-            this.updateVocalPlaybackState();
-            console.log(`[MusicEngine] ✅ Vocal synced gen=${myGeneration} for ${trackId} (no multi-stems)`);
-            clearTimeout(timeoutId);
-            resolve();
-          }
-        },
-        onerror: (e) => {
-          console.error(`[MusicEngine] ❌ Vocal audio load error for ${trackId}:`, e);
-          clearTimeout(timeoutId);
-          reject(e);
+      const onCanPlay = () => {
+        if (myGeneration !== this._vocalGeneration) {
+          console.log(`[MusicEngine] 🗑️ Stale gen=${myGeneration} — discarding audio`);
+          audio.src = '';
+          resolve();
+          return;
         }
-      });
+        console.log(`[MusicEngine] 🎤 HTMLAudio loaded gen=${myGeneration} duration=${audio.duration.toFixed(2)}s`);
+        audio.volume = 1.0;
+
+        // Store in vocalAudioElements — start()/resume()/pause() handle playback automatically
+        this.vocalAudioElements.set(trackId, audio);
+        this.trackModes.set(trackId, 'vocal');
+
+        // If transport is already playing, start the audio immediately at the right offset
+        if (Tone.Transport.state === 'started') {
+          const songOffset = Math.max(0, Tone.Transport.seconds - this.countInDuration);
+          audio.currentTime = Math.min(songOffset, audio.duration - 0.01);
+          audio.play().catch(e => console.warn('[MusicEngine] Immediate vocal play failed:', e));
+        }
+
+        resolve();
+      };
+
+      const onError = (e: Event) => {
+        console.error(`[MusicEngine] ❌ HTMLAudio load error for ${trackId}:`, e);
+        // Resolve anyway so the UI doesn't hang
+        resolve();
+      };
+
+      audio.addEventListener('canplaythrough', onCanPlay, { once: true });
+      audio.addEventListener('error', onError, { once: true });
+
+      // Timeout fallback
+      const timeoutId = setTimeout(() => {
+        console.warn(`[MusicEngine] ⚠️ addVocalLayer gen=${myGeneration} timed out — resolving`);
+        audio.removeEventListener('canplaythrough', onCanPlay);
+        audio.removeEventListener('error', onError);
+        resolve();
+      }, 30000);
+
+      audio.addEventListener('canplaythrough', () => clearTimeout(timeoutId), { once: true });
+      audio.addEventListener('error', () => clearTimeout(timeoutId), { once: true });
+
+      audio.src = audioUrl;
+      audio.load();
     });
   }
 
@@ -916,8 +881,9 @@ export class MusicEngine {
       // Play the sampler if:
       // 1. The track mode is NOT 'vocal'
       // 2. OR the track mode is 'vocal' but NO vocal layer is currently loaded for it
+      //    (either via Tone.Player or HTMLAudioElement)
       const isVocalMode = this.trackModes.get(event.trackId) === 'vocal';
-      const hasVocalLayer = this.trackVocalLayers.has(event.trackId);
+      const hasVocalLayer = this.trackVocalLayers.has(event.trackId) || this.vocalAudioElements.has(event.trackId);
       
       if (!isVocalMode || !hasVocalLayer) {
         const sampler = this.trackSamplers.get(event.trackId);
@@ -955,17 +921,18 @@ export class MusicEngine {
     await this.ensureInitialized();
     console.log("[MusicEngine] start() ensureInitialized done, transport state:", Tone.Transport.state);
     if (Tone.Transport.state !== 'started') {
-      const startOffset = Math.max(0, (this.baseStartTime || 0));
       const TRANSPORT_DELAY_MS = 100;
       const startTime = Tone.now() + (TRANSPORT_DELAY_MS / 1000);
-      console.log("[MusicEngine] starting Tone.Transport at", startTime, "offset", startOffset);
+      // songOffset = how many seconds into the song we currently are
+      const songOffset = Math.max(0, Tone.Transport.seconds - this.countInDuration);
+      console.log("[MusicEngine] starting Tone.Transport, songOffset=", songOffset);
       Tone.Transport.start(startTime);
       console.log("[MusicEngine] Tone.Transport started!");
-      // 🎤 Synced Tone.Players start automatically via .sync() binding
-      // 🎤 HTMLAudio vocal layers (legacy fallback)
-      this.vocalAudioElements.forEach(audio => {
+      // 🎤 Start HTMLAudio vocal layers at the correct song position
+      this.vocalAudioElements.forEach((audio) => {
         try {
-          audio.currentTime = startOffset;
+          audio.currentTime = Math.min(songOffset, Math.max(0, (isFinite(audio.duration) ? audio.duration - 0.01 : 0)));
+          // Delay play() by same TRANSPORT_DELAY_MS to stay in sync with piano
           setTimeout(() => {
             audio.play().catch(e => console.warn('[MusicEngine] Vocal audio.play() failed:', e));
           }, TRANSPORT_DELAY_MS);
@@ -973,6 +940,7 @@ export class MusicEngine {
       });
     }
   }
+
 
   // Resume from paused position
   async resume() {
