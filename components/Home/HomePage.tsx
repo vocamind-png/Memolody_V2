@@ -352,6 +352,10 @@ const HomePage: React.FC<HomePageProps> = ({
   }, []);
   const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+
+  useEffect(() => {
+    setSearchQuery(searchInput);
+  }, [searchInput]);
   const [showFilters, setShowFilters] = useState(false);
   const [filterGenre, setFilterGenre] = useState('');
   const [filterEra, setFilterEra] = useState('');
@@ -694,11 +698,9 @@ const HomePage: React.FC<HomePageProps> = ({
           />
           {searchInput && (
           <div className="absolute right-12 top-1/2 -translate-y-1/2 flex items-center gap-2">
-            {searchQuery && (
-              <button onClick={() => { setSearchInput(''); setSearchQuery(''); }} className="text-zinc-600 hover:text-white transition-colors">
-                <X size={14} />
-              </button>
-            )}
+            <button onClick={() => setSearchInput('')} className="text-zinc-600 hover:text-white transition-colors">
+              <X size={14} />
+            </button>
             <button 
               onClick={() => setShowFilters(!showFilters)}
               className={`p-1.5 rounded-lg transition-colors ${showFilters || filterGenre || filterEra || filterComposer || filterYear || filterInstrument ? 'bg-cyan-500/20 text-cyan-400' : 'text-zinc-600 hover:text-zinc-400'}`}
