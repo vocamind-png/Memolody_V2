@@ -7,7 +7,7 @@ import {
   RefreshCw, Repeat, Music,
   VolumeX, Bell, BellOff, Eye, EyeOff, Lock,
   ChevronDown, Library, Languages, Mic2, Timer, Sparkles,
-  Heart, Folder, Trash2, Plus
+  Heart, Folder, Trash2, Plus, ChevronLeft, ChevronRight
 } from 'lucide-react';
 import ProScoreEditor from './ProScoreEditor';
 import { KeyTransposeDisplay, BpmDisplay, BarBeatPositionDisplay, TimeSigDisplay } from './LCDDisplay';
@@ -34,6 +34,33 @@ const formatRenderLabel = (label: string, bpmPct: number) => {
     return label.replace(/(\d+)%/, `$1% (${diffStr})`);
   }
   return `${label} (${diffStr})`;
+};
+
+const getTransposeDiff = (origKey: string, targetKey: string): number => {
+  const cleanOrig = (origKey || 'C').trim();
+  const cleanTarget = (targetKey || 'C').trim();
+  
+  const baseOrig = cleanOrig.replace('m', '').trim();
+  const baseTarget = cleanTarget.replace('m', '').trim();
+
+  const KEY_ALIASES: Record<string, string> = {
+    'C#': 'Db', 'Gb': 'F#', 'Cb': 'B', 'D#': 'Eb', 'G#': 'Ab', 'A#': 'Bb'
+  };
+
+  const resolvedOrig = KEY_ALIASES[baseOrig] || baseOrig;
+  const resolvedTarget = KEY_ALIASES[baseTarget] || baseTarget;
+
+  const CHROMATIC_KEYS = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'];
+
+  const idxOrig = CHROMATIC_KEYS.indexOf(resolvedOrig);
+  const idxTarget = CHROMATIC_KEYS.indexOf(resolvedTarget);
+
+  if (idxOrig === -1 || idxTarget === -1) return 0;
+  
+  let diff = idxTarget - idxOrig;
+  if (diff > 6) diff -= 12;
+  if (diff < -6) diff += 12;
+  return diff;
 };
 
 const getCustomBackendUrl = () => {
@@ -266,6 +293,7 @@ const PlayerPage: React.FC<{
   const [newFolderName, setNewFolderName] = useState('');
   const [newFolderColor, setNewFolderColor] = useState('#6366f1');
   const folderPopoverRef = useRef<HTMLDivElement>(null);
+  const [isRenderHistoryHidden, setIsRenderHistoryHidden] = useState(false);
 
   const svsEngine = 'vocalido';
   const [isTransportHidden, setIsTransportHidden] = useState(false);
@@ -726,7 +754,10 @@ const PlayerPage: React.FC<{
   }, [tracks]);
 
   const activeLyricMode = useMemo(() => {
-    return vocalTrack?.lyricMode || 'British Fixed Doh';
+    const saved = (() => {
+      try { return localStorage.getItem('memo_lyric_mode') || 'British Fixed Doh'; } catch { return 'British Fixed Doh'; }
+    })();
+    return vocalTrack?.lyricMode || (saved as LyricMode);
   }, [vocalTrack]);
 
   const activeVoiceName = useMemo(() => {
@@ -1866,159 +1897,194 @@ const PlayerPage: React.FC<{
         <div className="flex-1 flex flex-col relative overflow-hidden pointer-events-auto pb-[124px]">
         {/* ── MEMO SONG RENDER: Speed Panel (left floating) ── */}
         {renderHistory.length > 0 && activeCard === 'score' && (
-          <div className="absolute left-2 top-1/2 -translate-y-1/2 z-[3000] flex flex-col gap-1.5 pointer-events-auto">
-            <span className="text-[6px] font-black text-zinc-400 uppercase tracking-widest text-center mb-0.5">Memo Render</span>
-            {renderHistory.map((h) => {
-              const hKey = `${h.bpmPercent}_${h.songKey}_${h.engineId||'default'}_${h.lyricMode||''}_${h.voiceName||'Auto'}`;
-              const isActive = activeRenderKey === hKey;
-              const isInfoOpen = memoInfoOpenKey === hKey;
-              const shortDate = h.renderedAt ? new Date(h.renderedAt).toLocaleDateString('th-TH', { day:'2-digit', month:'2-digit' }) : null;
-              const speedDiff = h.bpmPercent - 100;
-              const diffStr = speedDiff > 0 ? `+${speedDiff}%` : speedDiff < 0 ? `${speedDiff}%` : '±0%';
-              return (
-                <div key={hKey} className="relative group">
-                  {/* Main render button */}
+          <>
+            {isRenderHistoryHidden ? (
+              <button
+                onClick={() => setIsRenderHistoryHidden(false)}
+                className="absolute left-0 top-1/2 -translate-y-1/2 z-[3000] w-3.5 h-10 bg-[#0c0c0e]/90 border border-l-0 border-white/10 hover:bg-zinc-800 rounded-r-md flex items-center justify-center text-zinc-500 hover:text-white pointer-events-auto shadow-md transition-all active:scale-95"
+                title="Show Memo Renders"
+              >
+                <ChevronRight size={10} />
+              </button>
+            ) : (
+              <div className="absolute left-2 top-1/2 -translate-y-1/2 z-[3000] flex flex-col gap-1.5 pointer-events-auto bg-[#0c0c0e]/95 p-2 rounded-xl border border-white/10 backdrop-blur-xl shadow-2xl max-h-[70vh] overflow-y-auto scrollbar-hide w-16">
+                <div className="flex items-center justify-between border-b border-white/5 pb-1 mb-0.5 w-full">
+                  <span className="text-[5.5px] font-black text-zinc-400 uppercase tracking-widest pl-0.5">Renders</span>
                   <button
-                    onClick={async () => {
-                      const wasPlaying = isPlaying || musicEngine.transportState === 'started';
-                      const currentPos = musicEngine.transportSeconds;
-                      if (wasPlaying) {
-                        musicEngine.pause();
-                      }
-                      setIsAudioLoading(true);
-                      try {
-                        await musicEngine.ensureInitialized();
-
-                        // Set BPM first to prevent sync mismatch
-                        const origBpm = (parsedData?.metadata as any)?.bpm || song?.bpm || 120;
-                        const targetBpm = Math.round(((origBpm * h.bpmPercent) / 100) * 10) / 10;
-                        musicEngine.setBpm(targetBpm);
-                        setCurrentBpm(targetBpm);
-
-                        const fixedUrl = fixAudioUrl(h.audioUrl);
-                        const cacheBusted = fixedUrl.startsWith('blob:') ? fixedUrl
-                          : (fixedUrl.includes('?t=') 
-                            ? fixedUrl.replace(/\?t=\d+/, `?t=${Date.now()}`)
-                            : `${fixedUrl}?t=${Date.now()}`);
-                        const stemsWithBust = (h.savedStemUrls || []).map((sUrl: string) => {
-                          const fixedStem = fixAudioUrl(sUrl);
-                          return fixedStem.startsWith('blob:') ? fixedStem
-                            : (fixedStem.includes('?t=') ? fixedStem.replace(/\?t=\d+/, `?t=${Date.now()}`) : `${fixedStem}?t=${Date.now()}`);
-                        });
-                        
-                        const vocalTrack = tracks.find(t => t.mode === 'vocal');
-                        const trackId = vocalTrack ? vocalTrack.id : (tracks[0]?.id || 'P1');
-                        
-                        await musicEngine.addVocalLayer(trackId, cacheBusted, stemsWithBust);
-                        
-                        // Set the track mode to vocal so UI state reflects it
-                        const updatedTracks = tracks.map((t: any) => 
-                          t.id === trackId ? { ...t, mode: 'vocal' } as TrackState : t
-                        );
-                        setTracks(updatedTracks);
-                        
-                        setAvailableStems(prev => ({ ...prev, [trackId]: musicEngine.getAvailableStems(trackId) }));
-                        setSoloedStems(prev => ({ ...prev, [trackId]: null }));
-                        setActiveRenderKey(hKey);
-                        setMemoInfoOpenKey(null);
-                        
-                        // Call loadSong to sync and catch up
-                        await musicEngine.loadSong(parsedData.notes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn);
-                        
-                        musicEngine.setTransportSeconds(currentPos);
-                        if (wasPlaying) {
-                          await musicEngine.start();
-                          setIsPlaying(true);
-                        }
-                      } catch (err) {
-                        console.error("MemoRender hot-swap failed:", err);
-                      } finally {
-                        setIsAudioLoading(false);
-                      }
-                    }}
-                    title={`โหลด: ${formatRenderLabel(h.label, h.bpmPercent)}`}
-                    className={`w-auto px-3 h-10 rounded-xl text-[8px] font-black flex flex-col items-center justify-center border transition-all shadow-lg whitespace-nowrap
-                      ${ isActive
-                        ? 'bg-[#00e5ff] border-cyan-300 text-black shadow-[0_0_14px_rgba(0,229,255,0.55)] scale-[1.04]'
-                        : 'bg-zinc-800 border-zinc-600 text-zinc-200 hover:bg-zinc-700 hover:border-zinc-400 hover:text-white'
-                      }`}
+                    onClick={() => setIsRenderHistoryHidden(true)}
+                    className="w-3.5 h-3.5 flex items-center justify-center text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 rounded transition-colors"
+                    title="Hide Memo Renders"
                   >
-                    <span className="leading-tight">{formatRenderLabel(h.label, h.bpmPercent)}</span>
-                    {isActive && <span className="text-[5px] mt-0.5 font-black tracking-widest opacity-70">▶ ACTIVE</span>}
-                  </button>
-
-                  {/* Info button (ⓘ) — top-left corner */}
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setMemoInfoOpenKey(isInfoOpen ? null : hKey); }}
-                    className="absolute -top-1.5 -left-1.5 w-4 h-4 bg-zinc-700 hover:bg-zinc-500 text-zinc-300 hover:text-white rounded-full text-[7px] font-black items-center justify-center hidden group-hover:flex transition-all shadow-lg z-10"
-                    title="รายละเอียด / Info"
-                  >
-                    i
-                  </button>
-
-                  {/* Info popup tooltip */}
-                  {isInfoOpen && (
-                    <div
-                      className="absolute left-full ml-2 top-0 z-[9000] bg-[#0c0c12]/95 border border-white/20 rounded-2xl p-3 min-w-[180px] shadow-2xl backdrop-blur-lg text-[9px] flex flex-col gap-1.5"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <div className="flex justify-between items-start mb-1">
-                        <span className="text-[8px] font-black text-cyan-400 uppercase tracking-widest">Render Info</span>
-                        <button onClick={() => setMemoInfoOpenKey(null)} className="text-zinc-500 hover:text-white text-[10px] leading-none">✕</button>
-                      </div>
-                      <div className="flex flex-col gap-1">
-                        <div className="flex justify-between gap-3">
-                          <span className="text-zinc-500">เสียงร้อง</span>
-                          <span className="text-zinc-100 font-black text-right truncate max-w-[100px]">{h.voiceName || 'Auto'}</span>
-                        </div>
-                        <div className="flex justify-between gap-3">
-                          <span className="text-zinc-500">Tempo</span>
-                          <span className="text-zinc-100 font-black">{h.bpmPercent}% ({diffStr})</span>
-                        </div>
-                        <div className="flex justify-between gap-3">
-                          <span className="text-zinc-500">คีย์</span>
-                          <span className="text-zinc-100 font-black">{h.songKey}</span>
-                        </div>
-                        <div className="flex justify-between gap-3">
-                          <span className="text-zinc-500">โหมด</span>
-                          <span className="text-zinc-100 font-black truncate max-w-[100px]">{h.lyricMode || 'British Fixed Doh'}</span>
-                        </div>
-                        <div className="flex justify-between gap-3">
-                          <span className="text-zinc-500">Engine</span>
-                          <span className="text-zinc-100 font-black truncate max-w-[100px]">{h.engineId || 'default'}</span>
-                        </div>
-                        {shortDate && (
-                          <div className="flex justify-between gap-3">
-                            <span className="text-zinc-500">บันทึกเมื่อ</span>
-                            <span className="text-zinc-400">{shortDate}</span>
-                          </div>
-                        )}
-                        {isActive && (
-                          <div className="mt-1 px-2 py-1 bg-cyan-400/20 rounded-lg text-center text-cyan-400 font-black text-[8px] tracking-widest">▶ กำลังใช้งาน</div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Delete button — appears on hover (×) */}
-                  <button
-                    onClick={() => {
-                      const confirmed = window.confirm(`ลบ Render "${formatRenderLabel(h.label, h.bpmPercent)}" สำหรับเพลงนี้ออกใช่ไหม?`);
-                      if (!confirmed) return;
-                      if (h.filename) svsFetch(getFetchUrl(`/studio/renders/${encodeURIComponent(h.filename)}`), { method: 'DELETE' }).catch(() => {});
-                      setRenderHistory(prev => prev.filter(x => `${x.bpmPercent}_${x.songKey}_${x.engineId||'default'}_${x.lyricMode||''}_${x.voiceName||'Auto'}` !== hKey));
-                      if (activeRenderKey === hKey) setActiveRenderKey(null);
-                      if (memoInfoOpenKey === hKey) setMemoInfoOpenKey(null);
-                    }}
-                    className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-rose-600 hover:bg-rose-500 text-white rounded-full text-[7px] font-black items-center justify-center hidden group-hover:flex transition-all shadow-lg"
-                    title="ลบ / Delete"
-                  >
-                    ×
+                    <ChevronLeft size={9} />
                   </button>
                 </div>
-              );
-            })}
-          </div>
+                {renderHistory.map((h) => {
+                  const hKey = `${h.bpmPercent}_${h.songKey}_${h.engineId||'default'}_${h.lyricMode||''}_${h.voiceName||'Auto'}`;
+                  const isActive = activeRenderKey === hKey;
+                  const isInfoOpen = memoInfoOpenKey === hKey;
+                  const shortDate = h.renderedAt ? new Date(h.renderedAt).toLocaleDateString('th-TH', { day:'2-digit', month:'2-digit' }) : null;
+                  const speedDiff = h.bpmPercent - 100;
+                  const diffStr = speedDiff > 0 ? `+${speedDiff}%` : speedDiff < 0 ? `${speedDiff}%` : '±0%';
+                  return (
+                    <div key={hKey} className="relative group">
+                      {/* Main render button */}
+                      <button
+                        onClick={async () => {
+                          const wasPlaying = isPlaying || musicEngine.transportState === 'started';
+                          const currentPos = musicEngine.transportSeconds;
+                          if (wasPlaying) {
+                            musicEngine.pause();
+                          }
+                          setIsAudioLoading(true);
+                          try {
+                            await musicEngine.ensureInitialized();
+  
+                            // Set BPM first to prevent sync mismatch
+                            const origBpm = (parsedData?.metadata as any)?.bpm || song?.bpm || 120;
+                            const targetBpm = Math.round(((origBpm * h.bpmPercent) / 100) * 10) / 10;
+                            musicEngine.setBpm(targetBpm);
+                            setCurrentBpm(targetBpm);
+  
+                            // Transpose to matching key
+                            const origKey = parsedData.metadata.key || localSong.key || 'C';
+                            const targetKey = h.songKey;
+                            const tVal = getTransposeDiff(origKey, targetKey);
+                            setTranspose(tVal);
+  
+                            // Load audio stem
+                            const fixedUrl = fixAudioUrl(h.audioUrl);
+                            const cacheBusted = fixedUrl.startsWith('blob:') ? fixedUrl
+                              : (fixedUrl.includes('?t=') 
+                                ? fixedUrl.replace(/\?t=\d+/, `?t=${Date.now()}`)
+                                : `${fixedUrl}?t=${Date.now()}`);
+                            const stemsWithBust = (h.savedStemUrls || []).map((sUrl: string) => {
+                              const fixedStem = fixAudioUrl(sUrl);
+                              return fixedStem.startsWith('blob:') ? fixedStem
+                                : (fixedStem.includes('?t=') ? fixedStem.replace(/\?t=\d+/, `?t=${Date.now()}`) : `${fixedStem}?t=${Date.now()}`);
+                            });
+  
+                            const primaryTrackId = tracks.find(t => t.mode === 'vocal')?.id || tracks[0]?.id || 'P1';
+                            await musicEngine.addVocalLayer(primaryTrackId, cacheBusted, stemsWithBust);
+  
+                            // Set the track mode to vocal so UI state reflects it
+                            const updatedTracks = tracks.map((t: any) => 
+                              t.id === primaryTrackId ? { ...t, mode: 'vocal' } as TrackState : t
+                            );
+                            setTracks(updatedTracks);
+  
+                            setAvailableStems(prev => ({ ...prev, [primaryTrackId]: musicEngine.getAvailableStems(primaryTrackId) }));
+                            setSoloedStems(prev => ({ ...prev, [primaryTrackId]: null }));
+  
+                            setActiveRenderKey(hKey);
+                            setMemoInfoOpenKey(null);
+                            if (h.engineId) setActiveEngineId(h.engineId);
+                            if (h.voiceName && h.voiceName !== 'Auto') {
+                              setStoredSinger(h.voiceName);
+                            } else {
+                              setStoredSinger(null);
+                            }
+  
+                            // Load song (5 arguments)
+                            await musicEngine.loadSong(parsedData.notes, updatedTracks, tVal, parsedData.timeSignature, isMetronomeOn);
+                            
+                            musicEngine.setTransportSeconds(currentPos);
+                            if (wasPlaying) {
+                              await musicEngine.start();
+                              setIsPlaying(true);
+                            }
+                          } catch (err) {
+                            console.error('Failed to load render history stem:', err);
+                            alert("❌ ไม่สามารถโหลดไฟล์ร้องประสานเสียงนี้ได้");
+                          } finally {
+                            setIsAudioLoading(false);
+                          }
+                        }}
+                        className={`w-11 h-11 rounded-xl flex flex-col items-center justify-center border font-bold uppercase transition-all shadow-md relative leading-none select-none
+                          ${isActive 
+                            ? 'bg-gradient-to-br from-cyan-400 to-indigo-600 text-black border-transparent shadow-[0_0_12px_rgba(0,229,255,0.4)]' 
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700'
+                          }`}
+                        title={`เล่นประสานเสียง (${h.voiceName || 'Auto'} • ${h.lyricMode || 'SYS'} • Key ${h.songKey} • BPM ${h.bpmPercent}%)`}
+                      >
+                        <span className="text-[7.5px] tracking-tighter leading-none mb-0.5">{h.songKey}</span>
+                        <span className="text-[5.5px] opacity-80 leading-none">{diffStr}</span>
+                        <span className="text-[4px] opacity-60 mt-0.5 tracking-tighter max-w-[40px] truncate leading-none">{h.voiceName || 'Auto'}</span>
+                      </button>
+    
+                      {/* Info popup toggle — tiny badge */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setMemoInfoOpenKey(isInfoOpen ? null : hKey);
+                        }}
+                        className={`absolute -top-1 -left-1 w-3.5 h-3.5 rounded-full flex items-center justify-center text-[5.5px] font-black border transition-all pointer-events-auto
+                          ${isInfoOpen 
+                            ? 'bg-amber-500 border-amber-400 text-white shadow-lg' 
+                            : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-white'
+                          }`}
+                        title="ดูรายละเอียด / Show details"
+                      >
+                        ℹ
+                      </button>
+    
+                      {/* Detailed info popup overlay */}
+                      {isInfoOpen && (
+                        <div className="absolute left-14 top-0 w-44 bg-[#0c0c0e]/95 backdrop-blur-2xl border border-white/10 p-3 rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.8)] z-[8999] flex flex-col gap-1.5 text-[8px] animate-in fade-in slide-in-from-left-4 duration-150">
+                          <div className="flex justify-between border-b border-white/5 pb-1">
+                            <span className="font-black text-cyan-400 uppercase tracking-widest">Render Profile</span>
+                            <span className="text-[6.5px] text-zinc-500">{h.voiceName || 'Auto'}</span>
+                          </div>
+                          <div className="flex flex-col gap-1 text-zinc-300">
+                            <div className="flex justify-between gap-3">
+                              <span className="text-zinc-500">Key Signature</span>
+                              <span className="text-zinc-100 font-black">{h.songKey}</span>
+                            </div>
+                            <div className="flex justify-between gap-3">
+                              <span className="text-zinc-500">Speed Ratio</span>
+                              <span className="text-zinc-100 font-black">{h.bpmPercent}%</span>
+                            </div>
+                            <div className="flex justify-between gap-3">
+                              <span className="text-zinc-500">Singing System</span>
+                              <span className="text-zinc-100 font-black truncate max-w-[100px]">{h.lyricMode || 'British Fixed Doh'}</span>
+                            </div>
+                            <div className="flex justify-between gap-3">
+                              <span className="text-zinc-500">Engine</span>
+                              <span className="text-zinc-100 font-black truncate max-w-[100px]">{h.engineId || 'default'}</span>
+                            </div>
+                            {shortDate && (
+                              <div className="flex justify-between gap-3">
+                                <span className="text-zinc-500">บันทึกเมื่อ</span>
+                                <span className="text-zinc-400">{shortDate}</span>
+                              </div>
+                            )}
+                            {isActive && (
+                              <div className="mt-1 px-2 py-1 bg-cyan-400/20 rounded-lg text-center text-cyan-400 font-black text-[8px] tracking-widest">▶ กำลังใช้งาน</div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+    
+                      {/* Delete button — appears on hover (×) */}
+                      <button
+                        onClick={() => {
+                          const confirmed = window.confirm(`ลบ Render "${formatRenderLabel(h.label, h.bpmPercent)}" สำหรับเพลงนี้ออกใช่ไหม?`);
+                          if (!confirmed) return;
+                          if (h.filename) svsFetch(getFetchUrl(`/studio/renders/${encodeURIComponent(h.filename)}`), { method: 'DELETE' }).catch(() => {});
+                          setRenderHistory(prev => prev.filter(x => `${x.bpmPercent}_${x.songKey}_${x.engineId||'default'}_${x.lyricMode||''}_${x.voiceName||'Auto'}` !== hKey));
+                          if (activeRenderKey === hKey) setActiveRenderKey(null);
+                          if (memoInfoOpenKey === hKey) setMemoInfoOpenKey(null);
+                        }}
+                        className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-rose-600 hover:bg-rose-500 text-white rounded-full text-[7px] font-black items-center justify-center hidden group-hover:flex transition-all shadow-lg"
+                        title="ลบ / Delete"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
         )}
 
         {/* Close info popup when clicking outside */}
@@ -2583,9 +2649,9 @@ const PlayerPage: React.FC<{
               </div>
             </div>
 
-            <div className="w-full max-w-[calc(100vw-32px)] md:max-w-[640px] bg-white shadow-[0_20px_60px_rgba(0,0,0,0.9)] rounded-full h-[54px] flex items-center px-2.5 pointer-events-auto relative">
-              <div className="flex-[2] flex items-center justify-start gap-0.5 pr-1 border-r border-zinc-100">
-                <button onClick={() => setShowMixer(!showMixer)} className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${showMixer ? 'bg-zinc-100 text-black' : 'text-zinc-300 hover:text-black'}`}><SlidersHorizontal size={14} /></button>
+            <div className="w-full max-w-[calc(100vw-8px)] md:max-w-[640px] bg-white shadow-[0_20px_60px_rgba(0,0,0,0.9)] rounded-full h-[54px] flex items-center px-1 md:px-2.5 pointer-events-auto relative">
+              <div className="flex-none flex items-center justify-start gap-0.5 pr-0.5 md:pr-1.5 border-r border-zinc-100">
+                <button onClick={() => setShowMixer(!showMixer)} className={`w-7 h-7 md:w-8 md:h-8 rounded-full flex items-center justify-center transition-all ${showMixer ? 'bg-zinc-100 text-black' : 'text-zinc-300 hover:text-black'}`}><SlidersHorizontal size={12} /></button>
                 <button onClick={() => {
                   if (musicEngine.transportState !== 'stopped') {
                     musicEngine.pause();
@@ -2594,39 +2660,39 @@ const PlayerPage: React.FC<{
                   musicEngine.currentMeasure = '';
                   musicEngine.currentNoteTime = 0;
                   setIsPlaying(false);
-                }} className="w-8 h-8 flex items-center justify-center text-zinc-300 hover:text-black"><SkipBack size={18} fill="currentColor" /></button>
-                <div className="relative ml-1">
+                }} className="w-7 h-7 md:w-8 md:h-8 flex items-center justify-center text-zinc-300 hover:text-black"><SkipBack size={14} fill="currentColor" /></button>
+                <div className="relative ml-0.5 md:ml-1">
                   <div className={`absolute inset-0 bg-cyan-400/20 blur-md rounded-full transition-opacity ${isPlaying ? 'opacity-100' : 'opacity-0'}`} />
                   <button 
                     onClick={handleTogglePlay} 
                     disabled={isAudioLoading || isRenderingVocal} 
-                    className={`relative w-[38px] h-[38px] rounded-full flex items-center justify-center text-white transition-all 
+                    className={`relative w-8 h-8 md:w-[38px] md:h-[38px] rounded-full flex items-center justify-center text-white transition-all 
                       ${isRenderingVocal ? 'bg-zinc-800 shadow-none grayscale' : 'bg-[#00e5ff] shadow-[0_4px_15px_rgba(0,229,255,0.4)]'}`}
                   >
-                    {isAudioLoading ? <RefreshCw size={16} className="animate-spin text-white/50" /> : (isPlaying ? <Pause size={20} fill="white" /> : <Play size={20} fill="white" className="ml-0.5" />)}
+                    {isAudioLoading ? <RefreshCw size={14} className="animate-spin text-white/50" /> : (isPlaying ? <Pause size={16} fill="white" /> : <Play size={16} fill="white" className="ml-0.5" />)}
                   </button>
                 </div>
               </div>
 
-              <div className="flex-[8] h-[40px] bg-[#0c0c0e] rounded-full flex items-center border border-black shadow-inner overflow-hidden mx-1.5">
+              <div className="flex-1 h-[40px] bg-[#0c0c0e] rounded-full flex items-center border border-black shadow-inner overflow-hidden mx-0.5 md:mx-2.5">
                 <div className="flex-[1.2] h-full border-r border-white/5 flex items-center justify-center"><KeyTransposeDisplay keySig={parsedData.metadata.key || localSong.key} transpose={transpose} onTransposeChange={setTranspose} /></div>
                 <div className="flex-[1.2] h-full border-r border-white/5 flex items-center justify-center"><BpmDisplay bpm={currentBpm} onBpmChange={(b) => { setCurrentBpm(b); musicEngine.setBpm(b); }} /></div>
                 <div className="flex-[0.8] h-full border-r border-white/5 flex items-center justify-center"><TimeSigDisplay beats={parsedData.timeSignature.beats} beatType={parsedData.timeSignature.beatType} /></div>
                 <div className="flex-[1.5] h-full flex items-center justify-center"><BarBeatPositionDisplay bar={currentBar} beat={currentBeat} onSeek={(bar) => musicEngine.setTransportSeconds((bar - 1) * beatsPerMeasure * 60 / currentBpm)} /></div>
               </div>
 
-              <div className="flex-[1.5] flex items-center justify-end gap-1 pl-1 relative">
-                <button onClick={() => setActiveCard(activeCard === 'score' ? 'pianoroll' : 'score')} className={`w-9 h-9 border rounded-full flex flex-col items-center justify-center group active:scale-95 transition-all ${activeCard === 'score' ? 'bg-[#fbfbfb] border-zinc-100 text-zinc-300' : 'bg-cyan-50 border-cyan-100 text-cyan-500'}`}>
-                  <Music size={13} className={activeCard === 'score' ? 'text-zinc-300' : 'text-cyan-500'} />
-                  <span className={`text-[6px] font-black uppercase mt-0.5 ${activeCard === 'score' ? 'text-zinc-400' : 'text-cyan-600'}`}>SCR</span>
+              <div className="flex-none flex items-center justify-end gap-0.5 md:gap-1 pl-0.5 md:pl-1.5 relative">
+                <button onClick={() => setActiveCard(activeCard === 'score' ? 'pianoroll' : 'score')} className={`w-8 h-8 md:w-9 md:h-9 border rounded-full flex flex-col items-center justify-center group active:scale-95 transition-all ${activeCard === 'score' ? 'bg-[#fbfbfb] border-zinc-100 text-zinc-300' : 'bg-cyan-50 border-cyan-100 text-cyan-500'}`}>
+                  <Music size={11} className={activeCard === 'score' ? 'text-zinc-300' : 'text-cyan-500'} />
+                  <span className={`text-[5px] md:text-[6px] font-black uppercase mt-0.5 ${activeCard === 'score' ? 'text-zinc-400' : 'text-cyan-600'}`}>SCR</span>
                 </button>
 
                 <div className="relative" ref={volumePopupRef}>
                   <button
                     onClick={() => setShowVolumeSlider(!showVolumeSlider)}
-                    className={`w-9 h-9 rounded-full flex items-center justify-center transition-all border-2 ${showVolumeSlider ? 'border-cyan-400 bg-cyan-50 text-cyan-600 shadow-[0_0_15px_rgba(0,229,255,0.4)]' : 'border-transparent text-zinc-300 hover:text-cyan-500'}`}
+                    className={`w-8 h-8 md:w-9 md:h-9 rounded-full flex items-center justify-center transition-all border-2 ${showVolumeSlider ? 'border-cyan-400 bg-cyan-50 text-cyan-600 shadow-[0_0_15px_rgba(0,229,255,0.4)]' : 'border-transparent text-zinc-300 hover:text-cyan-500'}`}
                   >
-                    {masterVolume === 0 ? <VolumeX size={18} /> : <Volume2 size={20} className={showVolumeSlider ? 'text-cyan-600' : 'text-zinc-300'} />}
+                    {masterVolume === 0 ? <VolumeX size={14} /> : <Volume2 size={16} className={showVolumeSlider ? 'text-cyan-600' : 'text-zinc-300'} />}
                   </button>
 
                   {showVolumeSlider && (

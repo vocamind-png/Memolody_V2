@@ -19,7 +19,7 @@ import { telemetry } from './lib/Telemetry';
 import { songStorage } from './lib/SongStorage';
 import { DEMO_SONGS } from './data/demo_songs';
 import { CloudSyncService } from './lib/CloudSyncService';
-import { Song, TrackState } from './types';
+import { Song, TrackState, LyricMode } from './types';
 import { LoopPreset } from './components/Player/LoopMatrixModal';
 import { useAuth, hasAccess } from './lib/useAuth';
 import { nimoBrain } from './lib/NimoBrain';
@@ -355,6 +355,10 @@ const App: React.FC = () => {
     let vocalTrackSelected = false;
     const trackIds = Object.keys(parsed.partNames);
     
+    const savedLyricMode = (() => {
+      try { return localStorage.getItem('memo_lyric_mode') || 'British Fixed Doh'; } catch { return 'British Fixed Doh'; }
+    })();
+
     const newTracks: TrackState[] = trackIds.map((id, index) => {
       const name = parsed.partNames[id] || 'Track';
       const clef = parsed.trackClefs?.[id];
@@ -377,7 +381,7 @@ const App: React.FC = () => {
       }
 
       return {
-        id, name, isMuted: false, isSolo: false, lyricMode: 'British Fixed Doh' as const, volume: 0.8, pan: 0,
+        id, name, isMuted: false, isSolo: false, lyricMode: savedLyricMode as LyricMode, volume: 0.8, pan: 0,
         mode: isVocal ? 'vocal' as const : 'instrument' as const,
         instrument: isVocal ? 'Auto' : 'Piano', 
         effects: Array(6).fill(null)

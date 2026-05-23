@@ -100,14 +100,14 @@ export const KeyTransposeDisplay: React.FC<{ keySig: string; transpose: number; 
       onClick={() => { if (!isDragging) { setIsEditing(true); setTempValue(transpose.toString()); } }}
     >
         <div className="flex items-baseline gap-0.5 leading-none">
-            <span className="text-[15px] font-black italic lcd-font text-[#ffab00] tracking-tighter">
+            <span className="text-[12px] sm:text-[15px] font-black italic lcd-font text-[#ffab00] tracking-tighter">
                 {getTransposedKey(keySig, transpose)}
             </span>
-            <span className="text-[9px] font-black text-[#ffab00]/50 italic ml-0.5">
+            <span className="text-[8px] sm:text-[9px] font-black text-[#ffab00]/50 italic ml-0.5">
                 {transpose >= 0 ? `+${transpose}` : transpose}
             </span>
         </div>
-        <span className="text-[6px] font-black text-zinc-600 uppercase tracking-widest mt-0.5">KEY</span>
+        <span className="text-[5px] sm:text-[6px] font-black text-zinc-600 uppercase tracking-widest mt-0.5">KEY</span>
     </div>
   );
 };
@@ -145,10 +145,10 @@ export const BpmDisplay: React.FC<{ bpm: number; onBpmChange: (newBpm: number) =
       onTouchStart={handleStart}
       onClick={() => { if (!isDragging) { setIsEditing(true); setTempValue(Math.round(bpm).toString()); } }}
     >
-        <span className="text-[16px] font-black italic lcd-font text-[#00e5ff] leading-none tracking-tighter">
+        <span className="text-[13px] sm:text-[16px] font-black italic lcd-font text-[#00e5ff] leading-none tracking-tighter">
           {Math.round(bpm)}
         </span>
-        <span className="text-[6px] font-black text-zinc-600 uppercase tracking-widest mt-0.5">BPM</span>
+        <span className="text-[5px] sm:text-[6px] font-black text-zinc-600 uppercase tracking-widest mt-0.5">BPM</span>
     </div>
   );
 };
@@ -157,11 +157,11 @@ export const TimeSigDisplay: React.FC<{ beats?: number; beatType?: number }> = (
   return (
     <div className="flex flex-col items-center select-none leading-none w-full">
       <div className="flex flex-col items-center gap-[1px]">
-        <span className="text-[13px] font-black italic lcd-font text-white/90">{beats}</span>
+        <span className="text-[10px] sm:text-[13px] font-black italic lcd-font text-white/90">{beats}</span>
         <div className="w-3 h-[0.5px] bg-zinc-700" />
-        <span className="text-[13px] font-black italic lcd-font text-white/90">{beatType}</span>
+        <span className="text-[10px] sm:text-[13px] font-black italic lcd-font text-white/90">{beatType}</span>
       </div>
-      <span className="text-[5px] font-black text-zinc-600 uppercase tracking-widest mt-0.5">SIG</span>
+      <span className="text-[4px] sm:text-[5px] font-black text-zinc-600 uppercase tracking-widest mt-0.5">SIG</span>
     </div>
   );
 };
@@ -198,15 +198,15 @@ export const BarBeatPositionDisplay: React.FC<{ bar: number; beat: number; onSee
       onTouchStart={handleStart}
       onDoubleClick={() => { setIsEditing(true); setEditValue(bar.toString()); }}
     >
-      <div className="flex items-baseline gap-0.5 leading-none">
-        <span className="text-[19px] font-black italic text-[#ffab00] lcd-font tracking-tighter">
+      <div className="flex items-baseline gap-[1px] sm:gap-0.5 leading-none">
+        <span className="text-[14px] sm:text-[19px] font-black italic text-[#ffab00] lcd-font tracking-tighter">
             {bar}
         </span>
-        <span className="text-[13px] font-black italic text-white/30 lcd-font tracking-tighter">
+        <span className="text-[10px] sm:text-[13px] font-black italic text-white/30 lcd-font tracking-tighter">
             {beat}
         </span>
       </div>
-      <span className="text-[6px] font-black text-zinc-600 uppercase tracking-widest mt-0.5">POS</span>
+      <span className="text-[5px] sm:text-[6px] font-black text-zinc-600 uppercase tracking-widest mt-0.5">POS</span>
     </div>
   );
 };
