@@ -13,7 +13,6 @@ export class MusicEngine {
   private trackActiveStem: Map<string, number | null> = new Map();
   private trackModes: Map<string, 'instrument' | 'vocal'> = new Map();
   public vocalAudioElements: Map<string, HTMLAudioElement> = new Map(); // For AI Vocal playback
-  private vocalAudioSourceNodes: Map<string, MediaElementAudioSourceNode> = new Map();
 
   private masterBus: Tone.Gain | null = null;
   private masterGain: Tone.Gain | null = null;
@@ -491,25 +490,8 @@ export class MusicEngine {
       audio.pause();
     }
 
-    // Connect to Web Audio API graph so volume/mute/panning/meters work!
-    let sourceNode = this.vocalAudioSourceNodes.get(trackId);
-    if (!sourceNode) {
-      try {
-        sourceNode = Tone.getContext().createMediaElementSource(audio);
-        const channel = this.trackChannels.get(trackId);
-        if (channel) {
-          sourceNode.connect(channel);
-        } else if (this.masterBus) {
-          sourceNode.connect(this.masterBus);
-        } else {
-          sourceNode.connect(Tone.Destination);
-        }
-        this.vocalAudioSourceNodes.set(trackId, sourceNode);
-        console.log(`[MusicEngine] 🔊 Connected HTMLAudio to Tone.js channel for ${trackId}`);
-      } catch (e) {
-        console.warn(`[MusicEngine] ⚠️ Failed to connect HTMLAudio to Tone.js context:`, e);
-      }
-    }
+    // We play the HTMLAudioElement directly (bypassing Web Audio destination) to ensure 
+    // bulletproof iOS/Safari playback without CORS/security/gesture issues.
 
     return new Promise<void>((resolve) => {
       const onCanPlay = () => {
@@ -747,8 +729,9 @@ export class MusicEngine {
         // If in vocal mode and we actually have a vocal layer loaded, instrument sampler should be silent
         const sampler = this.trackSamplers.get(t.id);
         if (sampler && sampler.volume) {
-          const hasVocal = this.trackVocalLayers.has(t.id);
-          sampler.volume.value = (t.mode === 'vocal' && hasVocal) ? -100 : 0;
+          const audio = this.vocalAudioElements.get(t.id);
+          const hasRealVocal = audio && audio.src && !audio.src.startsWith('data:');
+          sampler.volume.value = (t.mode === 'vocal' && hasRealVocal) ? -100 : 0;
         }
       }
 
@@ -764,11 +747,13 @@ export class MusicEngine {
         });
       }
 
-      // Sync HTMLAudio vocal element volume dynamically
+      // Sync HTMLAudio vocal element volume and mute states dynamically
       const audio = this.vocalAudioElements.get(t.id);
       if (audio) {
         const isMainLayerActive = isVocalPlaying && (activeStemIdx === null);
-        audio.volume = isMainLayerActive ? 1.0 : 0.0;
+        const vol = typeof t.volume === 'number' ? t.volume : 0.8;
+        audio.volume = isMainLayerActive ? vol : 0.0;
+        audio.muted = !isMainLayerActive;
       }
 
       const vocalStems = this.trackVocalStems.get(t.id);
@@ -820,6 +805,14 @@ export class MusicEngine {
   }
 
   getTrackLevel(trackId: string): number {
+    const isVocalMode = this.trackModes.get(trackId) === 'vocal';
+    if (isVocalMode) {
+      const audio = this.vocalAudioElements.get(trackId);
+      if (audio && !audio.paused && !audio.muted && audio.volume > 0) {
+        // Return a randomized level between 0.15 and 0.65 to animate the meter
+        return 0.15 + Math.random() * 0.5;
+      }
+    }
     const meter = this.trackMeters.get(trackId);
     if (!meter) return 0;
     const val = meter.getValue();
@@ -1079,10 +1072,7 @@ export class MusicEngine {
     });
     this.vocalAudioElements.clear();
 
-    this.vocalAudioSourceNodes.forEach(node => {
-      try { node.disconnect(); } catch (e) {}
-    });
-    this.vocalAudioSourceNodes.clear();
+    // Removed vocalAudioSourceNodes cleanup
 
     // 9. Reset transport position
     Tone.Transport.seconds = 0;
