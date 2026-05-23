@@ -265,6 +265,7 @@ const PlayerPage: React.FC<{
   const [renderProgress, setRenderProgress] = useState(0);
   const [renderTimer, setRenderTimer] = useState(0);
   const [renderError, setRenderError] = useState<string | null>(null);
+  const [renderStatusText, setRenderStatusText] = useState('');
 
   // Debug Log Catcher State
   const [debugLogs, setDebugLogs] = useState<{type: 'log' | 'warn' | 'error', text: string, time: string}[]>([]);
@@ -1096,6 +1097,7 @@ const PlayerPage: React.FC<{
     setIsRenderingVocal(true);
     setRenderProgress(0);
     setRenderTimer(0);
+    setRenderStatusText('');
 
     const wasPlaying = isPlaying || musicEngine.transportState === 'started';
     const savedPos = musicEngine.transportSeconds;
@@ -1310,13 +1312,14 @@ const PlayerPage: React.FC<{
         if (!result && RUNPOD_AVAILABLE) {
           console.log('[Vocalido] 🚀 Using RunPod Serverless API...');
           usedRunPod = true;
+          setRenderStatusText('Connecting to GPU...');
           const runpodOutput = await synthesizeViaRunPod(
             notesToSynthesize,
             synthParams,
             controller.signal,
             (status) => {
               console.log(`[Vocalido/RunPod] ${status}`);
-              // Update progress text for the user
+              setRenderStatusText(status);
               setRenderError(null);
             }
           );
@@ -1473,12 +1476,13 @@ const PlayerPage: React.FC<{
       setTimeout(() => {
         setIsRenderingVocal(prev => {
           if (prev) {
-            console.warn('[Vocalido] ⚠️ Safety timeout: force-resetting render state after 120s');
+            console.warn('[Vocalido] ⚠️ Safety timeout: force-resetting render state after 300s');
             return false;
           }
           return prev;
         });
-      }, 120000);
+        setRenderStatusText('');
+      }, 300000);
     }
   };
 
@@ -2129,7 +2133,7 @@ const PlayerPage: React.FC<{
                   </div>
                   <div className="mt-6 flex flex-col items-center gap-2">
                     <span className="text-[10px] font-black uppercase tracking-[0.3em] text-cyan-400 animate-pulse">
-                      {renderProgress > 95 ? "Finalizing Audio..." : "Rendering Tone"}
+                      {renderStatusText || (renderProgress > 95 ? "Finalizing Audio..." : "Rendering Tone")}
                     </span>
                     <div className="flex gap-1">
                       {[0, 1, 2].map(i => (
