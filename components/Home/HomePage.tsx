@@ -655,7 +655,7 @@ const HomePage: React.FC<HomePageProps> = ({
   const TABS: { id: FilterTab, label: string, count: number, color: string }[] = [
     { id: 'home', label: 'Home', count: totalCount, color: 'text-cyan-400' },
     { id: 'favorites', label: 'Favorites', count: favCount, color: 'text-rose-400' },
-    { id: 'mysongs', label: 'My Songs', count: mySongsCount, color: 'text-amber-400' },
+    // { id: 'mysongs', label: 'My Songs', count: mySongsCount, color: 'text-amber-400' }, // Temporarily disabled
     { id: 'trash', label: 'Trash', count: trashCount, color: 'text-zinc-500' },
   ];
 
@@ -671,71 +671,15 @@ const HomePage: React.FC<HomePageProps> = ({
           <p className="text-[8px] font-black text-zinc-500 uppercase tracking-[0.3em]">Hear by Eye, Play by Ear</p>
         </div>
 
-        {/* ── TWO BUTTONS ROW: Camera (left) + Import (right) ── */}
-        <div className="flex gap-3">
-
-          {/* Import File Button */}
-          <button
-            id="file-import-btn"
-            onClick={() => cameraInputRef.current?.click()}
-            className="group relative flex-1 h-[88px] rounded-[24px] overflow-hidden active:scale-[0.97] transition-all duration-200 select-none"
-            style={{
-              background: 'linear-gradient(145deg, #0d1117, #161b22, #0d1117)',
-              boxShadow: '0 8px 0 rgba(0,0,0,0.8), 0 12px 28px rgba(0,149,255,0.12), inset 0 1px 0 rgba(0,149,255,0.15), 0 0 0 1px rgba(0,149,255,0.12)',
-            }}
-          >
-            {/* Blue glow top edge */}
-            <div className="absolute top-0 left-0 right-0 h-[1px]" style={{
-              background: 'linear-gradient(to right, transparent, rgba(0,229,255,0.5), transparent)',
-            }} />
-            {/* Circuit board texture */}
-            <div className="absolute inset-0 opacity-10" style={{
-              backgroundImage: 'repeating-linear-gradient(0deg, rgba(0,229,255,0.3) 0px, rgba(0,229,255,0.3) 1px, transparent 1px, transparent 24px), repeating-linear-gradient(90deg, rgba(0,229,255,0.3) 0px, rgba(0,229,255,0.3) 1px, transparent 1px, transparent 24px)',
-            }} />
-            {/* Hover shimmer */}
-            <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500" style={{
-              background: 'radial-gradient(ellipse at 50% 0%, rgba(0,229,255,0.12) 0%, transparent 70%)',
-            }} />
-
-            <div className="relative flex flex-col items-center justify-center gap-1.5 h-full">
-              {/* 3D Import Icon Box */}
-              <div className="relative" style={{ perspective: '180px' }}>
-                <div style={{ transform: 'rotateX(8deg) rotateY(-4deg)', transformStyle: 'preserve-3d' }}>
-                  <div className="w-[36px] h-[36px] rounded-xl flex items-center justify-center" style={{
-                    background: 'linear-gradient(135deg, rgba(0,229,255,0.15), rgba(0,100,200,0.08))',
-                    border: '1.5px solid rgba(0,229,255,0.3)',
-                    boxShadow: '0 4px 12px rgba(0,229,255,0.2), inset 0 1px 0 rgba(0,229,255,0.2)',
-                  }}>
-                    <Upload size={18} className="text-cyan-400" strokeWidth={2.5} />
-                  </div>
-                  {/* Bottom face (3D depth) */}
-                  <div className="absolute -bottom-[4px] left-[2px] right-[-2px] h-[36px] rounded-xl" style={{
-                    background: 'rgba(0,60,120,0.3)',
-                    transform: 'rotateX(-90deg)',
-                    transformOrigin: 'bottom',
-                  }} />
-                </div>
-              </div>
-              <p className="text-[9px] font-black text-cyan-400 uppercase tracking-[0.15em] leading-tight">Import File</p>
-              <p className="text-[6px] font-bold text-cyan-500/50 uppercase tracking-widest">XML · PDF · MIDI · Image</p>
-            </div>
-
-            {/* Bottom shadow depth */}
-            <div className="absolute bottom-0 left-3 right-3 h-[2px]" style={{
-              background: 'rgba(0,0,0,0.5)', filter: 'blur(2px)',
-            }} />
-          </button>
-
-          {/* Hidden file input for Import button */}
-          <input
-            ref={cameraInputRef}
-            type="file"
-            multiple
-            className="hidden"
-            accept=".xml,.musicxml,.mxl,.mid,.midi,.pdf,.png,.jpg,.jpeg,.webp,.heic,.heif"
-            onChange={handleImport}
-          />
-        </div>
+        {/* Hidden file input (kept for programmatic import from + button) */}
+        <input
+          ref={cameraInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          accept=".xml,.musicxml,.mxl,.mid,.midi,.pdf,.png,.jpg,.jpeg,.webp,.heic,.heif"
+          onChange={handleImport}
+        />
 
         {/* Search */}
         <div className="relative group">
@@ -884,7 +828,7 @@ const HomePage: React.FC<HomePageProps> = ({
       </div>
 
       {/* ── TOTAL MATRIX / VAULT (SCROLLABLE BOTTOM) ── */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 min-h-0 flex flex-col">
 
         {/* Section Tabs & Sort */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.03]">
@@ -912,9 +856,11 @@ const HomePage: React.FC<HomePageProps> = ({
             <button onClick={() => setShowNewFolder(true)} className="w-7 h-7 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 hover:bg-indigo-500/20 transition-colors" title="New Folder">
               <FolderPlus size={12} />
             </button>
+            {/* Temporarily disabled import button
             <button onClick={() => setShowImport(true)} className="w-7 h-7 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 hover:bg-cyan-500/20 transition-colors" title="Import">
               <Plus size={14} strokeWidth={3} />
             </button>
+            */}
           </div>
         </div>
 
@@ -962,7 +908,7 @@ const HomePage: React.FC<HomePageProps> = ({
         )}
 
         {/* Scrollable List */}
-        <div className="flex-1 overflow-y-auto pb-24" onScroll={handleScroll}>
+        <div className="flex-1 min-h-0 overflow-y-auto pb-32" onScroll={handleScroll}>
           {visibleItems.length === 0 ? (
             <div className="h-64 flex flex-col items-center justify-center text-zinc-800">
               <Database size={24} className="mb-2 opacity-10" />

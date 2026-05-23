@@ -64,8 +64,10 @@ class DiffSingerONNXEngine:
         print(f"[ONNXEngine] Loading acoustic: {self.acoustic_path}")
         print(f"[ONNXEngine] Loading vocoder: {self.vocoder_path}")
         try:
-            self.sess_acoustic = ort.InferenceSession(self.acoustic_path, providers=['CPUExecutionProvider'])
-            self.sess_vocoder = ort.InferenceSession(self.vocoder_path, providers=['CPUExecutionProvider'])
+            # Prioritize CUDA Execution Provider for GPU acceleration (RunPod)
+            providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+            self.sess_acoustic = ort.InferenceSession(self.acoustic_path, providers=providers)
+            self.sess_vocoder = ort.InferenceSession(self.vocoder_path, providers=providers)
         except Exception as e:
             print(f"[ONNXEngine] ❌ Failed to load ONNX session: {e}")
             return

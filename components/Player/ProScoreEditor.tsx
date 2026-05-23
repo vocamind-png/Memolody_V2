@@ -1076,8 +1076,15 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
 
       // Auto-scroll when page changes
       if (laserPrevPageRef.current !== sweepPage) {
+        const scrollArea = scrollAreaRef.current;
         const pageEl = containerRef.current?.children[sweepPage] as HTMLElement | undefined;
-        if (pageEl) pageEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (scrollArea && pageEl) {
+          const areaRect = scrollArea.getBoundingClientRect();
+          const pageRect = pageEl.getBoundingClientRect();
+          const targetScrollTop = scrollArea.scrollTop + (pageRect.top - areaRect.top);
+          // Reset horizontal scroll to 0 (left edge) so the start of system on the next page is visible
+          scrollArea.scrollTo({ top: targetScrollTop, left: 0, behavior: 'smooth' });
+        }
         laserPrevPageRef.current = sweepPage;
       }
     };
@@ -1266,18 +1273,18 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
 
       <div
         ref={scrollAreaRef}
-        className="flex-1 w-full overflow-auto memolody-scrollbar scroll-smooth px-2 sm:px-3 flex flex-col items-center"
+        className="flex-1 w-full overflow-auto memolody-scrollbar scroll-smooth px-2 sm:px-3 flex flex-col"
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
       >
         <div
           ref={containerRef}
-          className="relative min-h-full flex flex-col items-center origin-top transition-transform duration-75 ease-out"
+          className="relative min-h-full flex flex-col items-center transition-all duration-75 ease-out"
           style={{
-            width: '100%',
-            transform: `scale(${localZoom})`,
-            marginTop: localZoom > 1 ? `${(localZoom - 1) * 50}%` : '0px'
+            width: `${100 * localZoom}%`,
+            marginLeft: 'auto',
+            marginRight: 'auto'
           }}
         >
           {useMemo(() => svgPages.map((svg, i) => (

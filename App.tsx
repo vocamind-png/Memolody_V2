@@ -13,7 +13,9 @@ const getMusicEngine = async () => {
   }
   return _musicEngine;
 };
+
 import { initPlugins } from './lib/plugin-init';
+import { telemetry } from './lib/Telemetry';
 import { songStorage } from './lib/SongStorage';
 import { DEMO_SONGS } from './data/demo_songs';
 import { CloudSyncService } from './lib/CloudSyncService';
@@ -326,6 +328,9 @@ const App: React.FC = () => {
     setSelectedSong(song);
     setUploadedMusicXml(finalXml);
     setSelectedLayoutBundle(owned?.layoutBundle || null);
+    
+    // Track song play
+    telemetry.track('song_play', { songTitle: song.title, mode });
 
     // Lazy-load Tone.js engine only when needed
     const engine = await getMusicEngine();

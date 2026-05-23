@@ -62,6 +62,126 @@ const getFetchUrl = (path: string) => {
   return `${customBackend}${cleanPath}`;
 };
 
+const svsFetch = (url: string, options?: RequestInit) => {
+  const headers = new Headers(options?.headers || {});
+  headers.set('serveo-skip-browser-warning', 'true');
+  headers.set('bypass-tunnel-reminder', 'true');
+  return fetch(url, { ...options, headers });
+};
+
+// ── RunPod Serverless Synthesis Helper ─────────────────────────────────────
+const RUNPOD_API_URL = import.meta.env.VITE_RUNPOD_API_URL || '';
+const RUNPOD_API_KEY = import.meta.env.VITE_RUNPOD_API_KEY || '';
+const RUNPOD_AVAILABLE = !!(RUNPOD_API_URL && RUNPOD_API_KEY);
+// Derive the async endpoint from the runsync endpoint
+const RUNPOD_RUN_URL = RUNPOD_API_URL.replace('/runsync', '/run');
+const RUNPOD_STATUS_BASE = RUNPOD_API_URL.replace('/runsync', '/status');
+
+/**
+ * Synthesize vocals via RunPod Serverless API.
+ * Supports both synchronous (runsync) and async (run + poll) modes.
+ * @returns Response object compatible with local /studio/preview response format
+ */
+const synthesizeViaRunPod = async (
+  notes: { pitch: number; midi: number; duration: number; startTime: number; lyric: string }[],
+  params: Record<string, any>,
+  signal?: AbortSignal,
+  onProgress?: (status: string) => void
+): Promise<{ audio_b64: string; mime_type: string; stems_b64?: string[]; engine: string; duration?: number }> => {
+  if (!RUNPOD_AVAILABLE) throw new Error('RunPod API not configured');
+  
+  const headers = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${RUNPOD_API_KEY}`
+  };
+  const payload = {
+    input: {
+      notes,
+      params: { ...params, return_stems: String(params.return_stems || 'false') }
+    }
+  };
+
+  // Try runsync first (fast if worker is warm)
+  onProgress?.('Connecting to GPU...');
+  const syncResp = await fetch(RUNPOD_API_URL, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload),
+    signal
+  });
+
+  if (!syncResp.ok) {
+    const err = await syncResp.text().catch(() => 'Unknown');
+    throw new Error(`RunPod API Error (${syncResp.status}): ${err}`);
+  }
+
+  let result = await syncResp.json();
+
+  // If completed immediately (warm worker), return
+  if (result.status === 'COMPLETED' && result.output) {
+    onProgress?.('Synthesis complete');
+    return result.output;
+  }
+
+  // If IN_QUEUE or IN_PROGRESS → switch to async polling
+  if (result.status === 'IN_QUEUE' || result.status === 'IN_PROGRESS') {
+    // Get the job ID from runsync response, or submit via /run endpoint
+    let jobId = result.id;
+    
+    if (!jobId) {
+      // Submit via async endpoint
+      onProgress?.('Submitting to GPU queue...');
+      const asyncResp = await fetch(RUNPOD_RUN_URL, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+        signal
+      });
+      if (!asyncResp.ok) throw new Error(`RunPod /run failed: ${asyncResp.status}`);
+      const asyncResult = await asyncResp.json();
+      jobId = asyncResult.id;
+    }
+
+    if (!jobId) throw new Error('RunPod did not return a job ID');
+
+    // Poll until complete (max 5 minutes)
+    const POLL_INTERVAL = 3000;
+    const MAX_POLLS = 100; // 5 minutes
+    for (let i = 0; i < MAX_POLLS; i++) {
+      if (signal?.aborted) throw new Error('Aborted');
+      
+      await new Promise(r => setTimeout(r, POLL_INTERVAL));
+      
+      const statusResp = await fetch(`${RUNPOD_STATUS_BASE}/${jobId}`, {
+        headers: { 'Authorization': `Bearer ${RUNPOD_API_KEY}` },
+        signal
+      });
+      
+      if (!statusResp.ok) continue;
+      result = await statusResp.json();
+      
+      if (result.status === 'IN_QUEUE') {
+        onProgress?.(`GPU warming up... (${i * 3}s)`);
+      } else if (result.status === 'IN_PROGRESS') {
+        onProgress?.(`Synthesizing... (${i * 3}s)`);
+      } else if (result.status === 'COMPLETED' && result.output) {
+        onProgress?.('Synthesis complete');
+        return result.output;
+      } else if (result.status === 'FAILED') {
+        throw new Error('RunPod job failed: ' + JSON.stringify(result.error || result));
+      }
+    }
+    throw new Error('RunPod synthesis timed out after 5 minutes');
+  }
+
+  // If error
+  if (result.status === 'FAILED') {
+    throw new Error('RunPod synthesis failed: ' + JSON.stringify(result.error || result));
+  }
+
+  throw new Error('Unexpected RunPod response: ' + JSON.stringify(result));
+};
+
 const fixAudioUrl = (u: string) => {
   if (typeof u !== 'string') return u;
   let url = u;
@@ -130,6 +250,7 @@ const PlayerPage: React.FC<{
   onAutoPlayConsumed?: () => void; // ← clears the flag in App.tsx
 }> = ({ song, musicXml, layoutBundle, tracks, setTracks, viewMode = 'score', setViewMode, loopPresets, setLoopPresets, performanceMode, vocalidoAutoRender, autoPlay, onAutoPlayConsumed }) => {
   const [isPlaying, setIsPlaying] = useState(false);
+  const svsEngine = 'vocalido';
   const [isTransportHidden, setIsTransportHidden] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [currentBpm, setCurrentBpm] = useState(song?.bpm || 120);
@@ -164,7 +285,7 @@ const PlayerPage: React.FC<{
       const batchToSend = [...logQueue];
       logQueue = [];
 
-      fetch(getFetchUrl('/studio/api/client-log'), {
+      svsFetch(getFetchUrl('/studio/api/client-log'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ logs: batchToSend })
@@ -565,7 +686,7 @@ const PlayerPage: React.FC<{
         setRenderHistory([]);
       }
 
-      fetch(getFetchUrl(`/studio/renders/${encodeURIComponent(song.id)}`))
+      svsFetch(getFetchUrl(`/studio/renders/${encodeURIComponent(song.id)}`))
         .then(r => r.ok ? r.json() : null)
         .then(data => {
           if (data?.renders?.length) {
@@ -775,16 +896,18 @@ const PlayerPage: React.FC<{
     let active = true;
     const fetchEngines = async () => {
       try {
-        const res = await fetch(getFetchUrl('/vocalido/studio/voices'));
+        const res = await svsFetch(getFetchUrl('/vocalido/studio/voices'));
         if (!res.ok) throw new Error('Not OK');
         const data = await res.json();
         if (active && data && data.voices) {
           setVoiceEngines(data.voices);
         }
       } catch (err) {
-        console.warn("Could not fetch voice engines, retrying in 3s...", err);
+        console.warn("Could not fetch voice engines, using defaults", err);
         if (active) {
-          setTimeout(fetchEngines, 3000);
+          // Fallback: hardcode default Lotte V voice when server unreachable
+          setVoiceEngines([{ id: 'lotte_v', name: 'Lotte V', type: 'diffsinger', lang: 'en' }]);
+          setActiveEngineId('lotte_v');
         }
       }
     };
@@ -1138,33 +1261,94 @@ const PlayerPage: React.FC<{
           return;
         }
 
-        const resp = await fetch(getFetchUrl('/studio/preview'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: controller.signal,
-          body: JSON.stringify({
-            notes: notesToSynthesize,
-            params: { singer: activeVoiceName, bpm: actualBpm, transpose: transposeSemitones, voice: trackEngineId, return_stems: true, collapse_chords: collapseChords },
-            song_id: song?.id || '',
-            bpm_pct: bpmPct,
-            song_key: songKey,
-            lyric_mode: activeLyricMode,
-          })
-        });
+        // ── Dual-Path Synthesis: Local Server → RunPod Fallback ──────────────
+        let result: any = null;
+        const synthParams = { singer: activeVoiceName, bpm: actualBpm, transpose: transposeSemitones, voice: trackEngineId, return_stems: true, collapse_chords: collapseChords };
+        
+        // Determine if we should try local server first
+        const hasCustomBackend = !!getCustomBackendUrl();
+        const isProduction = typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
+        const shouldTryLocal = hasCustomBackend || !isProduction; // Only try local if custom backend set OR in dev mode
+
+        let usedRunPod = false;
+
+        if (shouldTryLocal) {
+          // Try local/cloud server with 10s timeout
+          try {
+            console.log('[Vocalido] 🔄 Trying local/cloud server...');
+            const localController = new AbortController();
+            const localTimeout = setTimeout(() => localController.abort(), 10000);
+            
+            const resp = await svsFetch(getFetchUrl('/studio/preview'), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              signal: localController.signal,
+              body: JSON.stringify({
+                notes: notesToSynthesize,
+                params: synthParams,
+                song_id: song?.id || '',
+                bpm_pct: bpmPct,
+                song_key: songKey,
+                lyric_mode: activeLyricMode,
+              })
+            });
+            clearTimeout(localTimeout);
+            
+            if (resp.ok) {
+              result = await resp.json();
+              console.log('[Vocalido] ✅ Local/cloud server responded');
+            } else {
+              const errorData = await resp.json().catch(() => ({}));
+              console.warn(`[Vocalido] ⚠️ Local server error (${resp.status}):`, errorData.error || '');
+            }
+          } catch (localErr: any) {
+            console.warn('[Vocalido] ⚠️ Local server unavailable:', localErr.name === 'AbortError' ? 'timeout' : localErr.message);
+          }
+        }
+
+        // Fallback to RunPod if local server failed
+        if (!result && RUNPOD_AVAILABLE) {
+          console.log('[Vocalido] 🚀 Using RunPod Serverless API...');
+          usedRunPod = true;
+          const runpodOutput = await synthesizeViaRunPod(
+            notesToSynthesize,
+            synthParams,
+            controller.signal,
+            (status) => {
+              console.log(`[Vocalido/RunPod] ${status}`);
+              // Update progress text for the user
+              setRenderError(null);
+            }
+          );
+          // Convert RunPod output format to match local server response format
+          result = {
+            audio_b64: runpodOutput.audio_b64,
+            mime_type: runpodOutput.mime_type || 'audio/wav',
+            stems_b64: runpodOutput.stems_b64 || [],
+            engine: runpodOutput.engine || 'diffsinger_onnx_runpod',
+          };
+        }
+
+        // If both paths failed
+        if (!result) {
+          if (!RUNPOD_AVAILABLE) {
+            throw new Error('SVS server unavailable and RunPod API not configured. Set VITE_RUNPOD_API_URL and VITE_RUNPOD_API_KEY.');
+          }
+          throw new Error('All synthesis backends failed');
+        }
+
         clearTimeout(timeoutId);
-        if (resp.ok) {
-          const result = await resp.json();
+
+        // ── Process result (same for local server and RunPod) ──────────────
+        if (result.audio_b64 || result.audio_url || result.saved_url) {
           let url = '';
           
           if (result.audio_url) {
-            // If server returned a URL, use it (prefixed with proxy if needed)
             url = result.audio_url.startsWith('http') ? result.audio_url : result.audio_url;
           } else if (result.saved_url && !result.audio_b64) {
-            // Server-side cache hit — file already exists on disk, use saved_url directly
             console.log(`[MemoCache] ✅ Server returned cached file: ${result.saved_url}`);
             url = result.saved_url;
           } else if (result.audio_b64) {
-            // If server returned base64, convert to Blob
             const binary = atob(result.audio_b64);
             const array = new Uint8Array(binary.length);
             for (let i = 0; i < binary.length; i++) array[i] = binary.charCodeAt(i);
@@ -1186,16 +1370,17 @@ const PlayerPage: React.FC<{
           }
           
           // 🚀 Register with MusicEngine for persistence and sync
-          console.log(`[Vocalido] 🎙️ Registering vocal layer to MusicEngine: ${primaryTrackId} via ${result.engine || 'unknown'}`);
+          console.log(`[Vocalido] 🎙️ Registering vocal layer to MusicEngine: ${primaryTrackId} via ${result.engine || 'unknown'}${usedRunPod ? ' (RunPod)' : ''}`);
           
-          const fixedFinalUrl = fixAudioUrl(result.saved_url || url);
-          const fixedSavedStemUrls = (result.saved_stem_urls || stemUrls || []).map((sUrl: string) => fixAudioUrl(sUrl));
+          // For RunPod responses (blob URLs), use the blob URL directly
+          const finalUrl = usedRunPod ? url : fixAudioUrl(result.saved_url || url);
+          const finalStemUrls = usedRunPod ? stemUrls : (result.saved_stem_urls || stemUrls || []).map((sUrl: string) => fixAudioUrl(sUrl));
 
-          const cacheBustedUrl = fixedFinalUrl.includes('?t=')
-            ? fixedFinalUrl.replace(/\?t=\d+/, `?t=${Date.now()}`)
-            : `${fixedFinalUrl}?t=${Date.now()}`;
+          const cacheBustedUrl = usedRunPod ? url : (finalUrl.includes('?t=')
+            ? finalUrl.replace(/\?t=\d+/, `?t=${Date.now()}`)
+            : `${finalUrl}?t=${Date.now()}`);
             
-          const stemsWithBust = fixedSavedStemUrls.map((sUrl: string) => {
+          const stemsWithBust = usedRunPod ? stemUrls : finalStemUrls.map((sUrl: string) => {
             return sUrl.includes('?t=') ? sUrl.replace(/\?t=\d+/, `?t=${Date.now()}`) : `${sUrl}?t=${Date.now()}`;
           });
           
@@ -1215,7 +1400,6 @@ const PlayerPage: React.FC<{
           const newLabel = result.label || `${songKeyForHist} ${bpmPctForHist}%${shortVoice}`;
           const newEntryKey = `${bpmPctForHist}_${songKeyForHist}_${storedEngineId}_${activeLyricMode}_${storedVoiceName}`;
           setRenderHistory(prev => {
-            // Replace same bpm+key+mode+engine+voice entry, keep others
             const filtered = prev.filter(h => {
               const hLyric = mapToLyricMode(h.lyricMode || 'British Fixed Doh');
               const tLyric = mapToLyricMode(activeLyricMode);
@@ -1230,13 +1414,13 @@ const PlayerPage: React.FC<{
             return [{
               bpmPercent: bpmPctForHist,
               songKey: songKeyForHist,
-              audioUrl: fixedFinalUrl,
+              audioUrl: usedRunPod ? cacheBustedUrl : finalUrl,
               label: newLabel,
               filename: filenameFromUrl,
               lyricMode: activeLyricMode,
               engineId: storedEngineId,
               voiceName: storedVoiceName,
-              savedStemUrls: fixedSavedStemUrls,
+              savedStemUrls: usedRunPod ? stemUrls : finalStemUrls,
               renderedAt: new Date().toISOString(),
             }, ...filtered].slice(0, 12);
           });
@@ -1272,8 +1456,7 @@ const PlayerPage: React.FC<{
           }
 
         } else {
-          const errorData = await resp.json().catch(() => ({}));
-          throw new Error(errorData.error || `Vocalido Error: ${resp.status}`);
+          throw new Error("Invalid synthesis response: no audio data in result");
         }
       }
     } catch (e: any) {
@@ -1577,7 +1760,7 @@ const PlayerPage: React.FC<{
         )}
 
         {/* ── MAIN CONTENT AREA (RIGHT SIDE IN SPLIT VIEW) ── */}
-        <div className="flex-1 flex flex-col relative overflow-hidden pointer-events-auto pb-[120px]">
+        <div className="flex-1 flex flex-col relative overflow-hidden pointer-events-auto pb-[80px]">
         {/* ── MEMO SONG RENDER: Speed Panel (left floating) ── */}
         {renderHistory.length > 0 && activeCard === 'score' && (
           <div className="absolute left-2 top-1/2 -translate-y-1/2 z-[3000] flex flex-col gap-1.5 pointer-events-auto">
@@ -1717,7 +1900,7 @@ const PlayerPage: React.FC<{
                     onClick={() => {
                       const confirmed = window.confirm(`ลบ Render "${formatRenderLabel(h.label, h.bpmPercent)}" สำหรับเพลงนี้ออกใช่ไหม?`);
                       if (!confirmed) return;
-                      if (h.filename) fetch(getFetchUrl(`/studio/renders/${encodeURIComponent(h.filename)}`), { method: 'DELETE' }).catch(() => {});
+                      if (h.filename) svsFetch(getFetchUrl(`/studio/renders/${encodeURIComponent(h.filename)}`), { method: 'DELETE' }).catch(() => {});
                       setRenderHistory(prev => prev.filter(x => `${x.bpmPercent}_${x.songKey}_${x.engineId||'default'}_${x.lyricMode||''}_${x.voiceName||'Auto'}` !== hKey));
                       if (activeRenderKey === hKey) setActiveRenderKey(null);
                       if (memoInfoOpenKey === hKey) setMemoInfoOpenKey(null);
@@ -2115,7 +2298,7 @@ const PlayerPage: React.FC<{
 
           {/* Main Transport Container - Slides away completely */}
           <div id="transport-container" className={`fixed inset-x-0 z-[5000] flex flex-col items-center px-3 no-print gap-1.5 pointer-events-none transition-transform duration-500 ease-[cubic-bezier(0.2,1,0.2,1)] ${isTransportHidden ? 'translate-y-[200%]' : 'translate-y-0'}`}
-            style={{ bottom: 'max(env(safe-area-inset-bottom, 8px), 8px)' }}>
+            style={{ bottom: 'calc(env(safe-area-inset-bottom, 0px) + 16px)' }}>
             <div className="w-full max-w-[500px] bg-[#0c0c0e]/90 backdrop-blur-2xl px-3 h-9 rounded-full border border-white/10 shadow-[0_10px_30px_rgba(0,0,0,0.8)] flex items-center gap-3 pointer-events-auto">
               {/* Eye Toggle on the far left - Trigger to hide */}
               <button

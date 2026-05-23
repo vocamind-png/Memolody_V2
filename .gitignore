@@ -58,3 +58,8 @@ vocalido_server/static/verovio-toolkit.js
 
 # Zip archives
 *.zip
+
+# Sensitive files
+.env.production
+RUNPOD_SECRETS.txt
+runpod-key.json

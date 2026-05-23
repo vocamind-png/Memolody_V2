@@ -6,8 +6,6 @@ import {
     CloudLightning, Music, Cpu
 } from 'lucide-react';
 import { songStorage, NeuralStats } from '../../lib/SongStorage';
-import { SupabaseSyncService } from '../../lib/SupabaseSyncService';
-import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { Song } from '../../types';
 import AuthForm from './AuthForm';
 
@@ -59,34 +57,22 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
 
     useEffect(() => {
         const getSession = async () => {
-            if (!isSupabaseConfigured) return;
-            try {
-                const { data: { session } } = await supabase.auth.getSession();
-                setUser(session?.user ?? null);
-                if (session?.user) {
-                    const storedAvatar = localStorage.getItem(`avatar_${session.user.id}`);
-                    if (storedAvatar) setAvatarUrl(storedAvatar);
-                    const storedBgUrl = localStorage.getItem(`bgurl_${session.user.id}`);
-                    if (storedBgUrl) setCustomBgUrl(storedBgUrl);
-
-                    const { count } = await supabase.from('songs')
-                        .select('*', { count: 'exact', head: true })
-                        .eq('user_id', session.user.id);
-                    setCloudSongCount(count || 0);
-                }
-            } catch(e) {
-                console.warn('[Profile] Supabase session error:', e);
+            const storedUserId = localStorage.getItem('mock_user_id');
+            const storedEmail = localStorage.getItem('mock_user_email');
+            if (storedUserId && storedEmail) {
+                setUser({ id: storedUserId, email: storedEmail, user_metadata: { full_name: storedEmail.split('@')[0] } });
+                const storedAvatar = localStorage.getItem(`avatar_${storedUserId}`);
+                if (storedAvatar) setAvatarUrl(storedAvatar);
+                const storedBgUrl = localStorage.getItem(`bgurl_${storedUserId}`);
+                if (storedBgUrl) setCustomBgUrl(storedBgUrl);
+            } else {
+                setUser(null);
             }
         };
         getSession();
 
-        let unsubscribe = () => {};
-        if (isSupabaseConfigured) {
-            const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-                setUser(session?.user ?? null);
-            });
-            unsubscribe = () => subscription.unsubscribe();
-        }
+        const handleAuthChange = () => getSession();
+        window.addEventListener('auth_change', handleAuthChange);
 
         const loadStats = async () => {
             const data = await songStorage.getUsageStats();
@@ -94,7 +80,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
         };
         loadStats();
 
-        return () => unsubscribe();
+        return () => window.removeEventListener('auth_change', handleAuthChange);
     }, []);
 
     // Avatar upload (stored in localStorage as base64)
@@ -136,15 +122,18 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
     const handleSync = async () => {
         if (!user) { await onTriggerSync(); onRefresh(); return; }
         setIsSyncingCloud(true);
-        const res = await SupabaseSyncService.performFullSync();
-        setSyncMessage(res.message);
+        // Supabase has been removed, so we mock a successful local sync
+        await new Promise(r => setTimeout(r, 1000));
+        setSyncMessage('Local sync completed (Cloud Disabled)');
         onRefresh();
         setIsSyncingCloud(false);
         setTimeout(() => setSyncMessage(''), 3000);
     };
 
     const handleSignOut = async () => {
-        await supabase.auth.signOut();
+        localStorage.removeItem('mock_user_id');
+        localStorage.removeItem('mock_user_email');
+        window.dispatchEvent(new Event('auth_change'));
         setUser(null);
     };
 
@@ -157,43 +146,6 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
     const usagePercent = Math.min(100, (totalSpent / (stats?.totalLimit || 1000000)) * 100);
 
     if (!user) {
-        // Show offline/guest profile UI if Supabase not configured or not logged in
-        if (!isSupabaseConfigured) {
-            return (
-                <div
-                    className={`h-full flex flex-col overflow-y-auto no-scrollbar pb-32 ${bgPreset.style}`}
-                    style={bgStyle}
-                >
-                    <div className="flex-1 flex flex-col items-center justify-center gap-6 p-8">
-                        <div className="w-24 h-24 rounded-full bg-zinc-900 border-2 border-zinc-700 flex items-center justify-center">
-                            <UserIcon size={40} className="text-zinc-600" />
-                        </div>
-                        <div className="text-center space-y-2">
-                            <h2 className="text-xl font-black text-white uppercase italic">Guest Mode</h2>
-                            <p className="text-[9px] text-zinc-500 uppercase tracking-widest">Supabase not configured yet</p>
-                        </div>
-                        <div className="w-full max-w-sm p-5 bg-amber-500/10 border border-amber-500/20 rounded-2xl">
-                            <p className="text-[9px] text-amber-400 uppercase tracking-widest leading-relaxed text-center">
-                                ⚠️ To enable Cloud Sync & Login, add your Supabase credentials as Vercel Environment Variables:<br/><br/>
-                                <code className="text-amber-300">VITE_SUPABASE_URL</code><br/>
-                               <code className="text-amber-300">VITE_SUPABASE_ANON_KEY</code>
-                            </p>
-                        </div>
-                        {/* Still show local stats */}
-                        <div className="grid grid-cols-2 gap-3 w-full max-w-sm">
-                            <div className="bg-black/40 border border-white/5 rounded-2xl p-4">
-                                <span className="text-[18px] font-black text-white">{userLibrary.length}</span>
-                                <span className="text-[7px] text-zinc-600 uppercase tracking-widest block">Local Songs</span>
-                            </div>
-                            <div className="bg-black/40 border border-white/5 rounded-2xl p-4">
-                                <span className="text-[18px] font-black text-white">{stats?.spentVocal.toLocaleString() || 0}</span>
-                                <span className="text-[7px] text-zinc-600 uppercase tracking-widest block">AI Tokens</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            );
-        }
         return (
             <div className="h-full flex items-center justify-center bg-[#050507] p-6">
                 <AuthForm onComplete={() => window.location.reload()} />

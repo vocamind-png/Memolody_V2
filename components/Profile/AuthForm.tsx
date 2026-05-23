@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
-import { Mail, Lock, User, ShieldCheck, Zap, ArrowRight, Loader2, Github, Chrome } from 'lucide-react';
-import { supabase } from '../../lib/supabase';
+import { Mail, Lock, User, ShieldCheck, Zap, ArrowRight, Loader2 } from 'lucide-react';
+import { authActions } from '../../lib/useAuth';
 
 const AuthForm: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
   const [isSignUp, setIsSignUp] = useState(false);
@@ -18,14 +18,12 @@ const AuthForm: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
     
     try {
       if (isSignUp) {
-        const { error: signUpError } = await supabase.auth.signUp({ 
-            email, password, 
-            options: { data: { full_name: fullName } } 
-        });
+        const { error: signUpError } = await authActions.signUp(email, password);
         if (signUpError) throw signUpError;
-        alert("Check your email for confirmation link!");
+        alert("Account created successfully!");
+        onComplete();
       } else {
-        const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+        const { error: signInError } = await authActions.signIn(email, password);
         if (signInError) throw signInError;
         onComplete();
       }
@@ -34,11 +32,6 @@ const AuthForm: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const handleSocialLogin = async (provider: 'google' | 'github') => {
-    const { error } = await supabase.auth.signInWithOAuth({ provider });
-    if (error) setError(error.message);
   };
 
   return (

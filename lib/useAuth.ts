@@ -1,6 +1,7 @@
 
 import { useState, useEffect } from 'react';
-import { supabase, isSupabaseConfigured } from './supabase';
+import { User, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut as firebaseSignOut } from 'firebase/auth';
+import { auth, isFirebaseConfigured } from './firebase';
 
 export type UserRole = 'owner' | 'executive' | 'admin' | 'user' | 'guest';
 
@@ -23,73 +24,73 @@ const ROLE_LEVEL: Record<UserRole, number> = {
   owner: 4,
 };
 
-export function hasAccess(userRole: UserRole, requiredRole: UserRole): boolean {
-  return ROLE_LEVEL[userRole] >= ROLE_LEVEL[requiredRole];
-}
+export const useAuth = (): { authUser: AuthUser | null; role: UserRole; loading: boolean; isFirebaseConfigured: boolean } => {
+    const [user, setUser] = useState<User | null>(null);
+    const [loading, setLoading] = useState(true);
 
-export function useAuth() {
-  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+    useEffect(() => {
+        if (!isFirebaseConfigured || !auth) {
+            setLoading(false);
+            return;
+        }
 
-  const loadProfile = async (userId: string, email: string) => {
-    try {
-      const { data } = await supabase
-        .from('profiles')
-        .select('full_name, avatar_url, role, membership_tier, max_ai_slots')
-        .eq('id', userId)
-        .single();
+        const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+            setUser(currentUser);
+            setLoading(false);
+        });
 
-      setAuthUser({
-        id: userId,
-        email,
-        fullName: data?.full_name || email.split('@')[0],
-        avatarUrl: data?.avatar_url || '',
-        role: (data?.role as UserRole) || 'user',
-        membershipTier: data?.membership_tier || 'Free',
-        maxAiSlots: data?.max_ai_slots || 1,
-      });
-    } catch {
-      setAuthUser({
-        id: userId,
-        email,
-        fullName: email.split('@')[0],
-        avatarUrl: '',
-        role: 'user',
-        membershipTier: 'Free',
-        maxAiSlots: 1,
-      });
-    }
-  };
+        return () => unsubscribe();
+    }, []);
 
-  useEffect(() => {
-    if (!isSupabaseConfigured) {
-      setIsLoading(false);
-      return;
+    let authUser: AuthUser | null = null;
+    let role: UserRole = 'guest';
+
+    if (user) {
+        if (user.email === 'paisan.jeam@gmail.com' || user.email === 'headadmin@memolody.com') {
+            role = 'owner';
+        } else if (user.email === 'admin@memolody.com') {
+            role = 'admin';
+        } else {
+            role = 'user';
+        }
+
+        authUser = {
+            id: user.uid,
+            email: user.email || '',
+            fullName: user.displayName || user.email?.split('@')[0] || 'User',
+            avatarUrl: user.photoURL || '',
+            role,
+            membershipTier: 'free',
+            maxAiSlots: 3
+        };
     }
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        loadProfile(session.user.id, session.user.email || '').finally(() => setIsLoading(false));
-      } else {
-        setIsLoading(false);
-      }
-    });
+    return { authUser, role, loading, isFirebaseConfigured };
+};
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user) {
-        setIsLoading(true);
-        loadProfile(session.user.id, session.user.email || '').finally(() => setIsLoading(false));
-      } else {
-        setAuthUser(null);
-        setIsLoading(false);
-      }
-    });
+export const hasAccess = (role: UserRole | undefined | null, requiredRole: UserRole) => {
+    if (!role) return false;
+    const userLevel = ROLE_LEVEL[role] ?? 0;
+    const reqLevel = ROLE_LEVEL[requiredRole] ?? 0;
+    return userLevel >= reqLevel;
+};
 
-    return () => subscription.unsubscribe();
-  }, []);
-
-  return { authUser, isLoading, role: authUser?.role ?? 'guest' };
-}
+export const authActions = {
+    signIn: async (email: string, pass: string) => {
+        if (!auth) throw new Error('Firebase not configured');
+        const res = await signInWithEmailAndPassword(auth, email, pass);
+        return { user: res.user, error: null };
+    },
+    signUp: async (email: string, pass: string) => {
+        if (!auth) throw new Error('Firebase not configured');
+        const res = await createUserWithEmailAndPassword(auth, email, pass);
+        return { user: res.user, error: null };
+    },
+    signOut: async () => {
+        if (!auth) return;
+        await firebaseSignOut(auth);
+    }
+};
 
 // Role badge config for UI
 export const ROLE_CONFIG: Record<UserRole, { label: string; color: string; bg: string; border: string }> = {

@@ -1,0 +1,10 @@
+.git
+.gitignore
+.venv
+__pycache__
+checkpoints
+renders
+training
+client_logs.log
+*.onnx
+*.zip

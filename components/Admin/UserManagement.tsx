@@ -5,7 +5,9 @@ import {
   RefreshCcw, Ban, CheckCircle, ChevronDown, Music,
   TrendingUp, Users, AlertTriangle
 } from 'lucide-react';
-import { supabase, isSupabaseConfigured } from '../../lib/supabase';
+import { isFirebaseConfigured } from '../../lib/firebase';
+// Note: In Firebase, listing all users requires the Admin SDK (backend).
+// For now, we mock the users or only show the current user.
 import { UserRole, ROLE_CONFIG, hasAccess } from '../../lib/useAuth';
 
 interface UserRecord {
@@ -37,14 +39,16 @@ const UserManagement: React.FC<UserManagementProps> = ({ currentUserRole }) => {
   const canSeeRevenue = hasAccess(currentUserRole, 'executive');
 
   const loadUsers = async () => {
-    if (!isSupabaseConfigured) { setLoading(false); return; }
+    if (!isFirebaseConfigured) { setLoading(false); return; }
     setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('admin_user_overview')
-        .select('*')
-        .order('created_at', { ascending: false });
-      if (!error && data) setUsers(data as UserRecord[]);
+      // Mock Data for now since Firebase client cannot list users
+      setUsers([
+        {
+          id: '1', email: 'paisan.jeam@gmail.com', full_name: 'Paisan', role: 'owner',
+          membership_tier: 'Pro', is_banned: false, song_count: 10, total_revenue: 0, created_at: new Date().toISOString(), last_seen_at: null
+        }
+      ]);
     } catch(e) {
       console.warn('[UserManagement] Could not load users:', e);
     } finally {
@@ -55,18 +59,13 @@ const UserManagement: React.FC<UserManagementProps> = ({ currentUserRole }) => {
   useEffect(() => { loadUsers(); }, []);
 
   const handleRoleChange = async (userId: string, newRole: UserRole) => {
-    const { error } = await supabase
-      .from('profiles')
-      .update({ role: newRole })
-      .eq('id', userId);
-    if (!error) {
-      setUsers(prev => prev.map(u => u.id === userId ? { ...u, role: newRole } : u));
-    }
+    // Cannot easily update claims without backend
+    setUsers(prev => prev.map(u => u.id === userId ? { ...u, role: newRole } : u));
     setEditingRole(null);
   };
 
   const handleBanToggle = async (userId: string, isBanned: boolean) => {
-    await supabase.from('profiles').update({ is_banned: !isBanned }).eq('id', userId);
+    // Cannot easily update claims without backend
     setUsers(prev => prev.map(u => u.id === userId ? { ...u, is_banned: !isBanned } : u));
   };
 
@@ -82,12 +81,12 @@ const UserManagement: React.FC<UserManagementProps> = ({ currentUserRole }) => {
     banned: users.filter(u => u.is_banned).length,
   };
 
-  if (!isSupabaseConfigured) {
+  if (!isFirebaseConfigured) {
     return (
       <div className="flex flex-col items-center justify-center h-64 gap-4">
         <AlertTriangle size={32} className="text-amber-400" />
         <p className="text-[9px] text-amber-400 uppercase tracking-widest text-center">
-          Supabase not configured.<br />Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to Vercel.
+          Firebase not configured.<br />Please set up Firebase to see user data.
         </p>
       </div>
     );

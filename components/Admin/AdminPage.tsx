@@ -2,13 +2,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   CheckCircle2, ShieldCheck, RefreshCcw, Trash2, HardDrive, AlertTriangle,
-  Sparkles, FileText, FileImage, FileCode, Plus, Music, Database, TrendingUp, Users, Lock
+  Sparkles, FileText, FileImage, FileCode, Plus, Music, Database, TrendingUp, Users, Lock, BrainCircuit
 } from 'lucide-react';
 import { parseMusicXMLMetadata } from '../../lib/MusicXmlParser';
 import { songStorage } from '../../lib/SongStorage';
 import { Song } from '../../types';
 import FinanceOverview from './FinanceOverview';
 import UserManagement from './UserManagement';
+import HeadAdminDashboard from './HeadAdminDashboard';
 import { useAuth, hasAccess } from '../../lib/useAuth';
 
 interface AdminPageProps {
@@ -17,7 +18,7 @@ interface AdminPageProps {
   onRefresh?: () => void;
 }
 
-type AdminTab = 'vault' | 'finance' | 'users';
+type AdminTab = 'vault' | 'finance' | 'users' | 'headquarters';
 
 const AdminPage: React.FC<AdminPageProps> = ({ onMusicXmlUpload, onRestoreMasterpieces, onRefresh }) => {
   const { role } = useAuth();
@@ -96,6 +97,8 @@ const AdminPage: React.FC<AdminPageProps> = ({ onMusicXmlUpload, onRestoreMaster
     { id: 'vault', label: 'Vault', icon: Database, color: 'text-cyan-500' },
     { id: 'finance', label: 'Economics', icon: TrendingUp, color: 'text-emerald-500' },
     { id: 'users', label: 'Members', icon: Users, color: 'text-indigo-500' },
+    // Only show Headquarters to Owner/Executive
+    ...(hasAccess(role, 'executive') ? [{ id: 'headquarters', label: 'HQ Analytics', icon: BrainCircuit, color: 'text-rose-500' }] : [])
   ];
 
   // Role guard — only admin and above
@@ -231,6 +234,12 @@ const AdminPage: React.FC<AdminPageProps> = ({ onMusicXmlUpload, onRestoreMaster
       {activeTab === 'users' && (
         <section className="animate-in fade-in slide-in-from-bottom-4 duration-500">
           <UserManagement currentUserRole={role} />
+        </section>
+      )}
+
+      {activeTab === 'headquarters' && hasAccess(role, 'executive') && (
+        <section className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <HeadAdminDashboard />
         </section>
       )}
     </div>

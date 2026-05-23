@@ -1,4 +1,5 @@
 import { IMemolodyPlugin, PluginStatus } from '../core/types';
+import { telemetry } from '../../lib/Telemetry';
 
 export interface VocalidoConfig {
   singerId: string;
@@ -58,7 +59,11 @@ export class VocalidoPlugin implements IMemolodyPlugin {
     }
 
     this.status = 'processing';
-    console.log('[Vocalido] 🚀 Sending Request to:', this.cloudEndpoint);
+    const renderStartTime = Date.now();
+    
+    // Check if RunPod config is available in Vite environment
+    const runpodUrl = import.meta.env.VITE_RUNPOD_API_URL;
+    const runpodKey = import.meta.env.VITE_RUNPOD_API_KEY;
 
     try {
       const notesWithLyrics = data.notes.map((n, idx) => {
@@ -73,29 +78,86 @@ export class VocalidoPlugin implements IMemolodyPlugin {
         };
       });
 
-      const payload = {
-        notes: notesWithLyrics,
-        params: data.params || {}
-      };
+      if (runpodUrl && runpodKey) {
+        console.log('[Vocalido] 🚀 Sending Request to RunPod Serverless Endpoint');
+        const payload = {
+          input: {
+            notes: notesWithLyrics,
+            params: data.params || {}
+          }
+        };
 
-      const response = await fetch(this.cloudEndpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+        const response = await fetch(runpodUrl, {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${runpodKey}`
+          },
+          body: JSON.stringify(payload),
+        });
 
-      if (!response.ok) {
-        const err = await response.text();
-        throw new Error(`Cloud API Error (${response.status}): ${err}`);
+        if (!response.ok) {
+          const err = await response.text();
+          throw new Error(`RunPod API Error (${response.status}): ${err}`);
+        }
+
+        const json = await response.json();
+        
+        if (json.status !== "COMPLETED") {
+             throw new Error("RunPod synthesis failed: " + JSON.stringify(json));
+        }
+
+        const b64 = json.output.audio_b64;
+        if (!b64) {
+          throw new Error("RunPod returned empty audio.");
+        }
+
+        // Convert base64 to Blob URL
+        const binaryString = window.atob(b64);
+        const len = binaryString.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+        }
+        const blob = new Blob([bytes], { type: "audio/wav" });
+        const audioUrl = URL.createObjectURL(blob);
+        
+        const durationSec = (Date.now() - renderStartTime) / 1000;
+        telemetry.track('vocalido_render', { renderSeconds: durationSec, provider: 'runpod' });
+        
+        console.log('[Vocalido] ✅ Audio ready from RunPod Serverless');
+        this.status = 'ready';
+        return audioUrl;
+
+      } else {
+        console.log('[Vocalido] 🚀 Sending Request to Local/Legacy Endpoint:', this.cloudEndpoint);
+        const payload = {
+          notes: notesWithLyrics,
+          params: data.params || {}
+        };
+
+        const response = await fetch(this.cloudEndpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+          const err = await response.text();
+          throw new Error(`Cloud API Error (${response.status}): ${err}`);
+        }
+
+        const json = await response.json();
+        const audioUrl = json.audio_url as string;
+        
+        const durationSec = (Date.now() - renderStartTime) / 1000;
+        telemetry.track('vocalido_render', { renderSeconds: durationSec, provider: 'legacy' });
+        
+        console.log('[Vocalido] ✅ Audio ready at:', audioUrl);
+
+        this.status = 'ready';
+        return audioUrl;
       }
-
-      // Server returns JSON { audio_url: "/vocalido/audio/vocal_xxx.wav" }
-      const json = await response.json();
-      const audioUrl = json.audio_url as string;
-      console.log('[Vocalido] ✅ Audio ready at:', audioUrl);
-
-      this.status = 'ready';
-      return audioUrl; // This is a proxy-safe path, no blob URL expiry issues
     } catch (e) {
       this.status = 'error';
       console.error('[Vocalido] Synthesis Failed:', e);

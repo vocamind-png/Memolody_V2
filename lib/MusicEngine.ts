@@ -21,6 +21,7 @@ export class MusicEngine {
   private metronomeLoop: Tone.Loop | null = null;
   private clickMetronomeEnabled = false;
   private metronomeClickSynth: Tone.MembraneSynth | null = null;
+  private vocalLoopId: number | null = null;
 
   public isInitialized = false;
   public countInDuration = 0;
@@ -62,12 +63,34 @@ export class MusicEngine {
   }
 
   private applyLoop() {
-    const ppq = Tone.Transport.PPQ;
     const bpm = Tone.Transport.bpm.value;
-    const toSec = (beats: number) => (beats / ppq) * (60 / bpm) * ppq; // beats → ticks → seconds
-    // Tone.Transport.loopStart/End accept seconds or "bars:beats:16ths"
-    Tone.Transport.loopStart = (this.loopStartBeats * 60) / Tone.Transport.bpm.value;
-    Tone.Transport.loopEnd = (this.loopEndBeats * 60) / Tone.Transport.bpm.value;
+    const startSec = (this.loopStartBeats * 60) / bpm;
+    const endSec = (this.loopEndBeats * 60) / bpm;
+    Tone.Transport.loopStart = startSec;
+    Tone.Transport.loopEnd = endSec;
+
+    // Clear any existing scheduled loop event
+    if (this.vocalLoopId !== null) {
+      try { Tone.Transport.clear(this.vocalLoopId); } catch (e) {}
+      this.vocalLoopId = null;
+    }
+    
+    // Schedule repeating loop event to manually loop the unsynced vocal players
+    this.vocalLoopId = Tone.Transport.scheduleRepeat((time) => {
+      const songTime = startSec - this.countInDuration;
+      const allPlayers: Tone.Player[] = [];
+      this.trackVocalLayers.forEach(players => allPlayers.push(...players));
+      this.trackVocalStems.forEach(players => allPlayers.push(...players.filter(Boolean)));
+      
+      allPlayers.forEach(player => {
+        if (!player || !player.buffer || !player.buffer.loaded) return;
+        player.stop(time);
+        const duration = player.buffer.duration;
+        if (songTime >= 0 && songTime < duration) {
+          player.start(time, songTime);
+        }
+      });
+    }, `${endSec - startSec}`, startSec);
   }
 
   clearLoop() {
@@ -75,6 +98,10 @@ export class MusicEngine {
     this.loopStartBeats = 0;
     this.loopEndBeats = 0;
     Tone.Transport.loop = false;
+    if (this.vocalLoopId !== null) {
+      try { Tone.Transport.clear(this.vocalLoopId); } catch (e) {}
+      this.vocalLoopId = null;
+    }
   }
 
   constructor() { }
@@ -464,9 +491,6 @@ export class MusicEngine {
             player.toDestination();
           }
           
-          // Sync to transport timeline precisely at countInDuration
-          player.sync().start(this.countInDuration || 0);
-          
           this.trackVocalLayers.set(trackId, [player]);
           // Mute the MIDI sampler — vocal replaces instrument playback
           this.trackModes.set(trackId, 'vocal');
@@ -490,11 +514,12 @@ export class MusicEngine {
                   else if (this.masterBus) stemPlayer.connect(this.masterBus);
                   else stemPlayer.toDestination();
                   stemPlayer.volume.value = -100; // Muted by default
-                  stemPlayer.sync().start(this.countInDuration || 0);
+                  
                   stems[idx] = stemPlayer;
                   loadedStems++;
                   if (loadedStems === stemUrls.length) {
                     this.trackVocalStems.set(trackId, stems);
+                    this.updateVocalPlaybackState();
                     console.log(`[MusicEngine] ✅ Vocal synced gen=${myGeneration} for ${trackId} with ${stemUrls.length} stems`);
                     clearTimeout(timeoutId);
                     resolve();
@@ -508,6 +533,7 @@ export class MusicEngine {
               });
             });
           } else {
+            this.updateVocalPlaybackState();
             console.log(`[MusicEngine] ✅ Vocal synced gen=${myGeneration} for ${trackId} (no multi-stems)`);
             clearTimeout(timeoutId);
             resolve();
@@ -750,6 +776,37 @@ export class MusicEngine {
     });
   }
 
+  public updateVocalPlaybackState(time?: number) {
+    const transportState = Tone.Transport.state;
+    const transportSeconds = Tone.Transport.seconds;
+    const countIn = this.countInDuration || 0;
+    const songTime = transportSeconds - countIn;
+    const shouldPlay = transportState === 'started';
+    const triggerTime = time !== undefined ? time : Tone.now();
+
+    const allPlayers: Tone.Player[] = [];
+    this.trackVocalLayers.forEach(players => allPlayers.push(...players));
+    this.trackVocalStems.forEach(players => allPlayers.push(...players.filter(Boolean)));
+
+    allPlayers.forEach(player => {
+      if (!player || !player.buffer || !player.buffer.loaded) return;
+      
+      player.stop(triggerTime);
+      
+      if (shouldPlay) {
+        if (songTime < 0) {
+          const delay = -songTime;
+          player.start(triggerTime + delay, 0);
+        } else {
+          const duration = player.buffer.duration;
+          if (songTime < duration) {
+            player.start(triggerTime, songTime);
+          }
+        }
+      }
+    });
+  }
+
   getTrackLevel(trackId: string): number {
     const meter = this.trackMeters.get(trackId);
     if (!meter) return 0;
@@ -776,6 +833,8 @@ export class MusicEngine {
         audio.pause();
       }
     });
+    // Sync unsynced vocal players
+    this.updateVocalPlaybackState();
   }
 
   async loadSong(notes: ParsedNote[], tracks: TrackState[] = [], transpose = 0, timeSignature: { beats: number } = { beats: 4 }, isMetronomeOn = false) {
@@ -863,30 +922,8 @@ export class MusicEngine {
     // Ensure initial volumes/pan/mute are set
     this.updateTrackStates(tracks);
 
-    // Re-sync any existing vocal Tone.Player layers to the updated countInDuration
-    for (const [tid, layers] of this.trackVocalLayers.entries()) {
-      for (const player of layers) {
-        try {
-          player.unsync();
-          player.sync().start(this.countInDuration || 0);
-        } catch (e) {
-          console.warn(`[MusicEngine] ⚠️ Failed to re-sync vocal layer for ${tid}:`, e);
-        }
-      }
-    }
-    // Also re-sync vocal stems
-    for (const [tid, stems] of this.trackVocalStems.entries()) {
-      for (const stemPlayer of stems) {
-        if (stemPlayer) {
-          try {
-            stemPlayer.unsync();
-            stemPlayer.sync().start(this.countInDuration || 0);
-          } catch (e) {
-            console.warn(`[MusicEngine] ⚠️ Failed to re-sync vocal stem for ${tid}:`, e);
-          }
-        }
-      }
-    }
+    // Sync vocal players to the updated transport position/state
+    this.updateVocalPlaybackState();
 
     Tone.Transport.seconds = this.baseStartTime + this.countInDuration;
   }
@@ -919,6 +956,9 @@ export class MusicEngine {
           }, TRANSPORT_DELAY_MS);
         } catch (e) { console.warn('[MusicEngine] Vocal start error:', e); }
       });
+
+      // Sync unsynced vocal players
+      this.updateVocalPlaybackState(startTime);
     }
   }
 
@@ -927,7 +967,8 @@ export class MusicEngine {
     await this.ensureInitialized();
     if (Tone.Transport.state === 'paused') {
       const offset = Math.max(0, Tone.Transport.seconds - this.countInDuration);
-      Tone.Transport.start(Tone.now() + 0.05);
+      const startTime = Tone.now() + 0.05;
+      Tone.Transport.start(startTime);
 
       // ── Resume HTMLAudio vocal layers ─────────────────────────────
       this.vocalAudioElements.forEach(audio => {
@@ -936,6 +977,9 @@ export class MusicEngine {
           audio.play().catch(e => console.warn('[MusicEngine] Vocal audio.play() resume failed:', e));
         } catch (e) { console.warn('[MusicEngine] Vocal resume error:', e); }
       });
+
+      // Sync unsynced vocal players
+      this.updateVocalPlaybackState(startTime);
     }
   }
 
@@ -945,6 +989,9 @@ export class MusicEngine {
     this.vocalAudioElements.forEach(audio => {
       audio.pause();
     });
+
+    // Sync unsynced vocal players
+    this.updateVocalPlaybackState();
   }
 
   /**
