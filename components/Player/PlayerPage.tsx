@@ -405,7 +405,21 @@ const PlayerPage: React.FC<{
   }, []);
 
   // Card Navigation State
-  const [activeCard, setActiveCard] = useState<PlayerCardType>('score');
+  const [activeCard, setActiveCard] = useState<PlayerCardType>(() => {
+    try {
+      const saved = localStorage.getItem('memo_active_card');
+      return (saved as PlayerCardType) || 'score';
+    } catch {
+      return 'score';
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('memo_active_card', activeCard);
+    } catch (e) {}
+  }, [activeCard]);
+
   const [isNavMenuVisible, setIsNavMenuVisible] = useState(false);
   
   // Original Image Split View State
@@ -782,6 +796,20 @@ const PlayerPage: React.FC<{
     return 'Lotte V';
   }, [vocalTrack, activeEngineId, voiceEngines, storedSinger]);
 
+  const autoRestoredRef = useRef<string>('');
+
+  // Save activeRenderKey to localStorage on change
+  useEffect(() => {
+    if (song?.id) {
+      try {
+        if (activeRenderKey) {
+          localStorage.setItem(`active_render_key_${song.id}`, activeRenderKey);
+        } else {
+          localStorage.removeItem(`active_render_key_${song.id}`);
+        }
+      } catch (e) {}
+    }
+  }, [activeRenderKey, song?.id]);
 
   // ── SONG CHANGE → Full engine reset (ONLY on song change) ─────────────────
   useEffect(() => {
@@ -798,7 +826,20 @@ const PlayerPage: React.FC<{
     lastRenderedKeyRef.current = ''; 
     setIsRenderingVocal(false);
     setTracks([]); // <-- ADD THIS: clear tracks so auto-assign runs for the new song
+    autoRestoredRef.current = ''; // Reset restoration guard
     console.log(`[PlayerPage] 🎵 Song changed → engine cleared.`);
+
+    // Load active render key from localStorage
+    if (song?.id) {
+      try {
+        const savedKey = localStorage.getItem(`active_render_key_${song.id}`);
+        setActiveRenderKey(savedKey || null);
+      } catch (e) {
+        setActiveRenderKey(null);
+      }
+    } else {
+      setActiveRenderKey(null);
+    }
 
     // Load render history for this song (from local storage first, then fetch from server)
     if (song?.id) {
@@ -853,9 +894,24 @@ const PlayerPage: React.FC<{
   useEffect(() => {
     if (!parsedData.notes.length || tracks.length > 0) return;
 
-    if (parsedData.partNames) {
+    if (parsedData.partNames && song?.id) {
       const partIds = Object.keys(parsedData.partNames);
       if (partIds.length > 0) {
+        // Try to load saved tracks from localStorage
+        let restoredTracks: TrackState[] = [];
+        try {
+          const saved = localStorage.getItem(`tracks_state_${song.id}`);
+          if (saved) {
+            restoredTracks = JSON.parse(saved);
+          }
+        } catch (e) {}
+
+        if (restoredTracks.length > 0) {
+          console.log('[PlayerPage] 🎹 Restored tracks from localStorage:', restoredTracks);
+          setTracks(restoredTracks);
+          return;
+        }
+
         console.log('[PlayerPage] 🎹 Auto-assigning track roles based on parsed notes');
         // Restore last-used lyric mode from localStorage
         const savedLyricMode = (() => { try { return localStorage.getItem('memo_lyric_mode') || ''; } catch { return ''; } })();
@@ -875,7 +931,64 @@ const PlayerPage: React.FC<{
         setTracks(newTracks);
       }
     }
-  }, [parsedData.notes.length, parsedData.partNames, setTracks, activeVoiceName, activeLyricMode, tracks.length]);
+  }, [parsedData.notes.length, parsedData.partNames, setTracks, activeVoiceName, activeLyricMode, tracks.length, song?.id]);
+
+  // Save tracks to localStorage whenever they change
+  useEffect(() => {
+    if (song?.id && tracks.length > 0) {
+      try {
+        localStorage.setItem(`tracks_state_${song.id}`, JSON.stringify(tracks));
+      } catch (e) {}
+    }
+  }, [tracks, song?.id]);
+
+  // Auto-restore active render on load
+  useEffect(() => {
+    if (!song?.id || renderHistory.length === 0 || tracks.length === 0) return;
+    
+    // Guard to ensure we only try to restore once per song load
+    if (autoRestoredRef.current === song.id) return;
+
+    const savedKey = localStorage.getItem(`active_render_key_${song.id}`);
+    if (!savedKey) return;
+
+    const cached = renderHistory.find(
+      h => `${h.bpmPercent}_${h.songKey}_${h.engineId||'default'}_${h.lyricMode||''}_${h.voiceName||'Auto'}` === savedKey
+    );
+
+    if (cached) {
+      autoRestoredRef.current = song.id;
+      console.log(`[PlayerPage] 🎤 Auto-restoring saved render ${cached.label}`);
+      
+      const fixedUrl = fixAudioUrl(cached.audioUrl);
+      const stemsWithBust = (cached.savedStemUrls || []).map((sUrl: string) => fixAudioUrl(sUrl));
+      const primaryTrackId = tracks.find(t => t.mode === 'vocal')?.id || tracks[0]?.id || 'P1';
+
+      // Load vocal layer in background
+      setIsAudioLoading(true);
+      musicEngine.addVocalLayer(primaryTrackId, fixedUrl, stemsWithBust)
+        .then(() => {
+          setAvailableStems(prev => ({ ...prev, [primaryTrackId]: musicEngine.getAvailableStems(primaryTrackId) }));
+          setSoloedStems(prev => ({ ...prev, [primaryTrackId]: null }));
+          setActiveRenderKey(savedKey);
+          
+          if (cached.engineId) setActiveEngineId(cached.engineId);
+          if (cached.voiceName && cached.voiceName !== 'Auto') {
+            setStoredSinger(cached.voiceName);
+          }
+          
+          // Re-load the song with vocal tracks enabled
+          const updatedTracks = tracks.map((t: any) => 
+            t.id === primaryTrackId ? { ...t, mode: 'vocal' } as TrackState : t
+          );
+          setTracks(updatedTracks);
+          
+          return musicEngine.loadSong(parsedData.notes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn);
+        })
+        .catch(err => console.warn('[PlayerPage] Auto-restore render failed:', err))
+        .finally(() => setIsAudioLoading(false));
+    }
+  }, [song?.id, renderHistory, tracks, transpose, isMetronomeOn, parsedData]);
 
   // ── AUTO-RENDER: Direct trigger on song load or lyric mode change ────────────
   const autoRenderRef = useRef(false);

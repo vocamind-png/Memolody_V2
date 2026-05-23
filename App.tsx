@@ -106,7 +106,14 @@ const NAV_ITEMS: { id: ViewId; icon: any; label: string; minRole?: string; isNim
 const App: React.FC = () => {
   const { authUser, role } = useAuth();
   const isAdmin = hasAccess(role, 'admin');
-  const [currentView, setCurrentView] = useState<ViewId>('home');
+  const [currentView, setCurrentView] = useState<ViewId>(() => {
+    try {
+      const saved = localStorage.getItem('memo_current_view');
+      return (saved as ViewId) || 'home';
+    } catch {
+      return 'home';
+    }
+  });
   const [isNimoOpen, setIsNimoOpen] = useState(false);
   const [nimoMounted, setNimoMounted] = useState(false); // mount on first click only
   const [selectedSong, setSelectedSong] = useState<Song | null>(null);
@@ -137,6 +144,24 @@ const App: React.FC = () => {
   const [nimoEnabled, setNimoEnabled] = useState(() => localStorage.getItem('nimo_enabled') !== 'false');
   const [nimoVoice, setNimoVoice] = useState<'teen_girl' | 'adult_woman' | 'teen_boy' | 'adult_man'>(() => (localStorage.getItem('nimo_voice') as any) || 'teen_girl');
 
+  // Save currentView to localStorage on change
+  useEffect(() => {
+    try {
+      localStorage.setItem('memo_current_view', currentView);
+    } catch (e) {}
+  }, [currentView]);
+
+  // Save selectedSong ID to localStorage on change
+  useEffect(() => {
+    try {
+      if (selectedSong) {
+        localStorage.setItem('memo_selected_song_id', selectedSong.id);
+      } else {
+        localStorage.removeItem('memo_selected_song_id');
+      }
+    } catch (e) {}
+  }, [selectedSong]);
+
   useEffect(() => {
     (async () => {
       try {
@@ -160,14 +185,21 @@ const App: React.FC = () => {
         userSongsRef.current = songs;
         setUserSongs(songs);
 
-        // ── Auto-select first song so Player/Edit always shows notes ──────────
-        // Pick the most-recently added song (last in list) as the startup default
+        // ── Restore saved song or auto-select default ──────────
         if (songs.length > 0) {
-          const defaultSong = songs[songs.length - 1]; // most recent
-          setSelectedSong(defaultSong.metadata);
-          setUploadedMusicXml(defaultSong.xmlData || '');
-          setSelectedLayoutBundle(defaultSong.layoutBundle || null);
-          console.log(`[App] 🎵 Auto-selected: "${defaultSong.metadata.title}"`);
+          const savedSongId = localStorage.getItem('memo_selected_song_id');
+          let initialSong = songs.find(s => s.metadata.id === savedSongId);
+          
+          if (!initialSong) {
+            initialSong = songs[songs.length - 1]; // most recent fallback
+          }
+
+          if (initialSong) {
+            setSelectedSong(initialSong.metadata);
+            setUploadedMusicXml(initialSong.xmlData || '');
+            setSelectedLayoutBundle(initialSong.layoutBundle || null);
+            console.log(`[App] 🎵 Restored/Selected song: "${initialSong.metadata.title}"`);
+          }
         }
 
         setTimeout(() => triggerSync(), 5000);
