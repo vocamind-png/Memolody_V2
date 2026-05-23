@@ -6,7 +6,8 @@ import {
   X, Volume2, SkipBack,
   RefreshCw, Repeat, Music,
   VolumeX, Bell, BellOff, Eye, EyeOff, Lock,
-  ChevronDown, Library, Languages, Mic2, Timer, Sparkles
+  ChevronDown, Library, Languages, Mic2, Timer, Sparkles,
+  Heart, Folder, Trash2, Plus
 } from 'lucide-react';
 import ProScoreEditor from './ProScoreEditor';
 import { KeyTransposeDisplay, BpmDisplay, BarBeatPositionDisplay, TimeSigDisplay } from './LCDDisplay';
@@ -20,7 +21,8 @@ import MemoPractice from './MemoPractice';
 import ChordPage from '../Chord/ChordPage';
 import { musicEngine } from '../../lib/MusicEngine';
 import { getChromaticSolfege } from '../../lib/SolfegeLogic';
-import { Song, TrackState, EffectInstance, LyricMode } from '../../types';
+import { Song, TrackState, EffectInstance, LyricMode, SongFolder } from '../../types';
+import { songStorage } from '../../lib/SongStorage';
 import { nimoBrain } from '../../lib/NimoBrain';
 
 export type PlayerCardType = 'score' | 'pianoroll' | 'trackview' | 'memochord' | 'practice' | 'vocalido';
@@ -251,8 +253,20 @@ const PlayerPage: React.FC<{
   vocalidoAutoRender?: boolean;
   autoPlay?: boolean;           // ← auto-start playback after OMR import
   onAutoPlayConsumed?: () => void; // ← clears the flag in App.tsx
-}> = ({ song, musicXml, layoutBundle, tracks, setTracks, viewMode = 'score', setViewMode, loopPresets, setLoopPresets, performanceMode, vocalidoAutoRender, autoPlay, onAutoPlayConsumed }) => {
+  onSongUpdate?: (updatedSong: Song) => void;
+}> = ({ song, musicXml, layoutBundle, tracks, setTracks, viewMode = 'score', setViewMode, loopPresets, setLoopPresets, performanceMode, vocalidoAutoRender, autoPlay, onAutoPlayConsumed, onSongUpdate }) => {
   const [isPlaying, setIsPlaying] = useState(false);
+  
+  // Favorites & Folder state
+  const [isFavorite, setIsFavorite] = useState(song?.isFavorite || false);
+  const [currentFolderId, setCurrentFolderId] = useState<string | undefined>(song?.folderId);
+  const [folders, setFolders] = useState<SongFolder[]>([]);
+  const [isFolderPopoverOpen, setIsFolderPopoverOpen] = useState(false);
+  const [showNewFolderForm, setShowNewFolderForm] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [newFolderColor, setNewFolderColor] = useState('#6366f1');
+  const folderPopoverRef = useRef<HTMLDivElement>(null);
+
   const svsEngine = 'vocalido';
   const [isTransportHidden, setIsTransportHidden] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -569,6 +583,76 @@ const PlayerPage: React.FC<{
       }
     }
   }, [song?.id, song?.coverUrl]);
+
+  // Sync favorite/folder from props
+  useEffect(() => {
+    setIsFavorite(song?.isFavorite || false);
+    setCurrentFolderId(song?.folderId);
+  }, [song]);
+
+  // Load folders on mount
+  useEffect(() => {
+    songStorage.getFolders().then(setFolders);
+  }, []);
+
+  // Folder click outside handler
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (folderPopoverRef.current && !folderPopoverRef.current.contains(event.target as Node)) {
+        setIsFolderPopoverOpen(false);
+      }
+    };
+    if (isFolderPopoverOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isFolderPopoverOpen]);
+
+  const handleToggleFavorite = async () => {
+    if (!song) return;
+    const newFav = await songStorage.toggleFavorite(song.id);
+    setIsFavorite(newFav);
+    if (onSongUpdate) {
+      onSongUpdate({ ...song, isFavorite: newFav });
+    }
+  };
+
+  const handleAssignFolder = async (folderId: string | undefined) => {
+    if (!song) return;
+    await songStorage.assignSongToFolder(song.id, folderId);
+    setCurrentFolderId(folderId);
+    setIsFolderPopoverOpen(false);
+    if (onSongUpdate) {
+      onSongUpdate({ ...song, folderId });
+    }
+  };
+
+  const handleCreateFolder = async () => {
+    if (!newFolderName.trim()) return;
+    const folder: SongFolder = {
+      id: `folder_${Date.now()}`,
+      name: newFolderName.trim(),
+      color: newFolderColor,
+      createdAt: new Date().toISOString()
+    };
+    await songStorage.saveFolder(folder);
+    setFolders(prev => [...prev, folder]);
+    setNewFolderName('');
+    setShowNewFolderForm(false);
+    await handleAssignFolder(folder.id);
+  };
+
+  const handleDeleteFolder = async (folderId: string) => {
+    const confirmed = window.confirm("ลบโฟลเดอร์นี้ใช่ไหม? (เพลงในโฟลเดอร์จะไม่ถูกลบ)");
+    if (!confirmed) return;
+    await songStorage.deleteFolder(folderId);
+    setFolders(prev => prev.filter(f => f.id !== folderId));
+    if (currentFolderId === folderId) {
+      handleAssignFolder(undefined);
+    }
+  };
 
   // Detect actual .staff Y positions from Verovio SVG → align mic buttons
   useEffect(() => {
@@ -1945,6 +2029,142 @@ const PlayerPage: React.FC<{
         {/* ── TRACK MIC BUTTONS: pinned to actual staff Y positions ── */}
         {activeCard === 'score' && tracks.length > 0 && (
           <div className="absolute left-0 top-0 w-full h-full z-[3000] pointer-events-none">
+            {/* Song Actions: Favorite & Folder selection */}
+            {(() => {
+              const baseTop = staffYPositions.length > 0 ? staffYPositions[0] : 60;
+              return (
+                <div 
+                  ref={folderPopoverRef}
+                  className="absolute left-1 z-[6000] flex flex-row gap-1 pointer-events-auto items-center"
+                  style={{ top: `${Math.max(5, baseTop - 25)}px` }}
+                >
+                  <button
+                    onClick={handleToggleFavorite}
+                    className={`h-4 px-1.5 rounded-sm flex items-center gap-0.5 text-[6.5px] font-black uppercase transition-all border shadow-sm ${
+                      isFavorite
+                        ? 'bg-rose-600 border-rose-500 text-white'
+                        : 'bg-zinc-800 border-zinc-600 text-zinc-300 hover:text-rose-400 hover:border-rose-400/60'
+                    }`}
+                    title={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+                  >
+                    <Heart size={7} fill={isFavorite ? 'currentColor' : 'none'} className={isFavorite ? 'text-white' : ''} />
+                    {isFavorite ? 'Favorite' : 'Add Fav'}
+                  </button>
+
+                  <div className="relative">
+                    <button
+                      onClick={() => setIsFolderPopoverOpen(!isFolderPopoverOpen)}
+                      className={`h-4 px-1.5 rounded-sm flex items-center gap-0.5 text-[6.5px] font-black uppercase transition-all border shadow-sm ${
+                        currentFolderId
+                          ? 'bg-indigo-600 border-indigo-500 text-white'
+                          : 'bg-zinc-800 border-zinc-600 text-zinc-300 hover:text-indigo-400 hover:border-indigo-400/60'
+                      }`}
+                      title="Manage Folder"
+                    >
+                      <Folder size={7} />
+                      {currentFolderId ? (folders.find(f => f.id === currentFolderId)?.name || 'Folder') : 'Add Folder'}
+                    </button>
+
+                    {isFolderPopoverOpen && (
+                      <div className="absolute left-0 mt-1 bg-[#0c0c0e]/95 backdrop-blur-xl border border-white/10 p-2 rounded-lg shadow-xl flex flex-col gap-1.5 w-[160px] z-[9000] animate-in fade-in duration-100">
+                        <span className="text-[6.5px] font-black text-white/40 uppercase tracking-wider px-1">Select Folder</span>
+                        
+                        <div className="flex flex-col gap-0.5 max-h-[100px] overflow-y-auto scrollbar-hide">
+                          {folders.map(f => (
+                            <div key={f.id} className="flex items-center justify-between hover:bg-white/5 rounded px-1 py-0.5">
+                              <button
+                                onClick={() => handleAssignFolder(f.id)}
+                                className={`text-[7px] font-bold text-left flex items-center gap-1 flex-1 truncate ${
+                                  currentFolderId === f.id ? 'text-indigo-400' : 'text-zinc-300 hover:text-white'
+                                }`}
+                              >
+                                <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: f.color || '#6366f1' }} />
+                                <span className="truncate">{f.name}</span>
+                              </button>
+                              
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteFolder(f.id);
+                                }}
+                                className="w-3.5 h-3.5 flex items-center justify-center text-zinc-500 hover:text-rose-500 rounded hover:bg-rose-500/10 transition-colors"
+                                title="Delete Folder"
+                              >
+                                <Trash2 size={7} />
+                              </button>
+                            </div>
+                          ))}
+
+                          {folders.length === 0 && (
+                            <span className="text-[6px] text-zinc-500 italic px-1">No folders created</span>
+                          )}
+                        </div>
+
+                        {currentFolderId && (
+                          <button
+                            onClick={() => handleAssignFolder(undefined)}
+                            className="w-full text-left text-[6.5px] font-bold text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded px-1 py-0.5 transition-colors border border-rose-500/20"
+                          >
+                            × Remove from Folder
+                          </button>
+                        )}
+
+                        <div className="h-px bg-white/5 my-0.5" />
+
+                        {showNewFolderForm ? (
+                          <div className="flex flex-col gap-1.5 p-1 bg-white/5 rounded border border-white/5">
+                            <input
+                              type="text"
+                              placeholder="Folder name..."
+                              value={newFolderName}
+                              onChange={(e) => setNewFolderName(e.target.value)}
+                              className="w-full bg-black/60 border border-white/10 rounded px-1 py-0.5 text-[7px] text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500"
+                              autoFocus
+                            />
+                            <div className="flex justify-between items-center">
+                              <div className="flex gap-1">
+                                {['#6366f1', '#ec4899', '#10b981', '#f59e0b', '#3b82f6'].map(c => (
+                                  <button
+                                    key={c}
+                                    onClick={() => setNewFolderColor(c)}
+                                    className={`w-2 h-2 rounded-full border transition-transform ${
+                                      newFolderColor === c ? 'scale-125 border-white' : 'border-transparent'
+                                    }`}
+                                    style={{ backgroundColor: c }}
+                                  />
+                                ))}
+                              </div>
+                              <div className="flex gap-1">
+                                <button
+                                  onClick={() => setShowNewFolderForm(false)}
+                                  className="px-1.5 py-0.5 bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white rounded text-[6px] font-bold uppercase"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  onClick={handleCreateFolder}
+                                  className="px-1.5 py-0.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-[6px] font-bold uppercase"
+                                >
+                                  Create
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setShowNewFolderForm(true)}
+                            className="w-full py-1 border border-dashed border-white/15 hover:border-indigo-500/50 hover:bg-indigo-500/5 rounded flex items-center justify-center gap-1 text-[6.5px] font-black uppercase text-indigo-400 transition-all"
+                          >
+                            <Plus size={6} /> New Folder
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+
             {tracks.map((track, i) => {
               const isMuted = mutedVocalTracks.has(track.id);
               const baseTop = staffYPositions.length > 0 ? staffYPositions[0] : 60;

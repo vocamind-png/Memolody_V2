@@ -286,6 +286,13 @@ const App: React.FC = () => {
     }
   }, []);
 
+  const handleSongUpdate = useCallback((updatedSong: Song) => {
+    setSelectedSong(updatedSong);
+    const updatedList = userSongsRef.current.map(s => s.metadata.id === updatedSong.id ? { ...s, metadata: updatedSong } : s);
+    userSongsRef.current = updatedList;
+    setUserSongs(updatedList);
+  }, []);
+
   const handleSongSelect = useCallback(async (
     song: Song, xml?: string,
     mode: 'listen' | 'studio' | 'edit' = 'studio',
@@ -483,7 +490,7 @@ const App: React.FC = () => {
           currentUserId={authUser?.id}
         />;
       case 'player':
-        return <PlayerPage song={selectedSong} musicXml={uploadedMusicXml} layoutBundle={selectedLayoutBundle} tracks={tracks} setTracks={setTracks} viewMode={playerViewMode} setViewMode={setPlayerViewMode} loopPresets={loopPresets} setLoopPresets={setLoopPresets} performanceMode={performanceMode} vocalidoAutoRender={vocalidoAutoRender} autoPlay={autoPlayOnLoad} onAutoPlayConsumed={() => setAutoPlayOnLoad(false)} />;
+        return <PlayerPage song={selectedSong} musicXml={uploadedMusicXml} layoutBundle={selectedLayoutBundle} tracks={tracks} setTracks={setTracks} viewMode={playerViewMode} setViewMode={setPlayerViewMode} loopPresets={loopPresets} setLoopPresets={setLoopPresets} performanceMode={performanceMode} vocalidoAutoRender={vocalidoAutoRender} autoPlay={autoPlayOnLoad} onAutoPlayConsumed={() => setAutoPlayOnLoad(false)} onSongUpdate={handleSongUpdate} />;
       case 'forge':
         return <StudioPage selectedSong={selectedSong} xmlData={uploadedMusicXml} layoutBundle={selectedLayoutBundle} tracks={tracks} setTracks={setTracks} onPublish={triggerSync} onExit={() => navigateTo('home')} />;
       case 'profile':
