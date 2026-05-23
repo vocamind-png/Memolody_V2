@@ -1,10 +1,31 @@
-.git
-.gitignore
-.venv
-__pycache__
-checkpoints
-renders
-training
-client_logs.log
-*.onnx
-*.zip
+# .gcloudignore for Cloud Build - must include model files that .gitignore excludes
+# NOTE: This file overrides .gitignore for gcloud builds submit
+
+# ── Exclude large unnecessary directories ──
+training/
+.venv/
+venv/
+renders/
+voicebanks/
+static/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+*.log
+
+# Exclude empty/unused checkpoints
+checkpoints/Lotte_V_AI_dol/
+checkpoints/dsvariance/
+checkpoints/ophelia/
+checkpoints/vocalido_ft/
+checkpoints/vocalido_gtsinger_en/
+checkpoints/vocalido_jianpu/
+checkpoints/vocalido_v1/
+checkpoints/vocalido_v1_runpod/
+checkpoints/vocalido_v3/
+checkpoints/tiger.zip
+
+# ── IMPORTANT: DO NOT exclude these (override .gitignore) ──
+# checkpoints/tiger_v106/ → MUST be included (contains ONNX models)
+# *.onnx → MUST be included
