@@ -315,18 +315,31 @@ export class ClientSvsEngine {
       }
 
       // 2. Initialize sessions
-      onProgress({ stage: 'initializing', message: 'Initializing Neural Engine on GPU...', progress: 85 });
-      
-      // Session settings: prefer webgpu, fallback to wasm
-      const sessionOptions = {
-        executionProviders: ['webgpu', 'wasm'],
+      onProgress({ stage: 'initializing', message: 'Initializing Neural Engine...', progress: 85 });
+
+      const hasWebGPU = typeof navigator !== 'undefined' && 'gpu' in navigator;
+      let sessionOptions = {
+        executionProviders: hasWebGPU ? ['webgpu', 'wasm'] : ['wasm'],
       };
 
-      console.log('[ClientSvsEngine] Creating Acoustic Inference Session');
-      this.acousticSession = await ort.InferenceSession.create(new Uint8Array(acousticBuffer), sessionOptions);
-      
-      console.log('[ClientSvsEngine] Creating Vocoder Inference Session');
-      this.vocoderSession = await ort.InferenceSession.create(new Uint8Array(vocoderBuffer), sessionOptions);
+      console.log(`[ClientSvsEngine] WebGPU support: ${hasWebGPU}. Using providers:`, sessionOptions.executionProviders);
+
+      try {
+        console.log('[ClientSvsEngine] Creating Acoustic Inference Session (Attempting preferred execution provider)');
+        this.acousticSession = await ort.InferenceSession.create(new Uint8Array(acousticBuffer), sessionOptions);
+        
+        console.log('[ClientSvsEngine] Creating Vocoder Inference Session (Attempting preferred execution provider)');
+        this.vocoderSession = await ort.InferenceSession.create(new Uint8Array(vocoderBuffer), sessionOptions);
+      } catch (gpuErr) {
+        console.warn('[ClientSvsEngine] WebGPU initialization failed, falling back to WebAssembly (WASM):', gpuErr);
+        onProgress({ stage: 'initializing', message: 'WebGPU failed. Initializing on CPU (WASM)...', progress: 90 });
+        
+        // Force CPU WebAssembly fallback
+        sessionOptions = { executionProviders: ['wasm'] };
+        
+        this.acousticSession = await ort.InferenceSession.create(new Uint8Array(acousticBuffer), sessionOptions);
+        this.vocoderSession = await ort.InferenceSession.create(new Uint8Array(vocoderBuffer), sessionOptions);
+      }
 
       console.log('[ClientSvsEngine] Inference Sessions loaded successfully!', {
         acousticInputs: this.acousticSession.inputNames,
