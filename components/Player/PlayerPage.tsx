@@ -1781,47 +1781,54 @@ const PlayerPage: React.FC<{
         if (svsEngine === 'browser-ai' && selectedVoice?.model_files) {
           console.log('[Browser AI] Running direct browser-side WebGPU synthesis...');
           setRenderStatusText('Loading models...');
-          
-          // Translate model files paths to complete URLs using getFetchUrl
-          const modelFiles = {
-            acoustic: getFetchUrl(selectedVoice.model_files.acoustic),
-            vocoder: getFetchUrl(selectedVoice.model_files.vocoder),
-            dictionary: selectedVoice.model_files.dictionary ? getFetchUrl(selectedVoice.model_files.dictionary) : undefined,
-            phonemes: selectedVoice.model_files.phonemes ? getFetchUrl(selectedVoice.model_files.phonemes) : undefined,
-            embeds: selectedVoice.model_files.embeds ? Object.keys(selectedVoice.model_files.embeds).reduce((acc, key) => {
-              if (selectedVoice.model_files?.embeds?.[key]) {
-                acc[key] = getFetchUrl(selectedVoice.model_files.embeds[key]);
-              }
-              return acc;
-            }, {} as Record<string, string>) : undefined
-          };
+          try {
+            // Translate model files paths to complete URLs using getFetchUrl
+            const modelFiles = {
+              acoustic: getFetchUrl(selectedVoice.model_files.acoustic),
+              vocoder: getFetchUrl(selectedVoice.model_files.vocoder),
+              dictionary: selectedVoice.model_files.dictionary ? getFetchUrl(selectedVoice.model_files.dictionary) : undefined,
+              phonemes: selectedVoice.model_files.phonemes ? getFetchUrl(selectedVoice.model_files.phonemes) : undefined,
+              embeds: selectedVoice.model_files.embeds ? Object.keys(selectedVoice.model_files.embeds).reduce((acc, key) => {
+                if (selectedVoice.model_files?.embeds?.[key]) {
+                  acc[key] = getFetchUrl(selectedVoice.model_files.embeds[key]);
+                }
+                return acc;
+              }, {} as Record<string, string>) : undefined
+            };
 
-          await clientSvsEngine.loadVoice(selectedVoice.id, modelFiles, (prog) => {
-            setRenderStatusText(prog.message);
-            setRenderProgress(Math.min(99.9, prog.progress));
-          });
+            await clientSvsEngine.loadVoice(selectedVoice.id, modelFiles, (prog) => {
+              setRenderStatusText(prog.message);
+              setRenderProgress(Math.min(99.9, prog.progress));
+            });
 
-          setRenderStatusText('Generating vocals...');
-          const wavBlob = await clientSvsEngine.synthesize(notesToSynthesize, {
-            bpm: actualBpm,
-            formant_shift: 0,
-            speed: 1.0,
-            breathiness: 0,
-            vocal_mode: 'root',
-            steps: 20,
-          });
+            setRenderStatusText('Generating vocals...');
+            const wavBlob = await clientSvsEngine.synthesize(notesToSynthesize, {
+              bpm: actualBpm,
+              formant_shift: 0,
+              speed: 1.0,
+              breathiness: 0,
+              vocal_mode: 'root',
+              steps: 20,
+            });
 
-          const localBlobUrl = URL.createObjectURL(wavBlob);
-          result = {
-            audio_url: localBlobUrl,
-            engine: 'browser_ai_webgpu',
-            stems_b64: []
-          };
-          usedRunPod = true; // Bypasses cache/fixAudioUrl rewriting, uses local blob url as-is
-        } else {
+            const localBlobUrl = URL.createObjectURL(wavBlob);
+            result = {
+              audio_url: localBlobUrl,
+              engine: 'browser_ai_webgpu',
+              stems_b64: []
+            };
+            usedRunPod = true; // Bypasses cache/fixAudioUrl rewriting, uses local blob url as-is
+          } catch (browserAiError: any) {
+            console.warn('[Browser AI] ⚠️ Browser-side WebGPU/WASM synthesis failed. Falling back to Server/RunPod:', browserAiError);
+            setRenderStatusText('Browser SVS failed. Falling back to Server/RunPod...');
+            result = null;
+          }
+        }
+
+        if (!result) {
           if (svsEngine === 'browser-ai') {
-            console.warn('[Browser AI] Selected voice has no local ONNX model files. Falling back to Server/RunPod.');
-            setRenderStatusText('Selected voice has no local ONNX files. Falling back to Server/RunPod.');
+            console.warn('[Browser AI] Selected voice has no local ONNX model files or browser execution failed. Falling back to Server/RunPod.');
+            setRenderStatusText('Browser SVS unavailable. Falling back to Server/RunPod...');
           }
           
           const shouldTryLocal = true; // Enable local/cloud server check for Hybrid Caching
@@ -3105,22 +3112,22 @@ const PlayerPage: React.FC<{
               </div>
             </div>
 
-            <div className="w-full max-w-[calc(100vw-8px)] md:max-w-[640px] bg-white shadow-[0_20px_60px_rgba(0,0,0,0.9)] rounded-full h-[48px] flex items-center justify-between px-2 md:px-3 pointer-events-auto relative">
+            <div className="w-full max-w-[calc(100vw-8px)] md:max-w-[640px] bg-white shadow-[0_20px_60px_rgba(0,0,0,0.9)] rounded-full h-[64px] flex items-center justify-between px-3 md:px-4 pointer-events-auto relative">
               {/* LEFT GROUP: Mixer Toggle */}
-              <div className="flex items-center gap-1.5 border-r border-zinc-100 pr-1.5 md:pr-2.5">
+              <div className="flex items-center gap-2 border-r border-zinc-100 pr-2.5 md:pr-3.5">
                 <button
                   onClick={() => setShowMixer(!showMixer)}
-                  className={`w-8 h-8 md:w-9 md:h-9 rounded-full flex items-center justify-center transition-all ${
+                  className={`w-10 h-10 md:w-11 md:h-11 rounded-full flex items-center justify-center transition-all ${
                     showMixer ? 'bg-zinc-100 text-black' : 'text-zinc-400 hover:text-black hover:bg-zinc-50'
                   }`}
                 >
-                  <SlidersHorizontal size={14} />
+                  <SlidersHorizontal size={18} />
                 </button>
               </div>
 
               {/* CENTER GROUP: Narrow LCD Display */}
-              <div className="flex-1 flex justify-center px-1">
-                <div className="w-[140px] sm:w-[160px] md:w-[190px] h-[30px] bg-[#0c0c0e] rounded-full flex items-center border border-black shadow-inner overflow-hidden">
+              <div className="flex-1 flex justify-center px-1.5">
+                <div className="w-[200px] sm:w-[225px] md:w-[260px] h-[44px] bg-[#0c0c0e] rounded-full flex items-center border border-black shadow-inner overflow-hidden">
                   <div className="flex-1 h-full border-r border-white/5 flex items-center justify-center">
                     <KeyTransposeDisplay keySig={parsedData.metadata.key || localSong.key} transpose={transpose} onTransposeChange={setTranspose} />
                   </div>
@@ -3134,7 +3141,7 @@ const PlayerPage: React.FC<{
               </div>
 
               {/* MIDDLE-RIGHT GROUP: Large Back and Play/Pause Controls */}
-              <div className="flex items-center gap-2 pl-1 pr-2 border-r border-zinc-100 md:pr-3">
+              <div className="flex items-center gap-2.5 pl-1.5 pr-2.5 border-r border-zinc-100 md:pr-3.5">
                 {/* Back Button */}
                 <button
                   onClick={() => {
@@ -3146,9 +3153,9 @@ const PlayerPage: React.FC<{
                     musicEngine.currentNoteTime = 0;
                     setIsPlaying(false);
                   }}
-                  className="w-8 h-8 md:w-9 md:h-9 rounded-full bg-zinc-100 hover:bg-zinc-200 text-zinc-700 hover:text-black flex items-center justify-center transition-all active:scale-95"
+                  className="w-10 h-10 md:w-[44px] md:h-[44px] rounded-full bg-zinc-100 hover:bg-zinc-200 text-zinc-700 hover:text-black flex items-center justify-center transition-all active:scale-95"
                 >
-                  <SkipBack size={15} fill="currentColor" />
+                  <SkipBack size={19} fill="currentColor" />
                 </button>
 
                 {/* Play/Pause Button */}
@@ -3157,30 +3164,30 @@ const PlayerPage: React.FC<{
                   <button
                     onClick={handleTogglePlay}
                     disabled={isAudioLoading || isRenderingVocal}
-                    className={`relative w-9.5 h-9.5 md:w-[40px] md:h-[40px] rounded-full flex items-center justify-center text-white transition-all active:scale-95
-                      ${isRenderingVocal ? 'bg-zinc-800 shadow-none grayscale' : 'bg-[#00e5ff] hover:bg-[#00c8e0] shadow-[0_4px_15px_rgba(0,229,255,0.4)]'}`}
+                    className={`relative w-12 h-12 md:w-[54px] md:h-[54px] rounded-full flex items-center justify-center text-white transition-all active:scale-95
+                      ${isRenderingVocal ? 'bg-zinc-800 shadow-none grayscale' : 'bg-[#00e5ff] hover:bg-[#00c8e0] shadow-[0_4px_25px_rgba(0,229,255,0.5)]'}`}
                   >
                     {isAudioLoading ? (
-                      <RefreshCw size={15} className="animate-spin text-white/50" />
+                      <RefreshCw size={20} className="animate-spin text-white/50" />
                     ) : isPlaying ? (
-                      <Pause size={18} fill="white" />
+                      <Pause size={24} fill="white" />
                     ) : (
-                      <Play size={18} fill="white" className="ml-0.5" />
+                      <Play size={24} fill="white" className="ml-1" />
                     )}
                   </button>
                 </div>
               </div>
 
               {/* RIGHT GROUP: SCR (Score toggle) and Volume */}
-              <div className="flex-none flex items-center justify-end gap-1.5 pl-1.5 md:pl-2.5 relative">
+              <div className="flex-none flex items-center justify-end gap-2 pl-2 md:pl-3 relative">
                 <button
                   onClick={() => setActiveCard(activeCard === 'score' ? 'pianoroll' : 'score')}
-                  className={`w-8 h-8 md:w-9 md:h-9 border rounded-full flex flex-col items-center justify-center group active:scale-95 transition-all ${
+                  className={`w-9 h-9 md:w-10 md:h-10 border rounded-full flex flex-col items-center justify-center group active:scale-95 transition-all ${
                     activeCard === 'score' ? 'bg-[#fbfbfb] border-zinc-100 text-zinc-400' : 'bg-cyan-50 border-cyan-100 text-cyan-500'
                   }`}
                 >
-                  <Music size={12} className={activeCard === 'score' ? 'text-zinc-400 group-hover:text-zinc-600' : 'text-cyan-500'} />
-                  <span className={`text-[5px] md:text-[5.5px] font-black uppercase mt-0.5 ${activeCard === 'score' ? 'text-zinc-400 group-hover:text-zinc-600' : 'text-cyan-600'}`}>
+                  <Music size={14} className={activeCard === 'score' ? 'text-zinc-400 group-hover:text-zinc-600' : 'text-cyan-500'} />
+                  <span className={`text-[6px] md:text-[7px] font-black uppercase mt-0.5 ${activeCard === 'score' ? 'text-zinc-400 group-hover:text-zinc-600' : 'text-cyan-600'}`}>
                     SCR
                   </span>
                 </button>
@@ -3188,19 +3195,19 @@ const PlayerPage: React.FC<{
                 <div className="relative" ref={volumePopupRef}>
                   <button
                     onClick={() => setShowVolumeSlider(!showVolumeSlider)}
-                    className={`w-8 h-8 md:w-9 md:h-9 rounded-full flex items-center justify-center transition-all border ${
+                    className={`w-9 h-9 md:w-10 md:h-10 rounded-full flex items-center justify-center transition-all border ${
                       showVolumeSlider
                         ? 'border-cyan-400 bg-cyan-50 text-cyan-600 shadow-[0_0_15px_rgba(0,229,255,0.4)]'
                         : 'border-transparent text-zinc-400 hover:text-cyan-500 hover:bg-zinc-50'
                     }`}
                   >
-                    {masterVolume === 0 ? <VolumeX size={15} /> : <Volume2 size={16} className={showVolumeSlider ? 'text-cyan-600' : 'text-zinc-400 hover:text-cyan-500'} />}
+                    {masterVolume === 0 ? <VolumeX size={17} /> : <Volume2 size={18} className={showVolumeSlider ? 'text-cyan-600' : 'text-zinc-400 hover:text-cyan-500'} />}
                   </button>
 
                   {showVolumeSlider && (
                     <div
                       ref={volumePopupRef}
-                      className="absolute bottom-[64px] left-1/2 -translate-x-1/2 w-14 h-64 bg-[#0c0c0e]/95 backdrop-blur-2xl rounded-[32px] shadow-[0_40px_100px_rgba(0,0,0,1)] border border-white/10 p-3.5 flex flex-col items-center animate-in slide-in-from-bottom-6 duration-300 z-[9999] ring-1 ring-white/10 select-none touch-none"
+                      className="absolute bottom-[72px] left-1/2 -translate-x-1/2 w-14 h-64 bg-[#0c0c0e]/95 backdrop-blur-2xl rounded-[32px] shadow-[0_40px_100px_rgba(0,0,0,1)] border border-white/10 p-3.5 flex flex-col items-center animate-in slide-in-from-bottom-6 duration-300 z-[9999] ring-1 ring-white/10 select-none touch-none"
                       onPointerDown={(e) => {
                         volumeDragStartYRef.current = e.clientY;
                         volumeDragStartVolRef.current = masterVolume;

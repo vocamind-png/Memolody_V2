@@ -990,7 +990,9 @@ export class MusicEngine {
       // 2. OR the track mode is 'vocal' but NO vocal layer is currently loaded for it
       //    (either via Tone.Player or HTMLAudioElement)
       const isVocalMode = this.trackModes.get(event.trackId) === 'vocal';
-      const hasVocalLayer = this.trackVocalLayers.has(event.trackId) || this.vocalAudioElements.has(event.trackId);
+      const audioEl = this.vocalAudioElements.get(event.trackId);
+      const hasRealAudio = audioEl && audioEl.src && !audioEl.src.startsWith('data:');
+      const hasVocalLayer = this.trackVocalLayers.has(event.trackId) || hasRealAudio;
       
       if (!isVocalMode || !hasVocalLayer) {
         const sampler = this.trackSamplers.get(event.trackId);

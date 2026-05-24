@@ -27,7 +27,7 @@ const SOLFEGE_MAP: Record<string, string> = {
   "fa":  "f aa",   "fah": "f aa",
   "sol": "s ow l", "soh": "s ow",
   "la":  "l aa",   "lah": "l aa",
-  "ti":  "t iy",   "si":  "s iy",
+  "ti":  "th iy",   "si":  "s iy",
   "di":  "d iy",
   "ri":  "r iy",
   "fi":  "f iy",
@@ -44,7 +44,7 @@ const SOLFEGE_MAP: Record<string, string> = {
   "tu":  "t uw",
   "ah":  "aa",     "oh":  "ow",    "ee":  "iy",
   "d": "d ow", "r": "r ey", "m": "m iy",
-  "f": "f aa", "s": "s ow l", "l": "l aa", "t": "t iy",
+  "f": "f aa", "s": "s ow l", "l": "l aa", "t": "th iy",
   "ma": "m aa", "sa": "s aa", "ta": "t aa",
   "ga": "g aa", "pa": "p aa", "dha": "dh aa", "ni": "n iy",
 
@@ -136,6 +136,9 @@ export class ClientSvsEngine {
   private maxDepth = 1.0;
   private isLoaded = false;
   private activeVoiceId = '';
+  private lastLoadedFiles: VoiceModelFiles | null = null;
+  private forceWasm = false;
+  private actualProvider: 'webgpu' | 'wasm' = 'wasm';
 
   constructor() {}
 
@@ -227,10 +230,11 @@ export class ClientSvsEngine {
     files: VoiceModelFiles,
     onProgress: (state: SvsEngineProgress) => void
   ): Promise<void> {
-    if (this.isLoaded && this.activeVoiceId === voiceId) {
+    if (this.isLoaded && this.activeVoiceId === voiceId && !this.forceWasm) {
       onProgress({ stage: 'ready', message: 'Voice already loaded', progress: 100 });
       return;
     }
+    this.lastLoadedFiles = files;
 
     const ort = getOrt();
     if (!ort) {
@@ -317,25 +321,31 @@ export class ClientSvsEngine {
       // 2. Initialize sessions
       onProgress({ stage: 'initializing', message: 'Initializing Neural Engine...', progress: 85 });
 
-      const hasWebGPU = typeof navigator !== 'undefined' && 'gpu' in navigator;
+      const hasWebGPU = typeof navigator !== 'undefined' && 'gpu' in navigator && !this.forceWasm;
       let sessionOptions = {
         executionProviders: hasWebGPU ? ['webgpu', 'wasm'] : ['wasm'],
       };
 
-      console.log(`[ClientSvsEngine] WebGPU support: ${hasWebGPU}. Using providers:`, sessionOptions.executionProviders);
+      console.log(`[ClientSvsEngine] WebGPU support: ${hasWebGPU} (forceWasm=${this.forceWasm}). Using providers:`, sessionOptions.executionProviders);
 
       try {
-        console.log('[ClientSvsEngine] Creating Acoustic Inference Session (Attempting preferred execution provider)');
-        this.acousticSession = await ort.InferenceSession.create(new Uint8Array(acousticBuffer), sessionOptions);
-        
-        console.log('[ClientSvsEngine] Creating Vocoder Inference Session (Attempting preferred execution provider)');
-        this.vocoderSession = await ort.InferenceSession.create(new Uint8Array(vocoderBuffer), sessionOptions);
+        if (hasWebGPU) {
+          console.log('[ClientSvsEngine] Creating Acoustic Inference Session (Attempting preferred execution provider)');
+          this.acousticSession = await ort.InferenceSession.create(new Uint8Array(acousticBuffer), sessionOptions);
+          
+          console.log('[ClientSvsEngine] Creating Vocoder Inference Session (Attempting preferred execution provider)');
+          this.vocoderSession = await ort.InferenceSession.create(new Uint8Array(vocoderBuffer), sessionOptions);
+          this.actualProvider = 'webgpu';
+        } else {
+          throw new Error('WebGPU disabled or forced off');
+        }
       } catch (gpuErr) {
-        console.warn('[ClientSvsEngine] WebGPU initialization failed, falling back to WebAssembly (WASM):', gpuErr);
+        console.warn('[ClientSvsEngine] WebGPU initialization failed or disabled, falling back to WebAssembly (WASM):', gpuErr);
         onProgress({ stage: 'initializing', message: 'Optimizing Neural Engine...', progress: 90 });
         
         // Force CPU WebAssembly fallback
         sessionOptions = { executionProviders: ['wasm'] };
+        this.actualProvider = 'wasm';
         
         this.acousticSession = await ort.InferenceSession.create(new Uint8Array(acousticBuffer), sessionOptions);
         this.vocoderSession = await ort.InferenceSession.create(new Uint8Array(vocoderBuffer), sessionOptions);
@@ -408,85 +418,104 @@ export class ClientSvsEngine {
       throw new Error('SVS Engine is not loaded. Call loadVoice() first.');
     }
 
-    const ort = getOrt();
-    const bpm = params?.bpm || 120.0;
-    const beatSec = 60.0 / bpm;
+    try {
+      const bpm = params?.bpm || 120.0;
+      const beatSec = 60.0 / bpm;
 
-    // 1. Sort and resolve polyphony by allocating notes to monophonic tracks
-    const sortedNotes = [...notes].sort((a, b) => a.startTime - b.startTime);
-    const tracks: Array<{ start: number; dur: number; note: NoteData }[]> = [];
-    
-    for (const n of sortedNotes) {
-      const start = n.startTime * beatSec;
-      const dur = Math.max(0.05, n.duration * beatSec);
-      let placed = false;
+      // 1. Sort and resolve polyphony by allocating notes to monophonic tracks
+      const sortedNotes = [...notes].sort((a, b) => a.startTime - b.startTime);
+      const tracks: Array<{ start: number; dur: number; note: NoteData }[]> = [];
       
-      for (const track of tracks) {
-        if (track.length === 0) {
-          track.push({ start, dur, note: n });
-          placed = true;
-          break;
+      for (const n of sortedNotes) {
+        const start = n.startTime * beatSec;
+        const dur = Math.max(0.05, n.duration * beatSec);
+        let placed = false;
+        
+        for (const track of tracks) {
+          if (track.length === 0) {
+            track.push({ start, dur, note: n });
+            placed = true;
+            break;
+          }
+          const lastNote = track[track.length - 1];
+          const lastEnd = lastNote.start + lastNote.dur;
+          if (start >= lastEnd - 0.01) {
+            track.push({ start, dur, note: n });
+            placed = true;
+            break;
+          }
         }
-        const lastNote = track[track.length - 1];
-        const lastEnd = lastNote.start + lastNote.dur;
-        if (start >= lastEnd - 0.01) {
-          track.push({ start, dur, note: n });
-          placed = true;
-          break;
+        if (!placed) {
+          tracks.push([{ start, dur, note: n }]);
         }
       }
-      if (!placed) {
-        tracks.push([{ start, dur, note: n }]);
-      }
-    }
 
-    console.log(`[ClientSvsEngine] Synthesizing ${tracks.length} tracks...`);
+      console.log(`[ClientSvsEngine] Synthesizing ${tracks.length} tracks...`);
 
-    // 2. Synthesize each track sequentially
-    const trackAudios: Float32Array[] = [];
-    for (let tIdx = 0; tIdx < tracks.length; tIdx++) {
-      const track = tracks[tIdx];
-      const audio = await this.synthesizeTrack(track, params);
-      if (audio) {
+      // 2. Synthesize each track sequentially
+      const trackAudios: Float32Array[] = [];
+      for (let tIdx = 0; tIdx < tracks.length; tIdx++) {
+        const track = tracks[tIdx];
+        const audio = await this.synthesizeTrack(track, params);
+        if (!audio) {
+          throw new Error(`Inference returned empty audio for track ${tIdx}`);
+        }
         trackAudios.push(audio);
       }
-    }
 
-    if (trackAudios.length === 0) {
-      throw new Error('No audio was synthesized from note list');
-    }
-
-    // 3. Mix tracks together
-    let maxLen = 0;
-    for (const audio of trackAudios) {
-      if (audio.length > maxLen) maxLen = audio.length;
-    }
-
-    const mixedAudio = new Float32Array(maxLen);
-    for (const audio of trackAudios) {
-      for (let i = 0; i < audio.length; i++) {
-        mixedAudio[i] += audio[i];
+      if (trackAudios.length === 0) {
+        throw new Error('No audio was synthesized from note list');
       }
-    }
 
-    // Normalize mixed audio if polyphonic
-    if (trackAudios.length > 1) {
-      let peak = 0;
-      for (let i = 0; i < mixedAudio.length; i++) {
-        const absVal = Math.abs(mixedAudio[i]);
-        if (absVal > peak) peak = absVal;
+      // 3. Mix tracks together
+      let maxLen = 0;
+      for (const audio of trackAudios) {
+        if (audio.length > maxLen) maxLen = audio.length;
       }
-      if (peak > 1.0) {
-        for (let i = 0; i < mixedAudio.length; i++) {
-          mixedAudio[i] = (mixedAudio[i] / peak) * 0.95;
+
+      const mixedAudio = new Float32Array(maxLen);
+      for (const audio of trackAudios) {
+        for (let i = 0; i < audio.length; i++) {
+          mixedAudio[i] += audio[i];
         }
       }
-    }
 
-    // 4. Encode as WAV Blob
-    console.log(`[ClientSvsEngine] Encoding PCM buffer to WAV: ${mixedAudio.length} samples`);
-    const wavBlob = this.encodeWAV(mixedAudio, this.sr);
-    return wavBlob;
+      // Normalize mixed audio if polyphonic
+      if (trackAudios.length > 1) {
+        let peak = 0;
+        for (let i = 0; i < mixedAudio.length; i++) {
+          const absVal = Math.abs(mixedAudio[i]);
+          if (absVal > peak) peak = absVal;
+        }
+        if (peak > 1.0) {
+          for (let i = 0; i < mixedAudio.length; i++) {
+            mixedAudio[i] = (mixedAudio[i] / peak) * 0.95;
+          }
+        }
+      }
+
+      // 4. Encode as WAV Blob
+      console.log(`[ClientSvsEngine] Encoding PCM buffer to WAV: ${mixedAudio.length} samples`);
+      const wavBlob = this.encodeWAV(mixedAudio, this.sr);
+      return wavBlob;
+
+    } catch (synthErr) {
+      if (this.actualProvider === 'webgpu' && this.lastLoadedFiles) {
+        console.warn('[ClientSvsEngine] ⚠️ Synthesis failed on WebGPU. Falling back to CPU (WASM) and retrying...', synthErr);
+        
+        // Force WASM mode
+        this.forceWasm = true;
+        this.actualProvider = 'wasm';
+        
+        // Reload sessions using CPU/WASM (with a dummy progress reporter)
+        await this.loadVoice(this.activeVoiceId, this.lastLoadedFiles, () => {});
+        
+        // Retry synthesis recursively (now under WASM)
+        return await this.synthesize(notes, params);
+      }
+      // If it failed under WASM as well, propagate error
+      throw synthErr;
+    }
   }
 
   /**

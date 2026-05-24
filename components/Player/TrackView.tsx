@@ -597,22 +597,22 @@ const TrackView: React.FC<TrackViewProps> = ({ song, musicXml, tracks, setTracks
           </div>
         </div>
 
-        <div className="w-full max-w-[calc(100vw-32px)] md:max-w-[580px] bg-white shadow-[0_20px_60px_rgba(0,0,0,0.9)] rounded-full h-[52px] flex items-center px-3 pointer-events-auto relative">
+        <div className="w-full max-w-[calc(100vw-32px)] md:max-w-[580px] bg-white shadow-[0_20px_60px_rgba(0,0,0,0.9)] rounded-full h-[60px] flex items-center px-3 pointer-events-auto relative">
           <div className="flex-[2] flex items-center justify-start gap-0.5 pr-2 border-r border-zinc-100">
-            <button onClick={() => { const targetWidth = isMixerOpen ? 0 : 200; setMixerWidth(targetWidth); setIsMixerOpen(!isMixerOpen); }} className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${isMixerOpen ? 'bg-zinc-100 text-black shadow-inner' : 'text-zinc-300 hover:text-black hover:bg-zinc-50'}`}><Sliders size={14} /></button>
-            <button onClick={() => musicEngine.setTransportSeconds(0)} className="w-8 h-8 flex items-center justify-center text-zinc-300 hover:text-black active:scale-90 transition-all"><SkipBack size={18} fill="currentColor" /></button>
+            <button onClick={() => { const targetWidth = isMixerOpen ? 0 : 200; setMixerWidth(targetWidth); setIsMixerOpen(!isMixerOpen); }} className={`w-9 h-9 rounded-full flex items-center justify-center transition-all ${isMixerOpen ? 'bg-zinc-100 text-black shadow-inner' : 'text-zinc-300 hover:text-black hover:bg-zinc-50'}`}><Sliders size={16} /></button>
+            <button onClick={() => musicEngine.setTransportSeconds(0)} className="w-9 h-9 flex items-center justify-center text-zinc-300 hover:text-black active:scale-90 transition-all"><SkipBack size={20} fill="currentColor" /></button>
             <div className="relative ml-0.5">
               <div className={`absolute inset-0 bg-[#6366f1]/30 blur-md rounded-full transition-opacity duration-500 ${isPlaying ? 'opacity-100' : 'opacity-0'}`} />
-              <button onClick={handleTogglePlay} className={`relative w-[38px] h-[38px] rounded-full flex items-center justify-center text-white transition-all active:scale-90 bg-gradient-to-br from-[#6366f1] to-indigo-700 shadow-[0_4px_15px_rgba(99,102,241,0.4)] hover:brightness-110`}>
-                {isPlaying ? <Pause size={18} fill="white" /> : <Play size={18} fill="white" className="ml-0.5" />}
+              <button onClick={handleTogglePlay} className={`relative w-[46px] h-[46px] rounded-full flex items-center justify-center text-white transition-all active:scale-90 bg-gradient-to-br from-[#6366f1] to-indigo-700 shadow-[0_4px_15px_rgba(99,102,241,0.4)] hover:brightness-110`}>
+                {isPlaying ? <Pause size={22} fill="white" /> : <Play size={22} fill="white" className="ml-0.5" />}
               </button>
             </div>
           </div>
-          <div className="flex-[5.5] h-[38px] bg-[#0a0a0c] rounded-full flex items-center border border-black shadow-[inset_0_2px_8px_rgba(0,0,0,0.8)] overflow-hidden mx-1.5">
-            <div className="flex-1 h-full border-r border-white/5 flex items-center justify-center scale-90"><KeyTransposeDisplay keySig={song?.key || 'C'} transpose={transpose} onTransposeChange={setTranspose} /></div>
-            <div className="flex-1 h-full border-r border-white/5 flex items-center justify-center scale-90"><BpmDisplay bpm={currentBpm} onBpmChange={(b) => { setCurrentBpm(b); musicEngine.setBpm(b); }} /></div>
-            <div className="flex-[0.5] h-full border-r border-white/5 flex items-center justify-center scale-75"><TimeSigDisplay beats={parsedData.timeSignature.beats} beatType={parsedData.timeSignature.beatType} /></div>
-            <div className="flex-[1.2] h-full flex items-center justify-center scale-90"><BarBeatPositionDisplay bar={currentBar} beat={currentBeat} onSeek={(bar) => musicEngine.setTransportSeconds((bar - 1) * beatsPerMeasure * 60 / currentBpm)} /></div>
+          <div className="flex-[5.5] h-[44px] bg-[#0a0a0c] rounded-full flex items-center border border-black shadow-[inset_0_2px_8px_rgba(0,0,0,0.8)] overflow-hidden mx-1.5">
+            <div className="flex-1 h-full border-r border-white/5 flex items-center justify-center scale-[0.95]"><KeyTransposeDisplay keySig={song?.key || 'C'} transpose={transpose} onTransposeChange={setTranspose} /></div>
+            <div className="flex-1 h-full border-r border-white/5 flex items-center justify-center scale-[0.95]"><BpmDisplay bpm={currentBpm} onBpmChange={(b) => { setCurrentBpm(b); musicEngine.setBpm(b); }} /></div>
+            <div className="flex-[0.5] h-full border-r border-white/5 flex items-center justify-center scale-90"><TimeSigDisplay beats={parsedData.timeSignature.beats} beatType={parsedData.timeSignature.beatType} /></div>
+            <div className="flex-[1.2] h-full flex items-center justify-center scale-[0.95]"><BarBeatPositionDisplay bar={currentBar} beat={currentBeat} onSeek={(bar) => musicEngine.setTransportSeconds((bar - 1) * beatsPerMeasure * 60 / currentBpm)} /></div>
           </div>
           <div className="flex-[2.5] flex items-center justify-end gap-1 pl-1 relative">
             <button onClick={() => setIsRecording(!isRecording)} className={`w-9 h-9 border rounded-full flex flex-col items-center justify-center group active:scale-95 transition-all ${isRecording ? 'bg-rose-50 border-rose-200 text-rose-500 shadow-[0_0_12px_rgba(244,63,94,0.2)]' : 'bg-[#fbfbfb] border-zinc-100 text-zinc-300 hover:text-rose-400 hover:border-rose-100'}`}>

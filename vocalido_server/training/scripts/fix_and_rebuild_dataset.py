@@ -43,7 +43,7 @@ SOLFEGE_MAP = {
     "fa":  "f ae", "fah": "f ae",
     "sol": "s ow l", "soh": "s ow",
     "la":  "l ah", "lah": "l ah",
-    "ti":  "t iy", "tee": "t iy", "si": "s iy",
+    "ti":  "th iy", "tee": "th iy", "si": "s iy",
     # British Flats (Curwen)
     "taw": "t ao", "law": "l ao", "saw": "s ao",
     "maw": "m ao", "raw": "r ao",
