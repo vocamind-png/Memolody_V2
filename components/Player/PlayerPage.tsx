@@ -345,69 +345,6 @@ const PlayerPage: React.FC<{
   const [hideLoadBanner, setHideLoadBanner] = useState(false);
   const [isServerOnline, setIsServerOnline] = useState(false);
 
-  // Auto-load voice model in the background when active voice or engine changes
-  useEffect(() => {
-    if (svsEngine !== 'browser-ai') {
-      setIsModelLoading(false);
-      return;
-    }
-    
-    // Skip preloading if the server is offline to prevent hanging requests from blocking the user
-    if (!isServerOnline) {
-      console.log('[Preload] SVS Server is offline, skipping auto-preload.');
-      setIsModelLoading(false);
-      return;
-    }
-
-    const selectedVoice = voiceEngines.find(v => v.id === activeEngineId);
-    if (!selectedVoice || !selectedVoice.model_files) {
-      return;
-    }
-
-    let active = true;
-    const preloadModel = async () => {
-      try {
-        setIsModelLoading(true);
-        setHideLoadBanner(false); // Reset dismissal on model change
-        setModelLoadStatus('Checking cache / downloading model...');
-        setModelLoadProgress(0);
-
-        const modelFiles = {
-          acoustic: getFetchUrl(selectedVoice.model_files.acoustic),
-          vocoder: getFetchUrl(selectedVoice.model_files.vocoder),
-          dictionary: selectedVoice.model_files.dictionary ? getFetchUrl(selectedVoice.model_files.dictionary) : undefined,
-          phonemes: selectedVoice.model_files.phonemes ? getFetchUrl(selectedVoice.model_files.phonemes) : undefined,
-          embeds: selectedVoice.model_files.embeds ? Object.keys(selectedVoice.model_files.embeds).reduce((acc, key) => {
-            if (selectedVoice.model_files?.embeds?.[key]) {
-              acc[key] = getFetchUrl(selectedVoice.model_files.embeds[key]);
-            }
-            return acc;
-          }, {} as Record<string, string>) : undefined
-        };
-
-        await clientSvsEngine.loadVoice(selectedVoice.id, modelFiles, (prog) => {
-          if (active) {
-            setModelLoadStatus(prog.message);
-            setModelLoadProgress(prog.progress);
-            if (prog.stage === 'ready') {
-              setIsModelLoading(false);
-            }
-          }
-        });
-      } catch (err) {
-        console.error('[Preload] Failed to preload voice model:', err);
-        if (active) {
-          setIsModelLoading(false);
-        }
-      }
-    };
-
-    preloadModel();
-
-    return () => {
-      active = false;
-    };
-  }, [activeEngineId, voiceEngines, svsEngine, isServerOnline]);
 
   // Debug Log Catcher State
   const [debugLogs, setDebugLogs] = useState<{type: 'log' | 'warn' | 'error', text: string, time: string}[]>([]);
@@ -553,6 +490,70 @@ const PlayerPage: React.FC<{
     } catch (e) {}
     return 'lotte_v_ai_dol';
   });
+
+  // Auto-load voice model in the background when active voice or engine changes
+  useEffect(() => {
+    if (svsEngine !== 'browser-ai') {
+      setIsModelLoading(false);
+      return;
+    }
+    
+    // Skip preloading if the server is offline to prevent hanging requests from blocking the user
+    if (!isServerOnline) {
+      console.log('[Preload] SVS Server is offline, skipping auto-preload.');
+      setIsModelLoading(false);
+      return;
+    }
+
+    const selectedVoice = voiceEngines.find(v => v.id === activeEngineId);
+    if (!selectedVoice || !selectedVoice.model_files) {
+      return;
+    }
+
+    let active = true;
+    const preloadModel = async () => {
+      try {
+        setIsModelLoading(true);
+        setHideLoadBanner(false); // Reset dismissal on model change
+        setModelLoadStatus('Checking cache / downloading model...');
+        setModelLoadProgress(0);
+
+        const modelFiles = {
+          acoustic: getFetchUrl(selectedVoice.model_files.acoustic),
+          vocoder: getFetchUrl(selectedVoice.model_files.vocoder),
+          dictionary: selectedVoice.model_files.dictionary ? getFetchUrl(selectedVoice.model_files.dictionary) : undefined,
+          phonemes: selectedVoice.model_files.phonemes ? getFetchUrl(selectedVoice.model_files.phonemes) : undefined,
+          embeds: selectedVoice.model_files.embeds ? Object.keys(selectedVoice.model_files.embeds).reduce((acc, key) => {
+            if (selectedVoice.model_files?.embeds?.[key]) {
+              acc[key] = getFetchUrl(selectedVoice.model_files.embeds[key]);
+            }
+            return acc;
+          }, {} as Record<string, string>) : undefined
+        };
+
+        await clientSvsEngine.loadVoice(selectedVoice.id, modelFiles, (prog) => {
+          if (active) {
+            setModelLoadStatus(prog.message);
+            setModelLoadProgress(prog.progress);
+            if (prog.stage === 'ready') {
+              setIsModelLoading(false);
+            }
+          }
+        });
+      } catch (err) {
+        console.error('[Preload] Failed to preload voice model:', err);
+        if (active) {
+          setIsModelLoading(false);
+        }
+      }
+    };
+
+    preloadModel();
+
+    return () => {
+      active = false;
+    };
+  }, [activeEngineId, voiceEngines, svsEngine, isServerOnline]);
 
   // Stem Solo/Mute State for polyphonic choral lines
   const [soloedStems, setSoloedStems] = useState<Record<string, number | null>>({});
