@@ -646,9 +646,7 @@ const PlayerPage: React.FC<{
       
       // Unlock all active vocal audio elements synchronously inside the user gesture
       tracks.forEach(t => {
-        if (t.mode === 'vocal') {
-          musicEngine.unlockVocalAudio(t.id);
-        }
+        musicEngine.unlockVocalAudio(t.id);
       });
     } catch (err) {
       console.warn("[PlayerPage] Direct context resume/unlock failed:", err);

@@ -168,6 +168,36 @@ const App: React.FC = () => {
       try {
         await songStorage.init();
 
+        // 🚨 AUTO-CLEAR CACHE ON NEW BUILD/REINSTALL
+        const APP_VERSION = '1.6.0-build-20260525-0033';
+        const savedVersion = localStorage.getItem('memo_app_version');
+        if (savedVersion !== APP_VERSION) {
+          console.log(`[App] 🔄 New Build/Reinstall detected: Wiping all cached data (old=${savedVersion}, new=${APP_VERSION})`);
+          await songStorage.deleteAllSongs();
+          
+          // Clear all localStorage keys
+          const keysToRemove: string[] = [];
+          for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && (
+              key.startsWith('tracks_state_') ||
+              key.startsWith('memo_render_history_') ||
+              key.startsWith('active_render_key_') ||
+              key.startsWith('memo_render_u') ||
+              key.startsWith('memo_selected_song_id') ||
+              key.startsWith('memo_current_view') ||
+              key.startsWith('memo_active_card')
+            )) {
+              keysToRemove.push(key);
+            }
+          }
+          keysToRemove.forEach(k => localStorage.removeItem(k));
+          localStorage.setItem('memo_app_version', APP_VERSION);
+          
+          // Force clear sessionStorage too so session checks run fresh
+          sessionStorage.removeItem('memo_session_active');
+        }
+
         // 🚨 Free Tier Session Wiping: Clear songs and caches if free user in new session
         const storedTier = typeof window !== 'undefined' ? localStorage.getItem('mock_membership_tier') : 'free';
         const isFreeInit = !storedTier || storedTier === 'free';

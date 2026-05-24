@@ -461,21 +461,22 @@ export class MusicEngine {
       audio.crossOrigin = 'anonymous';
       this.vocalAudioElements.set(trackId, audio);
     }
-    // ONLY play and pause if it's the silent dummy source to unlock it!
-    // If it's a real song URL, DO NOT play-pause it here because the main play loop will start it synchronously!
-    const isDummy = audio.src === '' || audio.src.startsWith('data:');
-    if (isDummy) {
-      if (audio.src === '') {
-        audio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==';
-      }
-      audio.play().then(() => {
+    
+    // Always play and pause to unlock under direct user gesture, even if it has a real source URL
+    const hasRealSource = audio.src && !audio.src.startsWith('data:');
+    if (!audio.src) {
+      audio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==';
+    }
+    
+    console.log(`[MusicEngine] 🔓 Synchronously unlocking vocal HTMLAudio for ${trackId} (hasRealSource=${hasRealSource})`);
+    const playPromise = audio.play();
+    if (playPromise !== undefined) {
+      playPromise.then(() => {
         audio.pause();
-        console.log(`[MusicEngine] 🔓 HTMLAudio unlocked successfully for ${trackId} (dummy source)`);
+        console.log(`[MusicEngine] 🔓 HTMLAudio unlocked successfully for ${trackId}`);
       }).catch(e => {
         console.warn(`[MusicEngine] ⚠️ HTMLAudio unlock failed/deferred for ${trackId}:`, e);
       });
-    } else {
-      console.log(`[MusicEngine] ℹ️ HTMLAudio already has real source, skipping unlock play-pause for ${trackId}: ${audio.src.substring(0, 60)}`);
     }
   }
 
