@@ -346,9 +346,7 @@ const PlayerPage: React.FC<{
   const [isServerOnline, setIsServerOnline] = useState(false);
 
 
-  // Debug Log Catcher State
-  const [debugLogs, setDebugLogs] = useState<{type: 'log' | 'warn' | 'error', text: string, time: string}[]>([]);
-  const [showDebugDrawer, setShowDebugDrawer] = useState(false);
+  // Debug Log Catcher State removed
 
   useEffect(() => {
     const originalLog = console.log;
@@ -393,8 +391,6 @@ const PlayerPage: React.FC<{
       }).join(' ');
       
       const time = new Date().toLocaleTimeString();
-      setDebugLogs(prev => [...prev.slice(-199), { type, text, time }]);
-
       logQueue.push({ type, message: text });
 
       if (!flushTimeout && !isSending) {
@@ -1595,7 +1591,7 @@ const PlayerPage: React.FC<{
       if (renderAbortControllerRef.current === controller) {
         controller.abort();
       }
-    }, 300000);
+    }, 90000);
     const noteCount = parsedData.notes.filter(n => n.trackId === primaryTrackId).length;
     const hasGpu = typeof navigator !== 'undefined' && !!(navigator as any).gpu;
     let estimatedDuration = 10;
@@ -2030,17 +2026,17 @@ const PlayerPage: React.FC<{
       }, 3000);
       cleanupLocal();
     } finally {
-      // Safety: always ensure render state is reset after max 120s
+      // Safety: always ensure render state is reset after max 90s
       setTimeout(() => {
         setIsRenderingVocal(prev => {
           if (prev) {
-            console.warn('[Vocalido] ⚠️ Safety timeout: force-resetting render state after 300s');
+            console.warn('[Vocalido] ⚠️ Safety timeout: force-resetting render state after 90s');
             return false;
           }
           return prev;
         });
         setRenderStatusText('');
-      }, 300000);
+      }, 90000);
     }
   };
 
@@ -2874,7 +2870,7 @@ const PlayerPage: React.FC<{
                 {/* Center Content */}
                 <div className="absolute inset-0 flex flex-col items-center justify-center text-white">
                   <span className="text-xl font-black tracking-tighter tabular-nums drop-shadow-lg">
-                    {renderProgress < 99.9 ? renderProgress.toFixed(1) : "99.9"}%
+                    {renderProgress >= 99.9 ? "100" : renderProgress.toFixed(1)}%
                   </span>
                   <div className="flex items-center gap-1 mt-1 bg-white/10 px-2 py-0.5 rounded-full backdrop-blur-sm border border-white/10">
                     <span className="w-1 h-1 bg-cyan-400 rounded-full animate-pulse" />
@@ -2900,56 +2896,10 @@ const PlayerPage: React.FC<{
                     {renderError ? (
                       <span className="text-rose-400 truncate max-w-[200px]">{renderError}</span>
                     ) : (
-                      <div className="flex flex-col sm:flex-row items-center gap-1.5 sm:gap-2">
-                        <div className="flex items-center gap-1.5">
-                          <span>VOICE: <span className="text-cyan-400">{(activeVoiceName || 'Vocalido Soprano').toUpperCase()}</span></span>
-                          <span className="text-white/30 hidden sm:inline">•</span>
-                        </div>
-                        
-                        <div className="flex items-center gap-1.5">
-                          {/* SVS Engine Selector */}
-                          <div className="flex items-center space-x-1">
-                            <span className="text-[6.5px] text-gray-400">⚡ ENGINE:</span>
-                            <select 
-                              value={svsEngine} 
-                              onChange={(e) => {
-                                const mode = e.target.value as 'vocalido' | 'browser-ai';
-                                setSvsEngine(mode);
-                                localStorage.setItem('vocalido_svs_engine', mode);
-                              }}
-                              className="bg-zinc-800 border border-zinc-700 text-white text-[7.5px] rounded px-1 py-0.2 outline-none focus:border-cyan-400 cursor-pointer"
-                            >
-                              <option value="browser-ai">Browser (WebGPU)</option>
-                              <option value="vocalido">Server (Hybrid)</option>
-                            </select>
-                          </div>
-
-                          <span className="text-white/20">•</span>
-
-                          {/* Engine Selection Dropdown */}
-                          <div className="flex items-center space-x-1">
-                            <span className="text-[6.5px] text-gray-400">🎤 MODEL:</span>
-                            <select 
-                              value={activeEngineId} 
-                              onChange={handleEngineChange}
-                              className="bg-zinc-800 border border-zinc-700 text-white text-[7.5px] rounded px-1 py-0.2 outline-none focus:border-cyan-400 cursor-pointer"
-                            >
-                              {voiceEngines.length > 0 ? (
-                                voiceEngines.map(v => (
-                                  <option key={v.id} value={v.id}>{v.name} ({v.lang})</option>
-                                ))
-                              ) : (
-                                <>
-                                  <option value="lotte_v_ai_dol">Lotte V Model (en)</option>
-                                  <option value="default">Native English (Default) (en)</option>
-                                </>
-                              )}
-                            </select>
-                          </div>
-                          
-                          <span className="text-white/20">•</span>
-                          <span>SYS: <span className="text-emerald-400">{(activeLyricMode || 'Standard').toUpperCase()}</span></span>
-                        </div>
+                      <div className="flex items-center gap-1.5 sm:gap-2">
+                        <span>VOICE: <span className="text-cyan-400">{(activeVoiceName || 'Vocalido Soprano').toUpperCase()}</span></span>
+                        <span className="text-white/30">•</span>
+                        <span>SYS: <span className="text-emerald-400">{(activeLyricMode || 'Standard').toUpperCase()}</span></span>
                       </div>
                     )}
                   </span>
@@ -3131,49 +3081,96 @@ const PlayerPage: React.FC<{
               </div>
             </div>
 
-            <div className="w-full max-w-[calc(100vw-8px)] md:max-w-[640px] bg-white shadow-[0_20px_60px_rgba(0,0,0,0.9)] rounded-full h-[38px] flex items-center px-1 md:px-2.5 pointer-events-auto relative">
-              <div className="flex-none flex items-center justify-start gap-0.5 pr-0.5 md:pr-1.5 border-r border-zinc-100">
-                <button onClick={() => setShowMixer(!showMixer)} className={`w-5.5 h-5.5 md:w-6 md:h-6 rounded-full flex items-center justify-center transition-all ${showMixer ? 'bg-zinc-100 text-black' : 'text-zinc-300 hover:text-black'}`}><SlidersHorizontal size={11} /></button>
-                <button onClick={() => {
-                  if (musicEngine.transportState !== 'stopped') {
-                    musicEngine.pause();
-                  }
-                  musicEngine.setTransportSeconds(0);
-                  musicEngine.currentMeasure = '';
-                  musicEngine.currentNoteTime = 0;
-                  setIsPlaying(false);
-                }} className="w-5.5 h-5.5 md:w-6 md:h-6 flex items-center justify-center text-zinc-300 hover:text-black"><SkipBack size={12} fill="currentColor" /></button>
-                <div className="relative ml-0.5 md:ml-1">
-                  <div className={`absolute inset-0 bg-cyan-400/20 blur-md rounded-full transition-opacity ${isPlaying ? 'opacity-100' : 'opacity-0'}`} />
-                  <button 
-                    onClick={handleTogglePlay} 
-                    disabled={isAudioLoading || isRenderingVocal} 
-                    className={`relative w-6.5 h-6.5 md:w-[30px] md:h-[30px] rounded-full flex items-center justify-center text-white transition-all 
-                      ${isRenderingVocal ? 'bg-zinc-800 shadow-none grayscale' : 'bg-[#00e5ff] shadow-[0_4px_15px_rgba(0,229,255,0.4)]'}`}
+            <div className="w-full max-w-[calc(100vw-8px)] md:max-w-[640px] bg-white shadow-[0_20px_60px_rgba(0,0,0,0.9)] rounded-full h-[48px] flex items-center justify-between px-2 md:px-3 pointer-events-auto relative">
+              {/* LEFT GROUP: Mixer Toggle */}
+              <div className="flex items-center gap-1.5 border-r border-zinc-100 pr-1.5 md:pr-2.5">
+                <button
+                  onClick={() => setShowMixer(!showMixer)}
+                  className={`w-8 h-8 md:w-9 md:h-9 rounded-full flex items-center justify-center transition-all ${
+                    showMixer ? 'bg-zinc-100 text-black' : 'text-zinc-400 hover:text-black hover:bg-zinc-50'
+                  }`}
+                >
+                  <SlidersHorizontal size={14} />
+                </button>
+              </div>
+
+              {/* CENTER GROUP: Narrow LCD Display */}
+              <div className="flex-1 flex justify-center px-1">
+                <div className="w-[140px] sm:w-[160px] md:w-[190px] h-[30px] bg-[#0c0c0e] rounded-full flex items-center border border-black shadow-inner overflow-hidden">
+                  <div className="flex-1 h-full border-r border-white/5 flex items-center justify-center">
+                    <KeyTransposeDisplay keySig={parsedData.metadata.key || localSong.key} transpose={transpose} onTransposeChange={setTranspose} />
+                  </div>
+                  <div className="flex-1 h-full border-r border-white/5 flex items-center justify-center">
+                    <BpmDisplay bpm={currentBpm} onBpmChange={(b) => { setCurrentBpm(b); musicEngine.setBpm(b); }} />
+                  </div>
+                  <div className="flex-1 h-full flex items-center justify-center">
+                    <BarBeatPositionDisplay bar={currentBar} beat={currentBeat} onSeek={(bar) => musicEngine.setTransportSeconds((bar - 1) * beatsPerMeasure * 60 / currentBpm)} />
+                  </div>
+                </div>
+              </div>
+
+              {/* MIDDLE-RIGHT GROUP: Large Back and Play/Pause Controls */}
+              <div className="flex items-center gap-2 pl-1 pr-2 border-r border-zinc-100 md:pr-3">
+                {/* Back Button */}
+                <button
+                  onClick={() => {
+                    if (musicEngine.transportState !== 'stopped') {
+                      musicEngine.pause();
+                    }
+                    musicEngine.setTransportSeconds(0);
+                    musicEngine.currentMeasure = '';
+                    musicEngine.currentNoteTime = 0;
+                    setIsPlaying(false);
+                  }}
+                  className="w-8 h-8 md:w-9 md:h-9 rounded-full bg-zinc-100 hover:bg-zinc-200 text-zinc-700 hover:text-black flex items-center justify-center transition-all active:scale-95"
+                >
+                  <SkipBack size={15} fill="currentColor" />
+                </button>
+
+                {/* Play/Pause Button */}
+                <div className="relative">
+                  <div className={`absolute inset-0 bg-[#00e5ff]/20 blur-md rounded-full transition-opacity ${isPlaying ? 'opacity-100' : 'opacity-0'}`} />
+                  <button
+                    onClick={handleTogglePlay}
+                    disabled={isAudioLoading || isRenderingVocal}
+                    className={`relative w-9.5 h-9.5 md:w-[40px] md:h-[40px] rounded-full flex items-center justify-center text-white transition-all active:scale-95
+                      ${isRenderingVocal ? 'bg-zinc-800 shadow-none grayscale' : 'bg-[#00e5ff] hover:bg-[#00c8e0] shadow-[0_4px_15px_rgba(0,229,255,0.4)]'}`}
                   >
-                    {isAudioLoading ? <RefreshCw size={12} className="animate-spin text-white/50" /> : (isPlaying ? <Pause size={14} fill="white" /> : <Play size={14} fill="white" className="ml-0.5" />)}
+                    {isAudioLoading ? (
+                      <RefreshCw size={15} className="animate-spin text-white/50" />
+                    ) : isPlaying ? (
+                      <Pause size={18} fill="white" />
+                    ) : (
+                      <Play size={18} fill="white" className="ml-0.5" />
+                    )}
                   </button>
                 </div>
               </div>
 
-              <div className="flex-1 h-[28px] bg-[#0c0c0e] rounded-full flex items-center border border-black shadow-inner overflow-hidden mx-0.5 md:mx-2.5">
-                <div className="flex-1 h-full border-r border-white/5 flex items-center justify-center"><KeyTransposeDisplay keySig={parsedData.metadata.key || localSong.key} transpose={transpose} onTransposeChange={setTranspose} /></div>
-                <div className="flex-1 h-full border-r border-white/5 flex items-center justify-center"><BpmDisplay bpm={currentBpm} onBpmChange={(b) => { setCurrentBpm(b); musicEngine.setBpm(b); }} /></div>
-                <div className="flex-1 h-full flex items-center justify-center"><BarBeatPositionDisplay bar={currentBar} beat={currentBeat} onSeek={(bar) => musicEngine.setTransportSeconds((bar - 1) * beatsPerMeasure * 60 / currentBpm)} /></div>
-              </div>
-
-              <div className="flex-none flex items-center justify-end gap-0.5 md:gap-1 pl-0.5 md:pl-1.5 relative">
-                <button onClick={() => setActiveCard(activeCard === 'score' ? 'pianoroll' : 'score')} className={`w-7 h-7 md:w-8 md:h-8 border rounded-full flex flex-col items-center justify-center group active:scale-95 transition-all ${activeCard === 'score' ? 'bg-[#fbfbfb] border-zinc-100 text-zinc-300' : 'bg-cyan-50 border-cyan-100 text-cyan-500'}`}>
-                  <Music size={10} className={activeCard === 'score' ? 'text-zinc-300' : 'text-cyan-500'} />
-                  <span className={`text-[4.5px] md:text-[5px] font-black uppercase mt-0.5 ${activeCard === 'score' ? 'text-zinc-400' : 'text-cyan-600'}`}>SCR</span>
+              {/* RIGHT GROUP: SCR (Score toggle) and Volume */}
+              <div className="flex-none flex items-center justify-end gap-1.5 pl-1.5 md:pl-2.5 relative">
+                <button
+                  onClick={() => setActiveCard(activeCard === 'score' ? 'pianoroll' : 'score')}
+                  className={`w-8 h-8 md:w-9 md:h-9 border rounded-full flex flex-col items-center justify-center group active:scale-95 transition-all ${
+                    activeCard === 'score' ? 'bg-[#fbfbfb] border-zinc-100 text-zinc-400' : 'bg-cyan-50 border-cyan-100 text-cyan-500'
+                  }`}
+                >
+                  <Music size={12} className={activeCard === 'score' ? 'text-zinc-400 group-hover:text-zinc-600' : 'text-cyan-500'} />
+                  <span className={`text-[5px] md:text-[5.5px] font-black uppercase mt-0.5 ${activeCard === 'score' ? 'text-zinc-400 group-hover:text-zinc-600' : 'text-cyan-600'}`}>
+                    SCR
+                  </span>
                 </button>
 
                 <div className="relative" ref={volumePopupRef}>
                   <button
                     onClick={() => setShowVolumeSlider(!showVolumeSlider)}
-                    className={`w-7 h-7 md:w-8 md:h-8 rounded-full flex items-center justify-center transition-all border-2 ${showVolumeSlider ? 'border-cyan-400 bg-cyan-50 text-cyan-600 shadow-[0_0_15px_rgba(0,229,255,0.4)]' : 'border-transparent text-zinc-300 hover:text-cyan-500'}`}
+                    className={`w-8 h-8 md:w-9 md:h-9 rounded-full flex items-center justify-center transition-all border ${
+                      showVolumeSlider
+                        ? 'border-cyan-400 bg-cyan-50 text-cyan-600 shadow-[0_0_15px_rgba(0,229,255,0.4)]'
+                        : 'border-transparent text-zinc-400 hover:text-cyan-500 hover:bg-zinc-50'
+                    }`}
                   >
-                    {masterVolume === 0 ? <VolumeX size={14} /> : <Volume2 size={16} className={showVolumeSlider ? 'text-cyan-600' : 'text-zinc-300'} />}
+                    {masterVolume === 0 ? <VolumeX size={15} /> : <Volume2 size={16} className={showVolumeSlider ? 'text-cyan-600' : 'text-zinc-400 hover:text-cyan-500'} />}
                   </button>
 
                   {showVolumeSlider && (
@@ -3390,86 +3387,7 @@ const PlayerPage: React.FC<{
         setEditingPlugin(null);
       }} />}
 
-      {/* Floating Debug Button */}
-      <button
-        onClick={() => setShowDebugDrawer(prev => !prev)}
-        className="fixed bottom-4 right-4 z-[9999] bg-zinc-800 hover:bg-zinc-700 text-white rounded-full w-10 h-10 shadow-lg border border-white/20 flex items-center justify-center pointer-events-auto transition-transform hover:scale-105 active:scale-95"
-        title="Toggle Debug Console"
-      >
-        <span className="text-[10px] font-bold text-red-400">DEBUG</span>
-      </button>
-
-      {/* Debug Drawer Panel */}
-      {showDebugDrawer && (
-        <div className="fixed bottom-0 left-0 right-0 h-[40vh] bg-[#0c0c0e] border-t border-white/10 z-[9998] flex flex-col font-mono text-xs text-zinc-300 pointer-events-auto shadow-2xl animate-in slide-in-from-bottom duration-250">
-          {/* Header */}
-          <div className="flex items-center justify-between px-4 py-2 bg-zinc-900 border-b border-white/10 shrink-0">
-            <div className="flex items-center gap-4">
-              <span className="font-bold text-cyan-400">🖥️ Memolody Audio & SVS System Logs</span>
-              <span className="text-[10px] text-zinc-500">
-                Context: <strong className={Tone.context.state === 'running' ? 'text-green-400' : 'text-yellow-400'}>{Tone.context.state}</strong>
-                {' | '}
-                Transport: <strong className="text-cyan-400">{musicEngine.transportState}</strong>
-                {' | '}
-                Time: <strong className="text-white">{musicEngine.transportSeconds.toFixed(2)}s</strong>
-                {' | '}
-                Audio Loading: <strong className={isAudioLoading ? 'text-yellow-400' : 'text-zinc-400'}>{String(isAudioLoading)}</strong>
-                {' | '}
-                Rendering Vocal: <strong className={isRenderingVocal ? 'text-red-400' : 'text-zinc-400'}>{String(isRenderingVocal)}</strong>
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <button 
-                onClick={() => {
-                  try {
-                    console.log("[Debug] Attempting manual Tone.js start/resume...");
-                    Tone.start();
-                    Tone.context.resume();
-                  } catch(e) {
-                    console.error("[Debug] Manual resume failed:", e);
-                  }
-                }} 
-                className="px-2 py-1 bg-cyan-600 hover:bg-cyan-500 text-white rounded text-[10px] font-bold"
-              >
-                Resume AudioContext
-              </button>
-              <button 
-                onClick={() => setDebugLogs([])} 
-                className="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white rounded text-[10px]"
-              >
-                Clear
-              </button>
-              <button 
-                onClick={() => setShowDebugDrawer(false)} 
-                className="p-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white rounded animate-none"
-              >
-                <X size={14} />
-              </button>
-            </div>
-          </div>
-
-          {/* Logs scroll area */}
-          <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-1 select-text">
-            {debugLogs.length === 0 ? (
-              <div className="text-zinc-600 italic">No logs captured yet... Try playing or rendering.</div>
-            ) : (
-              debugLogs.map((log, idx) => (
-                <div key={idx} className="flex items-start gap-2 leading-relaxed whitespace-pre-wrap border-b border-white/5 pb-1">
-                  <span className="text-[10px] text-zinc-500 shrink-0 select-none">[{log.time}]</span>
-                  <span className={`shrink-0 font-bold ${
-                    log.type === 'error' ? 'text-red-500' : log.type === 'warn' ? 'text-yellow-500' : 'text-cyan-500'
-                  }`}>
-                    [{log.type.toUpperCase()}]
-                  </span>
-                  <span className={log.type === 'error' ? 'text-red-400 font-medium' : log.type === 'warn' ? 'text-yellow-300' : 'text-zinc-300'}>
-                    {log.text}
-                  </span>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      )}
+      {/* Floating Debug Button and Drawer completely removed */}
     </div>
   );
 };
