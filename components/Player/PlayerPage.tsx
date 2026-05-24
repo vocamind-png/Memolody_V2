@@ -339,6 +339,65 @@ const PlayerPage: React.FC<{
   const [renderStatusText, setRenderStatusText] = useState('');
   const renderAbortControllerRef = useRef<AbortController | null>(null);
 
+  const [isModelLoading, setIsModelLoading] = useState(false);
+  const [modelLoadProgress, setModelLoadProgress] = useState(0);
+  const [modelLoadStatus, setModelLoadStatus] = useState('');
+
+  // Auto-load voice model in the background when active voice or engine changes
+  useEffect(() => {
+    if (svsEngine !== 'browser-ai') {
+      setIsModelLoading(false);
+      return;
+    }
+    const selectedVoice = voiceEngines.find(v => v.id === activeEngineId);
+    if (!selectedVoice || !selectedVoice.model_files) {
+      return;
+    }
+
+    let active = true;
+    const preloadModel = async () => {
+      try {
+        setIsModelLoading(true);
+        setModelLoadStatus('Checking cache / downloading model...');
+        setModelLoadProgress(0);
+
+        const modelFiles = {
+          acoustic: getFetchUrl(selectedVoice.model_files.acoustic),
+          vocoder: getFetchUrl(selectedVoice.model_files.vocoder),
+          dictionary: selectedVoice.model_files.dictionary ? getFetchUrl(selectedVoice.model_files.dictionary) : undefined,
+          phonemes: selectedVoice.model_files.phonemes ? getFetchUrl(selectedVoice.model_files.phonemes) : undefined,
+          embeds: selectedVoice.model_files.embeds ? Object.keys(selectedVoice.model_files.embeds).reduce((acc, key) => {
+            if (selectedVoice.model_files?.embeds?.[key]) {
+              acc[key] = getFetchUrl(selectedVoice.model_files.embeds[key]);
+            }
+            return acc;
+          }, {} as Record<string, string>) : undefined
+        };
+
+        await clientSvsEngine.loadVoice(selectedVoice.id, modelFiles, (prog) => {
+          if (active) {
+            setModelLoadStatus(prog.message);
+            setModelLoadProgress(prog.progress);
+            if (prog.stage === 'ready') {
+              setIsModelLoading(false);
+            }
+          }
+        });
+      } catch (err) {
+        console.error('[Preload] Failed to preload voice model:', err);
+        if (active) {
+          setIsModelLoading(false);
+        }
+      }
+    };
+
+    preloadModel();
+
+    return () => {
+      active = false;
+    };
+  }, [activeEngineId, voiceEngines, svsEngine]);
+
   // Debug Log Catcher State
   const [debugLogs, setDebugLogs] = useState<{type: 'log' | 'warn' | 'error', text: string, time: string}[]>([]);
   const [showDebugDrawer, setShowDebugDrawer] = useState(false);
@@ -1493,6 +1552,7 @@ const PlayerPage: React.FC<{
 
   const triggerVocalSynthesis = async (forceRender: boolean = false) => {
     if (isRenderingVocal) { console.warn('[Vocalido] ⛔ Render blocked: already rendering'); return; }
+    if (isModelLoading) { console.warn('[Vocalido] ⛔ Render blocked: vocal model is still loading in the background'); return; }
     if (!musicXml) { console.warn('[Vocalido] ⛔ Render blocked: no musicXml'); return; }
     if (!parsedData.notes.length) { console.warn('[Vocalido] ⛔ Render blocked: no notes parsed'); return; }
     if (tracks.length === 0) { console.warn('[Vocalido] ⛔ Render blocked: no tracks'); return; }
@@ -2145,15 +2205,20 @@ const PlayerPage: React.FC<{
           {/* Settings & Toggle Area */}
           <div className="flex items-center gap-1.5 pl-0.5">
             <button
+              disabled={isModelLoading}
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
                 triggerVocalSynthesis(true);
               }}
-              className="px-1.5 py-[1px] -m-0.5 rounded-full text-[6.5px] font-black uppercase tracking-widest bg-white/5 border border-white/10 transition-all text-[#00e5ff] hover:bg-[#00e5ff] hover:text-black shadow-[0_0_10px_rgba(0,229,255,0.2)]"
-              title="Force Fresh AI Render (Clear Cache) / Shortcut: Option+R"
+              className={`px-1.5 py-[1px] -m-0.5 rounded-full text-[6.5px] font-black uppercase tracking-widest border transition-all shadow-[0_0_10px_rgba(0,229,255,0.2)] ${
+                isModelLoading 
+                  ? 'bg-zinc-800 border-zinc-700 text-zinc-500 cursor-not-allowed shadow-none' 
+                  : 'bg-white/5 border-white/10 text-[#00e5ff] hover:bg-[#00e5ff] hover:text-black'
+              }`}
+              title={isModelLoading ? "Loading vocal models..." : "Force Fresh AI Render (Clear Cache) / Shortcut: Option+R"}
             >
-              Render
+              {isModelLoading ? "Loading..." : "Render"}
             </button>
             <button
               onClick={(e) => {
@@ -2717,6 +2782,42 @@ const PlayerPage: React.FC<{
             layoutBundle={layoutBundle}
           />
         </div>
+
+        {/* ── [VOCAL MODEL BACKGROUND AUTO-LOAD BANNER] ── */}
+        {isModelLoading && (
+          <div className="absolute inset-0 z-[4900] flex items-center justify-center bg-black/35 backdrop-blur-[2px] pointer-events-auto animate-in fade-in duration-300">
+            <div className="bg-rose-950/90 border border-rose-500/50 rounded-2xl p-4 flex flex-col items-center gap-3 text-center max-w-sm mx-4 backdrop-blur-xl shadow-[0_0_40px_rgba(244,63,94,0.3)]">
+              {/* Blinking Red Dot Icon */}
+              <div className="w-8 h-8 rounded-full bg-rose-500/20 border border-rose-500/50 flex items-center justify-center animate-pulse">
+                <span className="w-3.5 h-3.5 rounded-full bg-rose-500 animate-ping absolute" style={{ animationDuration: '2s' }} />
+                <span className="w-3.5 h-3.5 rounded-full bg-rose-600 relative" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <h3 className="text-rose-400 text-[10px] font-black uppercase tracking-wider animate-pulse">
+                  INITIALIZING SVS ENGINE
+                </h3>
+                <p className="text-white text-[11px] font-bold tracking-tight">
+                  Please wait...
+                </p>
+                <p className="text-zinc-400 text-[8.5px] mt-0.5">
+                  Downloading neural voice model to your device.
+                </p>
+              </div>
+              
+              {/* Progress Bar */}
+              <div className="w-48 bg-white/5 border border-white/10 rounded-full h-1.5 overflow-hidden mt-1">
+                <div 
+                  className="bg-rose-500 h-full transition-all duration-300 rounded-full shadow-[0_0_10px_rgba(244,63,94,0.5)]" 
+                  style={{ width: `${modelLoadProgress}%` }}
+                />
+              </div>
+              
+              <span className="text-[7.5px] font-black text-rose-400/80 tracking-widest uppercase">
+                {modelLoadStatus} ({modelLoadProgress}%)
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* ── [VOCALIDO RENDER OVERLAY] ── */}
         {isRenderingVocal && (
