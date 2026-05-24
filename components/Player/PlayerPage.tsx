@@ -1801,7 +1801,7 @@ const PlayerPage: React.FC<{
             setRenderProgress(Math.min(99.9, prog.progress));
           });
 
-          setRenderStatusText('Generating vocals (on-device GPU/CPU)...');
+          setRenderStatusText('Generating vocals...');
           const wavBlob = await clientSvsEngine.synthesize(notesToSynthesize, {
             bpm: actualBpm,
             formant_shift: 0,

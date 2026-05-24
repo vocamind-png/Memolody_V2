@@ -332,7 +332,7 @@ export class ClientSvsEngine {
         this.vocoderSession = await ort.InferenceSession.create(new Uint8Array(vocoderBuffer), sessionOptions);
       } catch (gpuErr) {
         console.warn('[ClientSvsEngine] WebGPU initialization failed, falling back to WebAssembly (WASM):', gpuErr);
-        onProgress({ stage: 'initializing', message: 'WebGPU failed. Initializing on CPU (WASM)...', progress: 90 });
+        onProgress({ stage: 'initializing', message: 'Optimizing Neural Engine...', progress: 90 });
         
         // Force CPU WebAssembly fallback
         sessionOptions = { executionProviders: ['wasm'] };
