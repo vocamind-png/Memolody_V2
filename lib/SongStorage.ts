@@ -215,10 +215,20 @@ export class SongStorage {
 
   async deleteAllSongs(): Promise<void> {
     const db = await this.init();
-    const tx = db.transaction([this.storeName, this.favoritesStore, this.memoStore], 'readwrite');
+    const tx = db.transaction([
+      this.storeName,
+      this.favoritesStore,
+      this.memoStore,
+      this.foldersStore,
+      this.historyStore,
+      this.deletedStore
+    ], 'readwrite');
     tx.objectStore(this.storeName).clear();
     tx.objectStore(this.favoritesStore).clear();
     tx.objectStore(this.memoStore).clear();
+    tx.objectStore(this.foldersStore).clear();
+    tx.objectStore(this.historyStore).clear();
+    tx.objectStore(this.deletedStore).clear();
   }
 
   // ── Favorite Management ──────────────────────────────────────────

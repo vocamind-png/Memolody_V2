@@ -8,6 +8,22 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&family=JetBrains+Mono:wght@700&display=swap" rel="stylesheet">
     <link rel="apple-touch-icon" href="/icon-192.png">
     <link rel="icon" href="/favicon.ico" sizes="any">
+    <link rel="manifest" href="/manifest.json">
+    <script>
+        // Force unregister any active service worker to prevent PWA caching issues
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(function(registrations) {
+                for (let registration of registrations) {
+                    registration.unregister().then(function(success) {
+                        if (success) {
+                            console.log('Old Service Worker successfully unregistered.');
+                            window.location.reload();
+                        }
+                    });
+                }
+            });
+        }
+    </script>
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="theme-color" content="#050507">
@@ -160,12 +176,12 @@
         }
     </style>
     <!-- Import map removed: Vite bundles all dependencies at build time -->
-  <script type="module" crossorigin src="/assets/index-A7dll6tK.js"></script>
+  <script type="module" crossorigin src="/assets/index-Dp3P6qMF.js"></script>
   <link rel="modulepreload" crossorigin href="/assets/vendor-react-CnF0OGO6.js">
   <link rel="modulepreload" crossorigin href="/assets/vendor-docs-CQgjcqA_.js">
   <link rel="modulepreload" crossorigin href="/assets/vendor-icons-DhCVToyT.js">
-  <link rel="stylesheet" crossorigin href="/assets/index-DaQWu3k5.css">
-<link rel="manifest" href="/manifest.webmanifest"><script id="vite-plugin-pwa:register-sw" src="/registerSW.js"></script></head>
+  <link rel="stylesheet" crossorigin href="/assets/index-DA9Y6pAX.css">
+</head>
 <body class="unselectable">
     <div id="root"></div>
 </body>

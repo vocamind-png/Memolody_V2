@@ -283,8 +283,15 @@ const PlayerPage: React.FC<{
   autoPlay?: boolean;           // ← auto-start playback after OMR import
   onAutoPlayConsumed?: () => void; // ← clears the flag in App.tsx
   onSongUpdate?: (updatedSong: Song) => void;
-}> = ({ song, musicXml, layoutBundle, tracks, setTracks, viewMode = 'score', setViewMode, loopPresets, setLoopPresets, performanceMode, vocalidoAutoRender, autoPlay, onAutoPlayConsumed, onSongUpdate }) => {
+  onNavigate?: (view: any) => void;
+}> = ({ song, musicXml, layoutBundle, tracks, setTracks, viewMode = 'score', setViewMode, loopPresets, setLoopPresets, performanceMode, vocalidoAutoRender, autoPlay, onAutoPlayConsumed, onSongUpdate, onNavigate }) => {
   const { authUser } = useAuth();
+  const isFree = (() => {
+    const storedTier = typeof window !== 'undefined' ? localStorage.getItem('mock_membership_tier') : null;
+    if (storedTier && storedTier !== 'free') return false;
+    if (!authUser) return true;
+    return authUser.membershipTier === 'free';
+  })();
   const [isPlaying, setIsPlaying] = useState(false);
   
   // Favorites & Folder state
@@ -3038,6 +3045,25 @@ const PlayerPage: React.FC<{
           {/* Main Transport Container - Slides away completely */}
           <div id="transport-container" className={`absolute inset-x-0 z-[5000] flex flex-col items-center px-3 no-print gap-1 pointer-events-none transition-transform duration-500 ease-[cubic-bezier(0.2,1,0.2,1)] ${isTransportHidden ? 'translate-y-[200%]' : 'translate-y-0'}`}
             style={{ bottom: 'calc(env(safe-area-inset-bottom, 0px) + 6px)' }}>
+            
+            {/* MOCK SPONSOR AD FOR FREE USERS */}
+            {isFree && (
+              <div className="w-full max-w-[500px] bg-[#0c0c0e]/90 border border-amber-500/20 backdrop-blur-3xl rounded-2xl p-2 px-3 flex items-center justify-between pointer-events-auto shadow-2xl select-none scale-[0.95] sm:scale-100 transition-all mb-0.5">
+                <div className="flex items-center gap-2">
+                  <span className="bg-amber-500/10 text-amber-500 text-[6.5px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border border-amber-500/20 shrink-0">AD</span>
+                  <p className="text-[7.5px] sm:text-[8px] text-zinc-300 font-bold uppercase tracking-widest leading-tight">
+                    Upgrade to <strong className="text-amber-400">PRO</strong> to save songs offline and remove ads!
+                  </p>
+                </div>
+                <button 
+                  onClick={() => onNavigate?.('subscription')}
+                  className="bg-amber-500 hover:bg-amber-600 text-black text-[7.5px] sm:text-[8px] font-black uppercase tracking-widest px-2.5 py-1 rounded-lg transition-all active:scale-95 shrink-0 ml-2"
+                >
+                  Upgrade
+                </button>
+              </div>
+            )}
+
             <div className="w-full max-w-[500px] bg-[#0c0c0e]/90 backdrop-blur-2xl px-3 h-8 rounded-full border border-white/10 shadow-[0_10px_30px_rgba(0,0,0,0.8)] flex items-center gap-3 pointer-events-auto">
               {/* Eye Toggle on the far left - Trigger to hide */}
               <button

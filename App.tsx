@@ -105,6 +105,12 @@ const NAV_ITEMS: { id: ViewId; icon: any; label: string; minRole?: string; isNim
 
 const App: React.FC = () => {
   const { authUser, role } = useAuth();
+  const isFree = (() => {
+    const storedTier = typeof window !== 'undefined' ? localStorage.getItem('mock_membership_tier') : null;
+    if (storedTier && storedTier !== 'free') return false; // Upgraded mock tier
+    if (!authUser) return true; // Default to free if not logged in
+    return authUser.membershipTier === 'free';
+  })();
   const isAdmin = hasAccess(role, 'admin');
   const [currentView, setCurrentView] = useState<ViewId>('home');
   const [isNimoOpen, setIsNimoOpen] = useState(false);
@@ -137,6 +143,8 @@ const App: React.FC = () => {
   const [nimoEnabled, setNimoEnabled] = useState(() => localStorage.getItem('nimo_enabled') !== 'false');
   const [nimoVoice, setNimoVoice] = useState<'teen_girl' | 'adult_woman' | 'teen_boy' | 'adult_man'>(() => (localStorage.getItem('nimo_voice') as any) || 'teen_girl');
 
+
+
   // Save currentView to localStorage on change
   useEffect(() => {
     try {
@@ -159,6 +167,37 @@ const App: React.FC = () => {
     (async () => {
       try {
         await songStorage.init();
+
+        // 🚨 Free Tier Session Wiping: Clear songs and caches if free user in new session
+        const storedTier = typeof window !== 'undefined' ? localStorage.getItem('mock_membership_tier') : 'free';
+        const isFreeInit = !storedTier || storedTier === 'free';
+        const sessionActive = typeof window !== 'undefined' ? sessionStorage.getItem('memo_session_active') : 'true';
+        if (isFreeInit && !sessionActive) {
+          console.log('[Cache Wrecker] 🚨 Free Tier Session: Wiping cached song states & songs...');
+          // 1. Clear IndexedDB user songs
+          await songStorage.deleteAllSongs();
+          
+          // 2. Clear localStorage keys
+          const keysToRemove: string[] = [];
+          for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && (
+              key.startsWith('tracks_state_') ||
+              key.startsWith('memo_render_history_') ||
+              key.startsWith('active_render_key_') ||
+              key.startsWith('memo_render_u') ||
+              key.startsWith('memo_selected_song_id')
+            )) {
+              keysToRemove.push(key);
+            }
+          }
+          keysToRemove.forEach(k => localStorage.removeItem(k));
+          sessionStorage.setItem('memo_session_active', 'true');
+        } else {
+          // Mark session active even if they are Pro/Premium so that it's set
+          sessionStorage.setItem('memo_session_active', 'true');
+        }
+
         await initPlugins(); // Initialize the Plugin System (including Vocalido)
 
         // Clean up legacy hardcoded demo song if present
@@ -519,7 +558,7 @@ const App: React.FC = () => {
           currentUserId={authUser?.id}
         />;
       case 'player':
-        return <PlayerPage song={selectedSong} musicXml={uploadedMusicXml} layoutBundle={selectedLayoutBundle} tracks={tracks} setTracks={setTracks} viewMode={playerViewMode} setViewMode={setPlayerViewMode} loopPresets={loopPresets} setLoopPresets={setLoopPresets} performanceMode={performanceMode} vocalidoAutoRender={vocalidoAutoRender} autoPlay={autoPlayOnLoad} onAutoPlayConsumed={() => setAutoPlayOnLoad(false)} onSongUpdate={handleSongUpdate} />;
+        return <PlayerPage song={selectedSong} musicXml={uploadedMusicXml} layoutBundle={selectedLayoutBundle} tracks={tracks} setTracks={setTracks} viewMode={playerViewMode} setViewMode={setPlayerViewMode} loopPresets={loopPresets} setLoopPresets={setLoopPresets} performanceMode={performanceMode} vocalidoAutoRender={vocalidoAutoRender} autoPlay={autoPlayOnLoad} onAutoPlayConsumed={() => setAutoPlayOnLoad(false)} onSongUpdate={handleSongUpdate} onNavigate={(view) => setCurrentView(view)} />;
       case 'forge':
         return <StudioPage selectedSong={selectedSong} xmlData={uploadedMusicXml} layoutBundle={selectedLayoutBundle} tracks={tracks} setTracks={setTracks} onPublish={triggerSync} onExit={() => navigateTo('home')} />;
       case 'profile':
@@ -535,7 +574,37 @@ const App: React.FC = () => {
       case 'admin':
         return <AdminPage onRefresh={triggerSync} />;
       case 'subscription':
-        return <PricingPage currentTier={(authUser?.membershipTier as any) || 'free'} onSelectPlan={(tier, cycle) => alert(`ขอบคุณสำหรับความสนใจ! ระบบจำลองตรวจพบการเลือกสมัครแพลน: ${tier === 'pro' ? 'Pro Plan' : 'Studio Plan'} (${cycle === 'monthly' ? 'รายเดือน' : 'รายปี'})\n\nขณะนี้แอปอยู่ในโหมดตัวอย่างนำเสนอผู้ลงทุน (Mock Mode) ระบบชำระเงินและการเชื่อมคลาวด์ Supabase จริงจะเปิดใช้งานในเฟสถัดไปครับ`)} />;
+        return (
+          <PricingPage 
+            currentTier={(() => {
+              const storedTier = localStorage.getItem('mock_membership_tier');
+              return (storedTier as any) || (authUser?.membershipTier as any) || 'free';
+            })()} 
+            onSelectPlan={async (tier, cycle) => {
+              localStorage.setItem('mock_membership_tier', tier);
+              if (tier === 'free') {
+                console.log('[Pricing] Wiping songs and caches for Free tier select...');
+                await songStorage.deleteAllSongs();
+                const keysToRemove: string[] = [];
+                for (let i = 0; i < localStorage.length; i++) {
+                  const key = localStorage.key(i);
+                  if (key && (
+                    key.startsWith('tracks_state_') ||
+                    key.startsWith('memo_render_history_') ||
+                    key.startsWith('active_render_key_') ||
+                    key.startsWith('memo_render_u') ||
+                    key.startsWith('memo_selected_song_id')
+                  )) {
+                    keysToRemove.push(key);
+                  }
+                }
+                keysToRemove.forEach(k => localStorage.removeItem(k));
+              }
+              alert(`ขอบคุณสำหรับความสนใจ! ระบบจำลองเปลี่ยนสถานะสมาชิกเป็น [${tier.toUpperCase()}] เรียบร้อยแล้ว แอปจะรีโหลดเพื่อเปิดใช้งานครับ`);
+              window.location.reload();
+            }} 
+          />
+        );
       default:
         return null;
     }

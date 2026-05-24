@@ -133,8 +133,28 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
     const handleSignOut = async () => {
         localStorage.removeItem('mock_user_id');
         localStorage.removeItem('mock_user_email');
+        localStorage.setItem('mock_membership_tier', 'free');
+
+        // 🚨 Clear songs and cached data on sign out!
+        await songStorage.deleteAllSongs();
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && (
+                key.startsWith('tracks_state_') ||
+                key.startsWith('memo_render_history_') ||
+                key.startsWith('active_render_key_') ||
+                key.startsWith('memo_render_u') ||
+                key.startsWith('memo_selected_song_id')
+            )) {
+                keysToRemove.push(key);
+            }
+        }
+        keysToRemove.forEach(k => localStorage.removeItem(k));
+
         window.dispatchEvent(new Event('auth_change'));
         setUser(null);
+        window.location.reload();
     };
 
     // Inline bg style

@@ -54,13 +54,14 @@ export const useAuth = (): { authUser: AuthUser | null; role: UserRole; loading:
             role = 'user';
         }
 
+        const storedTier = typeof window !== 'undefined' ? localStorage.getItem('mock_membership_tier') : null;
         authUser = {
             id: user.uid,
             email: user.email || '',
             fullName: user.displayName || user.email?.split('@')[0] || 'User',
             avatarUrl: user.photoURL || '',
             role,
-            membershipTier: 'free',
+            membershipTier: storedTier || 'free',
             maxAiSlots: 3
         };
     }
