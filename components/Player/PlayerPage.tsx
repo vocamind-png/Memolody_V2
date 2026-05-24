@@ -342,6 +342,8 @@ const PlayerPage: React.FC<{
   const [isModelLoading, setIsModelLoading] = useState(false);
   const [modelLoadProgress, setModelLoadProgress] = useState(0);
   const [modelLoadStatus, setModelLoadStatus] = useState('');
+  const [hideLoadBanner, setHideLoadBanner] = useState(false);
+  const [isServerOnline, setIsServerOnline] = useState(false);
 
   // Auto-load voice model in the background when active voice or engine changes
   useEffect(() => {
@@ -349,6 +351,14 @@ const PlayerPage: React.FC<{
       setIsModelLoading(false);
       return;
     }
+    
+    // Skip preloading if the server is offline to prevent hanging requests from blocking the user
+    if (!isServerOnline) {
+      console.log('[Preload] SVS Server is offline, skipping auto-preload.');
+      setIsModelLoading(false);
+      return;
+    }
+
     const selectedVoice = voiceEngines.find(v => v.id === activeEngineId);
     if (!selectedVoice || !selectedVoice.model_files) {
       return;
@@ -358,6 +368,7 @@ const PlayerPage: React.FC<{
     const preloadModel = async () => {
       try {
         setIsModelLoading(true);
+        setHideLoadBanner(false); // Reset dismissal on model change
         setModelLoadStatus('Checking cache / downloading model...');
         setModelLoadProgress(0);
 
@@ -396,7 +407,7 @@ const PlayerPage: React.FC<{
     return () => {
       active = false;
     };
-  }, [activeEngineId, voiceEngines, svsEngine]);
+  }, [activeEngineId, voiceEngines, svsEngine, isServerOnline]);
 
   // Debug Log Catcher State
   const [debugLogs, setDebugLogs] = useState<{type: 'log' | 'warn' | 'error', text: string, time: string}[]>([]);
@@ -1315,6 +1326,7 @@ const PlayerPage: React.FC<{
         if (!res.ok) throw new Error('Not OK');
         const data = await res.json();
         if (active && data && data.voices) {
+          setIsServerOnline(true);
           setVoiceEngines(data.voices);
           
           // Auto-select lotte_v_ai_dol or first non-default voice as default if not already set or if set to 'default'
@@ -1341,6 +1353,7 @@ const PlayerPage: React.FC<{
       } catch (err) {
         console.warn("Could not fetch voice engines, using defaults", err);
         if (active) {
+          setIsServerOnline(false);
           // Fallback: hardcode default Lotte V voice when server unreachable
           setVoiceEngines([{ 
             id: 'lotte_v_ai_dol', 
@@ -2784,9 +2797,9 @@ const PlayerPage: React.FC<{
         </div>
 
         {/* ── [VOCAL MODEL BACKGROUND AUTO-LOAD BANNER] ── */}
-        {isModelLoading && (
-          <div className="absolute inset-0 z-[4900] flex items-center justify-center bg-black/35 backdrop-blur-[2px] pointer-events-auto animate-in fade-in duration-300">
-            <div className="bg-rose-950/90 border border-rose-500/50 rounded-2xl p-4 flex flex-col items-center gap-3 text-center max-w-sm mx-4 backdrop-blur-xl shadow-[0_0_40px_rgba(244,63,94,0.3)]">
+        {isModelLoading && !hideLoadBanner && (
+          <div className="absolute inset-0 z-[4900] flex items-center justify-center bg-black/45 backdrop-blur-[3px] pointer-events-auto animate-in fade-in duration-300">
+            <div className="bg-rose-950/90 border border-rose-500/50 rounded-2xl p-5 flex flex-col items-center gap-3 text-center max-w-sm mx-4 backdrop-blur-xl shadow-[0_0_40px_rgba(244,63,94,0.35)]">
               {/* Blinking Red Dot Icon */}
               <div className="w-8 h-8 rounded-full bg-rose-500/20 border border-rose-500/50 flex items-center justify-center animate-pulse">
                 <span className="w-3.5 h-3.5 rounded-full bg-rose-500 animate-ping absolute" style={{ animationDuration: '2s' }} />
@@ -2799,8 +2812,8 @@ const PlayerPage: React.FC<{
                 <p className="text-white text-[11px] font-bold tracking-tight">
                   Please wait...
                 </p>
-                <p className="text-zinc-400 text-[8.5px] mt-0.5">
-                  Downloading neural voice model to your device.
+                <p className="text-zinc-400 text-[8.5px] mt-0.5 leading-relaxed">
+                  Downloading neural voice model to your device for client-side rendering.
                 </p>
               </div>
               
@@ -2812,9 +2825,19 @@ const PlayerPage: React.FC<{
                 />
               </div>
               
-              <span className="text-[7.5px] font-black text-rose-400/80 tracking-widest uppercase">
-                {modelLoadStatus} ({modelLoadProgress}%)
-              </span>
+              <div className="flex flex-col gap-2 items-center mt-1">
+                <span className="text-[7.5px] font-black text-rose-400/80 tracking-widest uppercase">
+                  {modelLoadStatus} ({modelLoadProgress}%)
+                </span>
+                
+                {/* Dismiss Button */}
+                <button
+                  onClick={() => setHideLoadBanner(true)}
+                  className="mt-1 px-3 py-1 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 rounded-lg text-[7.5px] font-black text-zinc-300 hover:text-white uppercase tracking-widest transition-all"
+                >
+                  Dismiss / Read Sheet Music
+                </button>
+              </div>
             </div>
           </div>
         )}
