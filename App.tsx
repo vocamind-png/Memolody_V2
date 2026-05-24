@@ -169,7 +169,7 @@ const App: React.FC = () => {
         await songStorage.init();
 
         // 🚨 AUTO-CLEAR CACHE ON NEW BUILD/REINSTALL
-        const APP_VERSION = '1.6.0-build-20260525-0033';
+        const APP_VERSION = '2.2.0-build-20260525-0047';
         const savedVersion = localStorage.getItem('memo_app_version');
         if (savedVersion !== APP_VERSION) {
           console.log(`[App] 🔄 New Build/Reinstall detected: Wiping all cached data (old=${savedVersion}, new=${APP_VERSION})`);
@@ -646,7 +646,7 @@ const App: React.FC = () => {
       <header className="h-12 flex items-center justify-between px-4 bg-[#0A0A0B] border-b border-white/5 shrink-0 z-[10000]">
         <div className="flex items-center gap-2">
           <Zap size={14} className="text-cyan-400" />
-          <span className="text-[10px] font-black tracking-[0.15em] text-zinc-400">MEMOLODY <span className="text-cyan-400">V2</span></span>
+          <span className="text-[10px] font-black tracking-[0.15em] text-zinc-400">MEMOLODY <span className="text-cyan-400">V2.2</span></span>
         </div>
         <nav className="flex items-center gap-0.5 sm:gap-1 shrink-0">
           {NAV_ITEMS

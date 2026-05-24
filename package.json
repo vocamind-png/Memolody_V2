@@ -1,7 +1,7 @@
 {
   "name": "memolody-play-by-ear-hear-by-eye",
   "private": true,
-  "version": "1.6.0",
+  "version": "2.2.0",
   "type": "module",
   "scripts": {
     "dev": "concurrently --kill-others-on-fail -n \"vite,omr\" -c \"cyan,yellow\" \"vite\" \"node scripts/omr-server.mjs\"",

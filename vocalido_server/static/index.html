@@ -13,14 +13,32 @@
         // Force unregister any active service worker to prevent PWA caching issues
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.getRegistrations().then(function(registrations) {
-                for (let registration of registrations) {
-                    registration.unregister().then(function(success) {
+                let unregisteredAny = false;
+                let promises = registrations.map(function(reg) {
+                    return reg.unregister().then(function(success) {
                         if (success) {
                             console.log('Old Service Worker successfully unregistered.');
-                            window.location.reload();
+                            unregisteredAny = true;
                         }
                     });
-                }
+                });
+                Promise.all(promises).then(function() {
+                    if (unregisteredAny) {
+                        window.location.reload();
+                    }
+                });
+            });
+        }
+        // Force clear Cache Storage to purge old PWA assets
+        if ('caches' in window) {
+            caches.keys().then(function(names) {
+                names.forEach(function(name) {
+                    caches.delete(name).then(function(success) {
+                        if (success) {
+                            console.log('Cache Storage cleared:', name);
+                        }
+                    });
+                });
             });
         }
     </script>
@@ -176,7 +194,7 @@
         }
     </style>
     <!-- Import map removed: Vite bundles all dependencies at build time -->
-  <script type="module" crossorigin src="/assets/index-CZ7cweK9.js"></script>
+  <script type="module" crossorigin src="/assets/index-CFrq8fhn.js"></script>
   <link rel="modulepreload" crossorigin href="/assets/vendor-react-CnF0OGO6.js">
   <link rel="modulepreload" crossorigin href="/assets/vendor-docs-CQgjcqA_.js">
   <link rel="modulepreload" crossorigin href="/assets/vendor-icons-DhCVToyT.js">
