@@ -1,9 +1,11 @@
 // lib/Telemetry.ts
+import { db, isFirebaseConfigured, auth } from './firebase';
+import { collection, addDoc, getDocs, query, orderBy, limit } from 'firebase/firestore';
 
 export type TelemetryEventType = 'app_open' | 'song_play' | 'vocalido_render' | 'session_end';
 
 export interface TelemetryEvent {
-  id: string;
+  id?: string;
   user_id: string;
   event_type: TelemetryEventType;
   event_data: any;
@@ -13,25 +15,11 @@ export interface TelemetryEvent {
 class TelemetryService {
   private events: TelemetryEvent[] = [];
   private currentSessionStart: number | null = null;
-  private userId: string | null = null;
 
   constructor() {
-    this.loadFromStorage();
-    if (this.events.length === 0) {
-      this.seedMockData();
-    }
-    
-    // Auto-track session start
     this.currentSessionStart = Date.now();
-    this.userId = localStorage.getItem('mock_user_id') || 'guest';
     this.track('app_open', { userAgent: navigator.userAgent });
 
-    // Listen to local mock auth changes
-    window.addEventListener('auth_change', () => {
-      this.userId = localStorage.getItem('mock_user_id') || 'guest';
-    });
-
-    // Try to track session end when window closes
     window.addEventListener('beforeunload', () => {
       if (this.currentSessionStart) {
          const durationSec = Math.round((Date.now() - this.currentSessionStart) / 1000);
@@ -40,83 +28,43 @@ class TelemetryService {
     });
   }
 
-  private loadFromStorage() {
-    try {
-      const stored = localStorage.getItem('memolody_telemetry');
-      if (stored) {
-        this.events = JSON.parse(stored);
-      }
-    } catch (e) {
-      console.warn('Telemetry load failed', e);
-    }
-  }
-
-  private saveToStorage() {
-    try {
-      localStorage.setItem('memolody_telemetry', JSON.stringify(this.events));
-    } catch (e) {
-      console.warn('Telemetry save failed', e);
-    }
-  }
-
-  public track(event_type: TelemetryEventType, event_data: any = {}) {
+  public async track(event_type: TelemetryEventType, event_data: any = {}) {
+    const user_id = auth?.currentUser?.uid || localStorage.getItem('mock_user_id') || 'guest';
     const event: TelemetryEvent = {
-      id: Math.random().toString(36).substr(2, 9),
-      user_id: this.userId || 'guest',
+      user_id,
       event_type,
       event_data,
       created_at: new Date().toISOString()
     };
     
+    // Always keep a local copy for quick UI updates if needed
     this.events.push(event);
-    this.saveToStorage();
-  }
 
-  // Used by the Admin Dashboard
-  public getEvents(): TelemetryEvent[] {
-    return this.events;
-  }
-  
-  public clearEvents() {
-    this.events = [];
-    this.saveToStorage();
-  }
-
-  // --- MOCK DATA FOR DEMO PURPOSES ---
-  private seedMockData() {
-    console.log('[Telemetry] Seeding mock data for Head Admin Dashboard...');
-    const now = Date.now();
-    const dayMs = 24 * 60 * 60 * 1000;
-    
-    // Generate events for the last 30 days
-    for (let i = 0; i < 30; i++) {
-        const dateStr = new Date(now - (i * dayMs)).toISOString();
-        
-        // Random 5-20 app opens per day
-        const opens = 5 + Math.floor(Math.random() * 15);
-        for(let j=0; j<opens; j++) {
-            this.events.push({ id: Math.random().toString(), user_id: 'user_'+j, event_type: 'app_open', event_data: {}, created_at: dateStr });
-            this.events.push({ id: Math.random().toString(), user_id: 'user_'+j, event_type: 'session_end', event_data: { durationSeconds: 300 + Math.random() * 3000 }, created_at: dateStr });
-        }
-        
-        // Random 10-50 song plays
-        const plays = 10 + Math.floor(Math.random() * 40);
-        const popularSongs = ['Auld Lang Syne', 'Twinkle Twinkle', 'Beethoven Virus', 'Ode to Joy', 'Canon in D'];
-        for(let j=0; j<plays; j++) {
-            const song = popularSongs[Math.floor(Math.random() * popularSongs.length)];
-            this.events.push({ id: Math.random().toString(), user_id: 'user_'+j, event_type: 'song_play', event_data: { songTitle: song }, created_at: dateStr });
-        }
-        
-        // Random 5-30 Vocalido renders
-        const renders = 5 + Math.floor(Math.random() * 25);
-        for(let j=0; j<renders; j++) {
-            // Render duration 5s to 25s
-            const renderSec = 5 + Math.random() * 20;
-            this.events.push({ id: Math.random().toString(), user_id: 'user_'+j, event_type: 'vocalido_render', event_data: { renderSeconds: renderSec }, created_at: dateStr });
-        }
+    if (isFirebaseConfigured && db) {
+      try {
+        await addDoc(collection(db, 'telemetry_events'), event);
+      } catch (e) {
+        console.warn('Telemetry save failed (Firestore)', e);
+      }
     }
+  }
+
+  // Used by the Admin Dashboard to fetch stats
+  public async getEventsFromCloud(): Promise<TelemetryEvent[]> {
+    if (!isFirebaseConfigured || !db) return this.events;
     
-    this.saveToStorage();
+    try {
+      const q = query(collection(db, 'telemetry_events'), orderBy('created_at', 'desc'), limit(1000));
+      const querySnapshot = await getDocs(q);
+      const cloudEvents: TelemetryEvent[] = [];
+      querySnapshot.forEach((doc) => {
+        cloudEvents.push({ id: doc.id, ...doc.data() } as TelemetryEvent);
+      });
+      return cloudEvents;
+    } catch (e) {
+      console.error("Could not load telemetry from cloud:", e);
+      return this.events;
+    }
   }
 }
 

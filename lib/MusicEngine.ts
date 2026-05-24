@@ -13,6 +13,8 @@ export class MusicEngine {
   private trackActiveStem: Map<string, number | null> = new Map();
   private trackModes: Map<string, 'instrument' | 'vocal'> = new Map();
   public vocalAudioElements: Map<string, HTMLAudioElement> = new Map(); // For AI Vocal playback
+  private vocalBlobUrls: Map<string, string> = new Map(); // Track pre-fetched local Blob URLs
+  public tracks: TrackState[] = [];
 
   private masterBus: Tone.Gain | null = null;
   private masterGain: Tone.Gain | null = null;
@@ -146,8 +148,19 @@ export class MusicEngine {
       xmlDoc.querySelector("credit-words[type='composer']")?.textContent ||
       defaultMeta.artist;
 
-    const metronomeNode = xmlDoc.querySelector("per-minute");
-    const bpm = metronomeNode ? parseInt(metronomeNode.textContent || "120") : defaultMeta.bpm;
+    const perMinuteEl = xmlDoc.querySelector("per-minute");
+    const soundEl = xmlDoc.querySelector("sound[tempo]");
+    let bpm = defaultMeta.bpm;
+    if (perMinuteEl) {
+      const val = parseFloat(perMinuteEl.textContent || "");
+      if (!isNaN(val) && val > 0) bpm = Math.round(val);
+    } else if (soundEl) {
+      const tempoAttr = soundEl.getAttribute("tempo");
+      if (tempoAttr) {
+        const val = parseFloat(tempoAttr);
+        if (!isNaN(val) && val > 0) bpm = Math.round(val);
+      }
+    }
 
     const fifthsNode = xmlDoc.querySelector("fifths");
     const fifths = fifthsNode ? parseInt(fifthsNode.textContent || "0") : 0;
@@ -448,16 +461,22 @@ export class MusicEngine {
       audio.crossOrigin = 'anonymous';
       this.vocalAudioElements.set(trackId, audio);
     }
-    // Set a short silent source if empty to unlock the element
-    if (audio.src === '') {
-      audio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==';
+    // ONLY play and pause if it's the silent dummy source to unlock it!
+    // If it's a real song URL, DO NOT play-pause it here because the main play loop will start it synchronously!
+    const isDummy = audio.src === '' || audio.src.startsWith('data:');
+    if (isDummy) {
+      if (audio.src === '') {
+        audio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==';
+      }
+      audio.play().then(() => {
+        audio.pause();
+        console.log(`[MusicEngine] 🔓 HTMLAudio unlocked successfully for ${trackId} (dummy source)`);
+      }).catch(e => {
+        console.warn(`[MusicEngine] ⚠️ HTMLAudio unlock failed/deferred for ${trackId}:`, e);
+      });
+    } else {
+      console.log(`[MusicEngine] ℹ️ HTMLAudio already has real source, skipping unlock play-pause for ${trackId}: ${audio.src.substring(0, 60)}`);
     }
-    audio.play().then(() => {
-      audio.pause();
-      console.log(`[MusicEngine] 🔓 HTMLAudio unlocked successfully for ${trackId}`);
-    }).catch(e => {
-      console.warn(`[MusicEngine] ⚠️ HTMLAudio unlock failed/deferred for ${trackId}:`, e);
-    });
   }
 
   async addVocalLayer(trackId: string, audioUrl: string, stemUrls?: string[]) {
@@ -490,11 +509,52 @@ export class MusicEngine {
       audio.pause();
     }
 
-    // We play the HTMLAudioElement directly (bypassing Web Audio destination) to ensure 
-    // bulletproof iOS/Safari playback without CORS/security/gesture issues.
+    // 📱 iOS Safari Pre-fetch workaround: download the file as a blob first 
+    // to bypass lazy-loading restriction and avoid hanging on canplay/loadedmetadata.
+    let finalUrl = audioUrl;
+    if (audioUrl && !audioUrl.startsWith('data:') && !audioUrl.startsWith('blob:')) {
+      try {
+        console.log(`[MusicEngine] 📥 Pre-fetching vocal audio as Blob for iOS compatibility: ${audioUrl}`);
+        const resp = await fetch(audioUrl);
+        if (resp.ok) {
+          const blob = await resp.blob();
+          const localBlobUrl = URL.createObjectURL(blob);
+          
+          // Track the blob URL so we can revoke it later to prevent memory leaks
+          const oldUrl = this.vocalBlobUrls.get(trackId);
+          if (oldUrl) {
+            try { URL.revokeObjectURL(oldUrl); } catch(e){}
+          }
+          this.vocalBlobUrls.set(trackId, localBlobUrl);
+          finalUrl = localBlobUrl;
+          console.log(`[MusicEngine] 📥 Pre-fetch successful. Created local Blob URL: ${localBlobUrl}`);
+        } else {
+          console.warn(`[MusicEngine] ⚠️ Pre-fetch failed with HTTP status ${resp.status}, using original URL`);
+        }
+      } catch (fetchErr) {
+        console.warn('[MusicEngine] ⚠️ Pre-fetch fetch error (CORS or network), using original URL:', fetchErr);
+      }
+    }
+
+    // If generation changed during fetch, discard
+    if (myGeneration !== this._vocalGeneration) {
+      console.log(`[MusicEngine] 🗑️ Stale gen=${myGeneration} after pre-fetch — discarding`);
+      if (finalUrl.startsWith('blob:')) {
+        try { URL.revokeObjectURL(finalUrl); } catch(e){}
+        this.vocalBlobUrls.delete(trackId);
+      }
+      return;
+    }
 
     return new Promise<void>((resolve) => {
-      const onCanPlay = () => {
+      let resolved = false;
+
+      const onReady = () => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timeoutId);
+        cleanupListeners();
+
         if (myGeneration !== this._vocalGeneration) {
           console.log(`[MusicEngine] 🗑️ Stale gen=${myGeneration} — discarding audio`);
           audio.src = '';
@@ -509,32 +569,46 @@ export class MusicEngine {
         if (Tone.Transport.state === 'started') {
           const songOffset = Math.max(0, Tone.Transport.seconds - this.countInDuration);
           audio.currentTime = Math.min(songOffset, isFinite(audio.duration) ? audio.duration - 0.01 : 0);
-          audio.play().catch(e => console.warn('[MusicEngine] Immediate vocal play failed:', e));
+          audio.play().catch(e => {
+            console.warn('[MusicEngine] Immediate vocal play failed:', e);
+            window.dispatchEvent(new CustomEvent('vocal-playback-blocked', { detail: { error: e } }));
+          });
         }
 
         resolve();
       };
 
       const onError = (e: Event) => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timeoutId);
+        cleanupListeners();
         console.error(`[MusicEngine] ❌ HTMLAudio load error for ${trackId}:`, e);
         resolve(); // Resolve anyway so the UI doesn't hang
       };
 
-      audio.addEventListener('canplaythrough', onCanPlay, { once: true });
-      audio.addEventListener('error', onError, { once: true });
-
-      // Timeout fallback
-      const timeoutId = setTimeout(() => {
-        console.warn(`[MusicEngine] ⚠️ addVocalLayer gen=${myGeneration} timed out — resolving`);
-        audio.removeEventListener('canplaythrough', onCanPlay);
+      const cleanupListeners = () => {
+        audio.removeEventListener('canplay', onReady);
+        audio.removeEventListener('canplaythrough', onReady);
+        audio.removeEventListener('loadedmetadata', onReady);
         audio.removeEventListener('error', onError);
+      };
+
+      audio.addEventListener('canplay', onReady);
+      audio.addEventListener('canplaythrough', onReady);
+      audio.addEventListener('loadedmetadata', onReady);
+      audio.addEventListener('error', onError);
+
+      // Timeout fallback (shorter now that we use Blobs)
+      const timeoutId = setTimeout(() => {
+        if (resolved) return;
+        resolved = true;
+        cleanupListeners();
+        console.warn(`[MusicEngine] ⚠️ addVocalLayer gen=${myGeneration} timed out — resolving`);
         resolve();
-      }, 30000);
+      }, 5000); // 5s is plenty for local blob URLs
 
-      audio.addEventListener('canplaythrough', () => clearTimeout(timeoutId), { once: true });
-      audio.addEventListener('error', () => clearTimeout(timeoutId), { once: true });
-
-      audio.src = audioUrl;
+      audio.src = finalUrl;
       audio.load();
     });
   }
@@ -559,6 +633,13 @@ export class MusicEngine {
       this.trackVocalStems.delete(trackId);
     }
     this.trackActiveStem.set(trackId, null);
+
+    // Revoke and clear blob URLs
+    const oldUrl = this.vocalBlobUrls.get(trackId);
+    if (oldUrl) {
+      try { URL.revokeObjectURL(oldUrl); } catch(e){}
+      this.vocalBlobUrls.delete(trackId);
+    }
   }
 
   public soloStem(trackId: string, stemIndex: number | null) {
@@ -715,6 +796,7 @@ export class MusicEngine {
   setBpm(bpm: number) { if (bpm >= 20 && bpm <= 400) Tone.Transport.bpm.rampTo(bpm, 0.05); }
 
   updateTrackStates(tracks: TrackState[]) {
+    this.tracks = tracks;
     const hasSolo = tracks.some(tr => tr.isSolo);
     tracks.forEach(t => {
       const channel = this.trackChannels.get(t.id);
@@ -842,6 +924,7 @@ export class MusicEngine {
   }
 
   async loadSong(notes: ParsedNote[], tracks: TrackState[] = [], transpose = 0, timeSignature: { beats: number } = { beats: 4 }, isMetronomeOn = false) {
+    this.tracks = tracks;
     console.log("[MusicEngine] [loadSong] starting...", { notesCount: notes.length, tracksCount: tracks.length });
     await this.ensureInitialized();
     console.log("[MusicEngine] [loadSong] ensureInitialized done");
@@ -939,28 +1022,53 @@ export class MusicEngine {
     return Tone.Frequency(midi, "midi").toFrequency();
   }
 
-  async start() {
+  start() {
     console.log("[MusicEngine] start() called");
-    await this.ensureInitialized();
-    console.log("[MusicEngine] start() ensureInitialized done, transport state:", Tone.Transport.state);
-    if (Tone.Transport.state !== 'started') {
-      const songOffset = Math.max(0, Tone.Transport.seconds - this.countInDuration);
-      console.log("[MusicEngine] starting Tone.Transport, songOffset=", songOffset);
-      
-      // Start HTMLAudio vocal layers synchronously at the correct song position
-      this.vocalAudioElements.forEach((audio) => {
-        try {
-          audio.currentTime = Math.min(songOffset, Math.max(0, (isFinite(audio.duration) ? audio.duration - 0.01 : 0)));
-          audio.play().catch(e => console.warn('[MusicEngine] Vocal audio.play() failed:', e));
-        } catch (e) { console.warn('[MusicEngine] Vocal start error:', e); }
+    
+    const runStart = () => {
+      if (Tone.Transport.state !== 'started') {
+        const songOffset = Math.max(0, Tone.Transport.seconds - this.countInDuration);
+        console.log("[MusicEngine] starting Tone.Transport, songOffset=", songOffset);
+        
+        // Start HTMLAudio vocal layers synchronously at the correct song position
+        this.vocalAudioElements.forEach((audio, trackId) => {
+          try {
+            // Check if track is vocal and not muted
+            const track = this.tracks.find(t => t.id === trackId);
+            const isVocalPlaying = track && track.mode === 'vocal' && !track.isMuted;
+            
+            if (isVocalPlaying) {
+              audio.currentTime = Math.min(songOffset, Math.max(0, (isFinite(audio.duration) ? audio.duration - 0.01 : 0)));
+              audio.play().catch(e => {
+                console.warn('[MusicEngine] Vocal audio.play() failed:', e);
+                window.dispatchEvent(new CustomEvent('vocal-playback-blocked', { detail: { error: e } }));
+              });
+            }
+          } catch (e) { console.warn('[MusicEngine] Vocal start error:', e); }
+        });
+
+        // Start Tone.Transport immediately
+        Tone.Transport.start();
+        console.log("[MusicEngine] Tone.Transport started!");
+
+        // Start unsynced vocal players (stems)
+        this.updateVocalPlaybackState(Tone.now());
+      }
+    };
+
+    try {
+      if (Tone.getContext().state !== 'running') {
+        Tone.start();
+        Tone.getContext().resume();
+      }
+    } catch (e) {}
+
+    if (this.isInitialized) {
+      runStart();
+    } else {
+      this.ensureInitialized().then(() => {
+        runStart();
       });
-
-      // Start Tone.Transport immediately
-      Tone.Transport.start();
-      console.log("[MusicEngine] Tone.Transport started!");
-
-      // Start unsynced vocal players (stems)
-      this.updateVocalPlaybackState(Tone.now());
     }
   }
 
@@ -970,10 +1078,19 @@ export class MusicEngine {
     if (Tone.Transport.state === 'paused') {
       const offset = Math.max(0, Tone.Transport.seconds - this.countInDuration);
 
-      this.vocalAudioElements.forEach(audio => {
+      this.vocalAudioElements.forEach((audio, trackId) => {
         try {
-          audio.currentTime = offset;
-          audio.play().catch(e => console.warn('[MusicEngine] Vocal audio.play() resume failed:', e));
+          // Check if track is vocal and not muted
+          const track = this.tracks.find(t => t.id === trackId);
+          const isVocalPlaying = track && track.mode === 'vocal' && !track.isMuted;
+          
+          if (isVocalPlaying) {
+            audio.currentTime = offset;
+            audio.play().catch(e => {
+              console.warn('[MusicEngine] Vocal audio.play() resume failed:', e);
+              window.dispatchEvent(new CustomEvent('vocal-playback-blocked', { detail: { error: e } }));
+            });
+          }
         } catch (e) { console.warn('[MusicEngine] Vocal resume error:', e); }
       });
 
@@ -1068,6 +1185,12 @@ export class MusicEngine {
       audio.src = '';
     });
     this.vocalAudioElements.clear();
+
+    // Revoke and clear all blob URLs
+    this.vocalBlobUrls.forEach(url => {
+      try { URL.revokeObjectURL(url); } catch(e){}
+    });
+    this.vocalBlobUrls.clear();
 
     // Removed vocalAudioSourceNodes cleanup
 

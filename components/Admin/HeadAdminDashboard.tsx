@@ -14,9 +14,23 @@ const HeadAdminDashboard: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Load events from local telemetry service
-    setEvents(telemetry.getEvents());
-    setIsLoading(false);
+    let isMounted = true;
+    const fetchEvents = async () => {
+      const cloudEvents = await telemetry.getEventsFromCloud();
+      if (isMounted) {
+        setEvents(cloudEvents);
+        setIsLoading(false);
+        
+        // Setup mock realtime update every 10s (if desired)
+        const interval = setInterval(async () => {
+          const fresh = await telemetry.getEventsFromCloud();
+          if (isMounted) setEvents(fresh);
+        }, 10000);
+        return () => clearInterval(interval);
+      }
+    };
+    fetchEvents();
+    return () => { isMounted = false; };
   }, []);
 
   const filteredEvents = useMemo(() => {

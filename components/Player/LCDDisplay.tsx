@@ -198,15 +198,18 @@ export const BarBeatPositionDisplay: React.FC<{ bar: number; beat: number; onSee
       onTouchStart={handleStart}
       onDoubleClick={() => { setIsEditing(true); setEditValue(bar.toString()); }}
     >
-      <div className="flex items-baseline gap-[1px] sm:gap-0.5 leading-none">
+      <div className="flex items-baseline gap-1 sm:gap-2 leading-none">
         <span className="text-[14px] sm:text-[19px] font-black italic text-[#ffab00] lcd-font tracking-tighter">
             {bar}
         </span>
-        <span className="text-[10px] sm:text-[13px] font-black italic text-white/30 lcd-font tracking-tighter">
+        <span className="text-[12px] sm:text-[15px] font-black text-white/40 mx-1.5">
+            :
+        </span>
+        <span className="text-[14px] sm:text-[19px] font-black italic text-[#00e5ff] lcd-font tracking-tighter">
             {beat}
         </span>
       </div>
-      <span className="text-[5px] sm:text-[6px] font-black text-zinc-600 uppercase tracking-widest mt-0.5">POS</span>
+      <span className="text-[5px] sm:text-[6px] font-black text-zinc-600 tracking-widest mt-0.5">Bar : Beat.</span>
     </div>
   );
 };

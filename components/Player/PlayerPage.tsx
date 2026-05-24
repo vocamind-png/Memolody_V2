@@ -10,7 +10,7 @@ import {
   Heart, Folder, Trash2, Plus, ChevronLeft, ChevronRight
 } from 'lucide-react';
 import ProScoreEditor from './ProScoreEditor';
-import { KeyTransposeDisplay, BpmDisplay, BarBeatPositionDisplay, TimeSigDisplay } from './LCDDisplay';
+import { KeyTransposeDisplay, BpmDisplay, BarBeatPositionDisplay } from './LCDDisplay';
 import MixerPanel from './MixerPanel';
 import PerformanceScore from './PerformanceScore';
 import TrackView from './TrackView';
@@ -25,6 +25,7 @@ import { Song, TrackState, EffectInstance, LyricMode, SongFolder } from '../../t
 import { songStorage } from '../../lib/SongStorage';
 import { nimoBrain } from '../../lib/NimoBrain';
 import { useAuth } from '../../lib/useAuth';
+import { clientSvsEngine } from '../../lib/ClientSvsEngine';
 
 export type PlayerCardType = 'score' | 'pianoroll' | 'trackview' | 'memochord' | 'practice' | 'vocalido';
 
@@ -297,7 +298,30 @@ const PlayerPage: React.FC<{
   const folderPopoverRef = useRef<HTMLDivElement>(null);
   const [isRenderHistoryHidden, setIsRenderHistoryHidden] = useState(false);
 
-  const svsEngine = 'vocalido';
+  const [svsEngine, setSvsEngine] = useState<'vocalido' | 'browser-ai'>(() => {
+    try {
+      return (localStorage.getItem('vocalido_svs_engine') as 'vocalido' | 'browser-ai') || 'browser-ai';
+    } catch {
+      return 'browser-ai';
+    }
+  });
+
+  // Keep the user's preferred SVS engine (defaults to client-side 'browser-ai' for direct WebGPU/WASM synthesis).
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('vocalido_svs_engine');
+      if (!saved) {
+        localStorage.setItem('vocalido_svs_engine', 'browser-ai');
+        setSvsEngine('browser-ai');
+      }
+      // Migrate legacy lotte_v to lotte_v_ai_dol
+      const savedVoice = localStorage.getItem('vocalido_active_engine');
+      if (savedVoice === 'lotte_v') {
+        localStorage.setItem('vocalido_active_engine', 'lotte_v_ai_dol');
+        setActiveEngineId('lotte_v_ai_dol');
+      }
+    } catch (e) {}
+  }, []);
   const [isTransportHidden, setIsTransportHidden] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [currentBpm, setCurrentBpm] = useState(song?.bpm || 120);
@@ -313,6 +337,7 @@ const PlayerPage: React.FC<{
   const [renderTimer, setRenderTimer] = useState(0);
   const [renderError, setRenderError] = useState<string | null>(null);
   const [renderStatusText, setRenderStatusText] = useState('');
+  const renderAbortControllerRef = useRef<AbortController | null>(null);
 
   // Debug Log Catcher State
   const [debugLogs, setDebugLogs] = useState<{type: 'log' | 'warn' | 'error', text: string, time: string}[]>([]);
@@ -451,7 +476,13 @@ const PlayerPage: React.FC<{
 
   // Voice Engines State
   const [voiceEngines, setVoiceEngines] = useState<{id: string, name: string, type: string, lang: string}[]>([]);
-  const [activeEngineId, setActiveEngineId] = useState<string>('default');
+  const [activeEngineId, setActiveEngineId] = useState<string>(() => {
+    try {
+      const stored = localStorage.getItem('vocalido_active_engine');
+      if (stored) return stored;
+    } catch (e) {}
+    return 'lotte_v_ai_dol';
+  });
 
   // Stem Solo/Mute State for polyphonic choral lines
   const [soloedStems, setSoloedStems] = useState<Record<string, number | null>>({});
@@ -607,7 +638,6 @@ const PlayerPage: React.FC<{
       }
 
       // Transport is 'stopped' — need to load and start
-      console.log("[PlayerPage] Loading song in MusicEngine...");
       const updatedTracks = tracks.map(t => ({
         ...t,
         mode: (mutedVocalTracks.has(t.id) ? 'instrument' : t.mode) as 'instrument' | 'vocal'
@@ -615,10 +645,22 @@ const PlayerPage: React.FC<{
       
       // Set BPM before loading so countIn and synced players align
       musicEngine.setBpm(currentBpm);
+
+      if (musicEngine.lastLoadedNotes.length > 0) {
+        console.log("[PlayerPage] Song already loaded in MusicEngine. Starting playback synchronously...");
+        musicEngine.updateTrackStates(updatedTracks);
+        musicEngine.start(); // Call synchronously!
+        console.log("[PlayerPage] MusicEngine started successfully!");
+        setIsPlaying(true);
+        clearTimeout(safetyTimeoutId);
+        setIsAudioLoading(false);
+        return;
+      }
       
+      console.log("[PlayerPage] Loading song in MusicEngine (first time)...");
       await musicEngine.loadSong(parsedData.notes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn);
       console.log("[PlayerPage] Song loaded! Starting MusicEngine...");
-      await musicEngine.start();
+      musicEngine.start();
       console.log("[PlayerPage] MusicEngine started successfully!");
       setIsPlaying(true);
     } catch (e) {
@@ -650,6 +692,22 @@ const PlayerPage: React.FC<{
   // Load folders on mount
   useEffect(() => {
     songStorage.getFolders().then(setFolders);
+  }, []);
+
+  // Handle iOS/Safari vocal playback block event
+  useEffect(() => {
+    const handlePlaybackBlocked = () => {
+      console.warn('[PlayerPage] Vocal playback blocked by browser gesture policy. Reverting play state to paused.');
+      musicEngine.pause();
+      setIsPlaying(false);
+      setRenderStatusText('Tap Play to start vocal playback');
+      setTimeout(() => setRenderStatusText(''), 5000);
+    };
+
+    window.addEventListener('vocal-playback-blocked', handlePlaybackBlocked);
+    return () => {
+      window.removeEventListener('vocal-playback-blocked', handlePlaybackBlocked);
+    };
   }, []);
 
   // Folder click outside handler
@@ -867,22 +925,22 @@ const PlayerPage: React.FC<{
       svsFetch(getFetchUrl(`/studio/renders/${encodeURIComponent(song.id)}?owner_id=${encodeURIComponent(authUser?.id || '')}`))
         .then(r => r.ok ? r.json() : null)
         .then(data => {
-          if (data?.renders?.length) {
-            setRenderHistory(data.renders.map((r: any) => ({
-              bpmPercent: r.bpm_pct,
-              songKey: r.song_key || 'C',
-              audioUrl: fixAudioUrl(r.url),
-              label: r.label,
-              filename: r.filename,
-              lyricMode: mapToLyricMode(r.lyric_mode),
-              engineId: r.engine_id,
-              voiceName: r.engine_id || 'Auto',
-              savedStemUrls: (r.saved_stem_urls || []).map((sUrl: string) => fixAudioUrl(sUrl)),
-            })));
-          } else {
-            // Note: only clear if server explicitly confirms no renders AND we don't have local ones
-            // Actually, server is the source of truth, but let's keep local if server fetch fails.
-            setRenderHistory([]);
+          if (data && Array.isArray(data.renders)) {
+            if (data.renders.length > 0) {
+              setRenderHistory(data.renders.map((r: any) => ({
+                bpmPercent: r.bpm_pct,
+                songKey: r.song_key || 'C',
+                audioUrl: fixAudioUrl(r.url),
+                label: r.label,
+                filename: r.filename,
+                lyricMode: mapToLyricMode(r.lyric_mode),
+                engineId: r.engine_id,
+                voiceName: r.engine_id || 'Auto',
+                savedStemUrls: (r.saved_stem_urls || []).map((sUrl: string) => fixAudioUrl(sUrl)),
+              })));
+            } else {
+              setRenderHistory([]);
+            }
           }
         })
         .catch(() => {});
@@ -910,6 +968,15 @@ const PlayerPage: React.FC<{
 
         if (restoredTracks.length > 0) {
           console.log('[PlayerPage] 🎹 Restored tracks from localStorage:', restoredTracks);
+          const hasLotte = voiceEngines.some(v => v.id === 'lotte_v_ai_dol') || 
+                            (localStorage.getItem('vocalido_active_engine') === 'lotte_v_ai_dol');
+          if (hasLotte) {
+            restoredTracks = restoredTracks.map((t: any) => 
+              (t.mode === 'vocal' && (t.engineId === 'default' || !t.engineId))
+                ? { ...t, engineId: 'lotte_v_ai_dol' }
+                : t
+            );
+          }
           setTracks(restoredTracks);
           return;
         }
@@ -1190,13 +1257,50 @@ const PlayerPage: React.FC<{
         const data = await res.json();
         if (active && data && data.voices) {
           setVoiceEngines(data.voices);
+          
+          // Auto-select lotte_v_ai_dol or first non-default voice as default if not already set or if set to 'default'
+          const storedEngine = localStorage.getItem('vocalido_active_engine');
+          const hasLotte = data.voices.some((v: any) => v.id === 'lotte_v_ai_dol');
+          const defaultVoiceId = hasLotte ? 'lotte_v_ai_dol' : (data.voices.find((v: any) => v.id !== 'default')?.id || 'default');
+          
+          const currentActive = storedEngine || activeEngineId;
+          const targetActiveId = (currentActive === 'default' && hasLotte) ? 'lotte_v_ai_dol' : (currentActive || defaultVoiceId);
+          
+          setActiveEngineId(targetActiveId);
+          localStorage.setItem('vocalido_active_engine', targetActiveId);
+
+          setTracks((prev: any) => prev.map((t: any) => {
+            if (t.mode === 'vocal' && (t.engineId === 'default' || !t.engineId) && hasLotte) {
+              return { ...t, engineId: 'lotte_v_ai_dol' };
+            }
+            if (t.mode === 'vocal' && !t.engineId) {
+              return { ...t, engineId: defaultVoiceId };
+            }
+            return t;
+          }));
         }
       } catch (err) {
         console.warn("Could not fetch voice engines, using defaults", err);
         if (active) {
           // Fallback: hardcode default Lotte V voice when server unreachable
-          setVoiceEngines([{ id: 'lotte_v', name: 'Lotte V', type: 'diffsinger', lang: 'en' }]);
-          setActiveEngineId('lotte_v');
+          setVoiceEngines([{ 
+            id: 'lotte_v_ai_dol', 
+            name: 'Lotte V', 
+            type: 'diffsinger', 
+            lang: 'en',
+            model_files: {
+              acoustic: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dsmain/acoustic.onnx',
+              vocoder: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dsvocoder/aidolgan.onnx',
+              dictionary: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dsmain/dictionary.txt',
+              phonemes: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dsmain/phonemes.txt',
+              embeds: {
+                root: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dsmain/embeds/acoustic/Root.emb',
+                fragrance: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dsmain/embeds/acoustic/Fragrance.emb',
+                nectar: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dsmain/embeds/acoustic/Nectar.emb'
+              }
+            }
+          }]);
+          setActiveEngineId('lotte_v_ai_dol');
         }
       }
     };
@@ -1375,6 +1479,18 @@ const PlayerPage: React.FC<{
     return () => window.removeEventListener('keydown', handleKeyDown);
   });
 
+  const cancelVocalSynthesis = () => {
+    if (renderAbortControllerRef.current) {
+      console.log('[Vocalido] 🛑 Cancelling synthesis...');
+      renderAbortControllerRef.current.abort();
+      renderAbortControllerRef.current = null;
+    }
+    setIsRenderingVocal(false);
+    setRenderProgress(0);
+    setRenderTimer(0);
+    setRenderStatusText('');
+  };
+
   const triggerVocalSynthesis = async (forceRender: boolean = false) => {
     if (isRenderingVocal) { console.warn('[Vocalido] ⛔ Render blocked: already rendering'); return; }
     if (!musicXml) { console.warn('[Vocalido] ⛔ Render blocked: no musicXml'); return; }
@@ -1400,16 +1516,31 @@ const PlayerPage: React.FC<{
 
     // Declare these BEFORE try so they are accessible in catch/finally
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 300000);
+    renderAbortControllerRef.current = controller;
+    const timeoutId = setTimeout(() => {
+      if (renderAbortControllerRef.current === controller) {
+        controller.abort();
+      }
+    }, 300000);
+    const noteCount = parsedData.notes.filter(n => n.trackId === primaryTrackId).length;
+    const hasGpu = typeof navigator !== 'undefined' && !!(navigator as any).gpu;
+    let estimatedDuration = 10;
+    if (svsEngine === 'browser-ai') {
+      estimatedDuration = hasGpu ? (4 + noteCount * 0.05) : (8 + noteCount * 0.4);
+    } else {
+      estimatedDuration = 6 + noteCount * 0.08;
+    }
+    estimatedDuration = Math.max(5, Math.min(180, estimatedDuration));
+
     const startTime = Date.now();
     const progressInterval = setInterval(() => {
       const elapsed = (Date.now() - startTime) / 1000;
       let simulatedProgress = 0;
-      if (elapsed < 3) simulatedProgress = (elapsed / 3) * 60;
-      else if (elapsed < 10) simulatedProgress = 60 + ((elapsed - 3) / 7) * 30;
-      else {
-        const extra = elapsed - 10;
-        simulatedProgress = 90 + (9.9 * (1 - Math.exp(-extra / 60)));
+      if (elapsed < estimatedDuration) {
+        simulatedProgress = (elapsed / estimatedDuration) * 95;
+      } else {
+        const extra = elapsed - estimatedDuration;
+        simulatedProgress = 95 + (4.9 * (1 - Math.exp(-extra / 30)));
       }
       setRenderProgress(Math.min(99.9, simulatedProgress));
       setRenderTimer(Math.round(elapsed));
@@ -1417,6 +1548,9 @@ const PlayerPage: React.FC<{
     const cleanupLocal = () => {
       clearInterval(progressInterval);
       clearTimeout(timeoutId);
+      if (renderAbortControllerRef.current === controller) {
+        renderAbortControllerRef.current = null;
+      }
     };
 
     try {
@@ -1487,7 +1621,7 @@ const PlayerPage: React.FC<{
       musicEngine.setBpm(actualBpm);
       setCurrentBpm(actualBpm);
 
-      if (svsEngine === 'vocalido') {
+      if (svsEngine === 'vocalido' || svsEngine === 'browser-ai') {
         const origBpm = (parsedData.metadata as any)?.bpm || 120;
         const bpmPct = Math.round((actualBpm / origBpm) * 100);
         const songKey = parsedData.metadata?.key || localSong.key || 'C';
@@ -1562,73 +1696,119 @@ const PlayerPage: React.FC<{
           return;
         }
 
-        // ── Dual-Path Synthesis: Local Server → RunPod Fallback ──────────────
+        // ── Dual-Path Synthesis: Browser GPU/CPU → Local Server → RunPod Fallback ──────────────
         let result: any = null;
-        const synthParams = { singer: activeVoiceName, bpm: actualBpm, transpose: transposeSemitones, voice: trackEngineId, return_stems: true, collapse_chords: collapseChords };
+        const synthParams = { singer: activeVoiceName, bpm: actualBpm, transpose: transposeSemitones, voice: trackEngineId, return_stems: true, collapse_chords: collapseChords, steps: 20 };
         
-        // Determine if we should try local server first
-        const shouldTryLocal = true; // Enable local/cloud server check for Hybrid Caching
-
         let usedRunPod = false;
 
-        if (shouldTryLocal) {
-          // Try local/cloud server with 10s timeout
-          try {
-            console.log('[Vocalido] 🔄 Trying local/cloud server...');
-            const localController = new AbortController();
-            const localTimeout = setTimeout(() => localController.abort(), 10000);
-            
-            const resp = await svsFetch(getFetchUrl('/studio/preview'), {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              signal: localController.signal,
-              body: JSON.stringify({
-                notes: notesToSynthesize,
-                params: synthParams,
-                song_id: song?.id || '',
-                bpm_pct: bpmPct,
-                song_key: songKey,
-                lyric_mode: activeLyricMode,
-                owner_id: song?.ownerId || authUser?.id || '',
-                is_public: song?.isPublic ?? true,
-              })
-            });
-            clearTimeout(localTimeout);
-            
-            if (resp.ok) {
-              result = await resp.json();
-              console.log('[Vocalido] ✅ Local/cloud server responded');
-            } else {
-              const errorData = await resp.json().catch(() => ({}));
-              console.warn(`[Vocalido] ⚠️ Local server error (${resp.status}):`, errorData.error || '');
-            }
-          } catch (localErr: any) {
-            console.warn('[Vocalido] ⚠️ Local server unavailable:', localErr.name === 'AbortError' ? 'timeout' : localErr.message);
-          }
-        }
-
-        // Fallback to RunPod if local server failed
-        if (!result && RUNPOD_AVAILABLE) {
-          console.log('[Vocalido] 🚀 Using RunPod Serverless API...');
-          usedRunPod = true;
-          setRenderStatusText('Connecting to GPU...');
-          const runpodOutput = await synthesizeViaRunPod(
-            notesToSynthesize,
-            synthParams,
-            controller.signal,
-            (status) => {
-              console.log(`[Vocalido/RunPod] ${status}`);
-              setRenderStatusText(status);
-              setRenderError(null);
-            }
-          );
-          // Convert RunPod output format to match local server response format
-          result = {
-            audio_b64: runpodOutput.audio_b64,
-            mime_type: runpodOutput.mime_type || 'audio/wav',
-            stems_b64: runpodOutput.stems_b64 || [],
-            engine: runpodOutput.engine || 'diffsinger_onnx_runpod',
+        const selectedVoice = voiceEngines.find(v => v.id === trackEngineId);
+        if (svsEngine === 'browser-ai' && selectedVoice?.model_files) {
+          console.log('[Browser AI] Running direct browser-side WebGPU synthesis...');
+          setRenderStatusText('Loading models...');
+          
+          // Translate model files paths to complete URLs using getFetchUrl
+          const modelFiles = {
+            acoustic: getFetchUrl(selectedVoice.model_files.acoustic),
+            vocoder: getFetchUrl(selectedVoice.model_files.vocoder),
+            dictionary: selectedVoice.model_files.dictionary ? getFetchUrl(selectedVoice.model_files.dictionary) : undefined,
+            phonemes: selectedVoice.model_files.phonemes ? getFetchUrl(selectedVoice.model_files.phonemes) : undefined,
+            embeds: selectedVoice.model_files.embeds ? Object.keys(selectedVoice.model_files.embeds).reduce((acc, key) => {
+              if (selectedVoice.model_files?.embeds?.[key]) {
+                acc[key] = getFetchUrl(selectedVoice.model_files.embeds[key]);
+              }
+              return acc;
+            }, {} as Record<string, string>) : undefined
           };
+
+          await clientSvsEngine.loadVoice(selectedVoice.id, modelFiles, (prog) => {
+            setRenderStatusText(prog.message);
+            setRenderProgress(Math.min(99.9, prog.progress));
+          });
+
+          setRenderStatusText('Generating vocals (on-device GPU/CPU)...');
+          const wavBlob = await clientSvsEngine.synthesize(notesToSynthesize, {
+            bpm: actualBpm,
+            formant_shift: 0,
+            speed: 1.0,
+            breathiness: 0,
+            vocal_mode: 'root',
+            steps: 20,
+          });
+
+          const localBlobUrl = URL.createObjectURL(wavBlob);
+          result = {
+            audio_url: localBlobUrl,
+            engine: 'browser_ai_webgpu',
+            stems_b64: []
+          };
+          usedRunPod = true; // Bypasses cache/fixAudioUrl rewriting, uses local blob url as-is
+        } else {
+          if (svsEngine === 'browser-ai') {
+            console.warn('[Browser AI] Selected voice has no local ONNX model files. Falling back to Server/RunPod.');
+            setRenderStatusText('Selected voice has no local ONNX files. Falling back to Server/RunPod.');
+          }
+          
+          const shouldTryLocal = true; // Enable local/cloud server check for Hybrid Caching
+          if (shouldTryLocal) {
+            // Try local/cloud server with 90s timeout (essential for CPU rendering on large scores)
+            try {
+              console.log('[Vocalido] 🔄 Trying local/cloud server...');
+              const localController = new AbortController();
+              const localTimeout = setTimeout(() => localController.abort(), 90000);
+              
+              const resp = await svsFetch(getFetchUrl('/studio/preview'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                signal: localController.signal,
+                body: JSON.stringify({
+                  notes: notesToSynthesize,
+                  params: synthParams,
+                  song_id: song?.id || '',
+                  bpm_pct: bpmPct,
+                  song_key: songKey,
+                  lyric_mode: activeLyricMode,
+                  owner_id: song?.ownerId || authUser?.id || '',
+                  is_public: song?.isPublic ?? true,
+                })
+              });
+              clearTimeout(localTimeout);
+              
+              if (resp.ok) {
+                result = await resp.json();
+                console.log('[Vocalido] ✅ Local/cloud server responded');
+              } else {
+                const errorData = await resp.json().catch(() => ({}));
+                console.warn(`[Vocalido] ⚠️ Local server error (${resp.status}):`, errorData.error || '');
+              }
+            } catch (localErr: any) {
+              console.warn('[Vocalido] ⚠️ Local server unavailable:', localErr.name === 'AbortError' ? 'timeout' : localErr.message);
+            }
+          }
+
+          // Fallback to RunPod if local server failed
+          if (!result && RUNPOD_AVAILABLE) {
+            console.log('[Vocalido] 🚀 Using RunPod Serverless API...');
+            usedRunPod = true;
+            setRenderStatusText('Connecting to GPU...');
+            const runpodOutput = await synthesizeViaRunPod(
+              notesToSynthesize,
+              synthParams,
+              controller.signal,
+              (status) => {
+                console.log(`[Vocalido/RunPod] ${status}`);
+                setRenderStatusText(status);
+                setRenderError(null);
+              }
+            );
+            // Convert RunPod output format to match local server response format
+            result = {
+              audio_b64: runpodOutput.audio_b64,
+              mime_type: runpodOutput.mime_type || 'audio/wav',
+              stems_b64: runpodOutput.stems_b64 || [],
+              engine: runpodOutput.engine || 'diffsinger_onnx_runpod',
+            };
+          }
         }
 
         // If both paths failed
@@ -1762,6 +1942,11 @@ const PlayerPage: React.FC<{
         }
       }
     } catch (e: any) {
+      if (e.name === 'AbortError' || e.message === 'Aborted' || controller.signal.aborted) {
+        console.log('[Vocalido] Synthesis aborted/cancelled by user');
+        cleanupLocal();
+        return;
+      }
       console.error(`[VOCALIDO] Error:`, e);
       setRenderError(e.message || "Synthesis Failed");
       // Auto-close after 3 seconds so the user can see the error but doesn't get stuck
@@ -1857,94 +2042,89 @@ const PlayerPage: React.FC<{
 
   return (
     <div className="flex flex-col h-full w-full bg-[#050507] relative overflow-hidden unselectable">
-      {/* ── PLAYER OPTIONS MENU (LEFT ALIGNED) ── */}
-      <div className="absolute top-3 left-3 sm:left-4 z-[4000] flex flex-col items-start">
-        <button
-          onClick={() => setIsNavMenuVisible(!isNavMenuVisible)}
-          className={`bg-[#0c0c0e]/95 backdrop-blur-xl border border-white/10 px-4 py-2 rounded-full text-[8px] sm:text-[9px] font-black uppercase tracking-widest hover:text-white shadow-[0_10px_30px_rgba(0,0,0,0.6)] flex items-center gap-1.5 transition-all active:scale-95 group ${activeCard !== 'vocalido' ? 'text-[#00e5ff]' : 'text-zinc-400'}`}
-        >
-          <Library size={12} className={`${activeCard !== 'vocalido' ? 'text-[#00e5ff]' : 'text-zinc-400'} group-hover:text-white transition-colors`} />
-          <span className="hidden sm:inline">PLAYER : </span>
-          <span className="text-zinc-200">{activeLyricMode || 'Standard'}</span>
-          <ChevronDown size={12} className={`ml-1 transition-transform duration-300 ${isNavMenuVisible ? 'rotate-180' : ''}`} />
-        </button>
+      {/* ── TOP CONTROL BAR ROW ── */}
+      <div className="flex items-center justify-between px-3 sm:px-4 py-0.5 border-b border-white/5 bg-[#08080a] shrink-0 z-[4000] relative">
+        {/* Left: Player Options Menu */}
+        <div className="relative">
+          <button
+            onClick={() => setIsNavMenuVisible(!isNavMenuVisible)}
+            className={`bg-[#0c0c0e]/95 backdrop-blur-xl border border-white/10 px-4 py-1.5 rounded-full text-[8px] sm:text-[9px] font-black uppercase tracking-widest hover:text-white shadow-md flex items-center gap-1.5 transition-all active:scale-95 group ${activeCard !== 'vocalido' ? 'text-[#00e5ff]' : 'text-zinc-400'}`}
+          >
+            <Library size={12} className={`${activeCard !== 'vocalido' ? 'text-[#00e5ff]' : 'text-zinc-400'} group-hover:text-white transition-colors`} />
+            <span className="hidden sm:inline">PLAYER : </span>
+            <span className="text-zinc-200">{activeLyricMode || 'Standard'}</span>
+            <ChevronDown size={12} className={`ml-1 transition-transform duration-300 ${isNavMenuVisible ? 'rotate-180' : ''}`} />
+          </button>
 
-        {isNavMenuVisible && (
-          <div className="mt-2 bg-[#0c0c0e]/95 backdrop-blur-3xl border border-white/10 p-4 rounded-3xl shadow-[0_20px_60px_rgba(0,0,0,0.9)] flex flex-col gap-3 w-[260px] animate-in fade-in slide-in-from-top-4 origin-top-left">
+          {isNavMenuVisible && (
+            <div className="absolute left-0 mt-2 bg-[#0c0c0e]/95 backdrop-blur-3xl border border-white/10 p-4 rounded-3xl shadow-[0_20px_60px_rgba(0,0,0,0.9)] flex flex-col gap-3 w-[260px] max-h-[75vh] sm:max-h-[85vh] overflow-y-auto custom-scrollbar animate-in fade-in slide-in-from-top-4 origin-top-left z-[5000]">
+              <div className="flex flex-col gap-1.5">
+                <span className="text-[8px] font-black text-white/40 uppercase tracking-widest pl-2 mb-1 flex items-center gap-1.5"><Library size={9} /> Visual Modes</span>
+                {(['score', 'pianoroll', 'trackview', 'memochord', 'practice'] as PlayerCardType[]).map(card => {
+                  const labels: Record<PlayerCardType, string> = {
+                    'score': 'Score Sheet', 'pianoroll': 'Piano Roll', 'trackview': 'Trackview',
+                    'memochord': 'Chord Ring', 'practice': 'Memo Practice', 'vocalido': 'Voice Studio'
+                  };
+                  return (
+                    <button
+                      key={card}
+                      onClick={() => { setActiveCard(card); setIsNavMenuVisible(false); }}
+                      className={`px-4 py-2.5 rounded-2xl text-[10px] sm:text-[11px] font-black uppercase tracking-widest transition-all text-left flex items-center justify-between
+                        ${activeCard === card ? 'bg-[#00e5ff] text-black shadow-[0_0_15px_rgba(0,229,255,0.4)]' : 'bg-white/5 text-zinc-400 hover:text-white hover:bg-white/10'}`}
+                    >
+                      <span>{labels[card]}</span>
+                      {activeCard === card && <span className="w-1.5 h-1.5 rounded-full bg-black/60" />}
+                    </button>
+                  );
+                })}
+              </div>
 
-            <div className="flex flex-col gap-1.5">
-              <span className="text-[8px] font-black text-white/40 uppercase tracking-widest pl-2 mb-1 flex items-center gap-1.5"><Library size={9} /> Visual Modes</span>
-              {(['score', 'pianoroll', 'trackview', 'memochord', 'practice'] as PlayerCardType[]).map(card => {
-                const labels: Record<PlayerCardType, string> = {
-                  'score': 'Score Sheet', 'pianoroll': 'Piano Roll', 'trackview': 'Trackview',
-                  'memochord': 'Chord Ring', 'practice': 'Memo Practice', 'vocalido': 'Voice Studio'
-                };
-                return (
-                  <button
-                    key={card}
-                    onClick={() => { setActiveCard(card); setIsNavMenuVisible(false); }}
-                    className={`px-4 py-2.5 rounded-2xl text-[10px] sm:text-[11px] font-black uppercase tracking-widest transition-all text-left flex items-center justify-between
-                      ${activeCard === card ? 'bg-[#00e5ff] text-black shadow-[0_0_15px_rgba(0,229,255,0.4)]' : 'bg-white/5 text-zinc-400 hover:text-white hover:bg-white/10'}`}
-                  >
-                    <span>{labels[card]}</span>
-                    {activeCard === card && <span className="w-1.5 h-1.5 rounded-full bg-black/60" />}
-                  </button>
-                );
-              })}
-            </div>
+              <div className="h-px bg-white/10 w-full my-0.5" />
 
-            <div className="h-px bg-white/10 w-full my-0.5" />
-
-            <div className="flex flex-col gap-2.5 max-h-[400px] overflow-y-auto scrollbar-hide pr-1">
-              <span className="text-[8px] font-black text-white/40 uppercase tracking-widest pl-2 mb-1 flex items-center gap-1.5"><Languages size={9} /> Singing Systems</span>
-              
-              {[
-                { group: 'American', items: ['American Movable Do', 'American Fixed Do'] },
-                { group: 'British', items: ['British Movable Doh', 'British Fixed Doh'] },
-                { group: 'Ju Solfege', items: ['Ju Solfege Movable Doh', 'Ju Solfege Fixed Doh'] },
-                { group: 'Pedagogical', items: ['Jianpu', 'Kodaly', 'Kodaly Rhythm'] },
-                { group: 'Ethnic', items: ['Indian Sargam'] },
-                { group: 'Standard', items: ['Lyric', 'Close'] }
-              ].map(grp => (
-                <div key={grp.group} className="flex flex-col gap-1">
-                  <span className="text-[7px] font-black text-zinc-600 uppercase tracking-widest pl-2 mb-0.5">{grp.group}</span>
-                  <div className="grid grid-cols-2 gap-1">
-                    {grp.items.map(mode => {
-                      const isActive = tracks.length > 0 && tracks[0].lyricMode === mode;
-                      return (
-                        <button
-                          key={mode}
-                          onClick={() => {
-                            setTracks((prevTracks: any) => prevTracks.map((t: any) => ({ ...t, lyricMode: mode as LyricMode })));
-                            // Persist last-used mode to localStorage
-                            try { localStorage.setItem('memo_lyric_mode', mode); } catch {}
-                            setIsNavMenuVisible(false);
-                            // Auto-render when singing mode changes
-                            lastRenderedKeyRef.current = '';
-                            setTimeout(() => triggerVocalSynthesis(), 150);
-                          }}
-                          className={`px-3 py-2 rounded-xl text-[8px] sm:text-[9px] font-black uppercase tracking-widest transition-all text-center flex items-center justify-center border
-                            ${isActive ? 'bg-indigo-500 border-indigo-400 text-white shadow-lg' : 'bg-white/5 border-white/5 text-zinc-400 hover:text-white hover:bg-white/10'}`}
-                        >
-                          {mode.replace('American ', '').replace('British ', '').replace('Ju Solfege ', '').replace('Indian ', '')}
-                        </button>
-                      );
-                    })}
+              <div className="flex flex-col gap-2.5 pr-1">
+                <span className="text-[8px] font-black text-white/40 uppercase tracking-widest pl-2 mb-1 flex items-center gap-1.5"><Languages size={9} /> Singing Systems</span>
+                {[
+                  { group: 'American', items: ['American Movable Do', 'American Fixed Do'] },
+                  { group: 'British', items: ['British Movable Doh', 'British Fixed Doh'] },
+                  { group: 'Ju Solfege', items: ['Ju Solfege Movable Doh', 'Ju Solfege Fixed Doh'] },
+                  { group: 'Pedagogical', items: ['Jianpu', 'Kodaly', 'Kodaly Rhythm'] },
+                  { group: 'Standard', items: ['Lyric', 'Close'] }
+                ].map(grp => (
+                  <div key={grp.group} className="flex flex-col gap-1">
+                    <span className="text-[7px] font-black text-zinc-600 uppercase tracking-widest pl-2 mb-0.5">{grp.group}</span>
+                    <div className="grid grid-cols-2 gap-1">
+                      {grp.items.map(mode => {
+                        const isActive = tracks.length > 0 && tracks[0].lyricMode === mode;
+                        return (
+                          <button
+                            key={mode}
+                            onClick={() => {
+                              setTracks((prevTracks: any) => prevTracks.map((t: any) => ({ ...t, lyricMode: mode as LyricMode })));
+                              try { localStorage.setItem('memo_lyric_mode', mode); } catch {}
+                              setIsNavMenuVisible(false);
+                              lastRenderedKeyRef.current = '';
+                              setTimeout(() => triggerVocalSynthesis(), 150);
+                            }}
+                            className={`px-3 py-2 rounded-xl text-[8px] sm:text-[9px] font-black uppercase tracking-widest transition-all text-center flex items-center justify-center border
+                              ${isActive ? 'bg-indigo-500 border-indigo-400 text-white shadow-lg' : 'bg-white/5 border-white/5 text-zinc-400 hover:text-white hover:bg-white/10'}`}
+                          >
+                            {mode.replace('American ', '').replace('British ', '').replace('Ju Solfege ', '').replace('Indian ', '')}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
+          )}
+        </div>
 
-          </div>
-        )}
-      </div>
-
-      {/* ── PREMIUM CLOUD DROPDOWN SVS CONTROL ── */}
-      <div className="absolute top-3 right-3 sm:right-4 z-[4000] flex items-center">
-        <div className="flex items-center bg-[#0c0c0e]/85 backdrop-blur-2xl border border-white/10 rounded-full pl-5 pr-3 py-1.5 shadow-2xl gap-4 hover:border-white/30 transition-all cursor-pointer group">
+        {/* Right: PREMIUM CLOUD DROPDOWN SVS CONTROL */}
+        <div className="flex items-center bg-[#0c0c0e]/85 backdrop-blur-2xl border border-white/10 rounded-full pl-2 pr-1.5 py-0.5 shadow-2xl gap-2 hover:border-white/30 transition-all cursor-pointer group">
           {/* Main Display Area (Click to Toggle Studio) */}
           <button 
-            className="flex items-center gap-3 pr-2"
+            className="flex items-center gap-2 pr-1"
             onClick={() => {
               if (activeCard === 'vocalido') {
                 setActiveCard('score');
@@ -1954,23 +2134,23 @@ const PlayerPage: React.FC<{
               }
             }}
           >
-            <span className={`text-[10px] font-black uppercase tracking-[0.2em] transition-colors ${activeCard === 'vocalido' ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'}`}>
+            <span className={`text-[7px] font-black uppercase tracking-[0.2em] transition-colors ${activeCard === 'vocalido' ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'}`}>
               VOCALIDO
             </span>
-            <ChevronDown size={14} className={`text-zinc-500 transition-transform duration-300 ${activeCard === 'vocalido' ? 'rotate-180' : ''}`} />
+            <ChevronDown size={10} className={`text-zinc-500 transition-transform duration-300 ${activeCard === 'vocalido' ? 'rotate-180' : ''}`} />
           </button>
 
-          <div className="w-px h-3 bg-white/10" />
+          <div className="w-px h-2 bg-white/10" />
 
           {/* Settings & Toggle Area */}
-          <div className="flex items-center gap-3 pl-1">
+          <div className="flex items-center gap-1.5 pl-0.5">
             <button
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
                 triggerVocalSynthesis(true);
               }}
-              className="px-3 py-1 -m-1 rounded-full text-[9px] font-black uppercase tracking-widest bg-white/5 border border-white/10 transition-all text-[#00e5ff] hover:bg-[#00e5ff] hover:text-black shadow-[0_0_10px_rgba(0,229,255,0.2)]"
+              className="px-1.5 py-[1px] -m-0.5 rounded-full text-[6.5px] font-black uppercase tracking-widest bg-white/5 border border-white/10 transition-all text-[#00e5ff] hover:bg-[#00e5ff] hover:text-black shadow-[0_0_10px_rgba(0,229,255,0.2)]"
               title="Force Fresh AI Render (Clear Cache) / Shortcut: Option+R"
             >
               Render
@@ -1981,10 +2161,10 @@ const PlayerPage: React.FC<{
                 e.stopPropagation();
                 setShowVocalidoSetup(true);
               }}
-              className="p-2 -m-2 rounded-full transition-all text-zinc-400 hover:text-white hover:bg-white/10"
+              className="p-1 -m-1 rounded-full transition-all text-zinc-400 hover:text-white hover:bg-white/10"
               title="Vocalido Setup"
             >
-              <SlidersHorizontal size={14} />
+              <SlidersHorizontal size={10} />
             </button>
             
             {/* Status Dot */}
@@ -2063,7 +2243,7 @@ const PlayerPage: React.FC<{
         )}
 
         {/* ── MAIN CONTENT AREA (RIGHT SIDE IN SPLIT VIEW) ── */}
-        <div className="flex-1 flex flex-col relative overflow-hidden pointer-events-auto pb-[124px]">
+        <div className="flex-1 flex flex-col relative overflow-hidden pointer-events-auto pb-[54px]">
         {/* ── MEMO SONG RENDER: Speed Panel (left floating) ── */}
         {renderHistory.length > 0 && activeCard === 'score' && (
           <>
@@ -2076,15 +2256,15 @@ const PlayerPage: React.FC<{
                 <ChevronRight size={10} />
               </button>
             ) : (
-              <div className="absolute left-2 top-1/2 -translate-y-1/2 z-[3000] flex flex-col gap-1.5 pointer-events-auto bg-[#0c0c0e]/95 p-2 rounded-xl border border-white/10 backdrop-blur-xl shadow-2xl max-h-[70vh] overflow-y-auto scrollbar-hide w-16">
-                <div className="flex items-center justify-between border-b border-white/5 pb-1 mb-0.5 w-full">
-                  <span className="text-[5.5px] font-black text-zinc-400 uppercase tracking-widest pl-0.5">Renders</span>
+              <div className="absolute left-1 top-1/2 -translate-y-1/2 z-[3000] flex flex-col gap-1 pointer-events-auto bg-[#0c0c0e]/95 p-1 rounded-lg border border-white/10 backdrop-blur-xl shadow-2xl max-h-[70vh] overflow-y-auto scrollbar-hide w-[34px]">
+                <div className="flex items-center justify-between border-b border-white/5 pb-0.5 mb-0.5 w-full">
+                  <span className="text-[4.2px] font-black text-zinc-400 uppercase tracking-widest pl-0.5">Renders</span>
                   <button
                     onClick={() => setIsRenderHistoryHidden(true)}
-                    className="w-3.5 h-3.5 flex items-center justify-center text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 rounded transition-colors"
+                    className="w-2.5 h-2.5 flex items-center justify-center text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 rounded transition-colors"
                     title="Hide Memo Renders"
                   >
-                    <ChevronLeft size={9} />
+                    <ChevronLeft size={6} />
                   </button>
                 </div>
                 {renderHistory.map((h) => {
@@ -2168,16 +2348,16 @@ const PlayerPage: React.FC<{
                             setIsAudioLoading(false);
                           }
                         }}
-                        className={`w-11 h-11 rounded-xl flex flex-col items-center justify-center border font-bold uppercase transition-all shadow-md relative leading-none select-none
+                        className={`w-6 h-6 rounded-lg flex flex-col items-center justify-center border font-bold uppercase transition-all shadow-md relative leading-none select-none
                           ${isActive 
-                            ? 'bg-gradient-to-br from-cyan-400 to-indigo-600 text-black border-transparent shadow-[0_0_12px_rgba(0,229,255,0.4)]' 
+                            ? 'bg-gradient-to-br from-cyan-400 to-indigo-600 text-black border-transparent shadow-[0_0_10px_rgba(0,229,255,0.4)]' 
                             : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700'
                           }`}
                         title={`เล่นประสานเสียง (${h.voiceName || 'Auto'} • ${h.lyricMode || 'SYS'} • Key ${h.songKey} • BPM ${h.bpmPercent}%)`}
                       >
-                        <span className="text-[7.5px] tracking-tighter leading-none mb-0.5">{h.songKey}</span>
-                        <span className="text-[5.5px] opacity-80 leading-none">{diffStr}</span>
-                        <span className="text-[4px] opacity-60 mt-0.5 tracking-tighter max-w-[40px] truncate leading-none">{h.voiceName || 'Auto'}</span>
+                        <span className="text-[4.5px] tracking-tighter leading-none mb-0.5">{h.songKey}</span>
+                        <span className="text-[3.2px] opacity-80 leading-none">{diffStr}</span>
+                        <span className="text-[2.2px] opacity-60 mt-0.5 tracking-tighter max-w-[22px] truncate leading-none">{h.voiceName || 'Auto'}</span>
                       </button>
     
                       {/* Info popup toggle — tiny badge */}
@@ -2186,7 +2366,7 @@ const PlayerPage: React.FC<{
                           e.stopPropagation();
                           setMemoInfoOpenKey(isInfoOpen ? null : hKey);
                         }}
-                        className={`absolute -top-1 -left-1 w-3.5 h-3.5 rounded-full flex items-center justify-center text-[5.5px] font-black border transition-all pointer-events-auto
+                        className={`absolute top-0 left-0 w-2 h-2 rounded-full flex items-center justify-center text-[3.5px] font-black border transition-all pointer-events-auto
                           ${isInfoOpen 
                             ? 'bg-amber-500 border-amber-400 text-white shadow-lg' 
                             : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-white'
@@ -2233,9 +2413,11 @@ const PlayerPage: React.FC<{
                         </div>
                       )}
     
-                      {/* Delete button — appears on hover (×) */}
+                      {/* Delete button — positioned inside to prevent overflow clipping */}
                       <button
-                        onClick={() => {
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
                           const confirmed = window.confirm(`ลบ Render "${formatRenderLabel(h.label, h.bpmPercent)}" สำหรับเพลงนี้ออกใช่ไหม?`);
                           if (!confirmed) return;
                           if (h.filename) svsFetch(getFetchUrl(`/studio/renders/${encodeURIComponent(h.filename)}?owner_id=${encodeURIComponent(authUser?.id || '')}&song_id=${encodeURIComponent(localSong.id)}`), { method: 'DELETE' }).catch(() => {});
@@ -2243,7 +2425,7 @@ const PlayerPage: React.FC<{
                           if (activeRenderKey === hKey) setActiveRenderKey(null);
                           if (memoInfoOpenKey === hKey) setMemoInfoOpenKey(null);
                         }}
-                        className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-rose-600 hover:bg-rose-500 text-white rounded-full text-[7px] font-black items-center justify-center hidden group-hover:flex transition-all shadow-lg"
+                        className="absolute top-0 right-0 w-2.5 h-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded-full text-[5.5px] font-black flex items-center justify-center transition-all shadow-lg pointer-events-auto z-[3100]"
                         title="ลบ / Delete"
                       >
                         ×
@@ -2270,33 +2452,33 @@ const PlayerPage: React.FC<{
               return (
                 <div 
                   ref={folderPopoverRef}
-                  className="absolute left-1 z-[6000] flex flex-row gap-1 pointer-events-auto items-center"
-                  style={{ top: `${Math.max(5, baseTop - 25)}px` }}
+                  className="absolute left-1 z-[6000] flex flex-col gap-0.5 pointer-events-auto items-start opacity-60 hover:opacity-100 transition-opacity duration-200"
+                  style={{ top: `${Math.max(2, baseTop - 42)}px` }}
                 >
                   <button
                     onClick={handleToggleFavorite}
-                    className={`h-4 px-1.5 rounded-sm flex items-center gap-0.5 text-[6.5px] font-black uppercase transition-all border shadow-sm ${
+                    className={`h-2 px-0.5 rounded-sm flex items-center gap-0.5 text-[3.2px] font-black uppercase tracking-wider transition-all border shadow-sm ${
                       isFavorite
                         ? 'bg-rose-600 border-rose-500 text-white'
                         : 'bg-zinc-800 border-zinc-600 text-zinc-300 hover:text-rose-400 hover:border-rose-400/60'
                     }`}
                     title={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
                   >
-                    <Heart size={7} fill={isFavorite ? 'currentColor' : 'none'} className={isFavorite ? 'text-white' : ''} />
+                    <Heart size={3} fill={isFavorite ? 'currentColor' : 'none'} className={isFavorite ? 'text-white' : ''} />
                     {isFavorite ? 'Favorite' : 'Add Fav'}
                   </button>
 
                   <div className="relative">
                     <button
                       onClick={() => setIsFolderPopoverOpen(!isFolderPopoverOpen)}
-                      className={`h-4 px-1.5 rounded-sm flex items-center gap-0.5 text-[6.5px] font-black uppercase transition-all border shadow-sm ${
+                      className={`h-2 px-0.5 rounded-sm flex items-center gap-0.5 text-[3.2px] font-black uppercase tracking-wider transition-all border shadow-sm ${
                         currentFolderId
                           ? 'bg-indigo-600 border-indigo-500 text-white'
                           : 'bg-zinc-800 border-zinc-600 text-zinc-300 hover:text-indigo-400 hover:border-indigo-400/60'
                       }`}
                       title="Manage Folder"
                     >
-                      <Folder size={7} />
+                      <Folder size={3} />
                       {currentFolderId ? (folders.find(f => f.id === currentFolderId)?.name || 'Folder') : 'Add Folder'}
                     </button>
 
@@ -2408,38 +2590,8 @@ const PlayerPage: React.FC<{
                 <div 
                   key={track.id} 
                   className="absolute left-1 z-50 flex flex-col gap-1 pointer-events-auto"
-                  style={{ top: `${yPos + 4}px` }}
+                  style={{ top: `${yPos - 2}px` }}
                 >
-                  {/* Voice Model Selector (Above Vocal Button) */}
-                  <select
-                    className="h-3 w-16 px-0.5 bg-black/40 border border-white/5 text-[6px] text-white/50 rounded-sm focus:outline-none focus:border-cyan-500 cursor-pointer backdrop-blur-sm -mb-0.5"
-                    value={track.engineId || activeEngineId}
-                    onChange={(e) => {
-                      const newId = e.target.value;
-                      setTracks((prev: any) => prev.map((t: any) => 
-                        t.id === track.id ? { ...t, engineId: newId } : t
-                      ));
-                      if (track.mode === 'vocal') setActiveEngineId(newId);
-                    }}
-                    title="Select Voice Model for this track"
-                  >
-                    {voiceEngines.length > 0 ? (
-                      voiceEngines.map(eng => (
-                        <option key={eng.id} value={eng.id}>{eng.name}</option>
-                      ))
-                    ) : (
-                      <>
-                        <option value="default">Native English (Default)</option>
-                        {activeEngineId === 'jianpu' && (
-                          <option value="jianpu">Chinese Numeral (Jianpu)</option>
-                        )}
-                        {activeEngineId && activeEngineId !== 'default' && activeEngineId !== 'jianpu' && (
-                          <option value={activeEngineId}>{activeEngineId.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</option>
-                        )}
-                      </>
-                    )}
-                  </select>
-
                   {/* Button Row */}
                   <div className="flex flex-row gap-0.5 items-center">
                     <button
@@ -2450,15 +2602,15 @@ const PlayerPage: React.FC<{
                         setActiveRenderTrackId(track.id);
                         triggerVocalSynthesis(true);
                       }}
-                      className={`h-4 px-1.5 rounded-sm flex items-center gap-0.5 text-[6.5px] font-black uppercase transition-all border shadow-sm ${
+                      className={`h-2.5 px-0.5 rounded-sm flex items-center gap-0.5 text-[3.5px] font-black uppercase transition-all border shadow-sm ${
                         track.mode === 'vocal'
                           ? 'bg-cyan-600 border-cyan-400 text-white'
                           : 'bg-zinc-800 border-zinc-600 text-zinc-300 hover:text-cyan-400 hover:border-cyan-400/60'
                       }`}
                       title={`Render "${track.name}" as vocal`}
                     >
-                      <Mic2 size={7} />
-                      {track.mode === 'vocal' ? (activeVoiceName || 'Lotte V') : 'Render'}
+                      <Mic2 size={4.5} />
+                      Render
                     </button>
                     
                     <button
@@ -2467,14 +2619,14 @@ const PlayerPage: React.FC<{
                         next.has(track.id) ? next.delete(track.id) : next.add(track.id);
                         return next;
                       })}
-                      className={`w-4 h-4 rounded-sm border flex items-center justify-center transition-all ${
+                      className={`w-2.5 h-2.5 rounded-sm border flex items-center justify-center transition-all ${
                         !isMuted 
                           ? 'bg-red-600 border-red-500 text-white shadow-[0_0_5px_rgba(220,38,38,0.5)]' 
                           : 'bg-zinc-300 border-zinc-400 text-zinc-800 hover:bg-zinc-200'
                       }`}
                       title={isMuted ? 'Piano mode' : 'Vocal mode'}
                     >
-                      {isMuted ? <span className="text-[7px]">🎹</span> : <Mic2 size={8} />}
+                      {isMuted ? <span className="text-[4.5px]">🎹</span> : <Mic2 size={5} />}
                     </button>
 
                     {/* Stem Solo — hidden behind toggle to prevent accidental clicks */}
@@ -2486,7 +2638,7 @@ const PlayerPage: React.FC<{
                           {/* Tiny toggle: only shows a small diamond icon */}
                           <button
                             onClick={(e) => { e.stopPropagation(); setExpandedStemTrack(isOpen ? null : stemTrackId); }}
-                            className={`w-4 h-4 rounded-sm flex items-center justify-center transition-all border text-[7px] font-black ${
+                            className={`w-3 h-3 rounded-sm flex items-center justify-center transition-all border text-[5px] font-black ${
                               isOpen 
                                 ? 'bg-cyan-600 border-cyan-400 text-white shadow-[0_0_6px_rgba(6,182,212,0.5)]' 
                                 : soloedStems[stemTrackId] !== null
@@ -2571,7 +2723,7 @@ const PlayerPage: React.FC<{
           <div className="absolute inset-0 z-[5000] flex flex-col items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-500 pointer-events-auto">
             <div className="relative flex flex-col items-center">
               {/* Outer Ring */}
-              <div className="relative w-56 h-56 flex items-center justify-center">
+              <div className="relative w-32 h-32 flex items-center justify-center">
                 <svg viewBox="0 0 224 224" className="absolute inset-0 w-full h-full -rotate-90 drop-shadow-[0_0_15px_rgba(0,229,255,0.2)]">
                   <circle
                     cx="112" cy="112" r="100"
@@ -2596,55 +2748,83 @@ const PlayerPage: React.FC<{
                 
                 {/* Center Content */}
                 <div className="absolute inset-0 flex flex-col items-center justify-center text-white">
-                  <span className="text-4xl font-black tracking-tighter tabular-nums drop-shadow-lg">
+                  <span className="text-xl font-black tracking-tighter tabular-nums drop-shadow-lg">
                     {renderProgress < 99.9 ? renderProgress.toFixed(1) : "99.9"}%
                   </span>
-                  <div className="flex items-center gap-1.5 mt-2 bg-white/10 px-3 py-1 rounded-full backdrop-blur-sm border border-white/10">
-                    <span className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-pulse" />
-                    <span className="text-[10px] font-bold tabular-nums opacity-80">{renderTimer}s</span>
+                  <div className="flex items-center gap-1 mt-1 bg-white/10 px-2 py-0.5 rounded-full backdrop-blur-sm border border-white/10">
+                    <span className="w-1 h-1 bg-cyan-400 rounded-full animate-pulse" />
+                    <span className="text-[7px] font-bold tabular-nums opacity-80">{renderTimer}s</span>
                   </div>
-                  <div className="mt-6 flex flex-col items-center gap-2">
-                    <span className="text-[10px] font-black uppercase tracking-[0.3em] text-cyan-400 animate-pulse">
+                  <div className="mt-4 flex flex-col items-center gap-1">
+                    <span className="text-[7px] font-black uppercase tracking-[0.3em] text-cyan-400 animate-pulse">
                       {renderStatusText || (renderProgress > 95 ? "Finalizing Audio..." : "Rendering Tone")}
                     </span>
-                    <div className="flex gap-1">
+                    <div className="flex gap-0.5">
                       {[0, 1, 2].map(i => (
-                        <div key={i} className="w-1 h-1 bg-white/20 rounded-full animate-bounce" style={{ animationDelay: `${i * 0.2}s` }} />
+                        <div key={i} className="w-0.5 h-0.5 bg-white/20 rounded-full animate-bounce" style={{ animationDelay: `${i * 0.2}s` }} />
                       ))}
                     </div>
                   </div>
                 </div>
               </div>
 
-              <div className="mt-8 flex flex-col items-center gap-2">
-                <div className="px-5 py-2 bg-black/60 border border-white/10 rounded-2xl backdrop-blur-xl flex items-center gap-3">
-                  <span className={`w-1.5 h-1.5 rounded-full ${renderError ? 'bg-rose-500' : 'bg-cyan-400 animate-pulse'}`} />
-                  <span className="text-[10px] font-black text-white uppercase tracking-widest">
+              <div className="mt-4 flex flex-col items-center gap-2">
+                <div className="px-3 py-1.5 bg-black/60 border border-white/10 rounded-xl backdrop-blur-xl flex items-center gap-2">
+                  <span className={`w-1 h-1 rounded-full ${renderError ? 'bg-rose-500' : 'bg-cyan-400 animate-pulse'}`} />
+                  <span className="text-[7.5px] font-black text-white uppercase tracking-widest">
                     {renderError ? (
                       <span className="text-rose-400 truncate max-w-[200px]">{renderError}</span>
                     ) : (
-                      <div className="flex items-center gap-2">
-                        <span>VOICE: <span className="text-cyan-400">{(activeVoiceName || 'Vocalido Soprano').toUpperCase()}</span></span>
-                        
-                        {/* Engine Selection Dropdown */}
-                        <div className="flex items-center space-x-2 mt-0">
-                          <span className="text-[8px] text-gray-400">🎤 MODEL:</span>
-                          <select 
-                            value={activeEngineId} 
-                            onChange={handleEngineChange}
-                            className="bg-gray-800 border border-gray-700 text-white text-[9px] rounded px-1.5 py-0.5 outline-none focus:border-cyan-400"
-                          >
-                            {voiceEngines.length > 0 ? (
-                              voiceEngines.map(v => (
-                                <option key={v.id} value={v.id}>{v.name} ({v.lang})</option>
-                              ))
-                            ) : (
-                              <option value="default">Native English (Default)</option>
-                            )}
-                          </select>
+                      <div className="flex flex-col sm:flex-row items-center gap-1.5 sm:gap-2">
+                        <div className="flex items-center gap-1.5">
+                          <span>VOICE: <span className="text-cyan-400">{(activeVoiceName || 'Vocalido Soprano').toUpperCase()}</span></span>
+                          <span className="text-white/30 hidden sm:inline">•</span>
                         </div>
-                        <span className="text-white/30">•</span>
-                        <span>SYS: <span className="text-emerald-400">{(activeLyricMode || 'Standard').toUpperCase()}</span></span>
+                        
+                        <div className="flex items-center gap-1.5">
+                          {/* SVS Engine Selector */}
+                          <div className="flex items-center space-x-1">
+                            <span className="text-[6.5px] text-gray-400">⚡ ENGINE:</span>
+                            <select 
+                              value={svsEngine} 
+                              onChange={(e) => {
+                                const mode = e.target.value as 'vocalido' | 'browser-ai';
+                                setSvsEngine(mode);
+                                localStorage.setItem('vocalido_svs_engine', mode);
+                              }}
+                              className="bg-zinc-800 border border-zinc-700 text-white text-[7.5px] rounded px-1 py-0.2 outline-none focus:border-cyan-400 cursor-pointer"
+                            >
+                              <option value="browser-ai">Browser (WebGPU)</option>
+                              <option value="vocalido">Server (Hybrid)</option>
+                            </select>
+                          </div>
+
+                          <span className="text-white/20">•</span>
+
+                          {/* Engine Selection Dropdown */}
+                          <div className="flex items-center space-x-1">
+                            <span className="text-[6.5px] text-gray-400">🎤 MODEL:</span>
+                            <select 
+                              value={activeEngineId} 
+                              onChange={handleEngineChange}
+                              className="bg-zinc-800 border border-zinc-700 text-white text-[7.5px] rounded px-1 py-0.2 outline-none focus:border-cyan-400 cursor-pointer"
+                            >
+                              {voiceEngines.length > 0 ? (
+                                voiceEngines.map(v => (
+                                  <option key={v.id} value={v.id}>{v.name} ({v.lang})</option>
+                                ))
+                              ) : (
+                                <>
+                                  <option value="lotte_v_ai_dol">Lotte V Model (en)</option>
+                                  <option value="default">Native English (Default) (en)</option>
+                                </>
+                              )}
+                            </select>
+                          </div>
+                          
+                          <span className="text-white/20">•</span>
+                          <span>SYS: <span className="text-emerald-400">{(activeLyricMode || 'Standard').toUpperCase()}</span></span>
+                        </div>
                       </div>
                     )}
                   </span>
@@ -2652,15 +2832,23 @@ const PlayerPage: React.FC<{
                 {renderError ? (
                   <button 
                     onClick={() => triggerVocalSynthesis()}
-                    className="mt-2 px-6 py-2 bg-white/10 hover:bg-white/20 border border-white/20 rounded-xl text-[10px] font-black text-white uppercase tracking-widest transition-all"
+                    className="mt-1.5 px-4 py-1 bg-white/10 hover:bg-white/20 border border-white/20 rounded-lg text-[7.5px] font-black text-white uppercase tracking-widest transition-all"
                   >
                     Try Again • ลองใหม่
                   </button>
                 ) : (
-                  <p className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest">Wait for play • กำลังประมวลผลจนจบ</p>
+                  <div className="flex flex-col items-center">
+                    <p className="text-[6.5px] font-bold text-zinc-500 uppercase tracking-widest mb-1">Wait for play • กำลังประมวลผลจนจบ</p>
+                    <button 
+                      onClick={cancelVocalSynthesis}
+                      className="px-3 py-1 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 rounded-md text-[7.5px] font-black text-rose-400 uppercase tracking-widest transition-all active:scale-95"
+                    >
+                      Cancel • ยกเลิก
+                    </button>
+                  </div>
                 )}
                 {renderError && (
-                  <button onClick={closeRenderOverlay} className="text-[8px] text-zinc-500 underline mt-2 uppercase tracking-widest">Dismiss • ปิด</button>
+                  <button onClick={closeRenderOverlay} className="text-[6.5px] text-zinc-500 underline mt-1.5 uppercase tracking-widest">Dismiss • ปิด</button>
                 )}
               </div>
             </div>
@@ -2773,9 +2961,9 @@ const PlayerPage: React.FC<{
           </button>
 
           {/* Main Transport Container - Slides away completely */}
-          <div id="transport-container" className={`absolute inset-x-0 z-[5000] flex flex-col items-center px-3 no-print gap-1.5 pointer-events-none transition-transform duration-500 ease-[cubic-bezier(0.2,1,0.2,1)] ${isTransportHidden ? 'translate-y-[200%]' : 'translate-y-0'}`}
-            style={{ bottom: 'calc(env(safe-area-inset-bottom, 0px) + 16px)' }}>
-            <div className="w-full max-w-[500px] bg-[#0c0c0e]/90 backdrop-blur-2xl px-3 h-9 rounded-full border border-white/10 shadow-[0_10px_30px_rgba(0,0,0,0.8)] flex items-center gap-3 pointer-events-auto">
+          <div id="transport-container" className={`absolute inset-x-0 z-[5000] flex flex-col items-center px-3 no-print gap-1 pointer-events-none transition-transform duration-500 ease-[cubic-bezier(0.2,1,0.2,1)] ${isTransportHidden ? 'translate-y-[200%]' : 'translate-y-0'}`}
+            style={{ bottom: 'calc(env(safe-area-inset-bottom, 0px) + 6px)' }}>
+            <div className="w-full max-w-[500px] bg-[#0c0c0e]/90 backdrop-blur-2xl px-3 h-8 rounded-full border border-white/10 shadow-[0_10px_30px_rgba(0,0,0,0.8)] flex items-center gap-3 pointer-events-auto">
               {/* Eye Toggle on the far left - Trigger to hide */}
               <button
                 onClick={() => setIsTransportHidden(true)}
@@ -2785,14 +2973,14 @@ const PlayerPage: React.FC<{
                 <EyeOff size={14} />
               </button>
 
-              <span className="text-[10px] font-black text-cyan-400 lcd-font tabular-nums w-9">{formatTime(currentTime)}</span>
+              <span className="text-[9px] font-black text-cyan-400 lcd-font tabular-nums w-9">{formatTime(currentTime)}</span>
               <div className="flex-1 relative h-[2px] flex items-center cursor-pointer group overflow-hidden" onClick={(e) => { const rect = e.currentTarget.getBoundingClientRect(); musicEngine.setTransportSeconds(((e.clientX - rect.left) / rect.width) * totalDurationSeconds); }}>
                 <div className="w-full h-full bg-white/20 rounded-full" />
                 <div className="absolute h-full bg-cyan-400 left-0 transition-all shadow-[0_0_8px_#00e5ff]" style={{ width: `${Math.min(100, Math.max(0, (currentTime / totalDurationSeconds) * 100))}%` }} />
                 <div className="absolute w-3 h-3 bg-white rounded-full shadow-[0_0_10px_#fff] transition-all" style={{ left: `calc(${Math.min(100, Math.max(0, (currentTime / totalDurationSeconds) * 100))}% - 6px)` }} />
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-[10px] font-black text-zinc-300 lcd-font tabular-nums w-9 text-right">{formatTime(totalDurationSeconds)}</span>
+                <span className="text-[9px] font-black text-zinc-300 lcd-font tabular-nums w-9 text-right">{formatTime(totalDurationSeconds)}</span>
                 <div className="h-3 w-px bg-white/20 mx-1" />
                 <button
                   onClick={() => {
@@ -2818,9 +3006,9 @@ const PlayerPage: React.FC<{
               </div>
             </div>
 
-            <div className="w-full max-w-[calc(100vw-8px)] md:max-w-[640px] bg-white shadow-[0_20px_60px_rgba(0,0,0,0.9)] rounded-full h-[54px] flex items-center px-1 md:px-2.5 pointer-events-auto relative">
+            <div className="w-full max-w-[calc(100vw-8px)] md:max-w-[640px] bg-white shadow-[0_20px_60px_rgba(0,0,0,0.9)] rounded-full h-[38px] flex items-center px-1 md:px-2.5 pointer-events-auto relative">
               <div className="flex-none flex items-center justify-start gap-0.5 pr-0.5 md:pr-1.5 border-r border-zinc-100">
-                <button onClick={() => setShowMixer(!showMixer)} className={`w-7 h-7 md:w-8 md:h-8 rounded-full flex items-center justify-center transition-all ${showMixer ? 'bg-zinc-100 text-black' : 'text-zinc-300 hover:text-black'}`}><SlidersHorizontal size={12} /></button>
+                <button onClick={() => setShowMixer(!showMixer)} className={`w-5.5 h-5.5 md:w-6 md:h-6 rounded-full flex items-center justify-center transition-all ${showMixer ? 'bg-zinc-100 text-black' : 'text-zinc-300 hover:text-black'}`}><SlidersHorizontal size={11} /></button>
                 <button onClick={() => {
                   if (musicEngine.transportState !== 'stopped') {
                     musicEngine.pause();
@@ -2829,37 +3017,36 @@ const PlayerPage: React.FC<{
                   musicEngine.currentMeasure = '';
                   musicEngine.currentNoteTime = 0;
                   setIsPlaying(false);
-                }} className="w-7 h-7 md:w-8 md:h-8 flex items-center justify-center text-zinc-300 hover:text-black"><SkipBack size={14} fill="currentColor" /></button>
+                }} className="w-5.5 h-5.5 md:w-6 md:h-6 flex items-center justify-center text-zinc-300 hover:text-black"><SkipBack size={12} fill="currentColor" /></button>
                 <div className="relative ml-0.5 md:ml-1">
                   <div className={`absolute inset-0 bg-cyan-400/20 blur-md rounded-full transition-opacity ${isPlaying ? 'opacity-100' : 'opacity-0'}`} />
                   <button 
                     onClick={handleTogglePlay} 
                     disabled={isAudioLoading || isRenderingVocal} 
-                    className={`relative w-8 h-8 md:w-[38px] md:h-[38px] rounded-full flex items-center justify-center text-white transition-all 
+                    className={`relative w-6.5 h-6.5 md:w-[30px] md:h-[30px] rounded-full flex items-center justify-center text-white transition-all 
                       ${isRenderingVocal ? 'bg-zinc-800 shadow-none grayscale' : 'bg-[#00e5ff] shadow-[0_4px_15px_rgba(0,229,255,0.4)]'}`}
                   >
-                    {isAudioLoading ? <RefreshCw size={14} className="animate-spin text-white/50" /> : (isPlaying ? <Pause size={16} fill="white" /> : <Play size={16} fill="white" className="ml-0.5" />)}
+                    {isAudioLoading ? <RefreshCw size={12} className="animate-spin text-white/50" /> : (isPlaying ? <Pause size={14} fill="white" /> : <Play size={14} fill="white" className="ml-0.5" />)}
                   </button>
                 </div>
               </div>
 
-              <div className="flex-1 h-[40px] bg-[#0c0c0e] rounded-full flex items-center border border-black shadow-inner overflow-hidden mx-0.5 md:mx-2.5">
-                <div className="flex-[1.2] h-full border-r border-white/5 flex items-center justify-center"><KeyTransposeDisplay keySig={parsedData.metadata.key || localSong.key} transpose={transpose} onTransposeChange={setTranspose} /></div>
-                <div className="flex-[1.2] h-full border-r border-white/5 flex items-center justify-center"><BpmDisplay bpm={currentBpm} onBpmChange={(b) => { setCurrentBpm(b); musicEngine.setBpm(b); }} /></div>
-                <div className="flex-[0.8] h-full border-r border-white/5 flex items-center justify-center"><TimeSigDisplay beats={parsedData.timeSignature.beats} beatType={parsedData.timeSignature.beatType} /></div>
-                <div className="flex-[1.5] h-full flex items-center justify-center"><BarBeatPositionDisplay bar={currentBar} beat={currentBeat} onSeek={(bar) => musicEngine.setTransportSeconds((bar - 1) * beatsPerMeasure * 60 / currentBpm)} /></div>
+              <div className="flex-1 h-[28px] bg-[#0c0c0e] rounded-full flex items-center border border-black shadow-inner overflow-hidden mx-0.5 md:mx-2.5">
+                <div className="flex-1 h-full border-r border-white/5 flex items-center justify-center"><KeyTransposeDisplay keySig={parsedData.metadata.key || localSong.key} transpose={transpose} onTransposeChange={setTranspose} /></div>
+                <div className="flex-1 h-full border-r border-white/5 flex items-center justify-center"><BpmDisplay bpm={currentBpm} onBpmChange={(b) => { setCurrentBpm(b); musicEngine.setBpm(b); }} /></div>
+                <div className="flex-1 h-full flex items-center justify-center"><BarBeatPositionDisplay bar={currentBar} beat={currentBeat} onSeek={(bar) => musicEngine.setTransportSeconds((bar - 1) * beatsPerMeasure * 60 / currentBpm)} /></div>
               </div>
 
               <div className="flex-none flex items-center justify-end gap-0.5 md:gap-1 pl-0.5 md:pl-1.5 relative">
-                <button onClick={() => setActiveCard(activeCard === 'score' ? 'pianoroll' : 'score')} className={`w-8 h-8 md:w-9 md:h-9 border rounded-full flex flex-col items-center justify-center group active:scale-95 transition-all ${activeCard === 'score' ? 'bg-[#fbfbfb] border-zinc-100 text-zinc-300' : 'bg-cyan-50 border-cyan-100 text-cyan-500'}`}>
-                  <Music size={11} className={activeCard === 'score' ? 'text-zinc-300' : 'text-cyan-500'} />
-                  <span className={`text-[5px] md:text-[6px] font-black uppercase mt-0.5 ${activeCard === 'score' ? 'text-zinc-400' : 'text-cyan-600'}`}>SCR</span>
+                <button onClick={() => setActiveCard(activeCard === 'score' ? 'pianoroll' : 'score')} className={`w-7 h-7 md:w-8 md:h-8 border rounded-full flex flex-col items-center justify-center group active:scale-95 transition-all ${activeCard === 'score' ? 'bg-[#fbfbfb] border-zinc-100 text-zinc-300' : 'bg-cyan-50 border-cyan-100 text-cyan-500'}`}>
+                  <Music size={10} className={activeCard === 'score' ? 'text-zinc-300' : 'text-cyan-500'} />
+                  <span className={`text-[4.5px] md:text-[5px] font-black uppercase mt-0.5 ${activeCard === 'score' ? 'text-zinc-400' : 'text-cyan-600'}`}>SCR</span>
                 </button>
 
                 <div className="relative" ref={volumePopupRef}>
                   <button
                     onClick={() => setShowVolumeSlider(!showVolumeSlider)}
-                    className={`w-8 h-8 md:w-9 md:h-9 rounded-full flex items-center justify-center transition-all border-2 ${showVolumeSlider ? 'border-cyan-400 bg-cyan-50 text-cyan-600 shadow-[0_0_15px_rgba(0,229,255,0.4)]' : 'border-transparent text-zinc-300 hover:text-cyan-500'}`}
+                    className={`w-7 h-7 md:w-8 md:h-8 rounded-full flex items-center justify-center transition-all border-2 ${showVolumeSlider ? 'border-cyan-400 bg-cyan-50 text-cyan-600 shadow-[0_0_15px_rgba(0,229,255,0.4)]' : 'border-transparent text-zinc-300 hover:text-cyan-500'}`}
                   >
                     {masterVolume === 0 ? <VolumeX size={14} /> : <Volume2 size={16} className={showVolumeSlider ? 'text-cyan-600' : 'text-zinc-300'} />}
                   </button>

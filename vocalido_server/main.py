@@ -64,6 +64,13 @@ app.mount("/studio/audio", StaticFiles(directory="renders"), name="studio_audio"
 # Use absolute path for static assets relative to this file
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+# Mount english_voicebanks directory to serve ONNX model files to the client
+english_voicebanks_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'english_voicebanks')
+if os.path.exists(english_voicebanks_dir):
+    app.mount("/vocalido/voicebanks", StaticFiles(directory=english_voicebanks_dir), name="vocalido_voicebanks")
+    app.mount("/studio/voicebanks", StaticFiles(directory=english_voicebanks_dir), name="studio_voicebanks")
+    app.mount("/voicebanks", StaticFiles(directory=english_voicebanks_dir), name="voicebanks")
 # Mount built frontend assets at root paths so index.html references work
 app.mount("/assets", StaticFiles(directory=os.path.join(static_dir, "assets")), name="assets")
 app.mount("/images", StaticFiles(directory=os.path.join(static_dir, "images")), name="images")
@@ -1030,6 +1037,50 @@ def get_vocal_modes(path):
                 return sorted(files)
     return []
 
+def get_model_files(voice_id):
+    if not english_voicebanks_dir or not os.path.exists(english_voicebanks_dir):
+        return None
+    voice_dir = os.path.join(english_voicebanks_dir, voice_id)
+    if not os.path.exists(voice_dir):
+        for name in os.listdir(english_voicebanks_dir):
+            if name.lower() == voice_id.lower():
+                voice_dir = os.path.join(english_voicebanks_dir, name)
+                break
+    if not os.path.exists(voice_dir):
+        return None
+    acoustic_path = None
+    vocoder_path = None
+    dict_path = None
+    phonemes_path = None
+    embeds = {}
+    for root, dirs, files in os.walk(voice_dir):
+        for f in files:
+            if f == "acoustic.onnx":
+                acoustic_path = os.path.join(root, f)
+            elif f == "dictionary.txt":
+                dict_path = os.path.join(root, f)
+            elif f == "phonemes.txt":
+                phonemes_path = os.path.join(root, f)
+            elif f.endswith(".onnx") and (f in ["aidolgan.onnx", "vocoder.onnx"] or "vocoder" in root.lower()):
+                vocoder_path = os.path.join(root, f)
+            elif f.endswith(".emb"):
+                name = f[:-4].lower()
+                embeds[name] = os.path.join(root, f)
+    if acoustic_path and vocoder_path:
+        def to_static_url(abs_p):
+            if not abs_p:
+                return None
+            rel = os.path.relpath(abs_p, english_voicebanks_dir)
+            return f"/vocalido/voicebanks/{rel.replace(os.sep, '/')}"
+        return {
+            "acoustic": to_static_url(acoustic_path),
+            "vocoder": to_static_url(vocoder_path),
+            "dictionary": to_static_url(dict_path),
+            "phonemes": to_static_url(phonemes_path),
+            "embeds": {k: to_static_url(v) for k, v in embeds.items()}
+        }
+    return None
+
 @app.get("/studio/voices")
 def get_voices():
     """Return a list of available AI voices."""
@@ -1052,20 +1103,23 @@ def get_voices():
             if not vocal_modes:
                 vocal_modes = get_vocal_modes(os.path.join(english_voicebanks_dir, v_id))
                 
-            voices.append({"id": v_id, "name": name_label, "type": "DiffSinger", "lang": "en", "vocal_modes": vocal_modes})
+            model_files = get_model_files(v_id)
+            voices.append({"id": v_id, "name": name_label, "type": "DiffSinger", "lang": "en", "vocal_modes": vocal_modes, "model_files": model_files})
     
     # 3. Lazy-loadable voices (not yet loaded into memory)
     for v_id in _lazy_voice_paths:
         name_label = v_id.replace("_", " ").title()
         ckpt, cfg = _lazy_voice_paths[v_id]
         vocal_modes = get_vocal_modes(os.path.dirname(ckpt))
-        voices.append({"id": v_id, "name": f"{name_label} ⏳", "type": "DiffSinger", "lang": "en", "vocal_modes": vocal_modes})
+        model_files = get_model_files(v_id)
+        voices.append({"id": v_id, "name": f"{name_label} ⏳", "type": "DiffSinger", "lang": "en", "vocal_modes": vocal_modes, "model_files": model_files})
             
     # 4. Jianpu Chinese engine
     if DS_JIANPU_OK and _ds_jianpu_engine:
         voices.append({"id": "jianpu", "name": "Chinese Numeral (Jianpu 简谱)", "type": "DiffSinger", "lang": "zh", "vocal_modes": []})
             
     return {"ok": True, "voices": voices}
+
 
 @app.get("/studio/renders/{song_id}")
 def list_renders(song_id: str, owner_id: Optional[str] = None):
@@ -1359,6 +1413,7 @@ async def get_pdf_preview(file: UploadFile = File(...)):
 # Mirror all routes under /vocalido so that requests like
 # POST /vocalido/studio/preview work identically to POST /studio/preview
 _vocalido_router = APIRouter(prefix="/vocalido")
+_vocalido_router.add_api_route("/studio/voices",       get_voices,          methods=["GET"])
 _vocalido_router.add_api_route("/studio/preview",      studio_preview,      methods=["POST"])
 _vocalido_router.add_api_route("/studio/api/client-log", studio_client_log, methods=["POST"])
 _vocalido_router.add_api_route("/studio/preview-note", studio_preview_note, methods=["POST"])

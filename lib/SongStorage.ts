@@ -98,10 +98,43 @@ export class SongStorage {
       const finalMetadata = { ...metadata, id: String(metadata.id) };
       transaction.objectStore(this.storeName).put({ metadata: finalMetadata, xmlData, layoutBundle });
       transaction.objectStore(this.deletedStore).delete(finalMetadata.id); // Remove from deleted list if re-added
-      transaction.oncomplete = () => resolve();
+      transaction.oncomplete = () => {
+        // Background sync to Firestore
+        this.syncSongToCloud(finalMetadata, xmlData, layoutBundle);
+        resolve();
+      };
       transaction.onerror = () => reject(transaction.error);
     });
   }
+
+  // --- Background Cloud Sync helpers ---
+  private async syncSongToCloud(metadata: Song, xmlData: string, layoutBundle?: any | null) {
+    // Dynamically import to avoid circular dependency if any
+    const { db: firestoreDb, isFirebaseConfigured, auth } = await import('./firebase');
+    if (!isFirebaseConfigured || !firestoreDb) return;
+    try {
+      const userId = auth?.currentUser?.uid || localStorage.getItem('mock_user_id') || 'guest';
+      const { doc, setDoc } = await import('firebase/firestore');
+      const docRef = doc(firestoreDb, `users/${userId}/songs`, String(metadata.id));
+      await setDoc(docRef, { metadata, xmlData, layoutBundle: layoutBundle || null, updated_at: new Date().toISOString() });
+    } catch (e) {
+      console.warn("Could not sync song to cloud", e);
+    }
+  }
+
+  private async removeSongFromCloud(songId: string) {
+    const { db: firestoreDb, isFirebaseConfigured, auth } = await import('./firebase');
+    if (!isFirebaseConfigured || !firestoreDb) return;
+    try {
+      const userId = auth?.currentUser?.uid || localStorage.getItem('mock_user_id') || 'guest';
+      const { doc, deleteDoc } = await import('firebase/firestore');
+      const docRef = doc(firestoreDb, `users/${userId}/songs`, String(songId));
+      await deleteDoc(docRef);
+    } catch (e) {
+      console.warn("Could not remove song from cloud", e);
+    }
+  }
+  // ------------------------------------
 
   async deleteSong(id: string): Promise<void> {
     const db = await this.init();
@@ -111,7 +144,10 @@ export class SongStorage {
       transaction.objectStore(this.storeName).delete(String(id));
       // Keep a tombstone in deletedStore so cloud-sync knows not to re-download this song
       transaction.objectStore(this.deletedStore).put({ id: String(id), deletedAt: new Date().toISOString() });
-      transaction.oncomplete = () => resolve();
+      transaction.oncomplete = () => {
+        this.removeSongFromCloud(String(id));
+        resolve();
+      };
       transaction.onerror = () => reject(transaction.error);
     });
   }
@@ -123,7 +159,10 @@ export class SongStorage {
       const transaction = db.transaction([this.storeName, this.deletedStore], 'readwrite');
       transaction.objectStore(this.storeName).delete(String(id));
       transaction.objectStore(this.deletedStore).delete(String(id)); // also clear tombstone
-      transaction.oncomplete = () => resolve();
+      transaction.oncomplete = () => {
+        this.removeSongFromCloud(String(id));
+        resolve();
+      };
       transaction.onerror = () => reject(transaction.error);
     });
   }
@@ -139,6 +178,7 @@ export class SongStorage {
         store.delete(String(id));
         // Keep tombstone for cloud-sync
         delStore.put({ id: String(id), deletedAt: new Date().toISOString() });
+        this.removeSongFromCloud(String(id));
       });
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error);

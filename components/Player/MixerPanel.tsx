@@ -86,7 +86,7 @@ const MixerPanel: React.FC<MixerPanelProps> = ({ tracks, songKey = 'C', onUpdate
       'British Movable Doh', 'British Fixed Doh', 
       'Ju Solfege Movable Doh', 'Ju Solfege Fixed Doh', 
       'Jianpu', 'Kodaly', 'Kodaly Rhythm', 
-      'Indian Sargam', 'Lyric', 'Close'
+      'Lyric', 'Close'
     ];
     const currentIdx = modes.indexOf(track.lyricMode);
     onUpdateTrack(track.id, { lyricMode: modes[(currentIdx + 1) % modes.length] });
@@ -179,7 +179,6 @@ const MixerPanel: React.FC<MixerPanelProps> = ({ tracks, songKey = 'C', onUpdate
           'Jianpu': { label: 'JIAPU', color: 'bg-amber-600', icon: Activity },
           'Kodaly': { label: 'KODLY', color: 'bg-rose-600', icon: Binary },
           'Kodaly Rhythm': { label: 'TA-TI', color: 'bg-fuchsia-600', icon: Timer },
-          'Indian Sargam': { label: 'SRGAM', color: 'bg-orange-600', icon: Library },
           'Lyric': { label: 'LYRIC', color: 'bg-sky-500', icon: FileText },
           'Close': { label: 'OFF', color: 'bg-zinc-800', icon: EyeOff }
         };

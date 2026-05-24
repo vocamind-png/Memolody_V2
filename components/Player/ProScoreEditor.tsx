@@ -1081,33 +1081,40 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
       // Track current laser position for zoom-scroll re-centering
       laserCurrentRelXRef.current = relX;
 
-      // Auto-scroll vertically when system row (staff line) changes
-      const systemKey = `${sweepPage}_${sweepSystemId}`;
-      if (laserPrevSystemKeyRef.current !== systemKey) {
-        const scrollArea = scrollAreaRef.current;
-        const pageEl = containerRef.current?.children[sweepPage] as HTMLElement | undefined;
-        if (scrollArea && pageEl) {
-          // Center the active system row vertically in the viewport
-          const systemCenterY = pageEl.offsetTop + (sweepTop + sweepHeight / 2) * pageEl.offsetHeight;
-          const targetScrollTop = Math.max(0, systemCenterY - scrollArea.clientHeight / 2);
-          
-          // Smooth scroll vertically to center the staff row
-          scrollArea.scrollTo({ top: targetScrollTop, behavior: 'smooth' });
-        }
-        laserPrevSystemKeyRef.current = systemKey;
-      }
-
-      // Horizontal follow: continuously keep the laser centered horizontally when zoomed
       const scrollArea = scrollAreaRef.current;
       const pageEl = containerRef.current?.children[sweepPage] as HTMLElement | undefined;
-      if (scrollArea && pageEl && scrollArea.scrollWidth > scrollArea.clientWidth) {
-        const pageWidth = pageEl.offsetWidth;
-        const laserPixelX = relX * pageWidth;
-        const halfViewW = scrollArea.clientWidth / 2;
-        const targetScrollLeft = Math.max(0, laserPixelX - halfViewW);
-        
-        // Direct assignment for real-time tracking (instant scroll matching tick frame)
-        scrollArea.scrollLeft = targetScrollLeft;
+      
+      if (scrollArea && pageEl) {
+        // Calculate the absolute Y center of the current row relative to the page
+        const systemCenterY = pageEl.offsetTop + (sweepTop + sweepHeight / 2) * pageEl.offsetHeight;
+        const targetScrollTop = Math.max(0, systemCenterY - scrollArea.clientHeight / 2);
+
+        const pageChanged = laserPrevPageRef.current !== sweepPage;
+        const systemKey = `${sweepPage}_${sweepSystemId}`;
+        const systemChanged = laserPrevSystemKeyRef.current !== systemKey;
+
+        // Force timeline to remain centered on screen
+        if (localZoom > 1.05 || pageChanged) {
+          // Centering horizontally based on page layout and laser relX
+          const pageWidth = pageEl.offsetWidth;
+          const laserPixelX = relX * pageWidth;
+          const targetScrollLeft = Math.max(0, laserPixelX - scrollArea.clientWidth / 2);
+
+          // Zoomed or Page changed: Snap instantly both vertically and horizontally
+          scrollArea.scrollLeft = targetScrollLeft;
+          scrollArea.scrollTop = targetScrollTop;
+          
+          laserPrevSystemKeyRef.current = systemKey;
+        } else if (systemChanged) {
+          // Row changed (but not zoomed & same page): smooth scroll vertically
+          scrollArea.scrollTo({ top: targetScrollTop, behavior: 'smooth' });
+          laserPrevSystemKeyRef.current = systemKey;
+        } else if (scrollArea.scrollWidth > scrollArea.clientWidth) {
+          // Continuous horizontal follow when zoomed but same page/row
+          const pageWidth = pageEl.offsetWidth;
+          const laserPixelX = relX * pageWidth;
+          scrollArea.scrollLeft = Math.max(0, laserPixelX - scrollArea.clientWidth / 2);
+        }
       }
 
       // Always track current sweep page (for zoom-triggered re-scroll)
@@ -1308,7 +1315,7 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
 
       <div
         ref={scrollAreaRef}
-        className="flex-1 w-full overflow-auto memolody-scrollbar scroll-smooth px-2 sm:px-3 flex flex-col"
+        className={`flex-1 w-full memolody-scrollbar px-2 sm:px-3 flex flex-col ${isPlaying ? 'overflow-hidden' : 'overflow-auto'}`}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
@@ -1382,14 +1389,30 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
         </div>
       </div>
 
-      {localZoom > 1 && (
-        <div className="absolute top-4 right-4 z-[5000] animate-in fade-in zoom-in duration-300">
-          <div className="bg-cyan-500 text-black px-4 py-1.5 rounded-full font-black text-[10px] uppercase tracking-widest shadow-2xl flex items-center gap-2">
-            <Zap size={12} fill="currentColor" /> {Math.round(localZoom * 100)}%
-            <button onClick={() => setLocalZoom(1.0)} className="ml-2 border-l border-black/20 pl-2 opacity-60 hover:opacity-100">RESET</button>
-          </div>
-        </div>
-      )}
+      {/* Permanent visual Zoom Controls to prevent iOS Safari kinetic scroll drifts */}
+      <div className="absolute top-4 right-4 z-[4500] flex items-center gap-1 bg-[#0c0c0e]/90 backdrop-blur-md border border-white/10 p-1 rounded-xl shadow-2xl">
+        <button
+          onClick={() => setLocalZoom(prev => Math.max(1.0, prev - 0.2))}
+          className="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 active:bg-white/20 flex items-center justify-center text-white font-extrabold text-xs active:scale-95 transition-all"
+          title="Zoom Out"
+        >
+          -
+        </button>
+        <button
+          onClick={() => setLocalZoom(1.0)}
+          className="px-1.5 h-7 rounded-lg bg-white/5 hover:bg-white/10 active:bg-white/20 flex items-center justify-center text-[8px] font-black text-white uppercase tracking-wider active:scale-95 transition-all min-w-[45px]"
+          title="Reset Zoom"
+        >
+          {Math.round(localZoom * 100)}%
+        </button>
+        <button
+          onClick={() => setLocalZoom(prev => Math.min(3.0, prev + 0.2))}
+          className="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 active:bg-white/20 flex items-center justify-center text-white font-extrabold text-xs active:scale-95 transition-all"
+          title="Zoom In"
+        >
+          +
+        </button>
+      </div>
 
       {error && xmlData && (
         <div className="absolute inset-0 bg-black/90 z-[20000] flex items-center justify-center p-8">

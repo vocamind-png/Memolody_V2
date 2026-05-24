@@ -35,7 +35,7 @@ const DistributionPage = lazy(() => import('./components/Distribution/Distributi
 const NimoPage = lazy(() => import('./components/Nimo/NimoPage'));
 const BrandingPage = lazy(() => import('./components/Presentation/BrandingPage'));
 const AdminPage = lazy(() => import('./components/Admin/AdminPage'));
-const PricingTiers = lazy(() => import('./components/Subscription/PricingTiers'));
+const PricingPage = lazy(() => import('./components/Subscription/PricingPage'));
 
 // ── Error Boundary for lazy-loaded pages ──
 interface EBState { hasError: boolean }
@@ -106,14 +106,7 @@ const NAV_ITEMS: { id: ViewId; icon: any; label: string; minRole?: string; isNim
 const App: React.FC = () => {
   const { authUser, role } = useAuth();
   const isAdmin = hasAccess(role, 'admin');
-  const [currentView, setCurrentView] = useState<ViewId>(() => {
-    try {
-      const saved = localStorage.getItem('memo_current_view');
-      return (saved as ViewId) || 'home';
-    } catch {
-      return 'home';
-    }
-  });
+  const [currentView, setCurrentView] = useState<ViewId>('home');
   const [isNimoOpen, setIsNimoOpen] = useState(false);
   const [nimoMounted, setNimoMounted] = useState(false); // mount on first click only
   const [selectedSong, setSelectedSong] = useState<Song | null>(null);
@@ -542,7 +535,7 @@ const App: React.FC = () => {
       case 'admin':
         return <AdminPage onRefresh={triggerSync} />;
       case 'subscription':
-        return <PricingTiers />;
+        return <PricingPage currentTier={(authUser?.membershipTier as any) || 'free'} onSelectPlan={(tier, cycle) => alert(`ขอบคุณสำหรับความสนใจ! ระบบจำลองตรวจพบการเลือกสมัครแพลน: ${tier === 'pro' ? 'Pro Plan' : 'Studio Plan'} (${cycle === 'monthly' ? 'รายเดือน' : 'รายปี'})\n\nขณะนี้แอปอยู่ในโหมดตัวอย่างนำเสนอผู้ลงทุน (Mock Mode) ระบบชำระเงินและการเชื่อมคลาวด์ Supabase จริงจะเปิดใช้งานในเฟสถัดไปครับ`)} />;
       default:
         return null;
     }
@@ -556,7 +549,7 @@ const App: React.FC = () => {
           <Zap size={14} className="text-cyan-400" />
           <span className="text-[10px] font-black tracking-[0.15em] text-zinc-400">MEMOLODY <span className="text-cyan-400">V2</span></span>
         </div>
-        <nav className="flex items-center gap-0.5">
+        <nav className="flex items-center gap-0.5 sm:gap-1 shrink-0">
           {NAV_ITEMS
             .filter(item => !item.minRole || hasAccess(role, item.minRole as any))
             .map(item => (
@@ -564,14 +557,16 @@ const App: React.FC = () => {
               key={item.id}
               id={`nav-${item.id}`}
               onClick={() => navigateTo(item.id)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[8px] font-black uppercase tracking-wider transition-colors duration-75 ${
+              className={`flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded-md text-[8px] font-black uppercase tracking-wider transition-colors duration-75 ${
                 item.isNimo
                   ? currentView === item.id ? 'bg-cyan-500 text-black' : 'text-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/10 border border-cyan-500/20'
                   : currentView === item.id ? 'bg-white text-black' : 'text-zinc-600 hover:text-zinc-300'
               }`}
             >
               <item.icon size={12} strokeWidth={2.5} />
-              {item.label}
+              <span className={currentView === item.id ? "inline" : "hidden sm:inline"}>
+                {item.label}
+              </span>
             </button>
           ))}
         </nav>

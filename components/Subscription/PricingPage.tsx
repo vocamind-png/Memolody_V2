@@ -16,7 +16,6 @@ type BillingCycle = 'monthly' | 'yearly';
 
 const TIER_ICONS: Record<string, React.ReactNode> = {
   free:    <Zap size={18} />,
-  starter: <Star size={18} />,
   pro:     <Sparkles size={18} />,
   premium: <Crown size={18} />,
 };
@@ -67,7 +66,7 @@ export default function PricingPage({ currentTier = 'free', onSelectPlan }: Pric
                 {c === 'monthly' ? 'รายเดือน' : 'รายปี'}
                 {c === 'yearly' && (
                   <span className="ml-2 px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-[7px] font-black">
-                    ประหยัดถึง 29%
+                    ประหยัดสูงสุด 45%
                   </span>
                 )}
               </button>
@@ -76,7 +75,7 @@ export default function PricingPage({ currentTier = 'free', onSelectPlan }: Pric
         </div>
 
         {/* Plan cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-4xl mx-auto">
           {tiers.map(([tierId, plan]) => {
             const isCurrent = tierId === currentTier;
             const isFeatured = !!plan.badge;
@@ -90,12 +89,10 @@ export default function PricingPage({ currentTier = 'free', onSelectPlan }: Pric
                 key={tierId}
                 className={`relative flex flex-col rounded-[32px] border p-6 transition-all ${
                   isFeatured
-                    ? 'border-amber-500/30 bg-gradient-to-b from-amber-500/5 to-transparent shadow-xl shadow-amber-500/5'
-                    : tierId === 'pro'
-                      ? 'border-indigo-500/20 bg-gradient-to-b from-indigo-500/5 to-transparent'
-                      : tierId === 'starter'
-                        ? 'border-cyan-500/20 bg-gradient-to-b from-cyan-500/5 to-transparent'
-                        : 'border-white/[0.06] bg-white/[0.02]'
+                    ? 'border-indigo-500/30 bg-gradient-to-b from-indigo-500/5 to-transparent shadow-xl shadow-indigo-500/5'
+                    : tierId === 'premium'
+                      ? 'border-amber-500/20 bg-gradient-to-b from-amber-500/5 to-transparent'
+                      : 'border-white/[0.06] bg-white/[0.02]'
                 }`}
               >
                 {/* Badge */}

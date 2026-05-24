@@ -11,7 +11,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
-export type MemberTier = 'free' | 'starter' | 'pro' | 'premium' | 'admin';
+export type MemberTier = 'free' | 'pro' | 'premium' | 'admin';
 
 export interface AuthUserCore {
   id: string;
@@ -36,22 +36,20 @@ interface AuthContextType {
 // Tier definitions (edit here to change quotas)
 // ─────────────────────────────────────────────────────────────────────────────
 //
-//  free     → ทดลองใช้ จำกัดเข้ม
-//  starter  → จ่ายเงิน ขั้นเริ่มต้น
-//  pro      → จ่ายเงิน ขยายขีดจำกัด (แต่ยังมี cap)
-//  premium  → จ่ายเงิน ไม่จำกัด (unlimited)
+//  free     → ทดลองใช้ฟรี 1 เดือนแรก (จำกัดเฉพาะในเครื่อง)
+//  pro      → จ่ายเงิน ซ้อมดนตรีส่วนบุคคล (จำกัด 100 render/เดือน, sync cloud 50 เพลง)
+//  premium  → จ่ายเงิน สตูดิโอ/ครูสอน (เรนเดอร์ไม่จำกัด, sync cloud ไม่จำกัด)
 //  admin    → ทีมงาน ไม่จำกัด
 //
 export const TIER_QUOTAS: Record<MemberTier, Pick<AuthUserCore, 'rendersPerSong' | 'dailySongQuota'>> = {
-  free:    { rendersPerSong: 3,    dailySongQuota: 3    },  // ทดลอง 3 เพลง/วัน, 3 render/เพลง
-  starter: { rendersPerSong: 10,   dailySongQuota: 20   },  // TBD — ราคา + limit ยังต้องคำนวณ
-  pro:     { rendersPerSong: 30,   dailySongQuota: 50   },  // TBD — render ได้เยอะขึ้น แต่มี cap
-  premium: { rendersPerSong: 9999, dailySongQuota: 9999 },  // ไม่จำกัด
+  free:    { rendersPerSong: 30,   dailySongQuota: 10   },  // ทดลองใช้งานฟรี
+  pro:     { rendersPerSong: 100,  dailySongQuota: 50   },  // สำหรับบุคคลทั่วไป
+  premium: { rendersPerSong: 9999, dailySongQuota: 9999 },  // สำหรับครูและสตูดิโอ
   admin:   { rendersPerSong: 9999, dailySongQuota: 9999 },  // ทีมงาน
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Pricing table — monthly & yearly (TBD: fill after GPU cost calculation)
+// Pricing table — monthly & yearly
 // yearly = monthly × 12 × (1 - yearlyDiscountPct/100)
 // ─────────────────────────────────────────────────────────────────────────────
 export interface TierPrice {
@@ -68,73 +66,52 @@ export interface TierPrice {
 
 export const TIER_PRICING: Record<Exclude<MemberTier, 'admin'>, TierPrice> = {
   free: {
-    label: 'Free',
-    description: 'ทดลองใช้ฟรี',
+    label: 'Free Trial',
+    description: 'ทดลองใช้งานฟรี 7 วันแรก',
     monthlyThb: null,
     yearlyThb: null,
     yearlyDiscountPct: 0,
     color: 'text-zinc-400',
     accentBg: 'bg-zinc-800/60',
     features: [
-      '3 เพลง / วัน',
-      '3 Render / เพลง',
-      '1 Voice Model',
-      'Score แสดงโน้ต',
-    ],
-  },
-  starter: {
-    label: 'Starter',
-    description: 'เริ่มต้นสร้างเสียง',
-    monthlyThb: 149,    // TBD — ตัวอย่าง ยังต้องคำนวณต้นทุนจริง
-    yearlyThb: 1290,    // ≈ 107.5/เดือน (ประหยัด ~28%)
-    yearlyDiscountPct: 28,
-    color: 'text-cyan-400',
-    accentBg: 'bg-cyan-500/10',
-    features: [
-      '20 เพลง / วัน',
-      '10 Render / เพลง',
-      '3 Voice Models',
-      'MemoRender History',
-      'Score + Piano Roll',
+      'ทดลองเล่นฟรี 7 วันทุกฟีเจอร์ในแอป',
+      'เล่น/ซ้อมผ่านแอปพลิเคชันเท่านั้น',
+      'เก็บข้อมูลเฉพาะในเครื่อง (No Backup)',
+      'จำกัดการดาวน์โหลดหรือส่งออกเสียง',
     ],
   },
   pro: {
-    label: 'Pro',
-    description: 'สำหรับนักดนตรีจริงจัง',
-    monthlyThb: 349,    // TBD
-    yearlyThb: 2990,    // ≈ 249/เดือน (ประหยัด ~29%)
-    yearlyDiscountPct: 29,
-    badge: 'Most Popular',
+    label: 'Pro Plan',
+    description: 'สำหรับซ้อมดนตรีส่วนบุคคล',
+    monthlyThb: 149,
+    yearlyThb: 990,
+    yearlyDiscountPct: 45,
+    badge: 'คุ้มค่าที่สุด',
     color: 'text-indigo-400',
     accentBg: 'bg-indigo-500/10',
     features: [
-      '50 เพลง / วัน',
-      '30 Render / เพลง',
-      'Voice Models ทั้งหมด',
-      'MemoRender + Stems',
-      'Score + Piano Roll',
-      'Vocal Studio เต็มรูปแบบ',
+      'เรนเดอร์เสียงร้อง AI 100 ครั้ง / เดือน',
+      'สำรองข้อมูลคลาวด์สูงสุด 50 เพลง',
+      'ซิงก์ข้อมูลข้ามเครื่องมือถือ/คอมพิวเตอร์',
+      'ใช้งาน AI Voice Models ทั้งหมด (Lotte V)',
+      'ส่งออกไฟล์โน้ตเพลงและไฟล์เสียงพื้นฐาน',
     ],
   },
   premium: {
-    label: 'Premium',
-    description: 'ไม่มีข้อจำกัด',
-    monthlyThb: 699,    // TBD
-    yearlyThb: 5990,    // ≈ 499/เดือน (ประหยัด ~29%)
-    yearlyDiscountPct: 29,
-    badge: '✦ Unlimited',
+    label: 'Studio Plan',
+    description: 'สำหรับครูและโรงเรียนสอนดนตรี',
+    monthlyThb: 399,
+    yearlyThb: 2900,
+    yearlyDiscountPct: 40,
+    badge: '✦ Professional',
     color: 'text-amber-400',
     accentBg: 'bg-amber-500/10',
     features: [
-      '∞ เพลง / วัน',
-      '∞ Render / เพลง',
-      'Voice Models ทั้งหมด + ใหม่ก่อนใคร',
-      'MemoRender + Stems',
-      'Score + Piano Roll',
-      'Vocal Studio เต็มรูปแบบ',
-      'Priority GPU Queue',
-      'Early Access Features',
-      '📦 Export Stem แยกไฟล์ WAV / MP3',
+      'เรนเดอร์เสียงร้อง AI ไม่จำกัด (VIP Queue)',
+      'สำรองข้อมูลคลาวด์ไม่จำกัดจำนวนเพลง',
+      'ส่งออกแยกแทร็กไฟล์เสียง (WAV/MP3 Stems)',
+      'แชร์ลิงก์ส่งการบ้านหรือการสอนให้ผู้เรียน',
+      'ไม่มีโฆษณาและการเชื่อมต่อจำกัด',
     ],
   },
 };
@@ -153,9 +130,9 @@ export type AppFeature =
   | 'earlyAccess';      // Early-access beta features
 
 const _FEATURE_MATRIX: Record<AppFeature, MemberTier[]> = {
-  renderVocal:       ['free', 'starter', 'pro', 'premium', 'admin'],
-  memoRenderHistory: ['free', 'starter', 'pro', 'premium', 'admin'],
-  stems:             ['starter', 'pro', 'premium', 'admin'],
+  renderVocal:       ['free', 'pro', 'premium', 'admin'],
+  memoRenderHistory: ['free', 'pro', 'premium', 'admin'],
+  stems:             ['pro', 'premium', 'admin'],
   exportStems:       ['premium', 'admin'],           // WAV / MP3 export
   allVoiceModels:    ['pro', 'premium', 'admin'],
   priorityGpu:       ['premium', 'admin'],

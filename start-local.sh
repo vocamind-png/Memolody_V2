@@ -60,9 +60,7 @@ echo -e "${GREEN}▶ Starting Vocalido SVS server on port 5001...${NC}"
 cd "$SERVER_DIR"
 source "$VENV/bin/activate"
 export PYTHONUNBUFFERED=1
-python -m uvicorn main:app --host 0.0.0.0 --port 5001 --reload \
-  --reload-exclude ".venv/*" --reload-exclude "checkpoints/*" --reload-exclude "renders/*" --reload-exclude "voicebanks/*" --reload-exclude "__pycache__/*" \
-  --log-level info 2>&1 &
+python -m uvicorn main:app --host 0.0.0.0 --port 5001 --log-level info 2>&1 &
 SVS_PID=$!
 echo -e "  PID: $SVS_PID"
 

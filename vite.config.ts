@@ -28,6 +28,7 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 3100,
       host: '0.0.0.0',
+      allowedHosts: true,
       watch: {
         // Ignore Python venv and node_modules to prevent spurious reloads
         ignored: ['**/vocalido_server/.venv/**', '**/node_modules/**', '**/.git/**'],
@@ -48,13 +49,13 @@ export default defineConfig(({ mode }) => {
         },
         // --- VOICE STUDIO → Local server ---
         '/studio': {
-          target: 'http://localhost:5001',
+          target: VOCALIDO_TARGET,
           changeOrigin: true,
           secure: false,
         },
         // --- ROOT-LEVEL SONG RENDERED FILES → Local server ---
         '/song_': {
-          target: 'http://localhost:5001',
+          target: VOCALIDO_TARGET,
           changeOrigin: true,
           secure: false,
           rewrite: (path) => `/studio/audio${path}`

@@ -1,0 +1,38 @@
+# Docker build context: only include essential files for RunPod deployment
+# Total build context should be ~1.3GB (mostly tiger_v106 model)
+
+# Exclude massive training data (17GB+)
+training/
+
+# Exclude local Python venv
+.venv/
+venv/
+
+# Exclude local renders & voicebanks
+renders/
+voicebanks/
+
+# Exclude static frontend builds (not needed in RunPod)
+static/
+
+# Exclude empty/unused model directories
+checkpoints/Lotte_V_AI_dol/
+checkpoints/dsvariance/
+checkpoints/ophelia/
+checkpoints/vocalido_ft/
+checkpoints/vocalido_gtsinger_en/
+checkpoints/vocalido_jianpu/
+checkpoints/vocalido_v1/
+checkpoints/vocalido_v1_runpod/
+checkpoints/vocalido_v3/
+checkpoints/tiger.zip
+
+# Exclude cache and temp files
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+*.log
+vocalido_server.log
+
+# Keep: *.py files, requirements*.txt, checkpoints/tiger_v106/**

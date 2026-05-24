@@ -418,7 +418,7 @@ class DiffSingerONNXEngine:
             depth_val = float(params.get("depth", self.max_depth)) if params else self.max_depth
             inputs["depth"] = np.array(depth_val, dtype=np.float32)
         if "steps" in input_names:
-            steps_val = int(params.get("steps", 100)) if params else 100
+            steps_val = int(params.get("steps", 20)) if params else 20
             inputs["steps"] = np.array(steps_val, dtype=np.int64)
 
         try:

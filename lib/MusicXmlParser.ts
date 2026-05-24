@@ -188,8 +188,19 @@ export const parseMusicXMLMetadata = async (
   if (isGeneric(finalTitle)) finalTitle = 'NEURAL MASTERPIECE';
   if (finalComposer.toUpperCase() === 'MAESTRO') finalComposer = 'UNKNOWN MAESTRO';
 
-  const metronomeNode = xmlDoc.querySelector("per-minute");
-  const bpmValue = metronomeNode ? parseInt(metronomeNode.textContent || "120") : 120;
+  const perMinuteEl = xmlDoc.querySelector("per-minute");
+  const soundEl = xmlDoc.querySelector("sound[tempo]");
+  let bpmValue = 120;
+  if (perMinuteEl) {
+    const val = parseFloat(perMinuteEl.textContent || "");
+    if (!isNaN(val) && val > 0) bpmValue = Math.round(val);
+  } else if (soundEl) {
+    const tempoAttr = soundEl.getAttribute("tempo");
+    if (tempoAttr) {
+      const val = parseFloat(tempoAttr);
+      if (!isNaN(val) && val > 0) bpmValue = Math.round(val);
+    }
+  }
 
   const fifthsNode = xmlDoc.querySelector("fifths");
   const fifths = fifthsNode ? parseInt(fifthsNode.textContent || "0") : 0;
