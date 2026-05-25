@@ -1390,24 +1390,24 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
       </div>
 
       {/* Permanent visual Zoom Controls to prevent iOS Safari kinetic scroll drifts */}
-      <div className="absolute top-4 right-4 z-[4500] flex items-center gap-1 bg-[#0c0c0e]/90 backdrop-blur-md border border-white/10 p-1 rounded-xl shadow-2xl">
+      <div className="absolute top-4 right-4 z-[4500] flex items-center gap-1 bg-transparent border-none p-1 rounded-xl shadow-none">
         <button
           onClick={() => setLocalZoom(prev => Math.max(1.0, prev - 0.2))}
-          className="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 active:bg-white/20 flex items-center justify-center text-white font-extrabold text-xs active:scale-95 transition-all"
+          className="w-7 h-7 rounded-lg bg-transparent flex items-center justify-center text-zinc-400 hover:text-white font-extrabold text-base active:scale-95 transition-all"
           title="Zoom Out"
         >
           -
         </button>
         <button
           onClick={() => setLocalZoom(1.0)}
-          className="px-1.5 h-7 rounded-lg bg-white/5 hover:bg-white/10 active:bg-white/20 flex items-center justify-center text-[8px] font-black text-white uppercase tracking-wider active:scale-95 transition-all min-w-[45px]"
+          className="px-1 h-7 rounded-lg bg-transparent flex items-center justify-center text-[9px] font-black text-zinc-500/80 uppercase tracking-wider active:scale-95 transition-all min-w-[36px] select-none"
           title="Reset Zoom"
         >
           {Math.round(localZoom * 100)}%
         </button>
         <button
           onClick={() => setLocalZoom(prev => Math.min(3.0, prev + 0.2))}
-          className="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 active:bg-white/20 flex items-center justify-center text-white font-extrabold text-xs active:scale-95 transition-all"
+          className="w-7 h-7 rounded-lg bg-transparent flex items-center justify-center text-zinc-400 hover:text-white font-extrabold text-base active:scale-95 transition-all"
           title="Zoom In"
         >
           +

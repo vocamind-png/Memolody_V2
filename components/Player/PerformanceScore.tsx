@@ -1,7 +1,6 @@
 import React, { useMemo, useState, useEffect, useRef, useCallback, memo } from 'react';
 import { TrackState, ParsedNote } from '../../types';
 import { getChromaticSolfege } from '../../lib/SolfegeLogic';
-import { ZoomIn, ZoomOut } from 'lucide-react';
 
 // Constant — never recreated
 const SEMI_TONE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
@@ -325,15 +324,15 @@ const PerformanceScore: React.FC<PerformanceScoreProps> = ({
       `}</style>
 
       {/* ZOOM — floating, separate from ruler */}
-      <div className="absolute top-1 right-3 z-[5000] flex items-center gap-1 bg-black/70 backdrop-blur-md rounded-lg px-1.5 py-0.5 border border-white/10">
+      <div className="absolute top-1 right-3 z-[5000] flex items-center gap-1 bg-transparent border-none">
         <button onClick={zoomOut}
-          className="w-6 h-6 flex items-center justify-center text-zinc-400 hover:text-white active:scale-90 transition-all">
-          <ZoomOut size={12} />
+          className="w-6 h-6 flex items-center justify-center text-zinc-400 hover:text-white font-extrabold text-base active:scale-90 transition-all bg-transparent border-none select-none">
+          -
         </button>
-        <span className="text-[9px] font-black text-zinc-500 w-8 text-center tabular-nums">{Math.round(zoom * 100)}%</span>
+        <span className="text-[9px] font-black text-zinc-500/80 w-8 text-center tabular-nums select-none">{Math.round(zoom * 100)}%</span>
         <button onClick={zoomIn}
-          className="w-6 h-6 flex items-center justify-center text-zinc-400 hover:text-white active:scale-90 transition-all">
-          <ZoomIn size={12} />
+          className="w-6 h-6 flex items-center justify-center text-zinc-400 hover:text-white font-extrabold text-base active:scale-90 transition-all bg-transparent border-none select-none">
+          +
         </button>
       </div>
 

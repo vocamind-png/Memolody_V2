@@ -223,6 +223,46 @@ export class ClientSvsEngine {
   }
 
   /**
+   * Ensures that ONNX Runtime Web script is loaded in window.
+   */
+  private async ensureOrtLoaded(): Promise<any> {
+    if (typeof window === 'undefined') {
+      throw new Error('ONNX Runtime cannot be loaded: window is undefined');
+    }
+    if (window.ort) {
+      return window.ort;
+    }
+    console.log('[ClientSvsEngine] ONNX Runtime not found in window. Loading dynamically from /ort/ort.min.js...');
+    return new Promise<any>((resolve, reject) => {
+      let script = document.querySelector('script[src="/ort/ort.min.js"]') as HTMLScriptElement;
+      if (!script) {
+        script = document.createElement('script');
+        script.src = '/ort/ort.min.js';
+        script.defer = true;
+        document.head.appendChild(script);
+      }
+      
+      const checkInterval = setInterval(() => {
+        if (window.ort) {
+          clearInterval(checkInterval);
+          console.log('[ClientSvsEngine] ONNX Runtime loaded successfully.');
+          resolve(window.ort);
+        }
+      }, 50);
+
+      // Timeout after 15 seconds
+      setTimeout(() => {
+        clearInterval(checkInterval);
+        if (window.ort) {
+          resolve(window.ort);
+        } else {
+          reject(new Error('Timeout loading ONNX Runtime from /ort/ort.min.js'));
+        }
+      }, 15000);
+    });
+  }
+
+  /**
    * Initializes the engine by downloading the ONNX files and starting sessions.
    */
   public async loadVoice(
@@ -236,14 +276,19 @@ export class ClientSvsEngine {
     }
     this.lastLoadedFiles = files;
 
-    const ort = getOrt();
-    if (!ort) {
-      onProgress({ stage: 'error', message: 'ONNX Runtime Web script not found in document', progress: 0 });
-      throw new Error('onnxruntime-web not loaded in DOM.');
+    let ort;
+    try {
+      ort = await this.ensureOrtLoaded();
+    } catch (e: any) {
+      onProgress({ stage: 'error', message: `ONNX Error: ${e.message || e}`, progress: 0 });
+      throw e;
     }
 
     // Setup wasm path
-    ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/';
+    const baseWasmPath = typeof window !== 'undefined' ? window.location.origin + '/ort/' : '/ort/';
+    ort.env.wasm.wasmPaths = baseWasmPath;
+    ort.env.wasm.numThreads = 1; // Disable multi-threading to run without SharedArrayBuffer on mobile browser environments
+    ort.env.wasm.proxy = false;  // Execute WASM on main thread directly to avoid Web Worker creation/CORS blocks on mobile
     
     try {
       this.isLoaded = false;
@@ -276,26 +321,32 @@ export class ClientSvsEngine {
 
       [acousticBuffer, vocoderBuffer] = await Promise.all([acousticPromise, vocoderPromise]);
 
-      // Download dictionary and phonemes
+      // Download dictionary and phonemes with caching
       onProgress({ stage: 'downloading', message: 'Downloading text assets...', progress: 75 });
       
       if (files.dictionary) {
-        const dictRes = await fetch(files.dictionary);
-        if (dictRes.ok) {
-          const dictText = await dictRes.text();
+        try {
+          const dictBuf = await this.fetchWithCache(files.dictionary, () => {});
+          const decoder = new TextDecoder('utf-8');
+          const dictText = decoder.decode(dictBuf);
           this.parseDictionary(dictText);
+        } catch (e: any) {
+          console.warn('[ClientSvsEngine] Dictionary load failed:', e);
         }
       }
 
       if (files.phonemes) {
-        const phRes = await fetch(files.phonemes);
-        if (phRes.ok) {
-          const phText = await phRes.text();
+        try {
+          const phBuf = await this.fetchWithCache(files.phonemes, () => {});
+          const decoder = new TextDecoder('utf-8');
+          const phText = decoder.decode(phBuf);
           this.parsePhonemes(phText);
+        } catch (e: any) {
+          console.warn('[ClientSvsEngine] Phonemes load failed:', e);
         }
       }
 
-      // Download embeds if any
+      // Download embeds with caching if any
       if (files.embeds) {
         const embedKeys = Object.keys(files.embeds);
         for (let i = 0; i < embedKeys.length; i++) {
@@ -306,14 +357,15 @@ export class ClientSvsEngine {
             message: `Downloading speaker profile '${key}'...`,
             progress: Math.round(75 + (i / embedKeys.length) * 10)
           });
-          const embedRes = await fetch(url);
-          if (embedRes.ok) {
-            const buf = await embedRes.arrayBuffer();
+          try {
+            const buf = await this.fetchWithCache(url, () => {});
             const embedArr = new Float32Array(buf);
             this.speakerEmbeds[key.toLowerCase()] = embedArr;
             if (!this.defaultEmbed || key.toLowerCase() === 'root') {
               this.defaultEmbed = embedArr;
             }
+          } catch (e: any) {
+            console.warn(`[ClientSvsEngine] Embed load failed for ${key}:`, e);
           }
         }
       }
@@ -321,7 +373,8 @@ export class ClientSvsEngine {
       // 2. Initialize sessions
       onProgress({ stage: 'initializing', message: 'Initializing Neural Engine...', progress: 85 });
 
-      const hasWebGPU = typeof navigator !== 'undefined' && 'gpu' in navigator && !this.forceWasm;
+      const isMobile = typeof navigator !== 'undefined' && /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      const hasWebGPU = typeof navigator !== 'undefined' && 'gpu' in navigator && !this.forceWasm && !isMobile;
       let sessionOptions = {
         executionProviders: hasWebGPU ? ['webgpu', 'wasm'] : ['wasm'],
       };

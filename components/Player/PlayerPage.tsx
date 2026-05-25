@@ -100,121 +100,7 @@ const svsFetch = (url: string, options?: RequestInit) => {
   return fetch(url, { ...options, headers });
 };
 
-// ── RunPod Serverless Synthesis Helper ─────────────────────────────────────
-const RUNPOD_API_URL = import.meta.env.VITE_RUNPOD_API_URL || 'https://api.runpod.ai/v2/25acn85syew6va/runsync';
-// Split the key to prevent GitHub secret scanner push protection from blocking the push
-const RUNPOD_API_KEY = import.meta.env.VITE_RUNPOD_API_KEY || (
-  'rpa_7SCGFORF2IBB5' + 'G758YSUHQ1YYZXSF4I6WUP60FD2kqsi9h'
-);
-const RUNPOD_AVAILABLE = !!(RUNPOD_API_URL && RUNPOD_API_KEY);
-// Derive the async endpoint from the runsync endpoint
-const RUNPOD_RUN_URL = RUNPOD_API_URL.replace('/runsync', '/run');
-const RUNPOD_STATUS_BASE = RUNPOD_API_URL.replace('/runsync', '/status');
-
-/**
- * Synthesize vocals via RunPod Serverless API.
- * Supports both synchronous (runsync) and async (run + poll) modes.
- * @returns Response object compatible with local /studio/preview response format
- */
-const synthesizeViaRunPod = async (
-  notes: { pitch: number; midi: number; duration: number; startTime: number; lyric: string }[],
-  params: Record<string, any>,
-  signal?: AbortSignal,
-  onProgress?: (status: string) => void
-): Promise<{ audio_b64: string; mime_type: string; stems_b64?: string[]; engine: string; duration?: number }> => {
-  if (!RUNPOD_AVAILABLE) throw new Error('RunPod API not configured');
-  
-  const headers = {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${RUNPOD_API_KEY}`
-  };
-  const payload = {
-    input: {
-      notes,
-      params: { ...params, return_stems: String(params.return_stems || 'false') }
-    }
-  };
-
-  // Try runsync first (fast if worker is warm)
-  onProgress?.('Connecting to GPU...');
-  const syncResp = await fetch(RUNPOD_API_URL, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(payload),
-    signal
-  });
-
-  if (!syncResp.ok) {
-    const err = await syncResp.text().catch(() => 'Unknown');
-    throw new Error(`RunPod API Error (${syncResp.status}): ${err}`);
-  }
-
-  let result = await syncResp.json();
-
-  // If completed immediately (warm worker), return
-  if (result.status === 'COMPLETED' && result.output) {
-    onProgress?.('Synthesis complete');
-    return result.output;
-  }
-
-  // If IN_QUEUE or IN_PROGRESS → switch to async polling
-  if (result.status === 'IN_QUEUE' || result.status === 'IN_PROGRESS') {
-    // Get the job ID from runsync response, or submit via /run endpoint
-    let jobId = result.id;
-    
-    if (!jobId) {
-      // Submit via async endpoint
-      onProgress?.('Submitting to GPU queue...');
-      const asyncResp = await fetch(RUNPOD_RUN_URL, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(payload),
-        signal
-      });
-      if (!asyncResp.ok) throw new Error(`RunPod /run failed: ${asyncResp.status}`);
-      const asyncResult = await asyncResp.json();
-      jobId = asyncResult.id;
-    }
-
-    if (!jobId) throw new Error('RunPod did not return a job ID');
-
-    // Poll until complete (max 5 minutes)
-    const POLL_INTERVAL = 3000;
-    const MAX_POLLS = 100; // 5 minutes
-    for (let i = 0; i < MAX_POLLS; i++) {
-      if (signal?.aborted) throw new Error('Aborted');
-      
-      await new Promise(r => setTimeout(r, POLL_INTERVAL));
-      
-      const statusResp = await fetch(`${RUNPOD_STATUS_BASE}/${jobId}`, {
-        headers: { 'Authorization': `Bearer ${RUNPOD_API_KEY}` },
-        signal
-      });
-      
-      if (!statusResp.ok) continue;
-      result = await statusResp.json();
-      
-      if (result.status === 'IN_QUEUE') {
-        onProgress?.(`GPU warming up... (${i * 3}s)`);
-      } else if (result.status === 'IN_PROGRESS') {
-        onProgress?.(`Synthesizing... (${i * 3}s)`);
-      } else if (result.status === 'COMPLETED' && result.output) {
-        onProgress?.('Synthesis complete');
-        return result.output;
-      } else if (result.status === 'FAILED') {
-        throw new Error('RunPod job failed: ' + JSON.stringify(result.error || result));
-      }
-    }
-    throw new Error('RunPod synthesis timed out after 5 minutes');
-  }
-
-  // If error
-  if (result.status === 'FAILED') {
-    throw new Error('RunPod synthesis failed: ' + JSON.stringify(result.error || result));
-  }
-
-  throw new Error('Unexpected RunPod response: ' + JSON.stringify(result));
-};
+// ── RunPod Serverless SVS is disabled. Pure on-device rendering only. ──────
 
 const fixAudioUrl = (u: string) => {
   if (typeof u !== 'string') return u;
@@ -253,6 +139,13 @@ const fixAudioUrl = (u: string) => {
   }
   
   return url;
+};
+
+const getVoiceModelUrl = (path: string) => {
+  if (path.startsWith('/vocalido/voicebanks/')) {
+    return path.replace('/vocalido/voicebanks/', 'https://storage.googleapis.com/memolody-vault/voicebanks/');
+  }
+  return getFetchUrl(path);
 };
 
 const mapToLyricMode = (modeStr: string): LyricMode => {
@@ -305,22 +198,12 @@ const PlayerPage: React.FC<{
   const folderPopoverRef = useRef<HTMLDivElement>(null);
   const [isRenderHistoryHidden, setIsRenderHistoryHidden] = useState(false);
 
-  const [svsEngine, setSvsEngine] = useState<'vocalido' | 'browser-ai'>(() => {
-    try {
-      return (localStorage.getItem('vocalido_svs_engine') as 'vocalido' | 'browser-ai') || 'browser-ai';
-    } catch {
-      return 'browser-ai';
-    }
-  });
+  const [svsEngine] = useState<'vocalido' | 'browser-ai'>('browser-ai');
 
   // Keep the user's preferred SVS engine (defaults to client-side 'browser-ai' for direct WebGPU/WASM synthesis).
   useEffect(() => {
     try {
-      const saved = localStorage.getItem('vocalido_svs_engine');
-      if (!saved) {
-        localStorage.setItem('vocalido_svs_engine', 'browser-ai');
-        setSvsEngine('browser-ai');
-      }
+      localStorage.setItem('vocalido_svs_engine', 'browser-ai');
       // Migrate legacy lotte_v to lotte_v_ai_dol
       const savedVoice = localStorage.getItem('vocalido_active_engine');
       if (savedVoice === 'lotte_v') {
@@ -485,7 +368,7 @@ const PlayerPage: React.FC<{
   const [synthProgress, setSynthProgress] = useState<{songId: string, progress: number, status: string} | null>(null);
 
   // Voice Engines State
-  const [voiceEngines, setVoiceEngines] = useState<{id: string, name: string, type: string, lang: string}[]>([]);
+  const [voiceEngines, setVoiceEngines] = useState<{id: string, name: string, type: string, lang: string, model_files?: any}[]>([]);
   const [activeEngineId, setActiveEngineId] = useState<string>(() => {
     try {
       const stored = localStorage.getItem('vocalido_active_engine');
@@ -497,13 +380,6 @@ const PlayerPage: React.FC<{
   // Auto-load voice model in the background when active voice or engine changes
   useEffect(() => {
     if (svsEngine !== 'browser-ai') {
-      setIsModelLoading(false);
-      return;
-    }
-    
-    // Skip preloading if the server is offline to prevent hanging requests from blocking the user
-    if (!isServerOnline) {
-      console.log('[Preload] SVS Server is offline, skipping auto-preload.');
       setIsModelLoading(false);
       return;
     }
@@ -522,13 +398,13 @@ const PlayerPage: React.FC<{
         setModelLoadProgress(0);
 
         const modelFiles = {
-          acoustic: getFetchUrl(selectedVoice.model_files.acoustic),
-          vocoder: getFetchUrl(selectedVoice.model_files.vocoder),
-          dictionary: selectedVoice.model_files.dictionary ? getFetchUrl(selectedVoice.model_files.dictionary) : undefined,
-          phonemes: selectedVoice.model_files.phonemes ? getFetchUrl(selectedVoice.model_files.phonemes) : undefined,
+          acoustic: getVoiceModelUrl(selectedVoice.model_files.acoustic),
+          vocoder: getVoiceModelUrl(selectedVoice.model_files.vocoder),
+          dictionary: selectedVoice.model_files.dictionary ? getVoiceModelUrl(selectedVoice.model_files.dictionary) : undefined,
+          phonemes: selectedVoice.model_files.phonemes ? getVoiceModelUrl(selectedVoice.model_files.phonemes) : undefined,
           embeds: selectedVoice.model_files.embeds ? Object.keys(selectedVoice.model_files.embeds).reduce((acc, key) => {
             if (selectedVoice.model_files?.embeds?.[key]) {
-              acc[key] = getFetchUrl(selectedVoice.model_files.embeds[key]);
+              acc[key] = getVoiceModelUrl(selectedVoice.model_files.embeds[key]);
             }
             return acc;
           }, {} as Record<string, string>) : undefined
@@ -556,7 +432,7 @@ const PlayerPage: React.FC<{
     return () => {
       active = false;
     };
-  }, [activeEngineId, voiceEngines, svsEngine, isServerOnline]);
+  }, [activeEngineId, voiceEngines, svsEngine]);
 
   // Stem Solo/Mute State for polyphonic choral lines
   const [soloedStems, setSoloedStems] = useState<Record<string, number | null>>({});
@@ -1778,19 +1654,22 @@ const PlayerPage: React.FC<{
         let usedRunPod = false;
 
         const selectedVoice = voiceEngines.find(v => v.id === trackEngineId);
-        if (svsEngine === 'browser-ai' && selectedVoice?.model_files) {
+
+        if (svsEngine === 'browser-ai') {
+          if (!selectedVoice?.model_files) {
+            throw new Error(`The selected voice "${selectedVoice?.name || 'Unknown'}" does not support browser-side SVS rendering. Please select Lotte V or a supported voice.`);
+          }
           console.log('[Browser AI] Running direct browser-side WebGPU synthesis...');
           setRenderStatusText('Loading models...');
           try {
-            // Translate model files paths to complete URLs using getFetchUrl
             const modelFiles = {
-              acoustic: getFetchUrl(selectedVoice.model_files.acoustic),
-              vocoder: getFetchUrl(selectedVoice.model_files.vocoder),
-              dictionary: selectedVoice.model_files.dictionary ? getFetchUrl(selectedVoice.model_files.dictionary) : undefined,
-              phonemes: selectedVoice.model_files.phonemes ? getFetchUrl(selectedVoice.model_files.phonemes) : undefined,
+              acoustic: getVoiceModelUrl(selectedVoice.model_files.acoustic),
+              vocoder: getVoiceModelUrl(selectedVoice.model_files.vocoder),
+              dictionary: selectedVoice.model_files.dictionary ? getVoiceModelUrl(selectedVoice.model_files.dictionary) : undefined,
+              phonemes: selectedVoice.model_files.phonemes ? getVoiceModelUrl(selectedVoice.model_files.phonemes) : undefined,
               embeds: selectedVoice.model_files.embeds ? Object.keys(selectedVoice.model_files.embeds).reduce((acc, key) => {
                 if (selectedVoice.model_files?.embeds?.[key]) {
-                  acc[key] = getFetchUrl(selectedVoice.model_files.embeds[key]);
+                  acc[key] = getVoiceModelUrl(selectedVoice.model_files.embeds[key]);
                 }
                 return acc;
               }, {} as Record<string, string>) : undefined
@@ -1819,86 +1698,14 @@ const PlayerPage: React.FC<{
             };
             usedRunPod = true; // Bypasses cache/fixAudioUrl rewriting, uses local blob url as-is
           } catch (browserAiError: any) {
-            console.warn('[Browser AI] ⚠️ Browser-side WebGPU/WASM synthesis failed. Falling back to Server/RunPod:', browserAiError);
-            setRenderStatusText('Browser SVS failed. Falling back to Server/RunPod...');
-            result = null;
+            console.error('[Browser AI] ❌ Browser-side WebGPU/WASM synthesis failed:', browserAiError);
+            throw new Error(`On-device SVS failed: ${browserAiError.message || browserAiError}`);
           }
         }
 
+        // If all paths failed
         if (!result) {
-          if (svsEngine === 'browser-ai') {
-            console.warn('[Browser AI] Selected voice has no local ONNX model files or browser execution failed. Falling back to Server/RunPod.');
-            setRenderStatusText('Browser SVS unavailable. Falling back to Server/RunPod...');
-          }
-          
-          const shouldTryLocal = true; // Enable local/cloud server check for Hybrid Caching
-          if (shouldTryLocal) {
-            // Try local/cloud server with 90s timeout (essential for CPU rendering on large scores)
-            try {
-              console.log('[Vocalido] 🔄 Trying local/cloud server...');
-              const localController = new AbortController();
-              const localTimeout = setTimeout(() => localController.abort(), 90000);
-              
-              const resp = await svsFetch(getFetchUrl('/studio/preview'), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                signal: localController.signal,
-                body: JSON.stringify({
-                  notes: notesToSynthesize,
-                  params: synthParams,
-                  song_id: song?.id || '',
-                  bpm_pct: bpmPct,
-                  song_key: songKey,
-                  lyric_mode: activeLyricMode,
-                  owner_id: song?.ownerId || authUser?.id || '',
-                  is_public: song?.isPublic ?? true,
-                })
-              });
-              clearTimeout(localTimeout);
-              
-              if (resp.ok) {
-                result = await resp.json();
-                console.log('[Vocalido] ✅ Local/cloud server responded');
-              } else {
-                const errorData = await resp.json().catch(() => ({}));
-                console.warn(`[Vocalido] ⚠️ Local server error (${resp.status}):`, errorData.error || '');
-              }
-            } catch (localErr: any) {
-              console.warn('[Vocalido] ⚠️ Local server unavailable:', localErr.name === 'AbortError' ? 'timeout' : localErr.message);
-            }
-          }
-
-          // Fallback to RunPod if local server failed
-          if (!result && RUNPOD_AVAILABLE) {
-            console.log('[Vocalido] 🚀 Using RunPod Serverless API...');
-            usedRunPod = true;
-            setRenderStatusText('Connecting to GPU...');
-            const runpodOutput = await synthesizeViaRunPod(
-              notesToSynthesize,
-              synthParams,
-              controller.signal,
-              (status) => {
-                console.log(`[Vocalido/RunPod] ${status}`);
-                setRenderStatusText(status);
-                setRenderError(null);
-              }
-            );
-            // Convert RunPod output format to match local server response format
-            result = {
-              audio_b64: runpodOutput.audio_b64,
-              mime_type: runpodOutput.mime_type || 'audio/wav',
-              stems_b64: runpodOutput.stems_b64 || [],
-              engine: runpodOutput.engine || 'diffsinger_onnx_runpod',
-            };
-          }
-        }
-
-        // If both paths failed
-        if (!result) {
-          if (!RUNPOD_AVAILABLE) {
-            throw new Error('SVS server unavailable and RunPod API not configured. Set VITE_RUNPOD_API_URL and VITE_RUNPOD_API_KEY.');
-          }
-          throw new Error('All synthesis backends failed');
+          throw new Error('On-device SVS failed or returned no audio.');
         }
 
         clearTimeout(timeoutId);
@@ -3112,22 +2919,90 @@ const PlayerPage: React.FC<{
               </div>
             </div>
 
-            <div className="w-full max-w-[calc(100vw-8px)] md:max-w-[640px] bg-white shadow-[0_20px_60px_rgba(0,0,0,0.9)] rounded-full h-[64px] flex items-center justify-between px-3 md:px-4 pointer-events-auto relative">
-              {/* LEFT GROUP: Mixer Toggle */}
-              <div className="flex items-center gap-2 border-r border-zinc-100 pr-2.5 md:pr-3.5">
+            <div className="w-full max-w-[calc(100vw-8px)] md:max-w-[640px] bg-white shadow-[0_20px_60px_rgba(0,0,0,0.9)] rounded-full h-[54px] min-[360px]:h-[64px] flex items-center justify-between px-1.5 min-[360px]:px-2.5 sm:px-3 md:px-4 pointer-events-auto relative">
+              {/* LEFT GROUP: Mixer Toggle, Volume & SCR vertically stacked */}
+              <div className="flex items-center gap-1.5 min-[360px]:gap-2 border-r border-zinc-100 pr-1.5 min-[360px]:pr-2.5 md:pr-3.5">
                 <button
                   onClick={() => setShowMixer(!showMixer)}
-                  className={`w-10 h-10 md:w-11 md:h-11 rounded-full flex items-center justify-center transition-all ${
+                  className={`w-8 h-8 min-[380px]:w-9 h-9 sm:w-10 sm:h-10 md:w-11 md:h-11 rounded-full flex items-center justify-center transition-all ${
                     showMixer ? 'bg-zinc-100 text-black' : 'text-zinc-400 hover:text-black hover:bg-zinc-50'
                   }`}
+                  title="Toggle Mixer"
                 >
-                  <SlidersHorizontal size={18} />
+                  <SlidersHorizontal className="w-3.5 h-3.5 min-[380px]:w-4 min-[380px]:h-4 sm:w-[18px] sm:h-[18px]" />
                 </button>
-              </div>
 
+                {/* Vertical stack for Volume and SCR */}
+                <div className="flex flex-col gap-0.5 items-center justify-center">
+                  {/* Volume Trigger */}
+                  <div className="relative" ref={volumePopupRef}>
+                    <button
+                      onClick={() => setShowVolumeSlider(!showVolumeSlider)}
+                      className={`w-6 h-6 min-[360px]:w-7 h-7 rounded-full flex items-center justify-center transition-all border ${
+                        showVolumeSlider
+                          ? 'border-cyan-400 bg-cyan-50 text-cyan-600 shadow-[0_0_10px_rgba(0,229,255,0.4)]'
+                          : 'border-transparent text-zinc-400 hover:text-cyan-500 hover:bg-zinc-50'
+                      }`}
+                      title="Volume Control"
+                    >
+                      {masterVolume === 0 ? (
+                        <VolumeX className="w-2.5 h-2.5 min-[360px]:w-3 h-3" />
+                      ) : (
+                        <Volume2 className={`w-2.5 h-2.5 min-[360px]:w-3 h-3 ${showVolumeSlider ? 'text-cyan-600' : 'text-zinc-400 hover:text-cyan-500'}`} />
+                      )}
+                    </button>
+
+                    {showVolumeSlider && (
+                      <div
+                        className="absolute bottom-[36px] left-[-10px] w-12 h-48 bg-[#0c0c0e]/95 backdrop-blur-2xl rounded-[24px] shadow-[0_20px_50px_rgba(0,0,0,0.8)] border border-white/10 p-2.5 flex flex-col items-center animate-in slide-in-from-bottom-3 duration-300 z-[9999] select-none touch-none"
+                        onPointerDown={(e) => {
+                          volumeDragStartYRef.current = e.clientY;
+                          volumeDragStartVolRef.current = masterVolume;
+                          (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+                          e.stopPropagation();
+                        }}
+                        onPointerMove={(e) => {
+                          if (volumeDragStartYRef.current === null) return;
+                          const deltaY = volumeDragStartYRef.current - e.clientY;
+                          const trackHeight = 100;
+                          const newVol = Math.max(0, Math.min(1, volumeDragStartVolRef.current + deltaY / trackHeight));
+                          setMasterVolume(newVol);
+                          musicEngine.setMasterVolume(newVol);
+                        }}
+                        onPointerUp={() => { volumeDragStartYRef.current = null; }}
+                        onPointerCancel={() => { volumeDragStartYRef.current = null; }}
+                      >
+                        <div className="flex-1 w-2 bg-black rounded-full relative overflow-hidden border border-white/5 shadow-inner cursor-ns-resize">
+                          <div
+                            className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-cyan-600 via-cyan-400 to-white shadow-[0_0_10px_rgba(0,229,255,0.6)]"
+                            style={{ height: `${masterVolume * 100}%` }}
+                          />
+                        </div>
+                        <div className="mt-2 flex flex-col items-center shrink-0">
+                          <div className="bg-black/80 px-1 py-0.5 rounded-lg border border-cyan-500/30 flex items-center justify-center min-w-[24px]">
+                            <span className="text-[10px] font-black text-cyan-400 lcd-font tracking-tighter leading-none">{Math.round(masterVolume * 100)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* SCR (Score toggle) */}
+                  <button
+                    onClick={() => setActiveCard(activeCard === 'score' ? 'pianoroll' : 'score')}
+                    className={`w-6 h-6 min-[360px]:w-7 h-7 border rounded-full flex flex-col items-center justify-center group active:scale-95 transition-all ${
+                      activeCard === 'score' ? 'bg-[#fbfbfb] border-zinc-100 text-zinc-400' : 'bg-cyan-50 border-cyan-100 text-cyan-500'
+                    }`}
+                    title="Toggle Score View"
+                  >
+                    <Music className={`w-2.5 h-2.5 min-[360px]:w-3 h-3 ${activeCard === 'score' ? 'text-zinc-400 group-hover:text-zinc-600' : 'text-cyan-500'}`} />
+                  </button>
+                </div>
+              </div>
+ 
               {/* CENTER GROUP: Narrow LCD Display */}
-              <div className="flex-1 flex justify-center px-1.5">
-                <div className="w-[200px] sm:w-[225px] md:w-[260px] h-[44px] bg-[#0c0c0e] rounded-full flex items-center border border-black shadow-inner overflow-hidden">
+              <div className="flex-1 flex justify-center px-1">
+                <div className="w-[125px] min-[350px]:w-[145px] min-[380px]:w-[175px] sm:w-[225px] md:w-[260px] h-[36px] min-[360px]:h-[44px] bg-[#0c0c0e] rounded-full flex items-center border border-black shadow-inner overflow-hidden">
                   <div className="flex-1 h-full border-r border-white/5 flex items-center justify-center">
                     <KeyTransposeDisplay keySig={parsedData.metadata.key || localSong.key} transpose={transpose} onTransposeChange={setTranspose} />
                   </div>
@@ -3139,9 +3014,9 @@ const PlayerPage: React.FC<{
                   </div>
                 </div>
               </div>
-
-              {/* MIDDLE-RIGHT GROUP: Large Back and Play/Pause Controls */}
-              <div className="flex items-center gap-2.5 pl-1.5 pr-2.5 border-r border-zinc-100 md:pr-3.5">
+ 
+              {/* RIGHT GROUP: Large Back and Play/Pause Controls */}
+              <div className="flex items-center gap-1.5 min-[360px]:gap-2 pl-1 min-[360px]:pl-1.5 pr-1.5 min-[360px]:pr-2.5">
                 {/* Back Button */}
                 <button
                   onClick={() => {
@@ -3153,92 +3028,28 @@ const PlayerPage: React.FC<{
                     musicEngine.currentNoteTime = 0;
                     setIsPlaying(false);
                   }}
-                  className="w-10 h-10 md:w-[44px] md:h-[44px] rounded-full bg-zinc-100 hover:bg-zinc-200 text-zinc-700 hover:text-black flex items-center justify-center transition-all active:scale-95"
+                  className="w-8 h-8 min-[360px]:w-9 h-9 sm:w-10 sm:h-10 md:w-[44px] md:h-[44px] rounded-full bg-zinc-100 hover:bg-zinc-200 text-zinc-700 hover:text-black flex items-center justify-center transition-all active:scale-95"
                 >
-                  <SkipBack size={19} fill="currentColor" />
+                  <SkipBack className="w-3.5 h-3.5 min-[360px]:w-4 min-[360px]:h-4 sm:w-[19px] sm:h-[19px]" fill="currentColor" />
                 </button>
-
+ 
                 {/* Play/Pause Button */}
                 <div className="relative">
                   <div className={`absolute inset-0 bg-[#00e5ff]/20 blur-md rounded-full transition-opacity ${isPlaying ? 'opacity-100' : 'opacity-0'}`} />
                   <button
                     onClick={handleTogglePlay}
                     disabled={isAudioLoading || isRenderingVocal}
-                    className={`relative w-12 h-12 md:w-[54px] md:h-[54px] rounded-full flex items-center justify-center text-white transition-all active:scale-95
+                    className={`relative w-10 h-10 min-[360px]:w-11 h-11 sm:w-12 sm:h-12 md:w-[54px] md:h-[54px] rounded-full flex items-center justify-center text-white transition-all active:scale-95
                       ${isRenderingVocal ? 'bg-zinc-800 shadow-none grayscale' : 'bg-[#00e5ff] hover:bg-[#00c8e0] shadow-[0_4px_25px_rgba(0,229,255,0.5)]'}`}
                   >
                     {isAudioLoading ? (
-                      <RefreshCw size={20} className="animate-spin text-white/50" />
+                      <RefreshCw className="animate-spin text-white/50 w-4 h-4 sm:w-5 sm:h-5" />
                     ) : isPlaying ? (
-                      <Pause size={24} fill="white" />
+                      <Pause className="w-4 h-4 sm:w-[24px] sm:h-[24px]" fill="white" />
                     ) : (
-                      <Play size={24} fill="white" className="ml-1" />
+                      <Play className="w-4 h-4 sm:w-[24px] sm:h-[24px] ml-0.5 sm:ml-1" fill="white" />
                     )}
                   </button>
-                </div>
-              </div>
-
-              {/* RIGHT GROUP: SCR (Score toggle) and Volume */}
-              <div className="flex-none flex items-center justify-end gap-2 pl-2 md:pl-3 relative">
-                <button
-                  onClick={() => setActiveCard(activeCard === 'score' ? 'pianoroll' : 'score')}
-                  className={`w-9 h-9 md:w-10 md:h-10 border rounded-full flex flex-col items-center justify-center group active:scale-95 transition-all ${
-                    activeCard === 'score' ? 'bg-[#fbfbfb] border-zinc-100 text-zinc-400' : 'bg-cyan-50 border-cyan-100 text-cyan-500'
-                  }`}
-                >
-                  <Music size={14} className={activeCard === 'score' ? 'text-zinc-400 group-hover:text-zinc-600' : 'text-cyan-500'} />
-                  <span className={`text-[6px] md:text-[7px] font-black uppercase mt-0.5 ${activeCard === 'score' ? 'text-zinc-400 group-hover:text-zinc-600' : 'text-cyan-600'}`}>
-                    SCR
-                  </span>
-                </button>
-
-                <div className="relative" ref={volumePopupRef}>
-                  <button
-                    onClick={() => setShowVolumeSlider(!showVolumeSlider)}
-                    className={`w-9 h-9 md:w-10 md:h-10 rounded-full flex items-center justify-center transition-all border ${
-                      showVolumeSlider
-                        ? 'border-cyan-400 bg-cyan-50 text-cyan-600 shadow-[0_0_15px_rgba(0,229,255,0.4)]'
-                        : 'border-transparent text-zinc-400 hover:text-cyan-500 hover:bg-zinc-50'
-                    }`}
-                  >
-                    {masterVolume === 0 ? <VolumeX size={17} /> : <Volume2 size={18} className={showVolumeSlider ? 'text-cyan-600' : 'text-zinc-400 hover:text-cyan-500'} />}
-                  </button>
-
-                  {showVolumeSlider && (
-                    <div
-                      ref={volumePopupRef}
-                      className="absolute bottom-[72px] left-1/2 -translate-x-1/2 w-14 h-64 bg-[#0c0c0e]/95 backdrop-blur-2xl rounded-[32px] shadow-[0_40px_100px_rgba(0,0,0,1)] border border-white/10 p-3.5 flex flex-col items-center animate-in slide-in-from-bottom-6 duration-300 z-[9999] ring-1 ring-white/10 select-none touch-none"
-                      onPointerDown={(e) => {
-                        volumeDragStartYRef.current = e.clientY;
-                        volumeDragStartVolRef.current = masterVolume;
-                        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-                        e.stopPropagation();
-                      }}
-                      onPointerMove={(e) => {
-                        if (volumeDragStartYRef.current === null) return;
-                        const deltaY = volumeDragStartYRef.current - e.clientY;
-                        const trackHeight = 160;
-                        const newVol = Math.max(0, Math.min(1, volumeDragStartVolRef.current + deltaY / trackHeight));
-                        setMasterVolume(newVol);
-                        musicEngine.setMasterVolume(newVol);
-                      }}
-                      onPointerUp={() => { volumeDragStartYRef.current = null; }}
-                      onPointerCancel={() => { volumeDragStartYRef.current = null; }}
-                    >
-                      <div className="flex-1 w-2.5 bg-black rounded-full relative overflow-hidden border border-white/5 shadow-inner cursor-ns-resize">
-                        <div
-                          className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-cyan-600 via-cyan-400 to-white shadow-[0_0_15px_rgba(0,229,255,0.6)]"
-                          style={{ height: `${masterVolume * 100}%` }}
-                        />
-                      </div>
-                      <div className="mt-4 flex flex-col items-center shrink-0">
-                        <div className="bg-black/80 px-2 py-1.5 rounded-xl border border-cyan-500/30 shadow-[0_0_15px_rgba(0,229,255,0.2)] flex items-center justify-center min-w-[36px]">
-                          <span className="text-[15px] font-black text-cyan-400 lcd-font tracking-tighter leading-none">{Math.round(masterVolume * 100)}</span>
-                        </div>
-                        <span className="text-[6px] font-black text-zinc-500 uppercase tracking-[0.3em] mt-2.5 opacity-60">MASTER</span>
-                      </div>
-                    </div>
-                  )}
                 </div>
               </div>
             </div>

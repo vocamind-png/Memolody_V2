@@ -2,6 +2,9 @@
 <html lang="en" class="h-full">
 <head>
     <meta charset="UTF-8">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=5, user-scalable=yes">
     <title>Memolody — Play by Ear, Hear by Eye</title>
     <!-- Tailwind classes are handled by Vite build, no CDN needed -->
@@ -29,15 +32,17 @@
                 });
             });
         }
-        // Force clear Cache Storage to purge old PWA assets
+        // Force clear Cache Storage to purge old PWA assets (excluding model files)
         if ('caches' in window) {
             caches.keys().then(function(names) {
                 names.forEach(function(name) {
-                    caches.delete(name).then(function(success) {
-                        if (success) {
-                            console.log('Cache Storage cleared:', name);
-                        }
-                    });
+                    if (name.indexOf('vocalido-models') === -1) {
+                        caches.delete(name).then(function(success) {
+                            if (success) {
+                                console.log('Cache Storage cleared:', name);
+                            }
+                        });
+                    }
                 });
             });
         }
@@ -46,7 +51,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="theme-color" content="#050507">
     <script src="/verovio-toolkit.js" defer></script>
-    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js" defer></script>
+    <script src="/ort/ort.min.js" defer></script>
     <style>
         :root {
             --nimo-cyan: #00e5ff;
@@ -194,11 +199,11 @@
         }
     </style>
     <!-- Import map removed: Vite bundles all dependencies at build time -->
-  <script type="module" crossorigin src="/assets/index-Can2zWMm.js"></script>
+  <script type="module" crossorigin src="/assets/index-B5hWMAOH.js"></script>
   <link rel="modulepreload" crossorigin href="/assets/vendor-react-CnF0OGO6.js">
   <link rel="modulepreload" crossorigin href="/assets/vendor-docs-CQgjcqA_.js">
-  <link rel="modulepreload" crossorigin href="/assets/vendor-icons-DhCVToyT.js">
-  <link rel="stylesheet" crossorigin href="/assets/index-DCHkT_aT.css">
+  <link rel="modulepreload" crossorigin href="/assets/vendor-icons-BRd6wzOa.js">
+  <link rel="stylesheet" crossorigin href="/assets/index-Dgt13LkG.css">
 </head>
 <body class="unselectable">
     <div id="root"></div>

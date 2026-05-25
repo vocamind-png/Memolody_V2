@@ -488,130 +488,96 @@ export class MusicEngine {
     // Ensure Tone.js context and masterBus are initialized
     await this.ensureInitialized();
 
-    // ── Clean up old vocal resources (but keep the HTMLAudioElement instance) ──
+    // ── Clean up old vocal resources ──
     this.clearVocalLayers(trackId);
 
     // Ensure track channel exists so the volume/pan/meter routing works
     if (!this.trackChannels.has(trackId) && this.masterBus) {
       const channel = new Tone.Channel(0, 0).connect(this.masterBus);
-      const meter = new Tone.Meter().connect(channel);
+      const meter = new Tone.Meter();
+      channel.connect(meter);
       this.trackChannels.set(trackId, channel);
       this.trackMeters.set(trackId, meter);
     }
+    const channel = this.trackChannels.get(trackId)!;
 
-    // Retrieve or create the HTMLAudioElement
-    let audio = this.vocalAudioElements.get(trackId);
-    if (!audio) {
-      audio = new Audio();
-      audio.preload = 'auto';
-      audio.crossOrigin = 'anonymous';
-      this.vocalAudioElements.set(trackId, audio);
-    } else {
-      audio.pause();
+    // Reset/clear any active HTMLAudioElement for this track to prevent duplicate playing
+    const oldAudio = this.vocalAudioElements.get(trackId);
+    if (oldAudio) {
+      oldAudio.pause();
+      oldAudio.src = '';
     }
 
-    // 📱 iOS Safari Pre-fetch workaround: download the file as a blob first 
-    // to bypass lazy-loading restriction and avoid hanging on canplay/loadedmetadata.
-    let finalUrl = audioUrl;
-    if (audioUrl && !audioUrl.startsWith('data:') && !audioUrl.startsWith('blob:')) {
-      try {
-        console.log(`[MusicEngine] 📥 Pre-fetching vocal audio as Blob for iOS compatibility: ${audioUrl}`);
-        const resp = await fetch(audioUrl);
-        if (resp.ok) {
-          const blob = await resp.blob();
-          const localBlobUrl = URL.createObjectURL(blob);
-          
-          // Track the blob URL so we can revoke it later to prevent memory leaks
-          const oldUrl = this.vocalBlobUrls.get(trackId);
-          if (oldUrl) {
-            try { URL.revokeObjectURL(oldUrl); } catch(e){}
+    // Load the main mix layer and any stems in parallel using Tone.Player
+    const loadPromises: Promise<void>[] = [];
+
+    // 1. Load Main Mix Player
+    let mainPlayer: Tone.Player | null = null;
+    if (audioUrl) {
+      loadPromises.push(new Promise<void>((resolve) => {
+        const player = new Tone.Player({
+          url: audioUrl,
+          autostart: false,
+          onload: () => {
+            if (myGeneration === this._vocalGeneration) {
+              mainPlayer = player;
+            } else {
+              player.dispose();
+            }
+            resolve();
+          },
+          onerror: (err) => {
+            console.error(`[MusicEngine] ❌ Main mix Tone.Player load error for ${trackId}:`, err);
+            resolve(); // Resolve to prevent blocking the user
           }
-          this.vocalBlobUrls.set(trackId, localBlobUrl);
-          finalUrl = localBlobUrl;
-          console.log(`[MusicEngine] 📥 Pre-fetch successful. Created local Blob URL: ${localBlobUrl}`);
-        } else {
-          console.warn(`[MusicEngine] ⚠️ Pre-fetch failed with HTTP status ${resp.status}, using original URL`);
-        }
-      } catch (fetchErr) {
-        console.warn('[MusicEngine] ⚠️ Pre-fetch fetch error (CORS or network), using original URL:', fetchErr);
-      }
+        }).connect(channel);
+      }));
     }
 
-    // If generation changed during fetch, discard
+    // 2. Load Stems Players
+    const loadedStems: (Tone.Player | null)[] = [];
+    if (stemUrls && stemUrls.length > 0) {
+      stemUrls.forEach((url, index) => {
+        loadPromises.push(new Promise<void>((resolve) => {
+          const player = new Tone.Player({
+            url: url,
+            autostart: false,
+            onload: () => {
+              if (myGeneration === this._vocalGeneration) {
+                loadedStems[index] = player;
+              } else {
+                player.dispose();
+              }
+              resolve();
+            },
+            onerror: (err) => {
+              console.error(`[MusicEngine] ❌ Stem ${index} Tone.Player load error for ${trackId}:`, err);
+              resolve();
+            }
+          }).connect(channel);
+        }));
+      });
+    }
+
+    await Promise.all(loadPromises);
+
+    // If generation changed during load, discard new nodes
     if (myGeneration !== this._vocalGeneration) {
-      console.log(`[MusicEngine] 🗑️ Stale gen=${myGeneration} after pre-fetch — discarding`);
-      if (finalUrl.startsWith('blob:')) {
-        try { URL.revokeObjectURL(finalUrl); } catch(e){}
-        this.vocalBlobUrls.delete(trackId);
-      }
+      console.log(`[MusicEngine] 🗑️ Stale gen=${myGeneration} after loading — discarding players`);
+      if (mainPlayer) (mainPlayer as Tone.Player).dispose();
+      loadedStems.forEach(p => p?.dispose());
       return;
     }
 
-    return new Promise<void>((resolve) => {
-      let resolved = false;
+    if (mainPlayer) {
+      this.trackVocalLayers.set(trackId, [mainPlayer]);
+    }
+    if (loadedStems.length > 0) {
+      this.trackVocalStems.set(trackId, loadedStems.filter(Boolean) as Tone.Player[]);
+    }
 
-      const onReady = () => {
-        if (resolved) return;
-        resolved = true;
-        clearTimeout(timeoutId);
-        cleanupListeners();
-
-        if (myGeneration !== this._vocalGeneration) {
-          console.log(`[MusicEngine] 🗑️ Stale gen=${myGeneration} — discarding audio`);
-          audio.src = '';
-          resolve();
-          return;
-        }
-        console.log(`[MusicEngine] 🎤 HTMLAudio loaded gen=${myGeneration} duration=${audio.duration.toFixed(2)}s`);
-        
-        this.trackModes.set(trackId, 'vocal');
-
-        // If transport is already playing, start the audio immediately at the right offset
-        if (Tone.Transport.state === 'started') {
-          const songOffset = Math.max(0, Tone.Transport.seconds - this.countInDuration);
-          audio.currentTime = Math.min(songOffset, isFinite(audio.duration) ? audio.duration - 0.01 : 0);
-          audio.play().catch(e => {
-            console.warn('[MusicEngine] Immediate vocal play failed:', e);
-            window.dispatchEvent(new CustomEvent('vocal-playback-blocked', { detail: { error: e } }));
-          });
-        }
-
-        resolve();
-      };
-
-      const onError = (e: Event) => {
-        if (resolved) return;
-        resolved = true;
-        clearTimeout(timeoutId);
-        cleanupListeners();
-        console.error(`[MusicEngine] ❌ HTMLAudio load error for ${trackId}:`, e);
-        resolve(); // Resolve anyway so the UI doesn't hang
-      };
-
-      const cleanupListeners = () => {
-        audio.removeEventListener('canplay', onReady);
-        audio.removeEventListener('canplaythrough', onReady);
-        audio.removeEventListener('loadedmetadata', onReady);
-        audio.removeEventListener('error', onError);
-      };
-
-      audio.addEventListener('canplay', onReady);
-      audio.addEventListener('canplaythrough', onReady);
-      audio.addEventListener('loadedmetadata', onReady);
-      audio.addEventListener('error', onError);
-
-      // Timeout fallback (shorter now that we use Blobs)
-      const timeoutId = setTimeout(() => {
-        if (resolved) return;
-        resolved = true;
-        cleanupListeners();
-        console.warn(`[MusicEngine] ⚠️ addVocalLayer gen=${myGeneration} timed out — resolving`);
-        resolve();
-      }, 5000); // 5s is plenty for local blob URLs
-
-      audio.src = finalUrl;
-      audio.load();
-    });
+    this.trackModes.set(trackId, 'vocal');
+    console.log(`[MusicEngine] 🎤 Vocal layers loaded for track=${trackId}. Main mix: ${!!mainPlayer}, Stems count: ${loadedStems.filter(Boolean).length}`);
   }
 
   clearVocalLayers(trackId: string) {
@@ -697,7 +663,8 @@ export class MusicEngine {
       if (!this.trackChannels.has(trackId) && this.masterBus) {
         console.log(`[MusicEngine] [initSampler] creating channel/meter for vocal trackId=${trackId}`);
         const channel = new Tone.Channel(0, 0).connect(this.masterBus);
-        const meter = new Tone.Meter().connect(channel);
+        const meter = new Tone.Meter();
+        channel.connect(meter);
         this.trackChannels.set(trackId, channel);
         this.trackMeters.set(trackId, meter);
       }
@@ -813,7 +780,7 @@ export class MusicEngine {
         const sampler = this.trackSamplers.get(t.id);
         if (sampler && sampler.volume) {
           const audio = this.vocalAudioElements.get(t.id);
-          const hasRealVocal = audio && audio.src && !audio.src.startsWith('data:');
+          const hasRealVocal = (audio && audio.src && !audio.src.startsWith('data:')) || this.trackVocalLayers.has(t.id);
           sampler.volume.value = (t.mode === 'vocal' && hasRealVocal) ? -100 : 0;
         }
       }
@@ -1040,7 +1007,7 @@ export class MusicEngine {
             const track = this.tracks.find(t => t.id === trackId);
             const isVocalPlaying = track && track.mode === 'vocal' && !track.isMuted;
             
-            if (isVocalPlaying) {
+            if (isVocalPlaying && audio.src && !audio.src.startsWith('data:')) {
               audio.currentTime = Math.min(songOffset, Math.max(0, (isFinite(audio.duration) ? audio.duration - 0.01 : 0)));
               audio.play().catch(e => {
                 console.warn('[MusicEngine] Vocal audio.play() failed:', e);
@@ -1087,7 +1054,7 @@ export class MusicEngine {
           const track = this.tracks.find(t => t.id === trackId);
           const isVocalPlaying = track && track.mode === 'vocal' && !track.isMuted;
           
-          if (isVocalPlaying) {
+          if (isVocalPlaying && audio.src && !audio.src.startsWith('data:')) {
             audio.currentTime = offset;
             audio.play().catch(e => {
               console.warn('[MusicEngine] Vocal audio.play() resume failed:', e);
