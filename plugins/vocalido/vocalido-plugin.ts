@@ -101,13 +101,44 @@ export class VocalidoPlugin implements IMemolodyPlugin {
           throw new Error(`RunPod API Error (${response.status}): ${err}`);
         }
 
-        const json = await response.json();
+        let json = await response.json();
+        let status = json.status;
+        const jobId = json.id;
+
+        if (status === 'IN_QUEUE' || status === 'IN_PROGRESS') {
+          console.log(`[Vocalido Plugin] Job ${jobId} status is ${status}. Polling...`);
+          const statusUrl = runpodUrl.endsWith('/runsync')
+            ? runpodUrl.replace('/runsync', `/status/${jobId}`)
+            : runpodUrl.replace('/run', `/status/${jobId}`);
+          let attempts = 0;
+          const maxAttempts = 120; // 120 attempts * 2s = 240 seconds max wait (cold start safety)
+          
+          while ((status === 'IN_QUEUE' || status === 'IN_PROGRESS') && attempts < maxAttempts) {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            attempts++;
+            
+            const pollResponse = await fetch(statusUrl, {
+              method: 'GET',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${runpodKey}`
+              }
+            });
+            
+            if (!pollResponse.ok) {
+              throw new Error(`RunPod Status Error (${pollResponse.status})`);
+            }
+            
+            json = await pollResponse.json();
+            status = json.status;
+          }
+        }
         
-        if (json.status !== "COMPLETED") {
+        if (status !== "COMPLETED") {
              throw new Error("RunPod synthesis failed: " + JSON.stringify(json));
         }
 
-        const b64 = json.output.audio_b64;
+        const b64 = json.output?.audio_b64;
         if (!b64) {
           throw new Error("RunPod returned empty audio.");
         }

@@ -16,6 +16,9 @@ const getOrt = () => {
   if (typeof window !== 'undefined' && window.ort) {
     return window.ort;
   }
+  if (typeof self !== 'undefined' && (self as any).ort) {
+    return (self as any).ort;
+  }
   return null;
 };
 
@@ -138,7 +141,7 @@ export class ClientSvsEngine {
   private activeVoiceId = '';
   private lastLoadedFiles: VoiceModelFiles | null = null;
   private forceWasm = false;
-  private actualProvider: 'webgpu' | 'wasm' = 'wasm';
+  public actualProvider: 'webgpu' | 'wasm' = 'wasm';
 
   constructor() {}
 
@@ -162,49 +165,133 @@ export class ClientSvsEngine {
       console.warn(`[ClientSvsEngine] Cache API not available/errored:`, e);
     }
 
-    console.log(`[ClientSvsEngine] Fetching from server: ${url}`);
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch ${url}: ${response.statusText}`);
-    }
-
-    const contentLength = response.headers.get('content-length');
-    const totalBytes = contentLength ? parseInt(contentLength, 10) : 0;
-
-    if (totalBytes === 0) {
-      const blob = await response.blob();
-      try {
-        const cache = await caches.open(cacheName);
-        await cache.put(url, new Response(blob, { headers: response.headers }));
-      } catch (e) {}
-      onProgress(100);
-      return await blob.arrayBuffer();
-    }
-
-    const reader = response.body?.getReader();
-    if (!reader) {
-      const blob = await response.blob();
-      try {
-        const cache = await caches.open(cacheName);
-        await cache.put(url, new Response(blob, { headers: response.headers }));
-      } catch (e) {}
-      onProgress(100);
-      return await blob.arrayBuffer();
-    }
-
+    console.log(`[ClientSvsEngine] Starting resilient download from: ${url}`);
+    
     let receivedBytes = 0;
+    let totalBytes = 0;
     const chunks: Uint8Array[] = [];
     
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value) {
-        chunks.push(value);
-        receivedBytes += value.length;
-        onProgress(Math.round((receivedBytes / totalBytes) * 100));
+    let retries = 8;
+    let delay = 1000;
+    let supportsRange = true;
+    let currentUrl = url;
+    let fallbackUrl = url;
+
+    if (url.startsWith('https://storage.googleapis.com/memolody-vault/voicebanks/')) {
+      fallbackUrl = url.replace('https://storage.googleapis.com/memolody-vault/voicebanks/', '/vocalido/voicebanks/');
+    }
+
+    while (totalBytes === 0 || receivedBytes < totalBytes) {
+      const controller = new AbortController();
+      let lastActiveTime = Date.now();
+      
+      // Watchdog interval to abort if download stalls for more than 12 seconds
+      const watchdog = setInterval(() => {
+        if (Date.now() - lastActiveTime > 12000) {
+          console.warn(`[ClientSvsEngine] Watchdog: Download stalled for ${currentUrl}. Aborting to retry/resume...`);
+          controller.abort();
+        }
+      }, 3000);
+
+      try {
+        const headers: Record<string, string> = {};
+        if (receivedBytes > 0 && supportsRange) {
+          headers['Range'] = `bytes=${receivedBytes}-`;
+        }
+
+        const response = await fetch(currentUrl, {
+          headers,
+          credentials: 'omit', // Explicitly omit credentials to bypass CORP headers under COEP credentialless
+          signal: controller.signal
+        });
+
+        if (!response.ok && response.status !== 206) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        // If we requested a range but got 200, the server doesn't support Range.
+        // We must discard previous chunks and download from scratch.
+        if (receivedBytes > 0 && response.status !== 206) {
+          console.warn(`[ClientSvsEngine] Server did not support 206 for range. Restarting from byte 0.`);
+          receivedBytes = 0;
+          chunks.length = 0;
+          supportsRange = false;
+        }
+
+        if (receivedBytes === 0) {
+          const contentLength = response.headers.get('content-length');
+          totalBytes = contentLength ? parseInt(contentLength, 10) : 0;
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) {
+          // Fallback if reader is not supported
+          const blob = await response.blob();
+          const arrayBuf = await blob.arrayBuffer();
+          const view = new Uint8Array(arrayBuf);
+          chunks.push(view);
+          receivedBytes += view.length;
+          clearInterval(watchdog);
+          break;
+        }
+
+        let streamFinished = false;
+        let lastProgressTime = 0;
+        while (true) {
+          lastActiveTime = Date.now(); // Feed the watchdog
+          const { done, value } = await reader.read();
+          if (done) {
+            streamFinished = true;
+            break;
+          }
+          if (value) {
+            chunks.push(value);
+            receivedBytes += value.length;
+            lastActiveTime = Date.now(); // Feed the watchdog again
+            if (totalBytes > 0) {
+              const now = Date.now();
+              // Throttle progress updates to once every 100ms or on completion
+              if (now - lastProgressTime > 100 || receivedBytes === totalBytes) {
+                onProgress(Math.round((receivedBytes / totalBytes) * 100));
+                lastProgressTime = now;
+              }
+            }
+          }
+        }
+
+        clearInterval(watchdog);
+
+        if (streamFinished && (totalBytes === 0 || receivedBytes >= totalBytes)) {
+          break; // Successfully downloaded everything!
+        } else {
+          throw new Error(`Stream closed prematurely. Received ${receivedBytes}/${totalBytes} bytes.`);
+        }
+
+      } catch (err: any) {
+        clearInterval(watchdog);
+        console.warn(`[ClientSvsEngine] Download error/stall on ${currentUrl} at byte ${receivedBytes}: ${err.message || err}`);
+        
+        retries--;
+        if (retries < 0) {
+          throw new Error(`Failed to download ${url} after multiple attempts. Last error: ${err.message || err}`);
+        }
+
+        // Switch to Vercel relative proxy URL if GCS direct URL has failed 4 times
+        if (retries === 4 && currentUrl !== fallbackUrl) {
+          console.warn(`[ClientSvsEngine] Switching to fallback proxy URL: ${fallbackUrl}`);
+          currentUrl = fallbackUrl;
+          receivedBytes = 0;
+          chunks.length = 0;
+        }
+
+        // Wait with exponential backoff
+        console.log(`[ClientSvsEngine] Retrying in ${delay}ms... (${retries} retries left)`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        delay = Math.min(8000, delay * 1.5);
       }
     }
 
+    // Combine chunks into single ArrayBuffer
     const allChunks = new Uint8Array(receivedBytes);
     let position = 0;
     for (const chunk of chunks) {
@@ -212,20 +299,39 @@ export class ClientSvsEngine {
       position += chunk.length;
     }
 
-    // Save to Cache API in background
+    // Save to Cache API
     try {
       const cache = await caches.open(cacheName);
       const blob = new Blob([allChunks]);
-      await cache.put(url, new Response(blob, { headers: response.headers }));
-    } catch (e) {}
+      await cache.put(url, new Response(blob, {
+        headers: {
+          'Content-Type': url.endsWith('.onnx') ? 'application/octet-stream' : 'text/plain',
+          'Content-Length': receivedBytes.toString()
+        }
+      }));
+      console.log(`[ClientSvsEngine] Successfully stored model in Cache API: ${url}`);
+    } catch (e) {
+      console.warn(`[ClientSvsEngine] Failed to save downloaded model to Cache API:`, e);
+    }
 
+    onProgress(100);
     return allChunks.buffer;
   }
 
   /**
-   * Ensures that ONNX Runtime Web script is loaded in window.
+   * Ensures that ONNX Runtime Web script is loaded in window or worker.
    */
   private async ensureOrtLoaded(): Promise<any> {
+    if (typeof document === 'undefined') {
+      // Running inside Web Worker context — use ESM-compatible loader
+      if (typeof self !== 'undefined' && (self as any).ort) {
+        return (self as any).ort;
+      }
+      // Dynamic import of our ESM wrapper (works in module workers)
+      const { loadOrt } = await import('./ort-loader');
+      return await loadOrt();
+    }
+
     if (typeof window === 'undefined') {
       throw new Error('ONNX Runtime cannot be loaded: window is undefined');
     }
@@ -285,10 +391,20 @@ export class ClientSvsEngine {
     }
 
     // Setup wasm path
-    const baseWasmPath = typeof window !== 'undefined' ? window.location.origin + '/ort/' : '/ort/';
+    const baseWasmPath = typeof self !== 'undefined' && self.location ? self.location.origin + '/ort/' : '/ort/';
     ort.env.wasm.wasmPaths = baseWasmPath;
-    ort.env.wasm.numThreads = 1; // Disable multi-threading to run without SharedArrayBuffer on mobile browser environments
-    ort.env.wasm.proxy = false;  // Execute WASM on main thread directly to avoid Web Worker creation/CORS blocks on mobile
+    
+    // Enable WASM Multi-threading using available CPU logical cores, fallback to 4
+    const cores = typeof navigator !== 'undefined' ? (navigator.hardwareConcurrency || 4) : 4;
+    // Cap threads to a maximum of 4 to prevent CPU thread thrashing and memory overhead
+    ort.env.wasm.numThreads = Math.min(4, cores);
+    
+    // Run ONNX inference in a background Web Worker thread (proxy = true) to prevent UI thread freezing.
+    // Disable proxy if we are already inside a Web Worker to avoid nested worker errors on mobile Safari (iOS).
+    // Disable proxy if WebGPU is supported and not forced off, as the ONNX WebGPU EP is incompatible with proxy mode.
+    const isWorker = typeof document === 'undefined';
+    const hasWebGPU = typeof navigator !== 'undefined' && 'gpu' in navigator && !this.forceWasm;
+    ort.env.wasm.proxy = !isWorker && !hasWebGPU;
     
     try {
       this.isLoaded = false;
@@ -296,14 +412,10 @@ export class ClientSvsEngine {
       this.speakerEmbeds = {};
       this.defaultEmbed = null;
 
-      // 1. Download files in parallel
+      // 1. Download files sequentially for stability on mobile connections
       onProgress({ stage: 'downloading', message: 'Downloading acoustic model...', progress: 10 });
       
-      let acousticBuffer: ArrayBuffer;
-      let vocoderBuffer: ArrayBuffer;
-      
-      // We load acoustic and vocoder concurrently, dividing progress
-      const acousticPromise = this.fetchWithCache(files.acoustic, (p) => {
+      const acousticBuffer = await this.fetchWithCache(files.acoustic, (p) => {
         onProgress({
           stage: 'downloading',
           message: `Downloading Acoustic Model: ${p}%`,
@@ -311,15 +423,15 @@ export class ClientSvsEngine {
         });
       });
 
-      const vocoderPromise = this.fetchWithCache(files.vocoder, (p) => {
+      onProgress({ stage: 'downloading', message: 'Downloading vocoder model...', progress: 50 });
+
+      const vocoderBuffer = await this.fetchWithCache(files.vocoder, (p) => {
         onProgress({
           stage: 'downloading',
           message: `Downloading Vocoder Model: ${p}%`,
           progress: Math.round(50 + p * 0.2) // 50% to 70%
         });
       });
-
-      [acousticBuffer, vocoderBuffer] = await Promise.all([acousticPromise, vocoderPromise]);
 
       // Download dictionary and phonemes with caching
       onProgress({ stage: 'downloading', message: 'Downloading text assets...', progress: 75 });
@@ -374,7 +486,7 @@ export class ClientSvsEngine {
       onProgress({ stage: 'initializing', message: 'Initializing Neural Engine...', progress: 85 });
 
       const isMobile = typeof navigator !== 'undefined' && /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-      const hasWebGPU = typeof navigator !== 'undefined' && 'gpu' in navigator && !this.forceWasm && !isMobile;
+      const hasWebGPU = typeof navigator !== 'undefined' && 'gpu' in navigator && !this.forceWasm;
       let sessionOptions = {
         executionProviders: hasWebGPU ? ['webgpu', 'wasm'] : ['wasm'],
       };
@@ -411,7 +523,22 @@ export class ClientSvsEngine {
         vocoderOutputs: this.vocoderSession.outputNames,
       });
 
-      this.isLoaded = true;
+      // 3. Warmup Run: Run a tiny inference session to compile shaders / warm up thread pools in the background
+      try {
+        console.log('[ClientSvsEngine] Running dummy warmup inference to compile WebGPU shaders and warm up thread pool...');
+        onProgress({ stage: 'initializing', message: 'Warming up AI engine (compiling)...', progress: 95 });
+        this.isLoaded = true; // Set temporarily to true so synthesize() validation passes
+        
+        const dummyNotes: NoteData[] = [{ pitch: 60, duration: 0.1, startTime: 0, lyric: 'Do' }];
+        await this.synthesize(dummyNotes, { bpm: 120, steps: 4 });
+        
+        console.log('[ClientSvsEngine] Dummy warmup completed successfully!');
+      } catch (warmupErr) {
+        console.warn('[ClientSvsEngine] ⚠️ Warmup run failed/skipped:', warmupErr);
+      } finally {
+        this.isLoaded = true;
+      }
+
       onProgress({ stage: 'ready', message: 'On-device SVS ready', progress: 100 });
       
     } catch (err: any) {
@@ -533,17 +660,42 @@ export class ClientSvsEngine {
         }
       }
 
-      // Normalize mixed audio if polyphonic
-      if (trackAudios.length > 1) {
-        let peak = 0;
+      // Normalize mixed audio
+      let peak = 0;
+      for (let i = 0; i < mixedAudio.length; i++) {
+        const absVal = Math.abs(mixedAudio[i]);
+        if (absVal > peak) peak = absVal;
+      }
+      if (peak > 0.001) {
         for (let i = 0; i < mixedAudio.length; i++) {
-          const absVal = Math.abs(mixedAudio[i]);
-          if (absVal > peak) peak = absVal;
+          mixedAudio[i] = (mixedAudio[i] / peak) * 0.95;
         }
-        if (peak > 1.0) {
-          for (let i = 0; i < mixedAudio.length; i++) {
-            mixedAudio[i] = (mixedAudio[i] / peak) * 0.95;
-          }
+      }
+
+      // Check for NaN or absolute silence (common on buggy WebGPU drivers returning zeros/NaN)
+      let hasNaN = false;
+      let allZeros = true;
+      for (let i = 0; i < mixedAudio.length; i++) {
+        if (isNaN(mixedAudio[i])) {
+          hasNaN = true;
+        }
+        if (mixedAudio[i] !== 0) {
+          allZeros = false;
+        }
+      }
+
+      if (hasNaN || allZeros || mixedAudio.length === 0) {
+        console.warn(`[ClientSvsEngine] ⚠️ Synthesized audio is invalid (hasNaN=${hasNaN}, allZeros=${allZeros}, len=${mixedAudio.length}).`);
+        if (this.actualProvider === 'webgpu' && this.lastLoadedFiles) {
+          console.warn('[ClientSvsEngine] 🔄 WebGPU returned silent or NaN audio! Forcing CPU (WASM) fallback and retrying...');
+          this.forceWasm = true;
+          this.actualProvider = 'wasm';
+          
+          // Reload sessions using CPU/WASM (with a dummy progress reporter)
+          await this.loadVoice(this.activeVoiceId, this.lastLoadedFiles, () => {});
+          
+          // Retry synthesis recursively (now under WASM)
+          return await this.synthesize(notes, params);
         }
       }
 
@@ -572,9 +724,92 @@ export class ClientSvsEngine {
   }
 
   /**
-   * Synthesizes a single monophonic track.
+   * Synthesizes a single monophonic track by splitting it into smaller chunks
+   * to avoid WebGPU out-of-memory and timeout errors.
    */
   private async synthesizeTrack(
+    trackNotes: Array<{ start: number; dur: number; note: NoteData }>,
+    params?: ClientSvsParams
+  ): Promise<Float32Array | null> {
+    if (trackNotes.length === 0) {
+      return new Float32Array(0);
+    }
+
+    // Sort notes by start time
+    const sortedNotes = [...trackNotes].sort((a, b) => a.start - b.start);
+
+    // Group notes into chunks
+    const chunks: Array<{ start: number; dur: number; note: NoteData }[]> = [];
+    let currentChunk: Array<{ start: number; dur: number; note: NoteData }> = [];
+
+    const MAX_CHUNK_DURATION = 15.0; // seconds
+    const MAX_GAP = 2.0; // seconds
+
+    for (const note of sortedNotes) {
+      if (currentChunk.length === 0) {
+        currentChunk.push(note);
+      } else {
+        const firstNote = currentChunk[0];
+        const lastNote = currentChunk[currentChunk.length - 1];
+        const chunkDuration = (note.start + note.dur) - firstNote.start;
+        const gap = note.start - (lastNote.start + lastNote.dur);
+
+        if (gap > MAX_GAP || chunkDuration > MAX_CHUNK_DURATION) {
+          chunks.push(currentChunk);
+          currentChunk = [note];
+        } else {
+          currentChunk.push(note);
+        }
+      }
+    }
+    if (currentChunk.length > 0) {
+      chunks.push(currentChunk);
+    }
+
+    console.log(`[ClientSvsEngine] Split track into ${chunks.length} chunks to optimize inference speed and VRAM.`);
+
+    // Determine the total duration of the track in seconds to allocate the track buffer
+    const lastNoteOfTrack = sortedNotes[sortedNotes.length - 1];
+    const totalTrackDuration = lastNoteOfTrack.start + lastNoteOfTrack.dur + 0.5; // add a little buffer
+    const trackAudioBuffer = new Float32Array(Math.ceil(totalTrackDuration * this.sr));
+
+    for (let cIdx = 0; cIdx < chunks.length; cIdx++) {
+      const chunk = chunks[cIdx];
+      const chunkStartSec = chunk[0].start;
+      
+      // Shift notes in the chunk to be relative to the chunk start
+      const shiftedChunkNotes = chunk.map(n => ({
+        start: Math.max(0, n.start - chunkStartSec),
+        dur: n.dur,
+        note: n.note
+      }));
+
+      console.log(`[ClientSvsEngine] Synthesizing chunk ${cIdx + 1}/${chunks.length} | notes: ${chunk.length} | start: ${chunkStartSec.toFixed(2)}s`);
+      
+      // Run the synthesis on this chunk
+      const chunkAudio = await this.synthesizeChunk(shiftedChunkNotes, params);
+      if (!chunkAudio) {
+        console.warn(`[ClientSvsEngine] Chunk ${cIdx + 1}/${chunks.length} synthesis returned null, skipping`);
+        continue;
+      }
+
+      // Copy chunk audio into the track master buffer
+      const startSampleIndex = Math.round(chunkStartSec * this.sr);
+      for (let i = 0; i < chunkAudio.length; i++) {
+        const targetIndex = startSampleIndex + i;
+        if (targetIndex < trackAudioBuffer.length) {
+          trackAudioBuffer[targetIndex] += chunkAudio[i];
+        }
+      }
+    }
+
+    return trackAudioBuffer;
+  }
+
+  /**
+   * Synthesizes a single chunk of notes.
+   */
+  private async synthesizeChunk(
     trackNotes: Array<{ start: number; dur: number; note: NoteData }>,
     params?: ClientSvsParams
   ): Promise<Float32Array | null> {
@@ -775,22 +1010,22 @@ export class ClientSvsEngine {
         audio = reverbAudio;
       }
 
-      // Normalization
+      // Avoid clipping, but do not boost soft audio to avoid noise floors
       let peak = 0;
       for (let i = 0; i < audio.length; i++) {
         const absVal = Math.abs(audio[i]);
         if (absVal > peak) peak = absVal;
       }
-      if (peak > 0.001) {
+      if (peak > 1.0) {
         for (let i = 0; i < audio.length; i++) {
-          audio[i] = (audio[i] / peak) * 0.90;
+          audio[i] = (audio[i] / peak) * 0.95;
         }
       }
 
       return audio;
 
     } catch (e) {
-      console.error('[ClientSvsEngine] Inference track error:', e);
+      console.error('[ClientSvsEngine] Inference chunk error:', e);
       return null;
     }
   }
@@ -913,5 +1148,119 @@ export class ClientSvsEngine {
   }
 }
 
-// Single exported instance
-export const clientSvsEngine = new ClientSvsEngine();
+/**
+ * ClientSvsEngineProxy — Web Worker dispatcher for SVS synthesis.
+ *
+ * All ONNX inference runs in a Web Worker to avoid blocking the main thread.
+ * The worker will attempt WebGPU first (available in Chrome 113+ workers),
+ * then fall back to WASM/CPU automatically.
+ *
+ * Key fix: Worker type changed from 'classic' → 'module' to support ESM imports.
+ */
+export class ClientSvsEngineProxy {
+  private worker: Worker | null = null;
+  private activeResolver: ((value: any) => void) | null = null;
+  private activeRejecter: ((reason: any) => void) | null = null;
+  private activeProgress: ((state: SvsEngineProgress) => void) | null = null;
+  public actualProvider: 'webgpu' | 'wasm' = 'wasm';
+
+  private ensureWorker() {
+    if (!this.worker && typeof window !== 'undefined') {
+      console.log('[ClientSvsEngineProxy] Spawning SVS Background Worker...');
+      this.worker = new Worker(
+        new URL('./svs.worker.ts', import.meta.url),
+        { type: 'module' }
+      );
+      
+      this.worker.onerror = (err: ErrorEvent) => {
+        console.error('[ClientSvsEngineProxy] Worker execution/load error:', err);
+        if (this.activeRejecter) {
+          this.activeRejecter(new Error(err.message || 'Background Worker failed to load or compile'));
+          this.activeResolver = null;
+          this.activeRejecter = null;
+        }
+      };
+
+      this.worker.onmessage = (e) => {
+        const { type, error, payload } = e.data;
+        
+        if (type === 'loadProgress' && this.activeProgress) {
+          this.activeProgress(payload);
+        } else if (type === 'loadSuccess') {
+          if (payload && payload.provider) {
+            this.actualProvider = payload.provider;
+          }
+          if (this.activeResolver) {
+            this.activeResolver(undefined);
+            this.activeResolver = null;
+            this.activeRejecter = null;
+          }
+        } else if (type === 'loadError') {
+          if (this.activeRejecter) {
+            this.activeRejecter(new Error(error || 'Worker loading failed'));
+            this.activeResolver = null;
+            this.activeRejecter = null;
+          }
+        } else if (type === 'synthSuccess') {
+          if (this.activeResolver) {
+            this.activeResolver(payload);
+            this.activeResolver = null;
+            this.activeRejecter = null;
+          }
+        } else if (type === 'synthError') {
+          if (this.activeRejecter) {
+            this.activeRejecter(new Error(error || 'Worker synthesis failed'));
+            this.activeResolver = null;
+            this.activeRejecter = null;
+          }
+        }
+      };
+    }
+  }
+
+  public async loadVoice(
+    voiceId: string,
+    files: VoiceModelFiles,
+    onProgress: (state: SvsEngineProgress) => void
+  ): Promise<void> {
+    console.log('[ClientSvsEngineProxy] Routing SVS voice load to Background Web Worker...');
+    this.ensureWorker();
+    if (!this.worker) {
+      throw new Error('Worker could not be initialized');
+    }
+    
+    this.activeProgress = onProgress;
+    return new Promise((resolve, reject) => {
+      this.activeResolver = resolve;
+      this.activeRejecter = reject;
+      this.worker!.postMessage({
+        type: 'loadVoice',
+        payload: { voiceId, files }
+      });
+    });
+  }
+
+  public async synthesize(
+    notes: NoteData[],
+    params?: ClientSvsParams
+  ): Promise<Blob> {
+    console.log('[ClientSvsEngineProxy] Routing SVS synthesis to Background Web Worker...');
+    this.ensureWorker();
+    if (!this.worker) {
+      throw new Error('Worker could not be initialized');
+    }
+    
+    return new Promise((resolve, reject) => {
+      this.activeResolver = resolve;
+      this.activeRejecter = reject;
+      this.worker!.postMessage({
+        type: 'synthesize',
+        payload: { notes, params }
+      });
+    });
+  }
+}
+
+// Single exported instance (Worker-based, non-blocking)
+export const clientSvsEngine = new ClientSvsEngineProxy();
+

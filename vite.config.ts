@@ -25,10 +25,17 @@ export default defineConfig(({ mode }) => {
   console.log(`🎤 Vocalido target: ${VOCALIDO_TARGET} (LOCAL_VOCALIDO=${LOCAL_VOCALIDO})`);
 
   return {
+    worker: {
+      format: 'es'
+    },
     server: {
       port: 3100,
       host: '0.0.0.0',
       allowedHosts: true,
+      headers: {
+        'Cross-Origin-Opener-Policy': 'same-origin',
+        'Cross-Origin-Embedder-Policy': 'credentialless'
+      },
       watch: {
         // Ignore Python venv and node_modules to prevent spurious reloads
         ignored: ['**/vocalido_server/.venv/**', '**/node_modules/**', '**/.git/**'],
@@ -67,6 +74,13 @@ export default defineConfig(({ mode }) => {
           secure: true,
           rewrite: (path) => path.replace(/^\/gemini-api/, ''),
           timeout: 180000,
+        },
+        // --- RUNPOD SERVERLESS PROXY (bypass CORS restrictions in local dev) ---
+        '/api/runpod': {
+          target: 'https://api.runpod.ai/v2',
+          changeOrigin: true,
+          secure: true,
+          rewrite: (path) => path.replace(/^\/api\/runpod/, '')
         }
       }
     },

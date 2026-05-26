@@ -80,6 +80,7 @@ interface ProScoreEditorProps {
     metadata?: { title?: string; composer?: string; tempo_bpm?: number | null };
     typography?: any;
   } | null;
+  isVisible?: boolean;
 }
 
 export interface ProScoreEditorRef {
@@ -270,6 +271,7 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
   performanceMode = false,
   lyricMode = 'Ju Solfege Movable Doh',
   layoutBundle = null,
+  isVisible = true,
 }, ref) => {
   // Detection for Mobile Devices (Centralized)
   const isMobile = useMemo(() => /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent), []);
@@ -529,7 +531,7 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
       const pc = pageRects.find(p => p.el.contains(mEl));
       if (!pc) return;
       const pageDivRect = pc.rect;
-      if (pageDivRect.width === 0) return;
+      if (pageDivRect.width === 0 || pageDivRect.height === 0) return;
       const nr = n.containerElement!.getBoundingClientRect();
       const avgRelX = (nr.left + nr.width / 2 - pageDivRect.left) / pageDivRect.width;
 
@@ -1015,57 +1017,44 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
   useEffect(() => {
     if (!showLaser) return;
 
-    let currentBarKey = '';
-    let barStartSeconds = 0;   // Tone.Transport.seconds when current bar began
-    let barDurSeconds = 2.0;   // duration of current bar in real seconds
-    let sweepFromX = 0;
-    let sweepToX = 0;
-    let sweepPage = 0;
-    let sweepTop = 0;
-    let sweepHeight = 0;
-    let sweepSystemId = '';
-
     const tick = () => {
       laserRafRef.current = requestAnimationFrame(tick);
 
       const bars = barMapsRef.current;
       if (bars.length === 0) return;
 
-      const barKey = musicEngine.currentMeasure;
-      if (!barKey) return;
+      const curBeats = musicEngine.transportMusicalTime;
 
-      // ── Bar changed → record start time and set sweep targets ──
-      if (barKey !== currentBarKey) {
-        const bar = bars.find(b => b.measureId === barKey || String(b.measureNumber) === barKey);
-        if (!bar) return;
-
-        const barIdx = bars.indexOf(bar);
-        const nextBar = bars[barIdx + 1];
-
-        // Only sweep to next bar if same system row AND forward direction
-        const sameSysNext = nextBar &&
-          nextBar.systemId === bar.systemId &&
-          nextBar.startRelX > bar.startRelX;
-
-        currentBarKey = barKey;
-        barStartSeconds = Tone.Transport.seconds;   // real clock: when this bar started
-        const bpm = Tone.Transport.bpm.value || 120;
-        barDurSeconds = Math.max(0.1, bar.duration * (60 / bpm)); // bar duration in seconds
-
-        sweepFromX = bar.startRelX;
-        sweepToX = sameSysNext ? nextBar.startRelX : bar.endRelX;
-        sweepPage = bar.pageIndex;
-        sweepTop = bar.y;
-        sweepHeight = bar.height;
-        sweepSystemId = bar.systemId;
+      let activeBar = bars.find(b => curBeats >= b.startTime && curBeats < b.startTime + b.duration);
+      if (!activeBar && curBeats >= bars[bars.length - 1].startTime) {
+        activeBar = bars[bars.length - 1];
+      }
+      if (!activeBar && curBeats <= bars[0].startTime) {
+        activeBar = bars[0];
       }
 
-      // ── Compute progress from REAL elapsed seconds ──────────────
-      const elapsed = Math.max(0, Tone.Transport.seconds - barStartSeconds);
-      const progress = Math.min(1, elapsed / barDurSeconds);   // 0.0 → 1.0, never > 1
+      if (!activeBar) return;
+
+      const elapsedBeats = Math.max(0, curBeats - activeBar.startTime);
+      const progress = Math.min(1, elapsedBeats / activeBar.duration);
+
+      const barIdx = bars.indexOf(activeBar);
+      const nextBar = bars[barIdx + 1];
+      const sameSysNext = nextBar &&
+        nextBar.systemId === activeBar.systemId &&
+        nextBar.startRelX > activeBar.startRelX;
+
+      const sweepFromX = activeBar.startRelX;
+      const sweepToX = sameSysNext ? nextBar.startRelX : activeBar.endRelX;
       const relX = sweepFromX + (sweepToX - sweepFromX) * progress;
 
-      // Update laser DOM on correct page
+      const sweepPage = activeBar.pageIndex;
+      const sweepTop = activeBar.y;
+      const sweepHeight = activeBar.height;
+      const sweepSystemId = activeBar.systemId;
+
+      if (!isFinite(relX) || !isFinite(sweepTop) || !isFinite(sweepHeight)) return;
+
       for (let i = 0; i < svgPages.length; i++) {
         const el = document.getElementById(`bar-laser-${i}`);
         if (!el) continue;
@@ -1078,14 +1067,14 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
           el.style.display = 'none';
         }
       }
-      // Track current laser position for zoom-scroll re-centering
+
       laserCurrentRelXRef.current = relX;
+      laserCurrentPageRef.current = sweepPage;
 
       const scrollArea = scrollAreaRef.current;
       const pageEl = containerRef.current?.children[sweepPage] as HTMLElement | undefined;
       
       if (scrollArea && pageEl) {
-        // Calculate the absolute Y center of the current row relative to the page
         const systemCenterY = pageEl.offsetTop + (sweepTop + sweepHeight / 2) * pageEl.offsetHeight;
         const targetScrollTop = Math.max(0, systemCenterY - scrollArea.clientHeight / 2);
 
@@ -1093,37 +1082,29 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
         const systemKey = `${sweepPage}_${sweepSystemId}`;
         const systemChanged = laserPrevSystemKeyRef.current !== systemKey;
 
-        // Force timeline to remain centered on screen
         if (localZoom > 1.05 || pageChanged) {
-          // Centering horizontally based on page layout and laser relX
           const pageWidth = pageEl.offsetWidth;
           const laserPixelX = relX * pageWidth;
           const targetScrollLeft = Math.max(0, laserPixelX - scrollArea.clientWidth / 2);
 
-          // Zoomed or Page changed: Snap instantly both vertically and horizontally
           scrollArea.scrollLeft = targetScrollLeft;
           scrollArea.scrollTop = targetScrollTop;
           
           laserPrevSystemKeyRef.current = systemKey;
         } else if (systemChanged) {
-          // Row changed (but not zoomed & same page): smooth scroll vertically
           scrollArea.scrollTo({ top: targetScrollTop, behavior: 'smooth' });
           laserPrevSystemKeyRef.current = systemKey;
         } else if (scrollArea.scrollWidth > scrollArea.clientWidth) {
-          // Continuous horizontal follow when zoomed but same page/row
           const pageWidth = pageEl.offsetWidth;
           const laserPixelX = relX * pageWidth;
           scrollArea.scrollLeft = Math.max(0, laserPixelX - scrollArea.clientWidth / 2);
         }
       }
 
-      // Always track current sweep page (for zoom-triggered re-scroll)
-      laserCurrentPageRef.current = sweepPage;
       laserPrevPageRef.current = sweepPage;
     };
 
     const hideAll = () => {
-      currentBarKey = '';
       laserPrevPageRef.current = -1;
       laserPrevSystemKeyRef.current = '';
       for (let i = 0; i < svgPages.length; i++) {
@@ -1141,6 +1122,107 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
     };
   // localZoom in deps: when user zooms, restart laser loop so it re-scrolls to active bar
   }, [isPlaying, showLaser, svgPages.length, localZoom]);
+
+  // Update laser playhead when paused or seeking
+  useEffect(() => {
+    if (isPlaying || !showLaser) return;
+
+    const bars = barMapsRef.current;
+    if (bars.length === 0) return;
+
+    let activeBar = bars.find(b => currentTime >= b.startTime && currentTime < b.startTime + b.duration);
+    if (!activeBar && currentTime >= bars[bars.length - 1].startTime) {
+      activeBar = bars[bars.length - 1];
+    }
+    if (!activeBar && currentTime <= bars[0].startTime) {
+      activeBar = bars[0];
+    }
+
+    if (!activeBar) {
+      for (let i = 0; i < svgPages.length; i++) {
+        const el = document.getElementById(`bar-laser-${i}`);
+        if (el) el.style.display = 'none';
+      }
+      return;
+    }
+
+    const elapsedBeats = Math.max(0, currentTime - activeBar.startTime);
+    const progress = Math.min(1, elapsedBeats / activeBar.duration);
+
+    const barIdx = bars.indexOf(activeBar);
+    const nextBar = bars[barIdx + 1];
+    const sameSysNext = nextBar &&
+      nextBar.systemId === activeBar.systemId &&
+      nextBar.startRelX > activeBar.startRelX;
+
+    const sweepFromX = activeBar.startRelX;
+    const sweepToX = sameSysNext ? nextBar.startRelX : activeBar.endRelX;
+    const relX = sweepFromX + (sweepToX - sweepFromX) * progress;
+
+    const sweepPage = activeBar.pageIndex;
+    const sweepTop = activeBar.y;
+    const sweepHeight = activeBar.height;
+
+    if (!isFinite(relX) || !isFinite(sweepTop) || !isFinite(sweepHeight)) return;
+
+    for (let i = 0; i < svgPages.length; i++) {
+      const el = document.getElementById(`bar-laser-${i}`);
+      if (!el) continue;
+      if (i === sweepPage) {
+        el.style.display = 'block';
+        el.style.left = `${relX * 100}%`;
+        el.style.top = `${sweepTop * 100}%`;
+        el.style.height = `${sweepHeight * 100}%`;
+      } else {
+        el.style.display = 'none';
+      }
+    }
+
+    laserCurrentRelXRef.current = relX;
+    laserCurrentPageRef.current = sweepPage;
+
+    const scrollArea = scrollAreaRef.current;
+    const pageEl = containerRef.current?.children[sweepPage] as HTMLElement | undefined;
+    if (scrollArea && pageEl) {
+      const systemCenterY = pageEl.offsetTop + (sweepTop + sweepHeight / 2) * pageEl.offsetHeight;
+      const targetScrollTop = Math.max(0, systemCenterY - scrollArea.clientHeight / 2);
+
+      const pageWidth = pageEl.offsetWidth;
+      const laserPixelX = relX * pageWidth;
+      const targetScrollLeft = Math.max(0, laserPixelX - scrollArea.clientWidth / 2);
+
+      scrollArea.scrollTop = targetScrollTop;
+      if (scrollArea.scrollWidth > scrollArea.clientWidth) {
+        scrollArea.scrollLeft = targetScrollLeft;
+      }
+    }
+  }, [isPlaying, currentTime, showLaser, svgPages.length, localZoom]);
+
+  // Re-build coordmap when visibility, pages, or zoom changes to ensure DOM coords are updated
+  useEffect(() => {
+    if (isVisible && svgPages.length > 0) {
+      console.log('[ProScoreEditor] ⚡ Triggering coordmap rebuild (isVisible/zoom changed)...');
+      createCoordMap();
+    }
+  }, [isVisible, svgPages.length, localZoom, createCoordMap]);
+
+  // Automatically re-build coordmap when the container dimensions change (e.g. after SVG layouts finish, orientation rotates, or user scales)
+  const lastSizeRef = useRef({ width: 0, height: 0 });
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const observer = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect;
+        if (Math.abs(width - lastSizeRef.current.width) > 0.5 || Math.abs(height - lastSizeRef.current.height) > 0.5) {
+          lastSizeRef.current = { width, height };
+          console.log('[ProScoreEditor] 📐 Container size changed, rebuilding coordmap:', width, 'x', height);
+          createCoordMap();
+        }
+      }
+    });
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, [createCoordMap]);
 
 
 
@@ -1307,7 +1389,7 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
 
           z-index: 60;
           pointer-events: none;
-          transition: left 0.10s linear, top 0.12s ease-out, height 0.12s ease-out;
+          transition: top 0.12s ease-out, height 0.12s ease-out;
         }
 
       `}</style>

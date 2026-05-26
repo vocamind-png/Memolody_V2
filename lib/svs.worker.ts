@@ -1,0 +1,54 @@
+/**
+ * svs.worker.ts — Web Worker for SVS synthesis (non-blocking).
+ * 
+ * Runs ONNX Runtime inference in a background thread so the main thread
+ * stays responsive. The engine will try WebGPU first (available in
+ * Chrome 113+ workers), then automatically fall back to WASM/CPU.
+ * 
+ * Key fix: Worker type changed from 'classic' → 'module' in the proxy
+ * to support ESM imports.
+ */
+import { ClientSvsEngine } from './ClientSvsEngine';
+
+const engine = new ClientSvsEngine();
+
+self.onmessage = async (e: MessageEvent) => {
+  const { type, payload } = e.data;
+  
+  if (type === 'loadVoice') {
+    const { voiceId, files } = payload;
+    try {
+      await engine.loadVoice(voiceId, files, (prog) => {
+        self.postMessage({
+          type: 'loadProgress',
+          payload: prog
+        });
+      });
+      self.postMessage({
+        type: 'loadSuccess',
+        payload: { provider: engine.actualProvider }
+      });
+    } catch (err: any) {
+      self.postMessage({
+        type: 'loadError',
+        error: err.message || String(err)
+      });
+    }
+  }
+  
+  else if (type === 'synthesize') {
+    const { notes, params } = payload;
+    try {
+      const wavBlob = await engine.synthesize(notes, params);
+      self.postMessage({
+        type: 'synthSuccess',
+        payload: wavBlob
+      });
+    } catch (err: any) {
+      self.postMessage({
+        type: 'synthError',
+        error: err.message || String(err)
+      });
+    }
+  }
+};

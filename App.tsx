@@ -17,7 +17,7 @@ const getMusicEngine = async () => {
 import { initPlugins } from './lib/plugin-init';
 import { telemetry } from './lib/Telemetry';
 import { songStorage } from './lib/SongStorage';
-import { DEMO_SONGS } from './data/demo_songs';
+import { SplashLoader } from './components/Home/SplashLoader';
 import { CloudSyncService } from './lib/CloudSyncService';
 import { Song, TrackState, LyricMode } from './types';
 import { LoopPreset } from './components/Player/LoopMatrixModal';
@@ -113,6 +113,9 @@ const App: React.FC = () => {
   })();
   const isAdmin = hasAccess(role, 'admin');
   const [currentView, setCurrentView] = useState<ViewId>('home');
+  const [isInitializing, setIsInitializing] = useState(true);
+  const [initProgress, setInitProgress] = useState(0);
+  const [initStatus, setInitStatus] = useState('Booting Audio System...');
   const [isNimoOpen, setIsNimoOpen] = useState(false);
   const [nimoMounted, setNimoMounted] = useState(false); // mount on first click only
   const [selectedSong, setSelectedSong] = useState<Song | null>(null);
@@ -166,12 +169,16 @@ const App: React.FC = () => {
   useEffect(() => {
     (async () => {
       try {
+        setInitProgress(15);
+        setInitStatus('Initializing Local Database');
         await songStorage.init();
+        setInitProgress(35);
 
         // 🚨 AUTO-CLEAR CACHE ON NEW BUILD/REINSTALL
         const APP_VERSION = '2.3.1-build-20260525-0230';
         const savedVersion = localStorage.getItem('memo_app_version');
         if (savedVersion !== APP_VERSION) {
+          setInitStatus('Wiping Old Cache');
           console.log(`[App] 🔄 New Build/Reinstall detected: Wiping all cached data (old=${savedVersion}, new=${APP_VERSION})`);
           await songStorage.deleteAllSongs();
           
@@ -212,10 +219,6 @@ const App: React.FC = () => {
           
           // Force clear sessionStorage too so session checks run fresh
           sessionStorage.removeItem('memo_session_active');
-
-          // Force reload the window to apply fresh assets
-          window.location.reload();
-          return;
         }
 
         // 🚨 Free Tier Session Wiping: Clear songs and caches if free user in new session
@@ -223,6 +226,7 @@ const App: React.FC = () => {
         const isFreeInit = !storedTier || storedTier === 'free';
         const sessionActive = typeof window !== 'undefined' ? sessionStorage.getItem('memo_session_active') : 'true';
         if (isFreeInit && !sessionActive) {
+          setInitStatus('Preparing Free Session');
           console.log('[Cache Wrecker] 🚨 Free Tier Session: Wiping cached song states & songs...');
           // 1. Clear IndexedDB user songs
           await songStorage.deleteAllSongs();
@@ -248,21 +252,53 @@ const App: React.FC = () => {
           sessionStorage.setItem('memo_session_active', 'true');
         }
 
+        setInitProgress(45);
+        setInitStatus('Configuring Audio Plugins');
         await initPlugins(); // Initialize the Plugin System (including Vocalido)
+        setInitProgress(65);
 
         // Clean up legacy hardcoded demo song if present
+        setInitStatus('Optimizing Storage');
         await songStorage.permanentDeleteSong('demo-vocal-01');
-
+        
+        // Scan and clean up any legacy hardcoded demo songs containing "Vocalido" or "Vocaludo" in their title
         let songs = await songStorage.getAllSongs();
-
-        // 🌱 SEED DATA: If library is empty, add demo songs
-        if (songs.length === 0) {
-          console.log('🌱 Project Empty: Seeding Vocalido Demo data...');
-          for (const demo of DEMO_SONGS) {
-            await songStorage.saveSong(demo.metadata as any, demo.xmlData, (demo as any).layoutBundle || null);
+        let databaseCleaned = false;
+        for (const s of songs) {
+          const titleLower = (s.metadata.title || '').toLowerCase();
+          const idStr = String(s.metadata.id);
+          if (titleLower.includes('vocalido') || titleLower.includes('vocaludo') || idStr === 'demo-vocal-01') {
+            console.log(`[App] 🧹 Deleting legacy demo song: "${s.metadata.title}" (id: ${idStr})`);
+            await songStorage.permanentDeleteSong(idStr);
+            databaseCleaned = true;
           }
+        }
+        if (databaseCleaned) {
           songs = await songStorage.getAllSongs();
         }
+        setInitProgress(75);
+
+        setInitStatus('Loading Songs Library');
+        if (songs.length === 0) {
+          setInitStatus('Syncing Songs Library from Cloud');
+          setInitProgress(80);
+          try {
+            // Run sync synchronously during boot if library is empty to avoid blank Home page
+            const syncResult = await CloudSyncService.syncWithGlobalCloud((percent) => {
+              // Map import progress (0-100) to the initialization progress (80-95)
+              setInitProgress(80 + (percent * 0.15));
+            });
+            if (syncResult.total >= 0) {
+              songs = await songStorage.getAllSongs();
+            }
+          } catch (syncErr) {
+            console.warn('[App] Initial cloud sync failed:', syncErr);
+            setInitStatus('Sync Failed - Opening Offline');
+          }
+        }
+        setInitProgress(95);
+
+        // Note: Seeding demo songs is disabled per user request to keep library clean.
 
         userSongsRef.current = songs;
         setUserSongs(songs);
@@ -270,7 +306,7 @@ const App: React.FC = () => {
         // ── Restore saved song or auto-select default ──────────
         if (songs.length > 0) {
           const savedSongId = localStorage.getItem('memo_selected_song_id');
-          let initialSong = songs.find(s => s.metadata.id === savedSongId);
+          let initialSong = songs.find(s => String(s.metadata.id) === String(savedSongId));
           
           if (!initialSong) {
             initialSong = songs[songs.length - 1]; // most recent fallback
@@ -284,9 +320,17 @@ const App: React.FC = () => {
           }
         }
 
-        setTimeout(() => triggerSync(), 5000);
+        setInitProgress(100);
+        setInitStatus('Workspace Ready');
+        setTimeout(() => setIsInitializing(false), 800);
+
+        // Background sync runs after 5s to grab updates if we already have songs, otherwise we just synced
+        if (songs.length > 0) {
+          setTimeout(() => triggerSync(), 5000);
+        }
       } catch (e) {
         console.error("Init Error:", e);
+        setIsInitializing(false); // recover even on error
       }
     })();
 
@@ -402,7 +446,7 @@ const App: React.FC = () => {
 
   const handleSongUpdate = useCallback((updatedSong: Song) => {
     setSelectedSong(updatedSong);
-    const updatedList = userSongsRef.current.map(s => s.metadata.id === updatedSong.id ? { ...s, metadata: updatedSong } : s);
+    const updatedList = userSongsRef.current.map(s => String(s.metadata.id) === String(updatedSong.id) ? { ...s, metadata: updatedSong } : s);
     userSongsRef.current = updatedList;
     setUserSongs(updatedList);
   }, []);
@@ -414,7 +458,7 @@ const App: React.FC = () => {
     desiredView?: { main: 'player' | 'tracks', player?: 'score' | 'pianoroll' }
   ) => {
     let finalXml = xml;
-    const owned = userSongsRef.current.find(s => s.metadata.id === song.id); // use ref — stable
+    const owned = userSongsRef.current.find(s => String(s.metadata.id) === String(song.id)); // use ref — stable
     if (!finalXml) finalXml = owned?.xmlData || '';
 
     if (finalXml && finalXml.startsWith('http')) {
@@ -585,6 +629,16 @@ const App: React.FC = () => {
   }, [navigateTo, handleSongSelect]);
 
   const renderPage = () => {
+    // Show premium splash loader on startup while loading database and plugins
+    if (isInitializing) {
+      return <SplashLoader progress={initProgress} statusText={initStatus} />;
+    }
+
+    // Guard against rendering player/forge views on startup before selectedSong is fully hydrated
+    if ((currentView === 'player' || currentView === 'forge') && !selectedSong) {
+      return <PageLoader />;
+    }
+
     switch (currentView) {
       case 'home':
         return <HomePage

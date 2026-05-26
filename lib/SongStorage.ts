@@ -146,6 +146,10 @@ export class SongStorage {
       transaction.objectStore(this.deletedStore).put({ id: String(id), deletedAt: new Date().toISOString() });
       transaction.oncomplete = () => {
         this.removeSongFromCloud(String(id));
+        // Clean up local SVS render cache
+        import('./AudioBlobCache').then(({ AudioBlobCache }) => {
+          AudioBlobCache.deleteSongCache(String(id));
+        }).catch(() => {});
         resolve();
       };
       transaction.onerror = () => reject(transaction.error);
@@ -161,6 +165,10 @@ export class SongStorage {
       transaction.objectStore(this.deletedStore).delete(String(id)); // also clear tombstone
       transaction.oncomplete = () => {
         this.removeSongFromCloud(String(id));
+        // Clean up local SVS render cache
+        import('./AudioBlobCache').then(({ AudioBlobCache }) => {
+          AudioBlobCache.deleteSongCache(String(id));
+        }).catch(() => {});
         resolve();
       };
       transaction.onerror = () => reject(transaction.error);

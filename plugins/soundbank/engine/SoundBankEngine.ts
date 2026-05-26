@@ -1,5 +1,26 @@
 import * as Tone from 'tone';
 import { SoundBankSettings } from '../types';
+import { AudioBlobCache } from '../../../lib/AudioBlobCache';
+
+async function getCachedSampleUrl(baseUrl: string, file: string): Promise<string> {
+    const fullUrl = baseUrl + file;
+    try {
+        const cachedBlob = await AudioBlobCache.get(fullUrl);
+        if (cachedBlob) {
+            return URL.createObjectURL(cachedBlob);
+        }
+        
+        const response = await fetch(fullUrl);
+        if (response.ok) {
+            const blob = await response.blob();
+            await AudioBlobCache.set(fullUrl, blob);
+            return URL.createObjectURL(blob);
+        }
+    } catch (e) {
+        console.warn(`[SoundBankCache] Failed to load/cache ${fullUrl}:`, e);
+    }
+    return fullUrl;
+}
 
 export class SoundBankEngine {
     // Cache the reverb instance so it's only created once
@@ -59,7 +80,7 @@ export class SoundBankEngine {
                         decay: 2.0,
                         preDelay: 0.04,
                         wet: wetAmount
-                    }).connect(masterBus);
+                     }).connect(masterBus);
 
                     // console.log("[SoundBank] Generating High-Quality Reverb IR...");
                     await this.sharedReverb.generate();
@@ -74,17 +95,61 @@ export class SoundBankEngine {
             const connectTarget = (isMobile ? masterBus : (this.sharedReverb || masterBus));
 
             // Piano Sampler Engine — use fewer samples for faster loading
+            console.log(`[SoundBankEngine] Preloading piano samples for trackId=${trackId}...`);
+
+            const baseUrl = "https://tonejs.github.io/audio/salamander/";
+            const files = {
+                A0: "A0.mp3",
+                C1: "C1.mp3",
+                "F#1": "Fs1.mp3",
+                A1: "A1.mp3",
+                C2: "C2.mp3",
+                "F#2": "Fs2.mp3",
+                A2: "A2.mp3",
+                C3: "C3.mp3",
+                "F#3": "Fs3.mp3",
+                A3: "A3.mp3",
+                C4: "C4.mp3",
+                "F#4": "Fs4.mp3",
+                A4: "A4.mp3",
+                C5: "C5.mp3",
+                "F#5": "Fs5.mp3",
+                A5: "A5.mp3",
+                C6: "C6.mp3",
+                A6: "A6.mp3",
+                C7: "C7.mp3",
+            };
+
+            const keys = Object.keys(files) as Array<keyof typeof files>;
+            const resolvedUrls: Record<string, string> = {};
+
+            try {
+                await Promise.all(
+                    keys.map(async (key) => {
+                        resolvedUrls[key] = await getCachedSampleUrl(baseUrl, files[key]);
+                    })
+                );
+            } catch (err) {
+                console.warn("[SoundBankEngine] Preload failed, falling back to direct URLs", err);
+                keys.forEach(key => {
+                    resolvedUrls[key] = baseUrl + files[key];
+                });
+            }
+
             console.log(`[SoundBankEngine] Creating Tone.Sampler for trackId=${trackId}...`);
+            let sampler: any = null;
             let resolved = false;
 
             const timeoutId = setTimeout(() => {
                 if (!resolved) {
                     resolved = true;
                     console.warn(`[SoundBankEngine] ⚠️ Sampler loading timed out (8s) for trackId=${trackId}, falling back to basic Synth`);
-                    try {
-                        sampler.dispose();
-                    } catch (err) {
-                        console.warn("[SoundBankEngine] Failed to dispose timed-out sampler:", err);
+                    if (sampler) {
+                        try {
+                            sampler.dispose();
+                        } catch (err) {
+                            console.warn("[SoundBankEngine] Failed to dispose timed-out sampler:", err);
+                        }
                     }
 
                     const channel = new Tone.Channel(0, 0).connect(connectTarget);
@@ -102,30 +167,10 @@ export class SoundBankEngine {
                 }
             }, 8000);
 
-            const sampler = new Tone.Sampler({
-                urls: {
-                    A0: "A0.mp3",
-                    C1: "C1.mp3",
-                    "F#1": "Fs1.mp3",
-                    A1: "A1.mp3",
-                    C2: "C2.mp3",
-                    "F#2": "Fs2.mp3",
-                    A2: "A2.mp3",
-                    C3: "C3.mp3",
-                    "F#3": "Fs3.mp3",
-                    A3: "A3.mp3",
-                    C4: "C4.mp3",
-                    "F#4": "Fs4.mp3",
-                    A4: "A4.mp3",
-                    C5: "C5.mp3",
-                    "F#5": "Fs5.mp3",
-                    A5: "A5.mp3",
-                    C6: "C6.mp3",
-                    A6: "A6.mp3",
-                    C7: "C7.mp3",
-                },
+            sampler = new Tone.Sampler({
+                urls: resolvedUrls,
                 release: 1.2,
-                baseUrl: "https://tonejs.github.io/audio/salamander/",
+                baseUrl: "",
                 onload: () => {
                     if (resolved) return;
                     resolved = true;
@@ -162,3 +207,4 @@ export class SoundBankEngine {
         });
     }
 }
+

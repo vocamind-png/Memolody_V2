@@ -472,6 +472,7 @@ const HomePage: React.FC<HomePageProps> = ({
 
   // Counts
   const totalCount = useMemo(() => userLibrary.filter(i => !i.metadata.isDeleted).length, [userLibrary]);
+  const homeCount = useMemo(() => userLibrary.filter(item => !item.metadata.isDeleted && (item.metadata.origin !== 'load' || item.metadata.isPublic)).length, [userLibrary]);
   const favCount = useMemo(() => userLibrary.filter(i => !i.metadata.isDeleted && i.metadata.isFavorite).length, [userLibrary]);
   const mySongsCount = useMemo(() => userLibrary.filter(i => !i.metadata.isDeleted && i.metadata.origin === 'load').length, [userLibrary]);
   const trashCount = useMemo(() => userLibrary.filter(i => i.metadata.isDeleted).length, [userLibrary]);
@@ -657,9 +658,9 @@ const HomePage: React.FC<HomePageProps> = ({
 
 
   const TABS: { id: FilterTab, label: string, count: number, color: string }[] = [
-    { id: 'home', label: 'Home', count: totalCount, color: 'text-cyan-400' },
+    { id: 'home', label: 'Home', count: homeCount, color: 'text-cyan-400' },
     { id: 'favorites', label: 'Favorites', count: favCount, color: 'text-rose-400' },
-    // { id: 'mysongs', label: 'My Songs', count: mySongsCount, color: 'text-amber-400' }, // Temporarily disabled
+    { id: 'mysongs', label: 'My Songs', count: mySongsCount, color: 'text-amber-400' },
     { id: 'trash', label: 'Trash', count: trashCount, color: 'text-zinc-500' },
   ];
 

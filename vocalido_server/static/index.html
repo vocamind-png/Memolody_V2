@@ -16,19 +16,12 @@
         // Force unregister any active service worker to prevent PWA caching issues
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.getRegistrations().then(function(registrations) {
-                let unregisteredAny = false;
-                let promises = registrations.map(function(reg) {
-                    return reg.unregister().then(function(success) {
+                registrations.forEach(function(reg) {
+                    reg.unregister().then(function(success) {
                         if (success) {
                             console.log('Old Service Worker successfully unregistered.');
-                            unregisteredAny = true;
                         }
                     });
-                });
-                Promise.all(promises).then(function() {
-                    if (unregisteredAny) {
-                        window.location.reload();
-                    }
                 });
             });
         }
@@ -199,11 +192,11 @@
         }
     </style>
     <!-- Import map removed: Vite bundles all dependencies at build time -->
-  <script type="module" crossorigin src="/assets/index-B5hWMAOH.js"></script>
+  <script type="module" crossorigin src="/assets/index-CVkU7Tmm.js"></script>
   <link rel="modulepreload" crossorigin href="/assets/vendor-react-CnF0OGO6.js">
   <link rel="modulepreload" crossorigin href="/assets/vendor-docs-CQgjcqA_.js">
   <link rel="modulepreload" crossorigin href="/assets/vendor-icons-BRd6wzOa.js">
-  <link rel="stylesheet" crossorigin href="/assets/index-Dgt13LkG.css">
+  <link rel="stylesheet" crossorigin href="/assets/index-oDy-YZjV.css">
 </head>
 <body class="unselectable">
     <div id="root"></div>

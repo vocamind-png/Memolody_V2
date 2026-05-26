@@ -12,12 +12,12 @@ export class CloudSyncService {
   /**
    * PULL: ดึงข้อมูลจากคลาวด์แบบตรวจเช็ค CORS
    */
-  public static async syncWithGlobalCloud(): Promise<{ added: number, total: number, message: string }> {
+  public static async syncWithGlobalCloud(onProgress?: (percent: number) => void): Promise<{ added: number, total: number, message: string }> {
     try {
       console.log("[Neural Link] Initiating High-Priority Fetch...");
 
       const cacheBuster = `v=${Date.now()}`;
-      const baseUrl = (import.meta as any).env?.DEV ? '/api/manifest' : this.GLOBAL_MANIFEST_URL;
+      const baseUrl = '/api/manifest';
       const fetchUrl = `${baseUrl}?${cacheBuster}`;
 
 
@@ -54,7 +54,7 @@ export class CloudSyncService {
       const rawData = await response.json();
       console.log("[Neural Link] Matrix Data Received and Parsed Successfully.");
 
-      await songStorage.importNeuralCore(rawData);
+      await songStorage.importNeuralCore(rawData, onProgress);
       const finalSongs = await songStorage.getAllSongs();
 
       return {
@@ -70,7 +70,7 @@ export class CloudSyncService {
 
   public static async checkUpdateAvailability(): Promise<boolean> {
     try {
-      const baseUrl = (import.meta as any).env?.DEV ? '/api/manifest' : this.GLOBAL_MANIFEST_URL;
+      const baseUrl = '/api/manifest';
       const response = await fetch(`${baseUrl}?t=${Date.now()}`, {
         method: 'GET',
         mode: 'cors'
@@ -83,7 +83,7 @@ export class CloudSyncService {
 
   public static async getCloudStats(): Promise<{ total: number }> {
     try {
-      const baseUrl = (import.meta as any).env?.DEV ? '/api/manifest' : this.GLOBAL_MANIFEST_URL;
+      const baseUrl = '/api/manifest';
       const response = await fetch(`${baseUrl}?t=${Date.now()}`, {
         mode: 'cors'
       });
