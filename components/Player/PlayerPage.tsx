@@ -693,20 +693,23 @@ const PlayerPage: React.FC<{
   const [expandedStemTrack, setExpandedStemTrack] = useState<string | null>(null);
 
   const handleTogglePlay = async () => {
-    if (isRenderingVocal || isAudioLoading) return;
+    if (isAudioLoading) return;
     
     // 🔊 CRITICAL: Start/Resume Tone.js context and unlock HTMLAudio elements in the synchronous user gesture stack immediately
     try {
-      if (Tone.context.state !== 'running') {
+      const context = Tone.getContext();
+      if (context.state !== 'running') {
         console.log("[PlayerPage] [Direct Gesture] Resuming Tone Context...");
         Tone.start();
-        Tone.context.resume();
+        context.resume();
       }
       
       // Unlock all active vocal audio elements synchronously inside the user gesture
-      tracks.forEach(t => {
-        musicEngine.unlockVocalAudio(t.id);
-      });
+      if (tracks) {
+        tracks.forEach(t => {
+          musicEngine.unlockVocalAudio(t.id);
+        });
+      }
     } catch (err) {
       console.warn("[PlayerPage] Direct context resume/unlock failed:", err);
     }
@@ -1870,10 +1873,13 @@ const PlayerPage: React.FC<{
             setAvailableStems(prev => ({ ...prev, [primaryTrackId]: musicEngine.getAvailableStems(primaryTrackId) }));
             setSoloedStems(prev => ({ ...prev, [primaryTrackId]: null }));
 
+            const livePlaying = isPlaying || musicEngine.transportState === 'started';
+            const livePos = musicEngine.transportSeconds;
+
             // Reload song to sync Tone.Part with new mode
             await musicEngine.loadSong(parsedData.notes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn);
-            musicEngine.setTransportSeconds(savedPos);
-            if (wasPlaying) {
+            musicEngine.setTransportSeconds(livePos);
+            if (livePlaying) {
               await musicEngine.start();
               setIsPlaying(true);
             }
@@ -2276,10 +2282,13 @@ const PlayerPage: React.FC<{
             setSoloedStems(prev => ({ ...prev, [primaryTrackId]: null }));
             console.log(`[Vocalido] ✅ Audio loaded and ready for playback`);
 
+            const livePlaying = isPlaying || musicEngine.transportState === 'started';
+            const livePos = musicEngine.transportSeconds;
+
             // Reload song to sync Tone.Part with new mode
             await musicEngine.loadSong(parsedData.notes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn);
-            musicEngine.setTransportSeconds(savedPos);
-            if (wasPlaying) {
+            musicEngine.setTransportSeconds(livePos);
+            if (livePlaying) {
               await musicEngine.start();
               setIsPlaying(true);
             }
@@ -3135,89 +3144,80 @@ const PlayerPage: React.FC<{
 
         {/* ── [VOCALIDO RENDER OVERLAY] ── */}
         {isRenderingVocal && (
-          <div className="absolute inset-0 z-[5000] flex flex-col items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-500 pointer-events-auto">
-            <div className="relative flex flex-col items-center">
-              {/* Outer Ring */}
-              <div className="relative w-32 h-32 flex items-center justify-center">
-                <svg viewBox="0 0 224 224" className="absolute inset-0 w-full h-full -rotate-90 drop-shadow-[0_0_15px_rgba(0,229,255,0.2)]">
+          <div className="absolute bottom-24 right-4 z-[5000] w-80 p-3.5 bg-zinc-950/90 border border-zinc-800 rounded-2xl shadow-[0_10px_40px_rgba(0,0,0,0.5)] backdrop-blur-xl flex items-center gap-3.5 animate-in slide-in-from-bottom-4 duration-300 pointer-events-auto">
+            {/* Left side: Circular Progress */}
+            <div className="relative w-14 h-14 flex-shrink-0 flex items-center justify-center">
+              <svg viewBox="0 0 100 100" className="absolute inset-0 w-full h-full -rotate-90">
+                <circle
+                  cx="50" cy="50" r="44"
+                  stroke="currentColor"
+                  strokeWidth="6"
+                  fill="transparent"
+                  className="text-white/10"
+                />
+                {!renderError && (
                   <circle
-                    cx="112" cy="112" r="100"
+                    cx="50" cy="50" r="44"
                     stroke="currentColor"
-                    strokeWidth="4"
+                    strokeWidth="8"
+                    strokeDasharray="276.5"
+                    strokeDashoffset={276.5 - (276.5 * renderProgress) / 100}
+                    strokeLinecap="round"
                     fill="transparent"
-                    className="text-white/10"
+                    className="text-cyan-400 transition-[stroke-dashoffset] duration-150 linear"
                   />
-                  {!renderError && (
-                    <circle
-                      cx="112" cy="112" r="100"
-                      stroke="currentColor"
-                      strokeWidth="8"
-                      strokeDasharray="628.3"
-                      strokeDashoffset={628.3 - (628.3 * renderProgress) / 100}
-                      strokeLinecap="round"
-                      fill="transparent"
-                      className="text-cyan-400 transition-[stroke-dashoffset] duration-150 linear"
-                    />
-                  )}
-                </svg>
-                
-                {/* Center Content */}
-                <div className="absolute inset-0 flex flex-col items-center justify-center text-white">
-                  <span className="text-xl font-black tracking-tighter tabular-nums drop-shadow-lg">
-                    {renderProgress >= 99.9 ? "100" : renderProgress.toFixed(1)}%
-                  </span>
-                  <div className="flex items-center gap-1 mt-1 bg-white/10 px-2 py-0.5 rounded-full backdrop-blur-sm border border-white/10">
-                    <span className="w-1 h-1 bg-cyan-400 rounded-full animate-pulse" />
-                    <span className="text-[7px] font-bold tabular-nums opacity-80">{renderTimer}s</span>
-                  </div>
-                  <div className="mt-4 flex flex-col items-center gap-1">
-                    <span className="text-[7px] font-black uppercase tracking-[0.3em] text-cyan-400 animate-pulse">
-                      {renderStatusText || (renderProgress > 95 ? "Finalizing Audio..." : "Rendering Tone")}
-                    </span>
-                    <div className="flex gap-0.5">
-                      {[0, 1, 2].map(i => (
-                        <div key={i} className="w-0.5 h-0.5 bg-white/20 rounded-full animate-bounce" style={{ animationDelay: `${i * 0.2}s` }} />
-                      ))}
-                    </div>
-                  </div>
-                </div>
+                )}
+              </svg>
+              <span className="text-[11px] font-black text-white tabular-nums drop-shadow-md">
+                {renderError ? "⚠️" : `${Math.round(renderProgress)}%`}
+              </span>
+            </div>
+
+            {/* Right side: Info and actions */}
+            <div className="flex-1 min-w-0 flex flex-col justify-center">
+              <span className="text-[8px] font-black uppercase tracking-wider text-zinc-500">
+                AI Voice Synthesis
+              </span>
+              
+              <span className={`text-[11px] font-bold tracking-wide truncate mt-0.5 ${renderError ? 'text-rose-400' : 'text-cyan-400'}`}>
+                {renderError 
+                  ? "Synthesis Failed" 
+                  : (renderStatusText || (renderProgress > 95 ? "Finalizing Audio..." : "Rendering vocals..."))
+                }
+              </span>
+
+              <div className="text-[9px] text-zinc-400 font-medium tracking-wide mt-0.5 flex gap-1 truncate">
+                <span>{(activeVoiceName || 'Vocalido Soprano').toUpperCase()}</span>
+                <span>•</span>
+                <span>{(activeLyricMode || 'Standard').toUpperCase()}</span>
+                <span>•</span>
+                <span className="tabular-nums">{renderTimer}s</span>
               </div>
 
-              <div className="mt-4 flex flex-col items-center gap-2">
-                <div className="px-3 py-1.5 bg-black/60 border border-white/10 rounded-xl backdrop-blur-xl flex items-center gap-2">
-                  <span className={`w-1 h-1 rounded-full ${renderError ? 'bg-rose-500' : 'bg-cyan-400 animate-pulse'}`} />
-                  <span className="text-[7.5px] font-black text-white uppercase tracking-widest">
-                    {renderError ? (
-                      <span className="text-rose-400 truncate max-w-[200px]">{renderError}</span>
-                    ) : (
-                      <div className="flex items-center gap-1.5 sm:gap-2">
-                        <span>VOICE: <span className="text-cyan-400">{(activeVoiceName || 'Vocalido Soprano').toUpperCase()}</span></span>
-                        <span className="text-white/30">•</span>
-                        <span>SYS: <span className="text-emerald-400">{(activeLyricMode || 'Standard').toUpperCase()}</span></span>
-                      </div>
-                    )}
-                  </span>
-                </div>
+              {/* Actions row */}
+              <div className="flex gap-2.5 mt-2">
                 {renderError ? (
-                  <button 
-                    onClick={() => triggerVocalSynthesis()}
-                    className="mt-1.5 px-4 py-1 bg-white/10 hover:bg-white/20 border border-white/20 rounded-lg text-[7.5px] font-black text-white uppercase tracking-widest transition-all"
-                  >
-                    Try Again • ลองใหม่
-                  </button>
-                ) : (
-                  <div className="flex flex-col items-center">
-                    <p className="text-[6.5px] font-bold text-zinc-500 uppercase tracking-widest mb-1">Wait for play • กำลังประมวลผลจนจบ</p>
+                  <>
                     <button 
-                      onClick={cancelVocalSynthesis}
-                      className="px-3 py-1 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 rounded-md text-[7.5px] font-black text-rose-400 uppercase tracking-widest transition-all active:scale-95"
+                      onClick={() => triggerVocalSynthesis()}
+                      className="text-[9px] font-black text-cyan-400 hover:text-cyan-300 uppercase tracking-widest transition-all"
                     >
-                      Cancel • ยกเลิก
+                      Try Again
                     </button>
-                  </div>
-                )}
-                {renderError && (
-                  <button onClick={closeRenderOverlay} className="text-[6.5px] text-zinc-500 underline mt-1.5 uppercase tracking-widest">Dismiss • ปิด</button>
+                    <button 
+                      onClick={closeRenderOverlay} 
+                      className="text-[9px] font-black text-zinc-500 hover:text-zinc-400 uppercase tracking-widest transition-all"
+                    >
+                      Dismiss
+                    </button>
+                  </>
+                ) : (
+                  <button 
+                    onClick={cancelVocalSynthesis}
+                    className="text-[9px] font-black text-rose-400 hover:text-rose-300 uppercase tracking-widest transition-all"
+                  >
+                    Cancel Synthesis
+                  </button>
                 )}
               </div>
             </div>
@@ -3513,9 +3513,8 @@ const PlayerPage: React.FC<{
                   <div className={`absolute inset-0 bg-[#00e5ff]/20 blur-md rounded-full transition-opacity ${isPlaying ? 'opacity-100' : 'opacity-0'}`} />
                   <button
                     onClick={handleTogglePlay}
-                    disabled={isAudioLoading || isRenderingVocal}
-                    className={`relative w-10 h-10 min-[360px]:w-11 h-11 sm:w-12 sm:h-12 md:w-[54px] md:h-[54px] rounded-full flex items-center justify-center text-white transition-all active:scale-95
-                      ${isRenderingVocal ? 'bg-zinc-800 shadow-none grayscale' : 'bg-[#00e5ff] hover:bg-[#00c8e0] shadow-[0_4px_25px_rgba(0,229,255,0.5)]'}`}
+                    disabled={isAudioLoading}
+                    className="relative w-10 h-10 min-[360px]:w-11 h-11 sm:w-12 sm:h-12 md:w-[54px] md:h-[54px] rounded-full flex items-center justify-center text-white transition-all active:scale-95 bg-[#00e5ff] hover:bg-[#00c8e0] shadow-[0_4px_25px_rgba(0,229,255,0.5)]"
                   >
                     {isAudioLoading ? (
                       <RefreshCw className="animate-spin text-white/50 w-4 h-4 sm:w-5 sm:h-5" />
