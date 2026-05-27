@@ -311,6 +311,9 @@ export class MusicEngine {
           if (divNode) {
             runningDivisions = parseInt(divNode.textContent || "1") || 1;
           }
+          if (isNaN(runningDivisions) || runningDivisions <= 0) {
+            runningDivisions = 1;
+          }
 
           const nominalDuration = runningBeats * (4 / runningBeatType);
 
@@ -318,27 +321,42 @@ export class MusicEngine {
           let measurePlayTime = 0;
           Array.from(measure.children).forEach((child) => {
             if (child.tagName === "backup") {
-              const duration = (parseInt(child.querySelector("duration")?.textContent || "0") / runningDivisions);
+              const rawDuration = parseInt(child.querySelector("duration")?.textContent || "0");
+              const duration = (isNaN(rawDuration) || runningDivisions <= 0) ? 0 : (rawDuration / runningDivisions);
               measurePlayTime -= duration;
             } else if (child.tagName === "forward") {
-              const duration = (parseInt(child.querySelector("duration")?.textContent || "0") / runningDivisions);
+              const rawDuration = parseInt(child.querySelector("duration")?.textContent || "0");
+              const duration = (isNaN(rawDuration) || runningDivisions <= 0) ? 0 : (rawDuration / runningDivisions);
               measurePlayTime += duration;
             } else if (child.tagName === "note") {
               const isChord = child.querySelector("chord");
-              const duration = (parseInt(child.querySelector("duration")?.textContent || "0") / runningDivisions);
+              const rawDuration = parseInt(child.querySelector("duration")?.textContent || "0");
+              const duration = (isNaN(rawDuration) || runningDivisions <= 0) ? 0 : (rawDuration / runningDivisions);
               if (!isChord) {
                 measurePlayTime += duration;
               }
             }
           });
 
+          if (isNaN(measurePlayTime)) {
+            measurePlayTime = 0;
+          }
+
           let stepDuration = nominalDuration;
+          if (isNaN(stepDuration) || stepDuration <= 0) {
+            stepDuration = 4;
+          }
+
           // If first measure (pickup) and actual duration is less than nominal, use actual
           if (i === 0 && measurePlayTime > 0 && measurePlayTime < nominalDuration) {
             stepDuration = measurePlayTime;
           } else {
             // Keep nominal duration, but if actual notes overflow it, expand it to fit them
-            stepDuration = Math.max(nominalDuration, measurePlayTime);
+            stepDuration = Math.max(stepDuration, measurePlayTime);
+          }
+
+          if (isNaN(stepDuration) || stepDuration <= 0) {
+            stepDuration = 4;
           }
 
           globalMeasureStartTimes.push(accumulatedBeat);
@@ -367,16 +385,22 @@ export class MusicEngine {
           
           // Force align to global measure start time
           currentTime = globalMeasureStartTimes[stepIdx] ?? currentTime;
+          if (isNaN(currentTime)) {
+            currentTime = 0;
+          }
           const startBeat = currentTime;
 
           const timeNode = measure.querySelector("time");
           if (timeNode) {
-            beats = parseInt(timeNode.querySelector("beats")?.textContent || "4");
-            beatType = parseInt(timeNode.querySelector("beat-type")?.textContent || "4");
+            beats = parseInt(timeNode.querySelector("beats")?.textContent || "4") || 4;
+            beatType = parseInt(timeNode.querySelector("beat-type")?.textContent || "4") || 4;
           }
           const divNode = measure.querySelector("attributes divisions");
           if (divNode) {
             divisions = parseInt(divNode.textContent || "1") || 1;
+          }
+          if (isNaN(divisions) || divisions <= 0) {
+            divisions = 1;
           }
 
           // Detect Clefs
@@ -389,15 +413,18 @@ export class MusicEngine {
 
           Array.from(measure.children).forEach((child) => {
             if (child.tagName === "backup") {
-              const duration = (parseInt(child.querySelector("duration")?.textContent || "0") / divisions);
+              const rawDuration = parseInt(child.querySelector("duration")?.textContent || "0");
+              const duration = (isNaN(rawDuration) || divisions <= 0) ? 0 : (rawDuration / divisions);
               currentTime -= duration;
             } else if (child.tagName === "forward") {
-              const duration = (parseInt(child.querySelector("duration")?.textContent || "0") / divisions);
+              const rawDuration = parseInt(child.querySelector("duration")?.textContent || "0");
+              const duration = (isNaN(rawDuration) || divisions <= 0) ? 0 : (rawDuration / divisions);
               currentTime += duration;
             } else if (child.tagName === "note") {
               const isRest = child.querySelector("rest");
               const isChord = child.querySelector("chord");
-              const duration = (parseInt(child.querySelector("duration")?.textContent || "0") / divisions);
+              const rawDuration = parseInt(child.querySelector("duration")?.textContent || "0");
+              const duration = (isNaN(rawDuration) || divisions <= 0) ? 0.5 : (rawDuration / divisions);
               const staff = parseInt(child.querySelector("staff")?.textContent || "1");
               const voice = parseInt(child.querySelector("voice")?.textContent || "1");
 
