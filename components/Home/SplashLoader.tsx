@@ -58,8 +58,8 @@ export const SplashLoader: React.FC<SplashLoaderProps> = ({ progress, statusText
           </div>
 
           {/* Treble Clef Icon at the start */}
-          <div className="absolute left-10 flex items-center justify-center pointer-events-none opacity-90" style={{ transform: 'translateY(-4px)' }}>
-            <span className="text-[75px] font-serif text-cyan-400 select-none leading-none" style={{ filter: 'drop-shadow(0 0 2px rgba(6,182,212,0.5))' }}>𝄞</span>
+          <div className="absolute left-10 flex items-center justify-center pointer-events-none opacity-90" style={{ transform: 'translateY(-2px)' }}>
+            <span className="text-[58px] font-serif text-cyan-400 select-none leading-none" style={{ filter: 'drop-shadow(0 0 2px rgba(6,182,212,0.5))' }}>𝄞</span>
           </div>
 
           {/* Animated Falling Notes landing on the staff */}
