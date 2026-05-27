@@ -58,44 +58,55 @@ export const SplashLoader: React.FC<SplashLoaderProps> = ({ progress, statusText
           </div>
 
           {/* Treble Clef Icon at the start */}
-          <div className="absolute left-10 flex items-center justify-center pointer-events-none opacity-40 animate-pulse">
-            <span className="text-4xl font-serif text-cyan-400/70 select-none">𝄞</span>
+          <div className="absolute left-10 flex items-center justify-center pointer-events-none opacity-45 animate-pulse" style={{ transform: 'translateY(-14px)' }}>
+            <span className="text-[170px] font-serif text-cyan-400/70 select-none leading-none">𝄞</span>
           </div>
 
           {/* Animated Falling Notes landing on the staff */}
           <div className="absolute inset-0 pointer-events-none">
-            {/* Note 1 */}
+            {/* Note 1 (Quarter Note - Stem Up) */}
             <div className="absolute top-[-20px] left-[30%] animate-note-fall" style={{ animationDelay: '0s', animationDuration: '3.5s' }}>
-              <div className="relative w-6 h-6 flex flex-col items-end">
-                <div className="w-3.5 h-2.5 bg-cyan-400 rounded-full rotate-[-20deg] shadow-[0_0_10px_rgba(6,182,212,0.8)]" />
-                <div className="w-[1.5px] h-6 bg-cyan-400 absolute bottom-1 right-0 shadow-[0_0_10px_rgba(6,182,212,0.8)]" />
-              </div>
+              <svg width="24" height="36" viewBox="0 0 24 36" className="text-cyan-400" style={{ filter: 'drop-shadow(0 0 8px rgba(6,182,212,0.9))' }} fill="currentColor">
+                <ellipse cx="7" cy="28" rx="6.5" ry="4.5" transform="rotate(-20 7 28)" />
+                <rect x="12.5" y="4" width="1.5" height="24" rx="0.5" />
+              </svg>
             </div>
+            {/* Note 1 Burst */}
+            <div className="absolute top-[52px] left-[calc(30%+4px)] w-8 h-8 rounded-full bg-white animate-glow-burst" style={{ animationDelay: '0s', animationDuration: '3.5s', mixBlendMode: 'screen' }} />
 
-            {/* Note 2 */}
+            {/* Note 2 (Eighth Note - Stem Down, Flag Curves Up-Right) */}
             <div className="absolute top-[-20px] left-[50%] animate-note-fall-alt" style={{ animationDelay: '0.8s', animationDuration: '4.2s' }}>
-              <div className="relative w-6 h-6 flex flex-col items-end">
-                <div className="w-3.5 h-2.5 bg-indigo-400 rounded-full rotate-[-20deg] shadow-[0_0_10px_rgba(99,102,241,0.8)]" />
-                <div className="w-[1.5px] h-6 bg-indigo-400 absolute bottom-1 right-0 shadow-[0_0_10px_rgba(99,102,241,0.8)]" />
-                <div className="w-3.5 h-2 bg-indigo-400 absolute top-0 right-[-2px] rounded-r-full rotate-[15deg] origin-left shadow-[0_0_8px_rgba(99,102,241,0.8)]" />
-              </div>
+              <svg width="24" height="36" viewBox="0 0 24 36" className="text-indigo-400" style={{ filter: 'drop-shadow(0 0 8px rgba(99,102,241,0.9))' }} fill="currentColor">
+                <ellipse cx="17" cy="8" rx="6.5" ry="4.5" transform="rotate(-20 17 8)" />
+                <rect x="11" y="8" width="1.5" height="24" rx="0.5" />
+                <path d="M 11,32 C 15.5,29 18.5,24 15.5,18 C 14.5,16 13,15 13,15 C 15,17.5 15.5,22 11,26 Z" />
+              </svg>
             </div>
+            {/* Note 2 Burst */}
+            <div className="absolute top-[47px] left-[calc(50%+14px)] w-8 h-8 rounded-full bg-white animate-glow-burst-alt" style={{ animationDelay: '0.8s', animationDuration: '4.2s', mixBlendMode: 'screen' }} />
 
-            {/* Note 3 */}
+            {/* Note 3 (Sixteenth Note - Stem Up, Parallel Flags Curve Down-Right) */}
             <div className="absolute top-[-20px] left-[70%] animate-note-fall" style={{ animationDelay: '1.5s', animationDuration: '3.8s' }}>
-              <div className="relative w-6 h-6 flex flex-col items-end">
-                <div className="w-3.5 h-2.5 bg-cyan-400 rounded-full rotate-[-20deg] shadow-[0_0_10px_rgba(6,182,212,0.8)]" />
-                <div className="w-[1.5px] h-6 bg-cyan-400 absolute bottom-1 right-0 shadow-[0_0_10px_rgba(6,182,212,0.8)]" />
-              </div>
+              <svg width="24" height="36" viewBox="0 0 24 36" className="text-cyan-400" style={{ filter: 'drop-shadow(0 0 8px rgba(6,182,212,0.9))' }} fill="currentColor">
+                <ellipse cx="7" cy="28" rx="6.5" ry="4.5" transform="rotate(-20 7 28)" />
+                <rect x="12.5" y="4" width="1.5" height="24" rx="0.5" />
+                <path d="M 13.5,4 C 18,7 21,12 18,18 C 17,20 15.5,21 15.5,21 C 17.5,18.5 18,14 13.5,10 Z" />
+                <path d="M 13.5,9 C 18,12 21,17 18,23 C 17,25 15.5,26 15.5,26 C 17.5,23.5 18,19 13.5,15 Z" />
+              </svg>
             </div>
+            {/* Note 3 Burst */}
+            <div className="absolute top-[52px] left-[calc(70%+4px)] w-8 h-8 rounded-full bg-white animate-glow-burst" style={{ animationDelay: '1.5s', animationDuration: '3.8s', mixBlendMode: 'screen' }} />
 
-            {/* Note 4 */}
+            {/* Note 4 (Eighth Note - Stem Up, Flag Curves Down-Right) */}
             <div className="absolute top-[-20px] left-[80%] animate-note-fall-alt" style={{ animationDelay: '2.2s', animationDuration: '4.5s' }}>
-              <div className="relative w-6 h-6 flex flex-col items-end">
-                <div className="w-3.5 h-2.5 bg-indigo-400 rounded-full rotate-[-20deg] shadow-[0_0_10px_rgba(99,102,241,0.8)]" />
-                <div className="w-[1.5px] h-6 bg-indigo-400 absolute bottom-1 right-0 shadow-[0_0_10px_rgba(99,102,241,0.8)]" />
-              </div>
+              <svg width="24" height="36" viewBox="0 0 24 36" className="text-indigo-400" style={{ filter: 'drop-shadow(0 0 8px rgba(99,102,241,0.9))' }} fill="currentColor">
+                <ellipse cx="7" cy="28" rx="6.5" ry="4.5" transform="rotate(-20 7 28)" />
+                <rect x="12.5" y="4" width="1.5" height="24" rx="0.5" />
+                <path d="M 13.5,4 C 18,7 21,12 18,18 C 17,20 15.5,21 15.5,21 C 17.5,18.5 18,14 13.5,10 Z" />
+              </svg>
             </div>
+            {/* Note 4 Burst */}
+            <div className="absolute top-[62px] left-[calc(80%+4px)] w-8 h-8 rounded-full bg-white animate-glow-burst-alt" style={{ animationDelay: '2.2s', animationDuration: '4.5s', mixBlendMode: 'screen' }} />
           </div>
 
           {/* Glowing Wave graphic (audio waves) */}
@@ -176,22 +187,42 @@ export const SplashLoader: React.FC<SplashLoaderProps> = ({ progress, statusText
           0% { transform: translateY(-30px); opacity: 0; }
           15% { opacity: 1; }
           60% { transform: translateY(60px); opacity: 1; }
-          75% { transform: translateY(55px); opacity: 0.9; }
-          100% { transform: translateY(120px); opacity: 0; }
+          62%, 100% { transform: translateY(60px); opacity: 0; }
         }
         .animate-note-fall {
-          animation: noteFall infinite ease-in-out;
+          animation: noteFall infinite ease-in;
         }
 
         @keyframes noteFallAlt {
           0% { transform: translateY(-30px); opacity: 0; }
-          10% { opacity: 1; }
+          12% { opacity: 1; }
           50% { transform: translateY(75px); opacity: 1; }
-          70% { transform: translateY(70px); opacity: 0.9; }
-          100% { transform: translateY(120px); opacity: 0; }
+          52%, 100% { transform: translateY(75px); opacity: 0; }
         }
         .animate-note-fall-alt {
-          animation: noteFallAlt infinite ease-in-out;
+          animation: noteFallAlt infinite ease-in;
+        }
+
+        @keyframes glowBurst {
+          0%, 58% { transform: scale(0); opacity: 0; }
+          60% { transform: scale(0.4); opacity: 1; }
+          65% { transform: scale(1.6); opacity: 0.7; filter: blur(3px); }
+          75% { transform: scale(2.2); opacity: 0; filter: blur(6px); }
+          100% { transform: scale(2.2); opacity: 0; }
+        }
+        .animate-glow-burst {
+          animation: glowBurst infinite ease-out;
+        }
+
+        @keyframes glowBurstAlt {
+          0%, 48% { transform: scale(0); opacity: 0; }
+          50% { transform: scale(0.4); opacity: 1; }
+          55% { transform: scale(1.6); opacity: 0.7; filter: blur(3px); }
+          65% { transform: scale(2.2); opacity: 0; filter: blur(6px); }
+          100% { transform: scale(2.2); opacity: 0; }
+        }
+        .animate-glow-burst-alt {
+          animation: glowBurstAlt infinite ease-out;
         }
 
         .animate-fade-in {

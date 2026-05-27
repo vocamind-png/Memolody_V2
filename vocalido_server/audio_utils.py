@@ -15,7 +15,7 @@ def audio_to_base64_wav(audio, sr=SR):
     buf.seek(0)
     return base64.b64encode(buf.read()).decode('utf-8')
 
-def audio_to_base64_mp3(audio, sr=SR, bitrate="128k"):
+def audio_to_base64_mp3(audio, sr=SR, bitrate="320k"):
     """Convert numpy audio to base64 MP3 string using pydub"""
     try:
         # 1. Convert float32 to int16
@@ -44,7 +44,7 @@ def audio_to_base64_mp3(audio, sr=SR, bitrate="128k"):
         # Fallback to WAV if MP3 fails
         return audio_to_base64_wav(audio, sr), "audio/wav"
 
-def save_audio_as_mp3(audio, filepath, sr=SR, bitrate="128k"):
+def save_audio_as_mp3(audio, filepath, sr=SR, bitrate="320k"):
     """Save numpy audio to MP3 file using pydub"""
     try:
         audio_clamped = np.clip(audio, -1.0, 1.0)

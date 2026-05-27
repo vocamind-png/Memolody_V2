@@ -9,6 +9,7 @@ interface BrandingPageProps {
 
 const BrandingPage: React.FC<BrandingPageProps> = ({ onEnter, backgroundImage }) => {
     const [scrolled, setScrolled] = useState(false);
+    const [showSpecs, setShowSpecs] = useState(false);
 
     useEffect(() => {
         const handleScroll = () => {
@@ -68,6 +69,42 @@ const BrandingPage: React.FC<BrandingPageProps> = ({ onEnter, backgroundImage })
                         <button className="h-16 px-10 border border-white/10 bg-white/5 backdrop-blur-xl rounded-full font-black text-sm uppercase tracking-[0.2em] transition-all hover:bg-white/10 flex items-center gap-3">
                             <Play size={16} fill="currentColor" /> Watch Vision
                         </button>
+                    </div>
+
+                    <div className="pt-6">
+                        <button 
+                            onClick={() => setShowSpecs(!showSpecs)}
+                            className="text-[9px] font-black uppercase tracking-[0.3em] text-zinc-500 hover:text-cyan-400 transition-colors flex items-center justify-center gap-2 mx-auto"
+                        >
+                            <Cpu size={12} />
+                            {showSpecs ? "Hide System Requirements (ซ่อนความต้องการระบบ)" : "Show System Requirements (แสดงความต้องการระบบ)"}
+                        </button>
+                        
+                        {showSpecs && (
+                            <div className="mt-6 max-w-xl mx-auto bg-black/60 backdrop-blur-3xl border border-white/10 p-6 rounded-[2rem] text-left space-y-5 animate-in fade-in slide-in-from-top-2 duration-300">
+                                <div>
+                                    <h4 className="text-[10px] font-black uppercase tracking-widest text-cyan-400 mb-2.5 flex items-center gap-1.5">
+                                        <Cpu size={12} /> Minimum Specifications (ความต้องการขั้นต่ำ)
+                                    </h4>
+                                    <ul className="text-[10px] text-zinc-400 space-y-1.5 list-disc pl-4 font-medium leading-relaxed uppercase tracking-wider">
+                                        <li><strong>PC/Mac:</strong> Intel Core i5 / Apple Silicon M1, RAM 8GB ขึ้นไป, Chrome/Edge/Safari (รุ่นล่าสุด)</li>
+                                        <li><strong>Mobile:</strong> iOS 16 (iPhone 12 ขึ้นไป) หรือ Android 11 (RAM 6GB ขึ้นไป)</li>
+                                        <li><strong>SVS Vocal Rendering:</strong> แนะนำให้ใช้โหมด <strong>Server-Side (Vocalido)</strong> เพื่อความเสถียร</li>
+                                    </ul>
+                                </div>
+                                <div className="h-px bg-white/10" />
+                                <div>
+                                    <h4 className="text-[10px] font-black uppercase tracking-widest text-amber-400 mb-2.5 flex items-center gap-1.5">
+                                        <Zap size={12} /> Recommended Specifications (ข้อแนะนำเพื่อประสิทธิภาพสูงสุด)
+                                    </h4>
+                                    <ul className="text-[10px] text-zinc-400 space-y-1.5 list-disc pl-4 font-medium leading-relaxed uppercase tracking-wider">
+                                        <li><strong>PC/Mac:</strong> Intel Core i7 / Apple Silicon M2, RAM 16GB ขึ้นไป, GPU แยก (Nvidia GTX 1660 / AMD RX 5500 ขึ้นไป)</li>
+                                        <li><strong>Mobile:</strong> iPhone 14 ขึ้นไป หรือ Android ระดับเรือธง (RAM 8GB/12GB ขึ้นไป)</li>
+                                        <li><strong>SVS Vocal Rendering:</strong> รองรับการใช้ <strong>On-Device (Browser AI SVS)</strong> ประมวลผลด่วนบนเครื่อง</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
 

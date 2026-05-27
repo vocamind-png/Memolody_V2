@@ -9,6 +9,15 @@ import { ScoreLayoutMode, TextAnnotation } from '../../types';
 import { musicEngine } from '../../lib/MusicEngine';
 import { computeLayoutSync, buildScrollSyncMap, syncScroll, type LayoutMap } from '../../lib/LayoutSyncService';
 
+const cleanMeasureNum = (mNum: any): string => {
+  if (mNum == null) return '';
+  const trimmed = String(mNum).trim();
+  if (/^\d+$/.test(trimmed)) {
+    return String(parseInt(trimmed));
+  }
+  return trimmed;
+};
+
 interface BarMap {
   measureNumber: number;
   measureId: string;        // raw SVG .measure[n] attribute value e.g. "1","9"
@@ -352,14 +361,15 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
   }, []);
 
   const barMapsRef = useRef<BarMap[]>([]);
+  const unrolledBarsRef = useRef<BarMap[]>([]);
   const svgNoteMapRef = useRef<SvgNoteElement[]>([]);
   const syncPointsRef = useRef<{ time: number, relX: number, pageIndex: number }[]>([]);
   const scoreEndTimeRef = useRef<number>(0);      // Verovio score end = visual range of syncPoints
   const cycleLengthRef = useRef<number>(0);        // Audio repeat cycle (measure-1 reappears)
   // Measure-number → first-note DOM position cache (key = "n" attribute value of .measure)
   const measurePosRef = useRef<Map<string, { relX: number, pageIndex: number }>>(new Map());
-  // Unrolled timeline: maps EVERY transport beat → DOM visual position (THE solution for repeats)
-  const unrolledTimelineRef = useRef<{ t: number, relX: number, pageIndex: number }[]>([]);
+  // Measure-number → array of visual notes in that physical measure
+  const measureVisualNotesRef = useRef<Map<string, { startTime: number, offset: number, relX: number, pageIndex: number }[]>>(new Map());
   const volta1MeasuresRef = useRef<Set<string>>(new Set());
   const prevPageRef = useRef<number>(-1);
   // Track current repeat pass (0=cyan pass1, 1+=rose pass2+)
@@ -387,6 +397,8 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
     const durationById = new Map<string, number>();
     // Maps Verovio measure element hash id → MusicXML measure number string
     const measureNumByVrvId = new Map<string, string>();
+    const measureQstamp = new Map<string, number>();
+    const measureDuration = new Map<string, number>();
     let scoreEndTime = 0;
 
     try {
@@ -409,12 +421,25 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
         // each containing { id: "verovio-hash", n: "1" } objects
         if (Array.isArray(entry.measureOn)) {
           entry.measureOn.forEach((m: any) => {
-            if (m?.id && m?.n != null) measureNumByVrvId.set(String(m.id), String(m.n));
+            if (m?.id && m?.n != null) {
+              measureNumByVrvId.set(String(m.id), String(m.n));
+            }
+            if (m?.id) {
+              measureQstamp.set(String(m.id), qstamp);
+            }
           });
         }
         if (Array.isArray(entry.measureOff)) {
           entry.measureOff.forEach((m: any) => {
-            if (m?.id && m?.n != null) measureNumByVrvId.set(String(m.id), String(m.n));
+            if (m?.id && m?.n != null) {
+              measureNumByVrvId.set(String(m.id), String(m.n));
+            }
+            if (m?.id) {
+              const startT = measureQstamp.get(String(m.id));
+              if (startT !== undefined) {
+                measureDuration.set(String(m.id), offQstamp - startT);
+              }
+            }
           });
         }
       });
@@ -521,85 +546,287 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
     //  - This works for ANY number of repeats, zero parsing required
     // ================================================================
 
-    const realBars: BarMap[] = [];
-    const timeToData = new Map<number, { relXs: number[], pages: number[] }>();
-    const processedMeasures = new Set<string>();
 
+    const timeToData = new Map<number, { relXs: number[], pages: number[] }>();
     noteMap.forEach(n => {
       const mEl = n.containerElement?.closest('.measure') as SVGElement;
       if (!mEl) return;
       const pc = pageRects.find(p => p.el.contains(mEl));
       if (!pc) return;
       const pageDivRect = pc.rect;
-      if (pageDivRect.width === 0 || pageDivRect.height === 0) return;
+      if (pageDivRect.width === 0) return;
       const nr = n.containerElement!.getBoundingClientRect();
       const avgRelX = (nr.left + nr.width / 2 - pageDivRect.left) / pageDivRect.width;
 
       if (!timeToData.has(n.startTime)) timeToData.set(n.startTime, { relXs: [], pages: [] });
       timeToData.get(n.startTime)!.relXs.push(avgRelX);
       timeToData.get(n.startTime)!.pages.push(pc.idx);
+    });
 
-      const mId = mEl.getAttribute('n') || mEl.id || '';
-      if (mId && !processedMeasures.has(mId)) {
+    const realBars: BarMap[] = [];
+    const processedMeasures = new Set<string>();
+
+    pageContainers.forEach((pageDiv) => {
+      const pageIdxAttr = pageDiv.getAttribute('data-page-index');
+      const pageIndex = pageIdxAttr ? parseInt(pageIdxAttr) : 0;
+      const pageDivRect = pageDiv.getBoundingClientRect();
+      if (pageDivRect.width === 0) return;
+
+      const mEls = Array.from(pageDiv.querySelectorAll('.measure')) as SVGElement[];
+      mEls.forEach(mEl => {
+        const mId = mEl.id || '';
+        if (!mId || processedMeasures.has(mId)) return;
         processedMeasures.add(mId);
+
         const staves = Array.from(mEl.querySelectorAll('.staff')) as SVGElement[];
         let mTop = 999999, mBottom = -999999;
         staves.forEach(st => {
           const sr = st.getBoundingClientRect();
-          if (sr.height > 0) { mTop = Math.min(mTop, sr.top); mBottom = Math.max(mBottom, sr.bottom); }
+          if (sr.height > 0) {
+            mTop = Math.min(mTop, sr.top);
+            mBottom = Math.max(mBottom, sr.bottom);
+          }
         });
-        if (mTop === 999999) return;
+        if (mTop === 999999) {
+          const baseRect = mEl.getBoundingClientRect();
+          mTop = baseRect.top;
+          mBottom = baseRect.bottom;
+        }
+
         const baseRect = mEl.getBoundingClientRect();
+        const xmlMNum = measureNumByVrvId.get(mId) || mEl.getAttribute('n') || mId;
+        const startTime = measureQstamp.get(mId) ?? 0;
+        const duration = measureDuration.get(mId) ?? 4;
+
         realBars.push({
-          measureNumber: parseInt(mId) || 0,
-          measureId: measureNumByVrvId.get(mId) || mId, // prefer MusicXML number, fallback to Verovio hash
+          measureNumber: parseInt(xmlMNum) || 0,
+          measureId: xmlMNum,
           startRelX: (baseRect.left - pageDivRect.left) / pageDivRect.width,
           endRelX: (baseRect.right - pageDivRect.left) / pageDivRect.width,
-          startTime: n.startTime,
-          duration: 1,
-          pageIndex: pc.idx,
+          startTime: startTime,
+          duration: duration,
+          pageIndex: pageIndex,
           y: (mTop - pageDivRect.top) / pageDivRect.height,
           height: (mBottom - mTop) / pageDivRect.height,
           systemId: mEl.closest('.system')?.id || ''
         });
-      }
+      });
     });
 
     realBars.sort((a, b) => a.startTime - b.startTime);
-    for (let i = 0; i < realBars.length - 1; i++) {
-      realBars[i].duration = Math.max(0.1, realBars[i + 1].startTime - realBars[i].startTime);
-    }
-    if (realBars.length > 0) realBars[realBars.length - 1].duration = 4;
 
-    // ── FIX: assign correct measureId from MusicXML by crossreferencing startTime ──
-    // The Verovio n-attribute on .measure elements is a hash, not a number.
-    // But every note has startTime (qstamp) and a measure number from MusicXML.
-    // Build startTime → measureNumber map from the engine, then tag each bar.
+    // ── FIX: assign correct measureId from MusicXML by direct index mapping ──
+    // Both Verovio physical bars (sorted by startTime) and XML part measures are in 1-to-1 sequential order.
     try {
-      const parsed = musicEngine.parseMusicXml(xmlData || '');
-      // Map: first occurrence of each measure's startTime → measure number
-      const measureFirstT = new Map<string, number>(); // measureNum → min startTime
-      parsed.notes.forEach(n => {
-        if (!n.measure) return;
-        const cur = measureFirstT.get(n.measure);
-        if (cur === undefined || n.startTime < cur) measureFirstT.set(n.measure, n.startTime);
-      });
-      // For each bar, find the measure whose first note startTime is closest
-      realBars.forEach(bar => {
-        let bestMeasure = '';
-        let bestDiff = 9999;
-        measureFirstT.forEach((t, mNum) => {
-          const diff = Math.abs(t - bar.startTime);
-          if (diff < bestDiff) { bestDiff = diff; bestMeasure = mNum; }
+      const xmlDoc = new DOMParser().parseFromString(xmlData || '', 'text/xml');
+      const part = xmlDoc.querySelector('part');
+      if (part) {
+        const physicalMeasures = Array.from(part.querySelectorAll('measure'));
+        realBars.forEach((bar, idx) => {
+          const m = physicalMeasures[idx];
+          if (m) {
+            const mNum = m.getAttribute('number');
+            if (mNum) bar.measureId = mNum;
+          }
         });
-        if (bestMeasure && bestDiff < 2) bar.measureId = bestMeasure;
-      });
-      console.log('[Memolody] ✅ barMaps measureId fixed via parseMusicXml. Sample:', realBars.slice(0, 5).map(b => `${b.measureId}@${b.startTime.toFixed(1)}`).join(' '));
+        console.log('[Memolody] ✅ barMaps measureId mapped directly from XML measures. Sample:', realBars.slice(0, 5).map(b => `${b.measureId}@${b.startTime.toFixed(1)}`).join(' '));
+      } else {
+        throw new Error('No part element found in XML');
+      }
     } catch (e) {
-      console.warn('[Memolody] measureId fix failed:', e);
+      console.warn('[Memolody] direct measureId mapping failed, falling back to startTime logic:', e);
+      try {
+        const parsed = musicEngine.parseMusicXml(xmlData || '');
+        const measureFirstT = new Map<string, number>();
+        parsed.notes.forEach(n => {
+          if (!n.measure) return;
+          const cur = measureFirstT.get(n.measure);
+          if (cur === undefined || n.startTime < cur) measureFirstT.set(n.measure, n.startTime);
+        });
+        realBars.forEach(bar => {
+          let bestMeasure = '';
+          let bestDiff = 9999;
+          measureFirstT.forEach((t, mNum) => {
+            const diff = Math.abs(t - bar.startTime);
+            if (diff < bestDiff) { bestDiff = diff; bestMeasure = mNum; }
+          });
+          if (bestMeasure && bestDiff < 2) bar.measureId = bestMeasure;
+        });
+      } catch (err) {
+        console.error('[Memolody] fallback measureId mapping failed:', err);
+      }
     }
 
     barMapsRef.current = realBars;
+
+    // ── Build unrolledBarsRef ──
+    const unrolledBars: BarMap[] = [];
+
+    // Ensure musicEngine.unrolledMeasures is populated by calling parseMusicXml if it's empty
+    if ((!musicEngine.unrolledMeasures || musicEngine.unrolledMeasures.length === 0) && xmlData) {
+      try {
+        musicEngine.parseMusicXml(xmlData);
+        console.log('[ProScoreEditor] ⚡ Pre-parsed XML to populate musicEngine.unrolledMeasures. Length:', musicEngine.unrolledMeasures.length);
+      } catch (e) {
+        console.warn('[ProScoreEditor] Pre-parsing xml to populate unrolledMeasures failed:', e);
+      }
+    }
+
+    if (musicEngine.unrolledMeasures && musicEngine.unrolledMeasures.length > 0) {
+      console.log('[ProScoreEditor] 🔁 Mapping unrolled bars from musicEngine.unrolledMeasures:', musicEngine.unrolledMeasures.length);
+      musicEngine.unrolledMeasures.forEach((u) => {
+        const uMNum = cleanMeasureNum(u.measureId);
+        // Find corresponding visual measure by measureId (number)
+        let physicalBar = realBars.find(b => cleanMeasureNum(b.measureId) === uMNum);
+        if (!physicalBar) {
+          // Fallback to index-based lookup if direct measureId match fails
+          const idx = parseInt(uMNum) - 1;
+          if (idx >= 0 && idx < realBars.length) {
+            physicalBar = realBars[idx];
+          }
+        }
+        if (physicalBar) {
+          unrolledBars.push({
+            ...physicalBar,
+            startTime: u.startTime,
+            duration: u.duration,
+          });
+        } else {
+          // Fallback to prevBar or realBars[0]
+          const prevBar = unrolledBars[unrolledBars.length - 1] || realBars[0];
+          if (prevBar) {
+            unrolledBars.push({
+              ...prevBar,
+              startTime: u.startTime,
+              duration: u.duration,
+            });
+          }
+        }
+      });
+    } else if (xmlData) {
+      // Fallback repeat simulator
+      try {
+        const xmlDoc = new DOMParser().parseFromString(xmlData, 'text/xml');
+        const part = xmlDoc.querySelector('part');
+        if (part) {
+          const physicalMeasures = Array.from(part.querySelectorAll('measure'));
+          
+          const repeatStack: number[] = [];
+          const passCount = new Map<number, number>();
+          const repeatInited = new Set<number>();
+          const bwdDone = new Set<number>();
+
+          const getEndingNums = (m: Element): number[] => {
+            const nums: number[] = [];
+            m.querySelectorAll('barline ending').forEach(e => {
+              (e.getAttribute('number') || '').split(',').forEach(s => {
+                const n = parseInt(s.trim());
+                if (!isNaN(n)) nums.push(n);
+              });
+            });
+            return nums;
+          };
+
+          const hasFwdRepeat = (m: Element) =>
+            !!m.querySelector('barline repeat[direction="forward"]');
+
+          const hasBwdRepeat = (m: Element) =>
+            !!m.querySelector('barline repeat[direction="backward"]');
+
+          const measureOrder: number[] = [];
+          let cursor = 0;
+          const MAX_ITER = physicalMeasures.length * 8;
+          let iter = 0;
+
+          while (cursor < physicalMeasures.length && iter < MAX_ITER) {
+            iter++;
+            const m = physicalMeasures[cursor];
+
+            if (hasFwdRepeat(m) && !repeatInited.has(cursor)) {
+              repeatInited.add(cursor);
+              repeatStack.push(cursor);
+              passCount.set(cursor, 1);
+            }
+
+            const innerStart = repeatStack.length > 0 ? repeatStack[repeatStack.length - 1] : -1;
+            const currentPass = innerStart >= 0 ? (passCount.get(innerStart) ?? 1) : 1;
+
+            const endings = getEndingNums(m);
+            const shouldSkip = endings.length > 0 && !endings.includes(currentPass);
+
+            if (!shouldSkip) {
+              measureOrder.push(cursor);
+            }
+
+            if (hasBwdRepeat(m) && !shouldSkip) {
+              let repeatStart: number;
+              if (repeatStack.length > 0) {
+                repeatStart = repeatStack[repeatStack.length - 1];
+              } else {
+                repeatStart = 0;
+                if (!repeatInited.has(0)) {
+                  repeatInited.add(0);
+                  repeatStack.push(0);
+                  passCount.set(0, 1);
+                }
+              }
+
+              if (!bwdDone.has(cursor)) {
+                bwdDone.add(cursor);
+                passCount.set(repeatStart, (passCount.get(repeatStart) ?? 1) + 1);
+                cursor = repeatStart;
+                continue;
+              } else {
+                if (repeatStack.length > 0 && repeatStack[repeatStack.length - 1] === repeatStart) {
+                  repeatStack.pop();
+                  passCount.delete(repeatStart);
+                }
+              }
+            }
+
+            cursor++;
+          }
+
+          let currentUnrolledTime = 0;
+          measureOrder.forEach((mIdx) => {
+            const xmlMeasure = physicalMeasures[mIdx];
+            const xmlMNum = cleanMeasureNum(xmlMeasure.getAttribute('number') || String(mIdx + 1));
+
+            let physicalBar = realBars.find(b => cleanMeasureNum(b.measureId) === xmlMNum);
+            if (!physicalBar && mIdx >= 0 && mIdx < realBars.length) {
+              physicalBar = realBars[mIdx];
+            }
+
+            if (physicalBar) {
+              unrolledBars.push({
+                ...physicalBar,
+                startTime: currentUnrolledTime,
+              });
+              currentUnrolledTime += physicalBar.duration;
+            } else {
+              const prevBar = unrolledBars[unrolledBars.length - 1] || realBars[0];
+              if (prevBar) {
+                unrolledBars.push({
+                  ...prevBar,
+                  startTime: currentUnrolledTime,
+                });
+                currentUnrolledTime += prevBar.duration;
+              }
+            }
+          });
+        }
+      } catch (err) {
+        console.warn('[ProScoreEditor] Repeat simulator failed:', err);
+      }
+    }
+
+    if (unrolledBars.length > 0) {
+      unrolledBarsRef.current = unrolledBars;
+      console.log(`[Memolody] 🔁 unrolledBars: ${unrolledBars.length} entries (repeat simulator OK). First 5:`, unrolledBars.slice(0, 5).map(b => `m${b.measureId}@${b.startTime.toFixed(1)}b`).join(' '));
+    } else {
+      unrolledBarsRef.current = realBars;
+      console.log(`[Memolody] ⚠️ unrolledBars empty, using barMaps fallback (${realBars.length} bars). No repeat detected.`);
+    }
 
     // Build first-pass syncPoints (Verovio DOM = written score, no repeats)
     const firstPassPoints: { time: number, relX: number, pageIndex: number }[] = [];
@@ -669,115 +896,37 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
     volta1MeasuresRef.current = volta1Measures;
     syncPointsRef.current = firstPassPoints;
 
-    // ── BUILD UNROLLED TIMELINE ──────────────────────────────────────────
-    // Map each unrolled transport beat → DOM visual position.
-    // This is THE correct approach for repeats: the unrolled sequence
-    // tells us EXACTLY which measure is playing at each transport time,
-    // and we map that to the visual position of that measure in the DOM.
-    //
-    // Steps:
-    //   1. Group svgNoteMap by measure number → measureVisualNotes
-    //   2. Get unrolled notes from parseMusicXml (includes all repeats)
-    //   3. For each unrolled note, find matching visual note by
-    //      offset-within-measure → get relX + pageIndex
-    //   4. Result: sorted array of { t: unrolledBeat, relX, pageIndex }
-
-    // 1. Group visual notes by measure number
-    const measureVisualNotes = new Map<string, { offset: number, relX: number, pageIndex: number }[]>();
-    const measureVrvStart = new Map<string, number>(); // measure → earliest qstamp
+    // Group visual notes by measure number
+    const measureVisualNotes = new Map<string, { startTime: number, offset: number, relX: number, pageIndex: number }[]>();
     noteMap.forEach(n => {
       if (!n.containerElement) return;
-      const mn = n.containerElement.closest('.measure')?.getAttribute('n') || '';
+      const mEl = n.containerElement.closest('.measure');
+      const mn = mEl?.getAttribute('n') || '';
       if (!mn) return;
+      const mId = mEl.id || '';
+      const mStart = measureQstamp.get(mId) ?? n.startTime;
+
       if (!measureVisualNotes.has(mn)) {
         measureVisualNotes.set(mn, []);
-        measureVrvStart.set(mn, n.startTime);
       }
-      const mStart = measureVrvStart.get(mn)!;
-      if (n.startTime < mStart) measureVrvStart.set(mn, n.startTime);
       const pc = pageRects.find(p => p.el.contains(n.containerElement!));
       if (!pc) return;
       const nr = n.containerElement!.getBoundingClientRect();
       measureVisualNotes.get(mn)!.push({
-        offset: n.startTime - mStart, // will be recalculated after grouping
+        startTime: n.startTime,
+        offset: n.startTime - mStart,
         relX: (nr.left + nr.width / 2 - pc.rect.left) / pc.rect.width,
         pageIndex: pc.idx
       });
     });
-    // Recalculate offsets now that we know the true measure start
-    measureVisualNotes.forEach((notes, mn) => {
-      const mStart = measureVrvStart.get(mn) || 0;
-      notes.forEach(n => { n.offset = n.offset; }); // offset was already relative
+    measureVisualNotes.forEach((notes) => {
       notes.sort((a, b) => a.offset - b.offset);
     });
 
-    // 2. Get unrolled notes
-    const parsed2 = musicEngine.parseMusicXml(xmlData || '');
-    const unrolledNotes = parsed2.notes;
-
-    // 3. Build timeline: for each unrolled note, find visual match
-    const timeline: { t: number, relX: number, pageIndex: number }[] = [];
-    // Track measure occurrence start times for offset calculation
-    const measureOccurrenceStart = new Map<string, number>();
-
-    unrolledNotes.forEach(n => {
-      const mn = n.measure || '';
-      if (!mn) return;
-
-      // Track when each measure occurrence starts (reset when measure changes back)
-      if (!measureOccurrenceStart.has(mn) || n.startTime < (measureOccurrenceStart.get(mn) || 0)) {
-        // This is a new occurrence of this measure
-      }
-
-      // Use measurePosMap for this measure's position (measure-level granularity)
-      const mPos = measurePosMap.get(mn);
-      if (!mPos) return;
-
-      // Try per-note precision: find visual note with closest offset in this measure
-      const visNotes = measureVisualNotes.get(mn);
-      if (visNotes && visNotes.length > 0) {
-        // Find offset of this note within its first-pass measure
-        // We approximate by using the first visual note for the first unrolled note,
-        // second visual note for the second unrolled note, etc.
-        const mOccStart = measureOccurrenceStart.get(mn);
-        if (mOccStart === undefined) {
-          measureOccurrenceStart.set(mn, n.startTime);
-        }
-        const offset = n.startTime - (measureOccurrenceStart.get(mn) || 0);
-
-        // Find closest visual note by offset
-        let bestDist = 9999, bestIdx = 0;
-        for (let i = 0; i < visNotes.length; i++) {
-          const d = Math.abs(visNotes[i].offset - offset);
-          if (d < bestDist) { bestDist = d; bestIdx = i; }
-        }
-        timeline.push({
-          t: n.startTime,
-          relX: visNotes[bestIdx].relX,
-          pageIndex: visNotes[bestIdx].pageIndex
-        });
-      } else {
-        // Fallback: use measure start position
-        timeline.push({ t: n.startTime, ...mPos });
-      }
-    });
-
-    // Reset occurrence tracker for repeated measures
-    // (We need a smarter approach: group consecutive notes by measure)
-    // Actually let's rebuild more carefully:
-    const timelineClean: { t: number, relX: number, pageIndex: number }[] = [];
-    let prevT = -1;
-    for (const entry of timeline) {
-      if (entry.t > prevT + 0.001) { // skip duplicates at same time
-        timelineClean.push(entry);
-        prevT = entry.t;
-      }
-    }
-    timelineClean.sort((a, b) => a.t - b.t);
-    unrolledTimelineRef.current = timelineClean;
+    measureVisualNotesRef.current = measureVisualNotes;
 
     setMappedCount(c => c + 1);
-    console.log('[Memolody] ✅ coordMap — syncPts:', firstPassPoints.length, '| unrolledTimeline:', timelineClean.length, '| bars:', realBars.length, '| cycle:', cycleLength.toFixed(1), 'b');
+    console.log('[Memolody] ✅ coordMap — syncPts:', firstPassPoints.length, '| bars:', realBars.length, '| cycle:', cycleLength.toFixed(1), 'b');
 
   }, [xmlData]);
 
@@ -1008,100 +1157,149 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
   }, [renderScore, xmlData]);
 
   // ══════════════════════════════════════════════════════════════
-  //  INDIGO BAR LASER — real-time sweep via Tone.Transport.seconds
-  //  - Uses musicEngine.currentMeasure to know WHICH bar
-  //  - Uses Tone.Transport.seconds to know WHERE in the bar (exact timing)
-  //  - progress = elapsed_seconds / barDurationSeconds  → perfectly synced
-  //  - Never sweeps backward, never overshoots beat 1 of next bar
-  // ══════════════════════════════════════════════════════════════
+
+  const getPlayheadPosition = useCallback((timeBeats: number, bars: BarMap[]): { relX: number, pageIndex: number, y: number, height: number, systemId: string } | null => {
+    if (bars.length === 0) return null;
+
+    let activeBar = bars.find(b => timeBeats >= b.startTime && timeBeats < b.startTime + b.duration);
+    if (!activeBar) {
+      for (let i = bars.length - 1; i >= 0; i--) {
+        if (timeBeats >= bars[i].startTime) {
+          activeBar = bars[i];
+          break;
+        }
+      }
+    }
+    if (!activeBar && timeBeats <= bars[0].startTime) {
+      activeBar = bars[0];
+    }
+    if (!activeBar) return null;
+
+    const sweepPage = activeBar.pageIndex;
+    const sweepTop = activeBar.y;
+    const sweepHeight = activeBar.height;
+    const sweepSystemId = activeBar.systemId;
+
+    const elapsedBeats = Math.max(0, timeBeats - activeBar.startTime);
+    const progress = Math.min(1, elapsedBeats / activeBar.duration);
+
+    const barIdx = bars.indexOf(activeBar);
+    const nextBar = bars[barIdx + 1];
+    const sameSysNext = nextBar &&
+      nextBar.systemId === activeBar.systemId &&
+      nextBar.pageIndex === activeBar.pageIndex &&
+      nextBar.startRelX > activeBar.startRelX;
+
+    const sweepFromX = activeBar.startRelX;
+    const sweepToX = sameSysNext ? nextBar.startRelX : activeBar.endRelX;
+    const relX = sweepFromX + (sweepToX - sweepFromX) * progress;
+
+    return {
+      relX,
+      pageIndex: sweepPage,
+      y: sweepTop,
+      height: sweepHeight,
+      systemId: sweepSystemId
+    };
+  }, []);
+
   useEffect(() => {
     if (!showLaser) return;
 
     const tick = () => {
       laserRafRef.current = requestAnimationFrame(tick);
 
-      const bars = barMapsRef.current;
-      if (bars.length === 0) return;
+      try {
+        const bars = unrolledBarsRef.current.length > 0 ? unrolledBarsRef.current : barMapsRef.current;
+        if (bars.length === 0) return;
 
-      const curBeats = musicEngine.transportMusicalTime;
+        const bpm = (typeof Tone !== 'undefined' && Tone.Transport?.bpm?.value) || 120;
+        
+        let curSeconds = 0;
+        let hasActiveAudio = false;
+        
+        if (musicEngine && musicEngine.tracks) {
+          const activeVocalTrack = musicEngine.tracks.find(t => t && t.mode === 'vocal' && !t.isMuted);
+          if (activeVocalTrack) {
+            const audio = musicEngine.vocalAudioElements?.get(activeVocalTrack.id);
+            if (audio && !audio.paused && audio.src && !audio.src.startsWith('data:')) {
+              const t = audio.currentTime;
+              if (typeof t === 'number' && isFinite(t) && !isNaN(t)) {
+                curSeconds = t;
+                hasActiveAudio = true;
+              }
+            }
+          }
+        }
 
-      let activeBar = bars.find(b => curBeats >= b.startTime && curBeats < b.startTime + b.duration);
-      if (!activeBar && curBeats >= bars[bars.length - 1].startTime) {
-        activeBar = bars[bars.length - 1];
-      }
-      if (!activeBar && curBeats <= bars[0].startTime) {
-        activeBar = bars[0];
-      }
-
-      if (!activeBar) return;
-
-      const elapsedBeats = Math.max(0, curBeats - activeBar.startTime);
-      const progress = Math.min(1, elapsedBeats / activeBar.duration);
-
-      const barIdx = bars.indexOf(activeBar);
-      const nextBar = bars[barIdx + 1];
-      const sameSysNext = nextBar &&
-        nextBar.systemId === activeBar.systemId &&
-        nextBar.startRelX > activeBar.startRelX;
-
-      const sweepFromX = activeBar.startRelX;
-      const sweepToX = sameSysNext ? nextBar.startRelX : activeBar.endRelX;
-      const relX = sweepFromX + (sweepToX - sweepFromX) * progress;
-
-      const sweepPage = activeBar.pageIndex;
-      const sweepTop = activeBar.y;
-      const sweepHeight = activeBar.height;
-      const sweepSystemId = activeBar.systemId;
-
-      if (!isFinite(relX) || !isFinite(sweepTop) || !isFinite(sweepHeight)) return;
-
-      for (let i = 0; i < svgPages.length; i++) {
-        const el = document.getElementById(`bar-laser-${i}`);
-        if (!el) continue;
-        if (i === sweepPage) {
-          el.style.display = 'block';
-          el.style.left = `${relX * 100}%`;
-          el.style.top = `${sweepTop * 100}%`;
-          el.style.height = `${sweepHeight * 100}%`;
+        let curBeats = 0;
+        if (hasActiveAudio) {
+          curBeats = curSeconds * (bpm / 60);
         } else {
-          el.style.display = 'none';
+          curBeats = musicEngine.transportSeconds * (bpm / 60);
         }
-      }
 
-      laserCurrentRelXRef.current = relX;
-      laserCurrentPageRef.current = sweepPage;
+        const pos = getPlayheadPosition(curBeats, bars);
+        if (!pos) return;
 
-      const scrollArea = scrollAreaRef.current;
-      const pageEl = containerRef.current?.children[sweepPage] as HTMLElement | undefined;
-      
-      if (scrollArea && pageEl) {
-        const systemCenterY = pageEl.offsetTop + (sweepTop + sweepHeight / 2) * pageEl.offsetHeight;
-        const targetScrollTop = Math.max(0, systemCenterY - scrollArea.clientHeight / 2);
+        const sweepPage = pos.pageIndex;
+        const sweepTop = pos.y;
+        const sweepHeight = pos.height;
+        const sweepSystemId = pos.systemId;
+        const relX = pos.relX;
 
-        const pageChanged = laserPrevPageRef.current !== sweepPage;
-        const systemKey = `${sweepPage}_${sweepSystemId}`;
-        const systemChanged = laserPrevSystemKeyRef.current !== systemKey;
+        if (!isFinite(relX) || !isFinite(sweepTop) || !isFinite(sweepHeight)) return;
 
-        if (localZoom > 1.05 || pageChanged) {
-          const pageWidth = pageEl.offsetWidth;
-          const laserPixelX = relX * pageWidth;
-          const targetScrollLeft = Math.max(0, laserPixelX - scrollArea.clientWidth / 2);
-
-          scrollArea.scrollLeft = targetScrollLeft;
-          scrollArea.scrollTop = targetScrollTop;
-          
-          laserPrevSystemKeyRef.current = systemKey;
-        } else if (systemChanged) {
-          scrollArea.scrollTo({ top: targetScrollTop, behavior: 'smooth' });
-          laserPrevSystemKeyRef.current = systemKey;
-        } else if (scrollArea.scrollWidth > scrollArea.clientWidth) {
-          const pageWidth = pageEl.offsetWidth;
-          const laserPixelX = relX * pageWidth;
-          scrollArea.scrollLeft = Math.max(0, laserPixelX - scrollArea.clientWidth / 2);
+        for (let i = 0; i < svgPages.length; i++) {
+          const el = document.getElementById(`bar-laser-${i}`);
+          if (!el) continue;
+          if (i === sweepPage) {
+            el.style.display = 'block';
+            el.style.left = `${relX * 100}%`;
+            el.style.top = `${sweepTop * 100}%`;
+            el.style.height = `${sweepHeight * 100}%`;
+          } else {
+            el.style.display = 'none';
+          }
         }
-      }
 
-      laserPrevPageRef.current = sweepPage;
+        laserCurrentRelXRef.current = relX;
+        laserCurrentPageRef.current = sweepPage;
+
+        const scrollArea = scrollAreaRef.current;
+        const pageEl = containerRef.current?.children[sweepPage] as HTMLElement | undefined;
+        
+        if (scrollArea && pageEl) {
+          const systemCenterY = pageEl.offsetTop + (sweepTop + sweepHeight / 2) * pageEl.offsetHeight;
+          const targetScrollTop = Math.max(0, systemCenterY - scrollArea.clientHeight / 2);
+
+          const pageChanged = laserPrevPageRef.current !== sweepPage;
+          const systemKey = `${sweepPage}_${sweepSystemId}`;
+          const systemChanged = laserPrevSystemKeyRef.current !== systemKey;
+
+          if (localZoom > 1.05 || pageChanged) {
+            const pageWidth = pageEl.offsetWidth;
+            const laserPixelX = relX * pageWidth;
+            const targetScrollLeft = Math.max(0, laserPixelX - scrollArea.clientWidth / 2);
+
+            scrollArea.scrollLeft = targetScrollLeft;
+            scrollArea.scrollTop = targetScrollTop;
+            
+            laserPrevSystemKeyRef.current = systemKey;
+          } else if (systemChanged) {
+            scrollArea.scrollTo({ top: targetScrollTop, behavior: 'smooth' });
+            laserPrevSystemKeyRef.current = systemKey;
+          } else if (scrollArea.scrollWidth > scrollArea.clientWidth) {
+            const pageWidth = pageEl.offsetWidth;
+            const laserPixelX = relX * pageWidth;
+            scrollArea.scrollLeft = Math.max(0, laserPixelX - scrollArea.clientWidth / 2);
+          }
+        }
+
+        laserPrevPageRef.current = sweepPage;
+      } catch (err) {
+        console.error('[Memolody Laser Tick Error]', err);
+      }
     };
 
     const hideAll = () => {
@@ -1127,74 +1325,59 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
   useEffect(() => {
     if (isPlaying || !showLaser) return;
 
-    const bars = barMapsRef.current;
-    if (bars.length === 0) return;
+    try {
+      const bars = unrolledBarsRef.current.length > 0 ? unrolledBarsRef.current : barMapsRef.current;
+      if (bars.length === 0) return;
 
-    let activeBar = bars.find(b => currentTime >= b.startTime && currentTime < b.startTime + b.duration);
-    if (!activeBar && currentTime >= bars[bars.length - 1].startTime) {
-      activeBar = bars[bars.length - 1];
-    }
-    if (!activeBar && currentTime <= bars[0].startTime) {
-      activeBar = bars[0];
-    }
+      const pos = getPlayheadPosition(currentTime, bars);
+      if (!pos) {
+        for (let i = 0; i < svgPages.length; i++) {
+          const el = document.getElementById(`bar-laser-${i}`);
+          if (el) el.style.display = 'none';
+        }
+        return;
+      }
 
-    if (!activeBar) {
+      const sweepPage = pos.pageIndex;
+      const sweepTop = pos.y;
+      const sweepHeight = pos.height;
+      const relX = pos.relX;
+
+      if (!isFinite(relX) || !isFinite(sweepTop) || !isFinite(sweepHeight)) return;
+
       for (let i = 0; i < svgPages.length; i++) {
         const el = document.getElementById(`bar-laser-${i}`);
-        if (el) el.style.display = 'none';
+        if (!el) continue;
+        if (i === sweepPage) {
+          el.style.display = 'block';
+          el.style.left = `${relX * 100}%`;
+          el.style.top = `${sweepTop * 100}%`;
+          el.style.height = `${sweepHeight * 100}%`;
+        } else {
+          el.style.display = 'none';
+        }
       }
-      return;
-    }
 
-    const elapsedBeats = Math.max(0, currentTime - activeBar.startTime);
-    const progress = Math.min(1, elapsedBeats / activeBar.duration);
+      laserCurrentRelXRef.current = relX;
+      laserCurrentPageRef.current = sweepPage;
 
-    const barIdx = bars.indexOf(activeBar);
-    const nextBar = bars[barIdx + 1];
-    const sameSysNext = nextBar &&
-      nextBar.systemId === activeBar.systemId &&
-      nextBar.startRelX > activeBar.startRelX;
+      const scrollArea = scrollAreaRef.current;
+      const pageEl = containerRef.current?.children[sweepPage] as HTMLElement | undefined;
+      if (scrollArea && pageEl) {
+        const systemCenterY = pageEl.offsetTop + (sweepTop + sweepHeight / 2) * pageEl.offsetHeight;
+        const targetScrollTop = Math.max(0, systemCenterY - scrollArea.clientHeight / 2);
 
-    const sweepFromX = activeBar.startRelX;
-    const sweepToX = sameSysNext ? nextBar.startRelX : activeBar.endRelX;
-    const relX = sweepFromX + (sweepToX - sweepFromX) * progress;
+        const pageWidth = pageEl.offsetWidth;
+        const laserPixelX = relX * pageWidth;
+        const targetScrollLeft = Math.max(0, laserPixelX - scrollArea.clientWidth / 2);
 
-    const sweepPage = activeBar.pageIndex;
-    const sweepTop = activeBar.y;
-    const sweepHeight = activeBar.height;
-
-    if (!isFinite(relX) || !isFinite(sweepTop) || !isFinite(sweepHeight)) return;
-
-    for (let i = 0; i < svgPages.length; i++) {
-      const el = document.getElementById(`bar-laser-${i}`);
-      if (!el) continue;
-      if (i === sweepPage) {
-        el.style.display = 'block';
-        el.style.left = `${relX * 100}%`;
-        el.style.top = `${sweepTop * 100}%`;
-        el.style.height = `${sweepHeight * 100}%`;
-      } else {
-        el.style.display = 'none';
+        scrollArea.scrollTop = targetScrollTop;
+        if (scrollArea.scrollWidth > scrollArea.clientWidth) {
+          scrollArea.scrollLeft = targetScrollLeft;
+        }
       }
-    }
-
-    laserCurrentRelXRef.current = relX;
-    laserCurrentPageRef.current = sweepPage;
-
-    const scrollArea = scrollAreaRef.current;
-    const pageEl = containerRef.current?.children[sweepPage] as HTMLElement | undefined;
-    if (scrollArea && pageEl) {
-      const systemCenterY = pageEl.offsetTop + (sweepTop + sweepHeight / 2) * pageEl.offsetHeight;
-      const targetScrollTop = Math.max(0, systemCenterY - scrollArea.clientHeight / 2);
-
-      const pageWidth = pageEl.offsetWidth;
-      const laserPixelX = relX * pageWidth;
-      const targetScrollLeft = Math.max(0, laserPixelX - scrollArea.clientWidth / 2);
-
-      scrollArea.scrollTop = targetScrollTop;
-      if (scrollArea.scrollWidth > scrollArea.clientWidth) {
-        scrollArea.scrollLeft = targetScrollLeft;
-      }
+    } catch (err) {
+      console.error('[Memolody Laser Pause/Seek Error]', err);
     }
   }, [isPlaying, currentTime, showLaser, svgPages.length, localZoom]);
 

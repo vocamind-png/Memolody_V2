@@ -90,4 +90,31 @@ export class AudioBlobCache {
       console.warn('[AudioBlobCache] deleteSongCache failed:', e);
     }
   }
+
+  static async clearAllVocalRenders(): Promise<void> {
+    try {
+      const db = await this.init();
+      return new Promise<void>((resolve, reject) => {
+        const tx = db.transaction([this.storeName], 'readwrite');
+        const store = tx.objectStore(this.storeName);
+        const request = store.openKeyCursor();
+        
+        request.onsuccess = (e: any) => {
+          const cursor = e.target.result;
+          if (cursor) {
+            const key = String(cursor.key);
+            if (key.startsWith('vocal_render_')) {
+              store.delete(key);
+            }
+            cursor.continue();
+          } else {
+            resolve();
+          }
+        };
+        request.onerror = () => reject(request.error);
+      });
+    } catch (e) {
+      console.warn('[AudioBlobCache] clearAllVocalRenders failed:', e);
+    }
+  }
 }

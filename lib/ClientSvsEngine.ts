@@ -22,6 +22,16 @@ const getOrt = () => {
   return null;
 };
 
+const sendWorkerDebug = (msg: string) => {
+  console.log(msg);
+  if (typeof self !== 'undefined' && (self as any).postMessage) {
+    (self as any).postMessage({
+      type: 'workerDebug',
+      payload: msg
+    });
+  }
+};
+
 // Solfège Syllable to Phoneme Map
 const SOLFEGE_MAP: Record<string, string> = {
   "do":  "d ow",   "doh": "d ow",
@@ -30,7 +40,7 @@ const SOLFEGE_MAP: Record<string, string> = {
   "fa":  "f aa",   "fah": "f aa",
   "sol": "s ow l", "soh": "s ow",
   "la":  "l aa",   "lah": "l aa",
-  "ti":  "th iy",   "si":  "s iy",
+  "ti":  "t iy",   "si":  "s iy",
   "di":  "d iy",
   "ri":  "r iy",
   "fi":  "f iy",
@@ -47,7 +57,7 @@ const SOLFEGE_MAP: Record<string, string> = {
   "tu":  "t uw",
   "ah":  "aa",     "oh":  "ow",    "ee":  "iy",
   "d": "d ow", "r": "r ey", "m": "m iy",
-  "f": "f aa", "s": "s ow l", "l": "l aa", "t": "th iy",
+  "f": "f aa", "s": "s ow l", "l": "l aa", "t": "t iy",
   "ma": "m aa", "sa": "s aa", "ta": "t aa",
   "ga": "g aa", "pa": "p aa", "dha": "dh aa", "ni": "n iy",
 
@@ -98,6 +108,11 @@ export interface VoiceModelFiles {
   dictionary?: string;
   phonemes?: string;
   embeds?: Record<string, string>;
+  // Neural sub-models for high-quality synthesis
+  linguistic?: string;       // linguistic.onnx (dsmain)
+  dur?: string;              // dur.onnx (dsdur)
+  pitch?: string;            // pitch.onnx (dspitch)
+  pitchLinguistic?: string;  // dspitch/linguistic.onnx (separate encoder for pitch)
 }
 
 export interface ClientSvsParams {
@@ -130,25 +145,34 @@ export interface SvsEngineProgress {
 export class ClientSvsEngine {
   private acousticSession: any = null;
   private vocoderSession: any = null;
+  private linguisticSession: any = null;
+  private durSession: any = null;
+  private pitchSession: any = null;
+  private pitchLinguisticSession: any = null;
+  public hasNeuralPipeline = false;
   private dictionaryMap: Record<string, string[]> = {};
   private phonemeToId: Record<string, number> = {};
   private speakerEmbeds: Record<string, Float32Array> = {};
   private defaultEmbed: Float32Array | null = null;
   
   private sr = 44100;
-  private maxDepth = 1.0;
+  private maxDepth = 0.6;
   private isLoaded = false;
   private activeVoiceId = '';
   private lastLoadedFiles: VoiceModelFiles | null = null;
   private forceWasm = false;
+  private hasWarmedUp = false;
   public actualProvider: 'webgpu' | 'wasm' = 'wasm';
+  /** Tracks how many files were loaded from cache vs network in the last loadVoice call */
+  public lastLoadStats = { cached: 0, downloaded: 0 };
 
   constructor() {}
 
   /**
    * Helper to fetch file via Cache API with progress reporting.
+   * Returns { buffer, fromCache } so callers can distinguish cache hits from fresh downloads.
    */
-  private async fetchWithCache(url: string, onProgress: (pct: number) => void): Promise<ArrayBuffer> {
+  private async fetchWithCache(url: string, onProgress: (pct: number) => void): Promise<{ buffer: ArrayBuffer; fromCache: boolean }> {
     const cacheName = 'vocalido-models';
     
     try {
@@ -156,10 +180,10 @@ export class ClientSvsEngine {
       const cachedResponse = await cache.match(url);
       
       if (cachedResponse) {
-        console.log(`[ClientSvsEngine] Cache hit: ${url}`);
+        console.log(`[ClientSvsEngine] ⚡ Cache hit: ${url}`);
         const blob = await cachedResponse.blob();
         onProgress(100);
-        return await blob.arrayBuffer();
+        return { buffer: await blob.arrayBuffer(), fromCache: true };
       }
     } catch (e) {
       console.warn(`[ClientSvsEngine] Cache API not available/errored:`, e);
@@ -309,13 +333,13 @@ export class ClientSvsEngine {
           'Content-Length': receivedBytes.toString()
         }
       }));
-      console.log(`[ClientSvsEngine] Successfully stored model in Cache API: ${url}`);
+      console.log(`[ClientSvsEngine] ✅ Stored model in Cache API: ${url}`);
     } catch (e) {
       console.warn(`[ClientSvsEngine] Failed to save downloaded model to Cache API:`, e);
     }
 
     onProgress(100);
-    return allChunks.buffer;
+    return { buffer: allChunks.buffer, fromCache: false };
   }
 
   /**
@@ -376,9 +400,18 @@ export class ClientSvsEngine {
     files: VoiceModelFiles,
     onProgress: (state: SvsEngineProgress) => void
   ): Promise<void> {
-    if (this.isLoaded && this.activeVoiceId === voiceId && !this.forceWasm) {
-      onProgress({ stage: 'ready', message: 'Voice already loaded', progress: 100 });
+    // Skip re-loading only if we have the same voice AND neural models are
+    // already loaded (or the new files don't include them either).
+    const newHasNeuralFiles = !!(files.linguistic && files.dur && files.pitch);
+    const needsNeuralReload = newHasNeuralFiles && !this.hasNeuralPipeline;
+    
+    if (this.isLoaded && this.activeVoiceId === voiceId && !this.forceWasm && !needsNeuralReload) {
+      this.lastLoadStats = { cached: 1, downloaded: 0 }; // Signal all-cached to UI
+      onProgress({ stage: 'ready', message: '⚡ Voice already loaded', progress: 100 });
       return;
+    }
+    if (needsNeuralReload) {
+      console.log('[ClientSvsEngine] 🔄 Neural models now available — reloading voice to activate full pipeline');
     }
     this.lastLoadedFiles = files;
 
@@ -411,36 +444,50 @@ export class ClientSvsEngine {
       this.activeVoiceId = voiceId;
       this.speakerEmbeds = {};
       this.defaultEmbed = null;
+      this.lastLoadStats = { cached: 0, downloaded: 0 };
 
       // 1. Download files sequentially for stability on mobile connections
-      onProgress({ stage: 'downloading', message: 'Downloading acoustic model...', progress: 10 });
+      onProgress({ stage: 'downloading', message: 'Checking cache...', progress: 5 });
       
-      const acousticBuffer = await this.fetchWithCache(files.acoustic, (p) => {
+      let acousticFromCache = false;
+      const acousticResult = await this.fetchWithCache(files.acoustic, (p) => {
+        // p === 100 instantly on cache hit (before result is assigned)
+        if (p === 100) acousticFromCache = true;
         onProgress({
           stage: 'downloading',
-          message: `Downloading Acoustic Model: ${p}%`,
+          message: acousticFromCache 
+            ? `⚡ Loading acoustic model from cache...`
+            : `📥 Downloading Acoustic Model: ${p}%`,
           progress: Math.round(10 + p * 0.4) // 10% to 50%
         });
       });
+      if (acousticResult.fromCache) this.lastLoadStats.cached++; else this.lastLoadStats.downloaded++;
 
-      onProgress({ stage: 'downloading', message: 'Downloading vocoder model...', progress: 50 });
-
-      const vocoderBuffer = await this.fetchWithCache(files.vocoder, (p) => {
+      let vocoderFromCache = false;
+      const vocoderResult = await this.fetchWithCache(files.vocoder, (p) => {
+        if (p === 100) vocoderFromCache = true;
         onProgress({
           stage: 'downloading',
-          message: `Downloading Vocoder Model: ${p}%`,
+          message: vocoderFromCache
+            ? `⚡ Loading vocoder from cache...`
+            : `📥 Downloading Vocoder Model: ${p}%`,
           progress: Math.round(50 + p * 0.2) // 50% to 70%
         });
       });
+      if (vocoderResult.fromCache) this.lastLoadStats.cached++; else this.lastLoadStats.downloaded++;
+      
+      const acousticBuffer = acousticResult.buffer;
+      const vocoderBuffer = vocoderResult.buffer;
 
       // Download dictionary and phonemes with caching
-      onProgress({ stage: 'downloading', message: 'Downloading text assets...', progress: 75 });
+      onProgress({ stage: 'downloading', message: 'Loading text assets...', progress: 75 });
       
       if (files.dictionary) {
         try {
-          const dictBuf = await this.fetchWithCache(files.dictionary, () => {});
+          const dictResult = await this.fetchWithCache(files.dictionary, () => {});
+          if (dictResult.fromCache) this.lastLoadStats.cached++; else this.lastLoadStats.downloaded++;
           const decoder = new TextDecoder('utf-8');
-          const dictText = decoder.decode(dictBuf);
+          const dictText = decoder.decode(dictResult.buffer);
           this.parseDictionary(dictText);
         } catch (e: any) {
           console.warn('[ClientSvsEngine] Dictionary load failed:', e);
@@ -449,9 +496,10 @@ export class ClientSvsEngine {
 
       if (files.phonemes) {
         try {
-          const phBuf = await this.fetchWithCache(files.phonemes, () => {});
+          const phResult = await this.fetchWithCache(files.phonemes, () => {});
+          if (phResult.fromCache) this.lastLoadStats.cached++; else this.lastLoadStats.downloaded++;
           const decoder = new TextDecoder('utf-8');
-          const phText = decoder.decode(phBuf);
+          const phText = decoder.decode(phResult.buffer);
           this.parsePhonemes(phText);
         } catch (e: any) {
           console.warn('[ClientSvsEngine] Phonemes load failed:', e);
@@ -470,8 +518,9 @@ export class ClientSvsEngine {
             progress: Math.round(75 + (i / embedKeys.length) * 10)
           });
           try {
-            const buf = await this.fetchWithCache(url, () => {});
-            const embedArr = new Float32Array(buf);
+            const embedResult = await this.fetchWithCache(url, () => {});
+            if (embedResult.fromCache) this.lastLoadStats.cached++; else this.lastLoadStats.downloaded++;
+            const embedArr = new Float32Array(embedResult.buffer);
             this.speakerEmbeds[key.toLowerCase()] = embedArr;
             if (!this.defaultEmbed || key.toLowerCase() === 'root') {
               this.defaultEmbed = embedArr;
@@ -482,8 +531,66 @@ export class ClientSvsEngine {
         }
       }
 
+      // Download neural sub-models (linguistic, dur, pitch) if available
+      console.log('[ClientSvsEngine] 📦 Neural model files received:', {
+        linguistic: files.linguistic ? '✅ ' + files.linguistic.substring(0, 60) : '❌ missing',
+        dur: files.dur ? '✅ ' + files.dur.substring(0, 60) : '❌ missing',
+        pitch: files.pitch ? '✅ ' + files.pitch.substring(0, 60) : '❌ missing',
+        pitchLinguistic: files.pitchLinguistic ? '✅ ' + files.pitchLinguistic.substring(0, 60) : '❌ missing',
+      });
+      let linguisticBuffer: ArrayBuffer | null = null;
+      let durBuffer: ArrayBuffer | null = null;
+      let pitchBuffer: ArrayBuffer | null = null;
+      let pitchLinguisticBuffer: ArrayBuffer | null = null;
+
+      if (files.linguistic) {
+        try {
+          onProgress({ stage: 'downloading', message: 'Downloading linguistic model...', progress: 78 });
+          const lingResult = await this.fetchWithCache(files.linguistic, () => {});
+          if (lingResult.fromCache) this.lastLoadStats.cached++; else this.lastLoadStats.downloaded++;
+          linguisticBuffer = lingResult.buffer;
+        } catch (e: any) {
+          console.warn('[ClientSvsEngine] Linguistic model download failed:', e);
+        }
+      }
+
+      if (files.dur) {
+        try {
+          onProgress({ stage: 'downloading', message: 'Downloading duration model...', progress: 80 });
+          const durResult = await this.fetchWithCache(files.dur, () => {});
+          if (durResult.fromCache) this.lastLoadStats.cached++; else this.lastLoadStats.downloaded++;
+          durBuffer = durResult.buffer;
+        } catch (e: any) {
+          console.warn('[ClientSvsEngine] Duration model download failed:', e);
+        }
+      }
+
+      if (files.pitch) {
+        try {
+          onProgress({ stage: 'downloading', message: 'Downloading pitch model...', progress: 82 });
+          const pitchResult = await this.fetchWithCache(files.pitch, () => {});
+          if (pitchResult.fromCache) this.lastLoadStats.cached++; else this.lastLoadStats.downloaded++;
+          pitchBuffer = pitchResult.buffer;
+        } catch (e: any) {
+          console.warn('[ClientSvsEngine] Pitch model download failed:', e);
+        }
+      }
+
+      if (files.pitchLinguistic) {
+        try {
+          onProgress({ stage: 'downloading', message: 'Downloading pitch linguistic model...', progress: 83 });
+          const plResult = await this.fetchWithCache(files.pitchLinguistic, () => {});
+          if (plResult.fromCache) this.lastLoadStats.cached++; else this.lastLoadStats.downloaded++;
+          pitchLinguisticBuffer = plResult.buffer;
+        } catch (e: any) {
+          console.warn('[ClientSvsEngine] Pitch linguistic model download failed:', e);
+        }
+      }
+
       // 2. Initialize sessions
-      onProgress({ stage: 'initializing', message: 'Initializing Neural Engine...', progress: 85 });
+      const allCached = this.lastLoadStats.downloaded === 0;
+      console.log(`[ClientSvsEngine] Load stats: ${this.lastLoadStats.cached} cached, ${this.lastLoadStats.downloaded} downloaded`);
+      onProgress({ stage: 'initializing', message: allCached ? '⚡ Initializing Neural Engine (cached)...' : 'Initializing Neural Engine...', progress: 85 });
 
       const isMobile = typeof navigator !== 'undefined' && /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
       const hasWebGPU = typeof navigator !== 'undefined' && 'gpu' in navigator && !this.forceWasm;
@@ -516,6 +623,75 @@ export class ClientSvsEngine {
         this.vocoderSession = await ort.InferenceSession.create(new Uint8Array(vocoderBuffer), sessionOptions);
       }
 
+      // Initialize neural sub-model sessions (linguistic, dur, pitch)
+      this.linguisticSession = null;
+      this.durSession = null;
+      this.pitchSession = null;
+      this.pitchLinguisticSession = null;
+      this.hasNeuralPipeline = false;
+
+      // Optimize sub-models: Try WebGPU if available to offload from the WASM heap,
+      // and disable memory patterns/arenas to prevent WASM heap fragmentation and out-of-bounds errors.
+      const subModelOptions = {
+        executionProviders: hasWebGPU ? ['webgpu', 'wasm'] : ['wasm'],
+        enableMemPattern: false,
+        enableCpuMemArena: false,
+      };
+
+      // Report buffer status (visible in main thread via progress)
+      const bufferStatus = `ling=${linguisticBuffer ? linguisticBuffer.byteLength : 'null'}, dur=${durBuffer ? durBuffer.byteLength : 'null'}, pitch=${pitchBuffer ? pitchBuffer.byteLength : 'null'}, pitchLing=${pitchLinguisticBuffer ? pitchLinguisticBuffer.byteLength : 'null'}`;
+      sendWorkerDebug(`[ClientSvsEngine] 📦 Buffer status: ${bufferStatus}`);
+      onProgress({ stage: 'initializing', message: `Neural buffers: ${bufferStatus}`, progress: 86 });
+
+      if (linguisticBuffer) {
+        try {
+          this.linguisticSession = await ort.InferenceSession.create(new Uint8Array(linguisticBuffer), subModelOptions);
+          sendWorkerDebug(`[ClientSvsEngine] ✅ Linguistic session loaded. Inputs: ${this.linguisticSession.inputNames.join(', ')}`);
+        } catch (e: any) {
+          sendWorkerDebug(`[ClientSvsEngine] ❌ Failed to create linguistic session: ${e.message || e}`);
+          onProgress({ stage: 'initializing', message: `❌ Linguistic session FAILED: ${e.message?.substring(0, 80)}`, progress: 87 });
+        }
+      }
+
+      if (durBuffer) {
+        try {
+          this.durSession = await ort.InferenceSession.create(new Uint8Array(durBuffer), subModelOptions);
+          sendWorkerDebug(`[ClientSvsEngine] ✅ Duration session loaded. Inputs: ${this.durSession.inputNames.join(', ')}`);
+        } catch (e: any) {
+          sendWorkerDebug(`[ClientSvsEngine] ❌ Failed to create duration session: ${e.message || e}`);
+          onProgress({ stage: 'initializing', message: `❌ Duration session FAILED: ${e.message?.substring(0, 80)}`, progress: 87 });
+        }
+      }
+
+      if (pitchBuffer) {
+        try {
+          this.pitchSession = await ort.InferenceSession.create(new Uint8Array(pitchBuffer), subModelOptions);
+          sendWorkerDebug(`[ClientSvsEngine] ✅ Pitch session loaded. Inputs: ${this.pitchSession.inputNames.join(', ')}`);
+        } catch (e: any) {
+          sendWorkerDebug(`[ClientSvsEngine] ❌ Failed to create pitch session: ${e.message || e}`);
+          onProgress({ stage: 'initializing', message: `❌ Pitch session FAILED: ${e.message?.substring(0, 80)}`, progress: 87 });
+        }
+      }
+
+      if (pitchLinguisticBuffer) {
+        try {
+          this.pitchLinguisticSession = await ort.InferenceSession.create(new Uint8Array(pitchLinguisticBuffer), subModelOptions);
+          sendWorkerDebug(`[ClientSvsEngine] ✅ Pitch linguistic session loaded. Inputs: ${this.pitchLinguisticSession.inputNames.join(', ')}`);
+        } catch (e: any) {
+          sendWorkerDebug(`[ClientSvsEngine] ❌ Failed to create pitch linguistic session: ${e.message || e}`);
+          onProgress({ stage: 'initializing', message: `❌ PitchLinguistic session FAILED: ${e.message?.substring(0, 80)}`, progress: 87 });
+        }
+      }
+
+      if (this.linguisticSession && this.durSession && this.pitchSession) {
+        this.hasNeuralPipeline = true;
+        sendWorkerDebug('[ClientSvsEngine] ✅ Full neural pipeline loaded (linguistic + dur + pitch)');
+        onProgress({ stage: 'initializing', message: '✅ Neural pipeline ACTIVE!', progress: 88 });
+      } else {
+        sendWorkerDebug(`[ClientSvsEngine] ⚠️ Neural sub-models not fully available — using flat-F0 fallback pipeline. States: ling=${!!this.linguisticSession}, dur=${!!this.durSession}, pitch=${!!this.pitchSession}`);
+        onProgress({ stage: 'initializing', message: `⚠️ Neural FALLBACK: ling=${!!this.linguisticSession}, dur=${!!this.durSession}, pitch=${!!this.pitchSession}`, progress: 88 });
+      }
+
       console.log('[ClientSvsEngine] Inference Sessions loaded successfully!', {
         acousticInputs: this.acousticSession.inputNames,
         acousticOutputs: this.acousticSession.outputNames,
@@ -523,23 +699,50 @@ export class ClientSvsEngine {
         vocoderOutputs: this.vocoderSession.outputNames,
       });
 
-      // 3. Warmup Run: Run a tiny inference session to compile shaders / warm up thread pools in the background
-      try {
-        console.log('[ClientSvsEngine] Running dummy warmup inference to compile WebGPU shaders and warm up thread pool...');
-        onProgress({ stage: 'initializing', message: 'Warming up AI engine (compiling)...', progress: 95 });
-        this.isLoaded = true; // Set temporarily to true so synthesize() validation passes
-        
-        const dummyNotes: NoteData[] = [{ pitch: 60, duration: 0.1, startTime: 0, lyric: 'Do' }];
-        await this.synthesize(dummyNotes, { bpm: 120, steps: 4 });
-        
-        console.log('[ClientSvsEngine] Dummy warmup completed successfully!');
-      } catch (warmupErr) {
-        console.warn('[ClientSvsEngine] ⚠️ Warmup run failed/skipped:', warmupErr);
-      } finally {
+      // 3. Warmup Run: Quick acoustic+vocoder warmup only (skip neural pipeline)
+      if (!this.hasWarmedUp) {
+        try {
+          console.log('[ClientSvsEngine] Running warmup inference (acoustic+vocoder only)...');
+          onProgress({ stage: 'initializing', message: 'Compiling AI shaders (one-time)...', progress: 95 });
+          
+          // Minimal warmup: run acoustic+vocoder with tiny dummy tensors
+          // Do NOT run full synthesize() which can crash at low steps and trigger forceWasm=true
+          const dummyTokens = new ort.Tensor('int64', BigInt64Array.from([2n, 2n]), [1, 2]);
+          const dummyDur = new ort.Tensor('int64', BigInt64Array.from([2n, 2n]), [1, 2]);
+          const dummyF0 = new ort.Tensor('float32', new Float32Array(4).fill(440), [1, 4]);
+          const dummyGender = new ort.Tensor('float32', new Float32Array(4).fill(0), [1, 4]);
+          const dummyVel = new ort.Tensor('float32', new Float32Array(4).fill(1), [1, 4]);
+          const dummySpk = new ort.Tensor('float32', new Float32Array(4 * 256).fill(0), [1, 4, 256]);
+          const dummyDepth = new ort.Tensor('float32', new Float32Array([0.6]), []);
+          const dummySteps = new ort.Tensor('int64', BigInt64Array.from([4n]), []);
+          
+          const warmupInputs: Record<string, any> = {
+            tokens: dummyTokens, durations: dummyDur, f0: dummyF0,
+            gender: dummyGender, velocity: dummyVel,
+            spk_embed: dummySpk, depth: dummyDepth, steps: dummySteps,
+          };
+          const validInputs: Record<string, any> = {};
+          for (const name of (this.acousticSession.inputNames as string[])) {
+            if (warmupInputs[name] !== undefined) validInputs[name] = warmupInputs[name];
+          }
+          await this.acousticSession.run(validInputs);
+          console.log('[ClientSvsEngine] ✅ Acoustic warmup OK');
+          
+          this.hasWarmedUp = true;
+          this.isLoaded = true;
+          console.log('[ClientSvsEngine] ✅ Warmup completed!');
+        } catch (warmupErr) {
+          console.warn('[ClientSvsEngine] ⚠️ Warmup failed/skipped:', warmupErr);
+          this.hasWarmedUp = true; // Don't retry on failure
+          this.isLoaded = true;
+        }
+      } else {
+        console.log('[ClientSvsEngine] ⚡ Skipping warmup (already done this session)');
         this.isLoaded = true;
       }
 
-      onProgress({ stage: 'ready', message: 'On-device SVS ready', progress: 100 });
+      const readyMsg = allCached ? '⚡ SVS ready (loaded from cache)' : '✅ SVS ready';
+      onProgress({ stage: 'ready', message: readyMsg, progress: 100 });
       
     } catch (err: any) {
       console.error('[ClientSvsEngine] Initialization failed:', err);
@@ -808,8 +1011,339 @@ export class ClientSvsEngine {
 
   /**
    * Synthesizes a single chunk of notes.
+   * If the full neural pipeline is available (linguistic + dur + pitch),
+   * it runs the DiffSinger neural pipeline for natural F0 prediction.
+   * Otherwise, falls back to flat-F0 synthesis.
    */
   private async synthesizeChunk(
+    trackNotes: Array<{ start: number; dur: number; note: NoteData }>,
+    params?: ClientSvsParams
+  ): Promise<Float32Array | null> {
+    console.log(`[ClientSvsEngine] 🧠 synthesizeChunk: hasNeuralPipeline=${this.hasNeuralPipeline}, linguisticSession=${!!this.linguisticSession}, durSession=${!!this.durSession}, pitchSession=${!!this.pitchSession}`);
+    if (this.hasNeuralPipeline) {
+      try {
+        return await this.synthesizeChunkNeural(trackNotes, params);
+      } catch (e) {
+        console.warn('[ClientSvsEngine] ⚠️ Neural pipeline failed, falling back to flat-F0:', e);
+        return await this.synthesizeChunkFallback(trackNotes, params);
+      }
+    }
+    return await this.synthesizeChunkFallback(trackNotes, params);
+  }
+
+  /**
+   * Full DiffSinger neural pipeline: linguistic → dur → pitch → acoustic → vocoder.
+   * Faithfully mirrors the Python server's _synthesize_track_neural().
+   */
+  private async synthesizeChunkNeural(
+    trackNotes: Array<{ start: number; dur: number; note: NoteData }>,
+    params?: ClientSvsParams
+  ): Promise<Float32Array | null> {
+    const ort = getOrt();
+    const hopSize = 512;
+    const frameHz = this.sr / hopSize;
+    const SP_ID = this.phonemeToId['SP'] ?? 2;
+
+    // 1. Determine speaker embedding and its dimensionality
+    const selectedMode = (params?.vocal_mode || 'root').toLowerCase();
+    const spkEmbed = this.speakerEmbeds[selectedMode] || this.defaultEmbed || new Float32Array(256);
+    const embedDim = spkEmbed.length;
+
+    // 2. Build word-level and phoneme-level timing sequences
+    const allTok: number[] = [];
+    const allPhMidi: number[] = [];
+    const wordDiv: number[] = [];
+    const wordDurFr: number[] = [];
+    const noteMidi: number[] = [];
+    const noteRest: boolean[] = [];
+    const noteDurFr: number[] = [];
+
+    // Initial silence (AP)
+    const initialApSec = 0.02;
+    const initialApFr = Math.max(1, Math.round(initialApSec * frameHz));
+
+    allTok.push(SP_ID);
+    allPhMidi.push(0);
+    wordDiv.push(1);
+    wordDurFr.push(initialApFr);
+    noteMidi.push(0.0);
+    noteRest.push(true);
+    noteDurFr.push(initialApFr);
+
+    let prevEnd = -initialApSec;
+
+    for (let i = 0; i < trackNotes.length; i++) {
+      const { start, dur, note } = trackNotes[i];
+
+      // Insert silence gap between notes if needed
+      const gap = start - prevEnd;
+      if (gap > 0.02) {
+        const gapFr = Math.max(2, Math.round(gap * frameHz));
+        allTok.push(SP_ID);
+        allPhMidi.push(0);
+        wordDiv.push(1);
+        wordDurFr.push(gapFr);
+        noteMidi.push(0.0);
+        noteRest.push(true);
+        noteDurFr.push(gapFr);
+      }
+
+      const midi = note.midi ?? note.pitch ?? 60;
+      const lyric = (note.lyric || 'a').trim();
+      const durFr = Math.max(2, Math.round(dur * frameHz));
+      const isRest = ['', '-', '~', 'rest', '_'].includes(lyric);
+
+      const phonemes = this.lyricToPhonemes(lyric);
+      const ids = phonemes.map(p => this.phonemeToId[p] ?? SP_ID);
+      if (ids.length === 0) ids.push(SP_ID);
+
+      allTok.push(...ids);
+      allPhMidi.push(...ids.map(() => midi));
+      wordDiv.push(ids.length);
+      wordDurFr.push(durFr);
+      noteMidi.push(midi);
+      noteRest.push(isRest);
+      noteDurFr.push(durFr);
+
+      prevEnd = start + dur;
+    }
+
+    // Final silence
+    const finalSpFr = Math.max(2, Math.round(0.1 * frameHz));
+    allTok.push(SP_ID);
+    allPhMidi.push(0);
+    wordDiv.push(1);
+    wordDurFr.push(finalSpFr);
+    noteMidi.push(0.0);
+    noteRest.push(true);
+    noteDurFr.push(finalSpFr);
+
+    const nTok = allTok.length;
+    const nNotes = noteMidi.length;
+
+    // Pre-compute phoneme-level durations from word-level data
+    const phDur: number[] = [];
+    for (let wi = 0; wi < wordDiv.length; wi++) {
+      const wdur = wordDurFr[wi];
+      const wdiv = wordDiv[wi];
+      const per = Math.max(1, Math.floor(wdur / wdiv));
+      const rem = wdur - per * wdiv;
+      for (let k = 0; k < wdiv; k++) {
+        phDur.push(per + (k === wdiv - 1 && rem > 0 ? rem : 0));
+      }
+    }
+    const nFrames = phDur.reduce((a, b) => a + b, 0);
+
+    // Build tensors
+    const tokT = new ort.Tensor('int64', BigInt64Array.from(allTok.map(BigInt)), [1, nTok]);
+    const phMidiT = new ort.Tensor('int64', BigInt64Array.from(allPhMidi.map(BigInt)), [1, nTok]);
+    const wdT = new ort.Tensor('int64', BigInt64Array.from(wordDiv.map(BigInt)), [1, nNotes]);
+    const wdurT = new ort.Tensor('int64', BigInt64Array.from(wordDurFr.map(BigInt)), [1, nNotes]);
+    const nmT = new ort.Tensor('float32', Float32Array.from(noteMidi), [1, nNotes]);
+    const nrT = new ort.Tensor('bool', new Uint8Array(noteRest.map(v => v ? 1 : 0)), [1, nNotes]);
+    const ndT = new ort.Tensor('int64', BigInt64Array.from(noteDurFr.map(BigInt)), [1, nNotes]);
+    const pdT = new ort.Tensor('int64', BigInt64Array.from(phDur.map(BigInt)), [1, nTok]);
+
+    // 3. Run linguistic model
+    const lingInputNames: string[] = this.linguisticSession.inputNames;
+    let lingInputs: Record<string, any>;
+    if (lingInputNames.includes('ph_dur')) {
+      lingInputs = { tokens: tokT, ph_dur: pdT };
+    } else {
+      lingInputs = { tokens: tokT, word_div: wdT, word_dur: wdurT };
+    }
+    console.log(`[ClientSvsEngine] Running linguistic model: ${nTok} tokens`);
+    const lingOutputs = await this.linguisticSession.run(lingInputs);
+    const encTensor = lingOutputs.encoder_out || lingOutputs[this.linguisticSession.outputNames[0]];
+    const masksTensor = lingOutputs.x_masks || lingOutputs[this.linguisticSession.outputNames[1]];
+
+    // 4. Run duration model
+    // Build spk_embed tiled to [1, nTok, embedDim]
+    const skTokData = new Float32Array(nTok * embedDim);
+    for (let i = 0; i < nTok; i++) {
+      skTokData.set(spkEmbed, i * embedDim);
+    }
+    const skTokTensor = new ort.Tensor('float32', skTokData, [1, nTok, embedDim]);
+
+    const durInputNames: string[] = this.durSession.inputNames;
+    const durInputsAll: Record<string, any> = {
+      encoder_out: encTensor,
+      x_masks: masksTensor,
+      ph_midi: phMidiT,
+      spk_embed: skTokTensor,
+    };
+    const durInputsFiltered: Record<string, any> = {};
+    for (const name of durInputNames) {
+      if (durInputsAll[name] !== undefined) durInputsFiltered[name] = durInputsAll[name];
+    }
+    console.log(`[ClientSvsEngine] Running duration model`);
+    await this.durSession.run(durInputsFiltered);
+
+    // 5. Build F0 guide (MIDI scale per frame)
+    const f0MidiList: number[] = [];
+    let ti = 0;
+    let ni = 0;
+    for (let w = 0; w < wordDiv.length; w++) {
+      const wdivV = wordDiv[w];
+      const nr = ni < noteRest.length ? noteRest[ni] : true;
+      const nm = ni < noteMidi.length ? noteMidi[ni] : 0;
+      const midiVal = nr ? 0.0 : nm;
+      ni++;
+      for (let k = 0; k < wdivV; k++) {
+        const frames = phDur[ti + k];
+        for (let f = 0; f < frames; f++) {
+          f0MidiList.push(midiVal);
+        }
+      }
+      ti += wdivV;
+    }
+
+    // Pad or truncate to nFrames
+    while (f0MidiList.length < nFrames) f0MidiList.push(0.0);
+    const f0MidiArr = Float32Array.from(f0MidiList.slice(0, nFrames));
+    const f0GuideTensor = new ort.Tensor('float32', f0MidiArr, [1, nFrames]);
+
+    // 6. Run pitch model
+    // Use encoder_out from the MAIN linguistic model (matching server Python behavior).
+    // The server does NOT use a separate pitch linguistic model — it passes `enc`
+    // from the main linguistic directly to the pitch model.
+    const pitchEncTensor = encTensor;
+
+    // Build spk_embed tiled to [1, nFrames, embedDim]
+    const skFrData = new Float32Array(nFrames * embedDim);
+    for (let i = 0; i < nFrames; i++) {
+      skFrData.set(spkEmbed, i * embedDim);
+    }
+    const skFrTensor = new ort.Tensor('float32', skFrData, [1, nFrames, embedDim]);
+
+    const exprTensor = new ort.Tensor('float32', new Float32Array(nFrames).fill(1.0), [1, nFrames]);
+    const retakeTensor = new ort.Tensor('bool', new Uint8Array(nFrames).fill(1), [1, nFrames]);
+    const stepsVal = params?.steps ?? 20;
+    const stepsTensor = new ort.Tensor('int64', new BigInt64Array([BigInt(stepsVal)]), []);
+
+    const pitchInputNames: string[] = this.pitchSession.inputNames;
+    const pitchInputsAll: Record<string, any> = {
+      encoder_out: pitchEncTensor,
+      ph_dur: pdT,
+      note_midi: nmT,
+      note_rest: nrT,
+      note_dur: ndT,
+      pitch: f0GuideTensor,
+      expr: exprTensor,
+      retake: retakeTensor,
+      spk_embed: skFrTensor,
+      steps: stepsTensor,
+    };
+    const pitchInputsFiltered: Record<string, any> = {};
+    for (const name of pitchInputNames) {
+      if (pitchInputsAll[name] !== undefined) pitchInputsFiltered[name] = pitchInputsAll[name];
+    }
+    console.log(`[ClientSvsEngine] Running pitch model: ${nFrames} frames`);
+    const pitchOutputs = await this.pitchSession.run(pitchInputsFiltered);
+    const ppTensor = pitchOutputs[this.pitchSession.outputNames[0]];
+    const ppData = (ppTensor.data as Float32Array).slice();
+
+    // 7. Convert predicted pitch to Hz
+    // Detect scale: log F0, MIDI semitones, or raw Hz
+    let voicedSum = 0;
+    let voicedCount = 0;
+    for (let i = 0; i < ppData.length; i++) {
+      if (ppData[i] > 2.0) {
+        voicedSum += ppData[i];
+        voicedCount++;
+      }
+    }
+    const vMean = voicedCount > 0 ? voicedSum / voicedCount : 0.0;
+
+    const ppFinal = new Float32Array(ppData.length);
+    if (vMean > 0.1 && vMean < 10.0) {
+      // Log F0 → exp to Hz
+      console.log(`[ClientSvsEngine] Pitch output detected as log-F0 (mean=${vMean.toFixed(3)})`);
+      for (let i = 0; i < ppData.length; i++) {
+        ppFinal[i] = ppData[i] > 0 ? Math.exp(ppData[i]) : 0.0;
+      }
+    } else if (vMean >= 10.0 && vMean < 100.0) {
+      // MIDI semitones → Hz
+      console.log(`[ClientSvsEngine] Pitch output detected as MIDI semitones (mean=${vMean.toFixed(3)})`);
+      for (let i = 0; i < ppData.length; i++) {
+        ppFinal[i] = ppData[i] > 0 ? 440.0 * Math.pow(2.0, (ppData[i] - 69.0) / 12.0) : 0.0;
+      }
+    } else {
+      // Already Hz (or >= 100)
+      console.log(`[ClientSvsEngine] Pitch output detected as Hz (mean=${vMean.toFixed(3)})`);
+      for (let i = 0; i < ppData.length; i++) {
+        ppFinal[i] = ppData[i];
+      }
+    }
+
+    const f0Tensor = new ort.Tensor('float32', ppFinal, [1, nFrames]);
+
+    // 8. Run acoustic model with predicted F0
+    const no = nFrames;
+    const formantVal = params?.formant_shift ?? 0.0;
+    const genderVal = -formantVal / 6.0;
+    const speedVal = params?.speed ?? 1.0;
+    const depthVal = params?.depth ?? this.maxDepth;
+
+    const acousticInputNames = this.acousticSession.inputNames as string[];
+    const acousticInputs: Record<string, any> = {
+      tokens: tokT,
+      durations: pdT,
+      f0: f0Tensor,
+    };
+
+    if (acousticInputNames.includes('gender')) {
+      acousticInputs.gender = new ort.Tensor('float32', new Float32Array(no).fill(genderVal), [1, no]);
+    }
+    if (acousticInputNames.includes('velocity')) {
+      acousticInputs.velocity = new ort.Tensor('float32', new Float32Array(no).fill(speedVal), [1, no]);
+    }
+    if (acousticInputNames.includes('languages')) {
+      acousticInputs.languages = new ort.Tensor('int64', new BigInt64Array(nTok).fill(0n), [1, nTok]);
+    }
+    if (acousticInputNames.includes('breathiness')) {
+      const breathVal = (params?.breathiness ?? 0.0) / 100.0;
+      acousticInputs.breathiness = new ort.Tensor('float32', new Float32Array(no).fill(breathVal), [1, no]);
+    }
+    if (acousticInputNames.includes('voicing')) {
+      acousticInputs.voicing = new ort.Tensor('float32', new Float32Array(no).fill(0), [1, no]);
+    }
+    if (acousticInputNames.includes('tension')) {
+      acousticInputs.tension = new ort.Tensor('float32', new Float32Array(no).fill(0), [1, no]);
+    }
+    if (acousticInputNames.includes('spk_embed')) {
+      const spkData = new Float32Array(no * embedDim);
+      for (let i = 0; i < no; i++) {
+        spkData.set(spkEmbed, i * embedDim);
+      }
+      acousticInputs.spk_embed = new ort.Tensor('float32', spkData, [1, no, embedDim]);
+    }
+    if (acousticInputNames.includes('depth')) {
+      acousticInputs.depth = new ort.Tensor('float32', new Float32Array([depthVal]), []);
+    }
+    if (acousticInputNames.includes('steps')) {
+      acousticInputs.steps = stepsTensor;
+    }
+
+    console.log(`[ClientSvsEngine] Running acoustic session (neural F0): ${no} frames`);
+    const acousticOutputs = await this.acousticSession.run(acousticInputs);
+    const melTensor = acousticOutputs.mel || acousticOutputs[this.acousticSession.outputNames[0]];
+
+    // 9. Run vocoder
+    console.log(`[ClientSvsEngine] Running vocoder session`);
+    const vocOutputs = await this.vocoderSession.run({ mel: melTensor, f0: f0Tensor });
+    const waveformTensor = vocOutputs.waveform || vocOutputs[this.vocoderSession.outputNames[0]];
+    let audio = (waveformTensor.data as Float32Array).slice();
+
+    // Post-processing
+    audio = this.applyPostProcessing(audio, params);
+    return audio;
+  }
+
+  /**
+   * Fallback flat-F0 synthesis (original approach: no neural pitch prediction).
+   */
+  private async synthesizeChunkFallback(
     trackNotes: Array<{ start: number; dur: number; note: NoteData }>,
     params?: ClientSvsParams
   ): Promise<Float32Array | null> {
@@ -962,7 +1496,7 @@ export class ClientSvsEngine {
     }
 
     try {
-      console.log(`[ClientSvsEngine] Running acoustic session: ${nFrames} frames`);
+      console.log(`[ClientSvsEngine] Running acoustic session (flat F0): ${nFrames} frames`);
       const acousticOutputs = await this.acousticSession.run(acousticInputs);
       const melTensor = acousticOutputs.mel || acousticOutputs[this.acousticSession.outputNames[0]];
 
@@ -977,57 +1511,66 @@ export class ClientSvsEngine {
 
       let audio = (waveformTensor.data as Float32Array).slice();
 
-      // Apply warmth and brightness EQ
-      const warmth = params?.warmth ?? 0.0;
-      const brightness = params?.brightness ?? 0.0;
-
-      if (Math.abs(warmth) > 0.05) {
-        const lowBand = this.applyBiquadFilter(audio, this.sr, 300, 'lowpass');
-        for (let i = 0; i < audio.length; i++) {
-          audio[i] += lowBand[i] * warmth * 0.5;
-        }
-      }
-
-      if (Math.abs(brightness) > 0.05) {
-        const hiBand = this.applyBiquadFilter(audio, this.sr, 4000, 'highpass');
-        for (let i = 0; i < audio.length; i++) {
-          audio[i] += hiBand[i] * brightness * 0.5;
-        }
-      }
-
-      // Apply simple delay-based reverb
-      const reverb = params?.reverb ?? 0.0;
-      if (reverb > 0.01) {
-        const delays = [0.030, 0.037, 0.041, 0.043].map(d => Math.round(this.sr * d));
-        const reverbAudio = new Float32Array(audio);
-        for (const d of delays) {
-          if (d < audio.length) {
-            for (let i = d; i < audio.length; i++) {
-              reverbAudio[i] += audio[i - d] * reverb * 0.3;
-            }
-          }
-        }
-        audio = reverbAudio;
-      }
-
-      // Avoid clipping, but do not boost soft audio to avoid noise floors
-      let peak = 0;
-      for (let i = 0; i < audio.length; i++) {
-        const absVal = Math.abs(audio[i]);
-        if (absVal > peak) peak = absVal;
-      }
-      if (peak > 1.0) {
-        for (let i = 0; i < audio.length; i++) {
-          audio[i] = (audio[i] / peak) * 0.95;
-        }
-      }
-
+      // Post-processing
+      audio = this.applyPostProcessing(audio, params);
       return audio;
 
     } catch (e) {
       console.error('[ClientSvsEngine] Inference chunk error:', e);
       return null;
     }
+  }
+
+  /**
+   * Shared post-processing: EQ, reverb, and normalization.
+   */
+  private applyPostProcessing(audio: Float32Array, params?: ClientSvsParams): Float32Array {
+    // Apply warmth and brightness EQ
+    const warmth = params?.warmth ?? 0.0;
+    const brightness = params?.brightness ?? 0.0;
+
+    if (Math.abs(warmth) > 0.05) {
+      const lowBand = this.applyBiquadFilter(audio, this.sr, 300, 'lowpass');
+      for (let i = 0; i < audio.length; i++) {
+        audio[i] += lowBand[i] * warmth * 0.5;
+      }
+    }
+
+    if (Math.abs(brightness) > 0.05) {
+      const hiBand = this.applyBiquadFilter(audio, this.sr, 4000, 'highpass');
+      for (let i = 0; i < audio.length; i++) {
+        audio[i] += hiBand[i] * brightness * 0.5;
+      }
+    }
+
+    // Apply simple delay-based reverb
+    const reverb = params?.reverb ?? 0.0;
+    if (reverb > 0.01) {
+      const delays = [0.030, 0.037, 0.041, 0.043].map(d => Math.round(this.sr * d));
+      const reverbAudio = new Float32Array(audio);
+      for (const d of delays) {
+        if (d < audio.length) {
+          for (let i = d; i < audio.length; i++) {
+            reverbAudio[i] += audio[i - d] * reverb * 0.3;
+          }
+        }
+      }
+      audio = reverbAudio;
+    }
+
+    // Avoid clipping, but do not boost soft audio to avoid noise floors
+    let peak = 0;
+    for (let i = 0; i < audio.length; i++) {
+      const absVal = Math.abs(audio[i]);
+      if (absVal > peak) peak = absVal;
+    }
+    if (peak > 1.0) {
+      for (let i = 0; i < audio.length; i++) {
+        audio[i] = (audio[i] / peak) * 0.95;
+      }
+    }
+
+    return audio;
   }
 
   /**
@@ -1163,6 +1706,7 @@ export class ClientSvsEngineProxy {
   private activeRejecter: ((reason: any) => void) | null = null;
   private activeProgress: ((state: SvsEngineProgress) => void) | null = null;
   public actualProvider: 'webgpu' | 'wasm' = 'wasm';
+  public lastLoadStats = { cached: 0, downloaded: 0 };
 
   private ensureWorker() {
     if (!this.worker && typeof window !== 'undefined') {
@@ -1184,12 +1728,19 @@ export class ClientSvsEngineProxy {
       this.worker.onmessage = (e) => {
         const { type, error, payload } = e.data;
         
-        if (type === 'loadProgress' && this.activeProgress) {
+        if (type === 'workerDebug') {
+          console.log('[ClientSvsEngineProxy] 🔧', payload);
+        } else if (type === 'loadProgress' && this.activeProgress) {
           this.activeProgress(payload);
         } else if (type === 'loadSuccess') {
           if (payload && payload.provider) {
             this.actualProvider = payload.provider;
           }
+          if (payload && payload.loadStats) {
+            this.lastLoadStats = payload.loadStats;
+          }
+          const neuralStatus = payload?.hasNeuralPipeline ? '✅ NEURAL PIPELINE ACTIVE' : '⚠️ FLAT F0 FALLBACK';
+          console.log(`[ClientSvsEngineProxy] Voice loaded: provider=${payload?.provider}, ${neuralStatus}`);
           if (this.activeResolver) {
             this.activeResolver(undefined);
             this.activeResolver = null;

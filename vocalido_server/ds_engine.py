@@ -54,7 +54,7 @@ SOLFEGE_MAP = {
     "fa":  "f aa",   "fah": "f aa",
     "sol": "s ow l", "soh": "s ow",
     "la":  "l aa",   "lah": "l aa",
-    "ti":  "th iy",   "si":  "s iy",
+    "ti":  "t iy",   "si":  "s iy",
     # Chromatic SHARP side
     "di":  "d iy",   # C#  (all systems)
     "ri":  "r iy",   # D#
@@ -77,7 +77,7 @@ SOLFEGE_MAP = {
     "ah":  "aa",     "oh":  "ow",    "ee":  "iy",
     # Kodaly single-letter
     "d": "d ow", "r": "r ey", "m": "m iy",
-    "f": "f aa", "s": "s ow l", "l": "l aa", "t": "th iy",
+    "f": "f aa", "s": "s ow l", "l": "l aa", "t": "t iy",
     # Kodaly flat & Sargam missing syllables
     "ma": "m aa", "sa": "s aa", "ta": "t aa",
     "ga": "g aa", "pa": "p aa", "dha": "dh aa", "ni": "n iy",

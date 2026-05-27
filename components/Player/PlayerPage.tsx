@@ -27,6 +27,7 @@ import { nimoBrain } from '../../lib/NimoBrain';
 import { useAuth } from '../../lib/useAuth';
 import { clientSvsEngine } from '../../lib/ClientSvsEngine';
 import { AudioBlobCache } from '../../lib/AudioBlobCache';
+import { vocalidoRenderService } from '../../lib/VocalidoRenderService';
 
 export type PlayerCardType = 'score' | 'pianoroll' | 'trackview' | 'memochord' | 'practice' | 'vocalido';
 
@@ -311,7 +312,7 @@ const PlayerPage: React.FC<{
         return saved;
       }
     } catch (e) {}
-    return 'browser-ai';
+    return 'vocalido';
   });
 
   const handleSvsEngineChange = (engine: 'vocalido' | 'browser-ai') => {
@@ -326,7 +327,7 @@ const PlayerPage: React.FC<{
       const saved = localStorage.getItem('vocalido_svs_steps');
       if (saved) {
         const val = parseInt(saved, 10);
-        if ([6, 10, 20].includes(val)) return val;
+        if ([6, 10, 20, 40].includes(val)) return val;
       }
     } catch (e) {}
     
@@ -342,10 +343,10 @@ const PlayerPage: React.FC<{
       
       const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
       if (isMobile && !isLocalIp) {
-        return 10; // Default to Balanced (10 steps) on mobile for optimal speed/quality
+        return 20; // Default to HD (20 steps) on mobile for good quality
       }
     }
-    return 20; // Default to HD (20 steps) on desktop/local
+    return 40; // Default to Studio (40 steps) on desktop/local
   });
 
   const handleSvsStepsChange = (steps: number) => {
@@ -381,7 +382,62 @@ const PlayerPage: React.FC<{
   const [renderTimer, setRenderTimer] = useState(0);
   const [renderError, setRenderError] = useState<string | null>(null);
   const [renderStatusText, setRenderStatusText] = useState('');
-  const renderAbortControllerRef = useRef<AbortController | null>(null);
+
+  // Subscribe to background rendering service updates
+  useEffect(() => {
+    const handleStateChange = (state: any) => {
+      if (state.activeSongId === song?.id || !state.activeSongId) {
+        setIsRenderingVocal(state.isRendering);
+        setRenderProgress(state.progress);
+        setRenderTimer(state.timer);
+        setRenderStatusText(state.statusText);
+        setRenderError(state.error);
+        if (state.activeRenderKey) {
+          setActiveRenderKey(state.activeRenderKey);
+        }
+      }
+    };
+    vocalidoRenderService.subscribe(handleStateChange);
+    return () => {
+      vocalidoRenderService.unsubscribe(handleStateChange);
+    };
+  }, [song?.id]);
+
+  // Synchronize component states when rendering completes
+  const prevIsRenderingRef = useRef(false);
+  useEffect(() => {
+    if (prevIsRenderingRef.current && !isRenderingVocal) {
+      // Synthesis finished
+      const activeKey = vocalidoRenderService.activeRenderKey || localStorage.getItem(`active_render_key_${song?.id}`);
+      if (activeKey && !renderError) {
+        try {
+          setActiveRenderKey(activeKey);
+          
+          const localHist = localStorage.getItem(`memo_render_history_${song?.id}`);
+          if (localHist) {
+            const parsed = JSON.parse(localHist);
+            if (Array.isArray(parsed)) {
+              const mapped = parsed.map((h: any) => ({
+                ...h,
+                lyricMode: mapToLyricMode(h.lyricMode),
+              }));
+              restoreCachedBlobs(song!.id, mapped).then(setRenderHistory);
+            }
+          }
+          
+          const savedTracks = localStorage.getItem(`tracks_state_${song?.id}`);
+          if (savedTracks) {
+            setTracks(JSON.parse(savedTracks));
+          }
+          
+          setActiveCard('score');
+        } catch (e) {
+          console.warn('[PlayerPage] Failed to sync completed render state:', e);
+        }
+      }
+    }
+    prevIsRenderingRef.current = isRenderingVocal;
+  }, [isRenderingVocal, renderError, song?.id, setTracks]);
 
   const [isModelLoading, setIsModelLoading] = useState(false);
   const [modelLoadProgress, setModelLoadProgress] = useState(0);
@@ -577,7 +633,7 @@ const PlayerPage: React.FC<{
       try {
         setIsModelLoading(true);
         setHideLoadBanner(false); // Reset dismissal on model change
-        setModelLoadStatus('Checking cache / downloading model...');
+        setModelLoadStatus('⚡ Checking local cache...');
         setModelLoadProgress(0);
 
         const modelFiles = {
@@ -590,7 +646,12 @@ const PlayerPage: React.FC<{
               acc[key] = getVoiceModelUrl(selectedVoice.model_files.embeds[key]);
             }
             return acc;
-          }, {} as Record<string, string>) : undefined
+          }, {} as Record<string, string>) : undefined,
+          // Neural sub-models for full DiffSinger pipeline
+          linguistic: selectedVoice.model_files.linguistic ? getVoiceModelUrl(selectedVoice.model_files.linguistic) : undefined,
+          dur: selectedVoice.model_files.dur ? getVoiceModelUrl(selectedVoice.model_files.dur) : undefined,
+          pitch: selectedVoice.model_files.pitch ? getVoiceModelUrl(selectedVoice.model_files.pitch) : undefined,
+          pitchLinguistic: selectedVoice.model_files.pitchLinguistic ? getVoiceModelUrl(selectedVoice.model_files.pitchLinguistic) : undefined,
         };
 
         await clientSvsEngine.loadVoice(selectedVoice.id, modelFiles, (prog) => {
@@ -599,6 +660,11 @@ const PlayerPage: React.FC<{
             setModelLoadProgress(prog.progress);
             if (prog.stage === 'ready') {
               setIsModelLoading(false);
+              // Auto-hide banner faster if everything was from cache
+              const stats = clientSvsEngine.lastLoadStats;
+              if (stats.downloaded === 0 && stats.cached > 0) {
+                setTimeout(() => setHideLoadBanner(true), 1200);
+              }
             }
           }
         });
@@ -653,6 +719,7 @@ const PlayerPage: React.FC<{
   }, [renderHistory, song?.id]);
   // Vocalido Setup modal
   const [showVocalidoSetup, setShowVocalidoSetup] = useState(false);
+  const [cacheClearedText, setCacheClearedText] = useState(false);
   const [showStemControls, setShowStemControls] = useState<boolean>(() => {
     try {
       return localStorage.getItem('memo_show_stem_controls') === 'true';
@@ -693,13 +760,17 @@ const PlayerPage: React.FC<{
   const [expandedStemTrack, setExpandedStemTrack] = useState<string | null>(null);
 
   const handleTogglePlay = async () => {
-    if (isAudioLoading) return;
+    console.log("[PlayerPage] ▶️ handleTogglePlay ENTERED. isAudioLoading:", isAudioLoading);
+    if (isAudioLoading) {
+      console.warn("[PlayerPage] ⛔ handleTogglePlay BLOCKED by isAudioLoading=true");
+      return;
+    }
     
-    // 🔊 CRITICAL: Start/Resume Tone.js context and unlock HTMLAudio elements in the synchronous user gesture stack immediately
+    // 🔊 CRITICAL: Start/Resume Tone.js context SYNCHRONOUSLY in user gesture
     try {
       const context = Tone.getContext();
+      console.log("[PlayerPage] AudioContext state BEFORE resume:", context.state);
       if (context.state !== 'running') {
-        console.log("[PlayerPage] [Direct Gesture] Resuming Tone Context...");
         Tone.start();
         context.resume();
       }
@@ -715,11 +786,11 @@ const PlayerPage: React.FC<{
     }
 
     const tState = musicEngine.transportState;
-    console.log("[PlayerPage] handleTogglePlay clicked. current transportState:", tState);
+    console.log("[PlayerPage] Transport state:", tState, "| isSongLoaded:", musicEngine.isSongLoaded, "| lastLoadedNotes:", musicEngine.lastLoadedNotes.length, "| parsedData.notes:", parsedData.notes.length);
 
     // 1. If playing, pause immediately (fully synchronous)
     if (tState === 'started') {
-      console.log("[PlayerPage] Pausing playback...");
+      console.log("[PlayerPage] ⏸ Pausing playback...");
       musicEngine.pause();
       setIsPlaying(false);
       setIsAudioLoading(false);
@@ -728,7 +799,6 @@ const PlayerPage: React.FC<{
 
     // 2. If paused, resume immediately (fully synchronous)
     if (tState === 'paused') {
-      // If we are at or near the end of the song, reset to 0 before resuming
       const currentPos = musicEngine.transportSeconds;
       if (currentPos >= totalDurationSeconds - 0.2) {
         console.log("[PlayerPage] Near end of song, resetting to 0 before play");
@@ -737,74 +807,107 @@ const PlayerPage: React.FC<{
         musicEngine.currentNoteTime = 0;
       }
 
-      console.log("[PlayerPage] Resuming playback synchronously...");
-      musicEngine.resume(); // Called synchronously (no await) for Safari compliance!
+      console.log("[PlayerPage] ▶️ Resuming playback synchronously...");
+      musicEngine.resume();
       setIsPlaying(true);
       setIsAudioLoading(false);
       return;
     }
 
-    // 3. If stopped, check if the song is already loaded
-    const updatedTracks = tracks.map(t => ({
+    // 3. Guard: no notes to play
+    if (!parsedData.notes || parsedData.notes.length === 0) {
+      console.error("[PlayerPage] ❌ Cannot play: parsedData.notes is EMPTY! musicXml length:", musicXml?.length || 0);
+      return;
+    }
+
+    // 4. Build updated track list — if tracks are empty, generate them inline (race condition fix)
+    let effectiveTracks = tracks;
+    if (effectiveTracks.length === 0 && parsedData.partNames && Object.keys(parsedData.partNames).length > 0) {
+      console.warn("[PlayerPage] ⚠️ tracks state is EMPTY! Auto-generating tracks inline from parsedData.partNames...");
+      const partIds = Object.keys(parsedData.partNames);
+      effectiveTracks = partIds.map((id, index) => ({
+        id,
+        name: parsedData.partNames[id] || `Track ${index + 1}`,
+        volume: 0.8,
+        pan: 0,
+        isMuted: false,
+        isSolo: false,
+        mode: 'instrument' as 'instrument' | 'vocal',
+        instrument: 'Piano',
+        lyricMode: 'British Fixed Doh' as any,
+        engineId: activeEngineId,
+        effects: Array(6).fill(null),
+        pluginSettings: undefined
+      }));
+      // Also update the state so future clicks don't need this fallback
+      setTracks(effectiveTracks as any);
+    }
+
+    const updatedTracks = effectiveTracks.map(t => ({
       ...t,
       mode: (mutedVocalTracks.has(t.id) ? 'instrument' : t.mode) as 'instrument' | 'vocal'
     }));
     
-    // Set BPM before loading so countIn and synced players align
+    console.log("[PlayerPage] updatedTracks:", updatedTracks.length, updatedTracks.map(t => `${t.id}:${t.mode}`).join(', '));
     musicEngine.setBpm(currentBpm);
 
+    // 5. If song is already loaded, start immediately (sync path)
     if (musicEngine.isSongLoaded && musicEngine.lastLoadedNotes.length > 0) {
-      console.log("[PlayerPage] Song already loaded in MusicEngine. Starting playback synchronously...");
+      console.log("[PlayerPage] ▶️ Song already loaded. Starting immediately...");
       musicEngine.updateTrackStates(updatedTracks);
-      musicEngine.start(); // Call synchronously!
-      console.log("[PlayerPage] MusicEngine started successfully!");
+      musicEngine.start();
       setIsPlaying(true);
       setIsAudioLoading(false);
+      console.log("[PlayerPage] ✅ Started (cached path). Transport:", musicEngine.transportState);
       return;
     }
 
-    // 4. ONLY if the song is NOT loaded yet, we load and start asynchronously
+    // 6. Async path: load then start
+    console.log("[PlayerPage] 📥 Song not loaded yet. Entering async load path...");
     setIsAudioLoading(true);
 
-    // Safety timeout: Reset isAudioLoading after 15 seconds no matter what
     const safetyTimeoutId = setTimeout(() => {
-      setIsAudioLoading(prev => {
-        if (prev) {
-          console.warn("[PlayerPage] ⚠️ Safety timeout: force-resetting isAudioLoading after 15s");
-          return false;
-        }
-        return prev;
-      });
+      console.warn("[PlayerPage] ⚠️ Safety timeout (15s): force-resetting isAudioLoading");
+      setIsAudioLoading(false);
     }, 15000);
 
     try {
+      // Step A: Ensure AudioContext is running
       try {
-        console.log("[PlayerPage] Resuming Audio Context with 1s timeout...");
+        console.log("[PlayerPage] Step A: Resuming AudioContext...");
         await Promise.race([
           Promise.all([
             Tone.start(),
             Tone.getContext().state !== 'running' ? Tone.getContext().resume() : Promise.resolve()
           ]),
-          new Promise((resolve) => setTimeout(resolve, 1000))
+          new Promise((resolve) => setTimeout(resolve, 2000))
         ]);
-        console.log("[PlayerPage] Audio Context state now:", Tone.getContext().state);
+        console.log("[PlayerPage] Step A done. AudioContext state:", Tone.getContext().state);
       } catch (audioCtxError) {
-        console.warn("[PlayerPage] Audio context initialization failed:", audioCtxError);
+        console.warn("[PlayerPage] Step A failed (non-fatal):", audioCtxError);
       }
       
+      // Step B: Set volume
       musicEngine.setMasterVolume(masterVolume);
-      
-      console.log("[PlayerPage] Loading song in MusicEngine (first time)...");
+
+      // Step C: Load song
+      console.log("[PlayerPage] Step C: Loading song...", { notes: parsedData.notes.length, tracks: updatedTracks.length, transpose, isMetronomeOn });
       await musicEngine.loadSong(parsedData.notes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn);
-      console.log("[PlayerPage] Song loaded! Starting MusicEngine...");
+      console.log("[PlayerPage] Step C done. isSongLoaded:", musicEngine.isSongLoaded, "currentPart exists:", !!musicEngine.isSongLoaded);
+
+      // Step D: Start playback
+      console.log("[PlayerPage] Step D: Starting MusicEngine...");
       musicEngine.start();
-      console.log("[PlayerPage] MusicEngine started successfully!");
+      console.log("[PlayerPage] Step D done. Transport state:", musicEngine.transportState);
+      
       setIsPlaying(true);
+      console.log("[PlayerPage] ✅ Playback started successfully!");
     } catch (e) {
-      console.error('Playback Start Failed:', e);
+      console.error("[PlayerPage] ❌ Playback Start Failed:", e);
     } finally {
       clearTimeout(safetyTimeoutId);
       setIsAudioLoading(false);
+      console.log("[PlayerPage] 🏁 handleTogglePlay finished. isPlaying will be:", musicEngine.transportState === 'started');
     }
   };
 
@@ -1159,7 +1262,7 @@ const PlayerPage: React.FC<{
     
     try {
       const activeRenderingSong = localStorage.getItem('vocalido_rendering_active_song');
-      if (activeRenderingSong === song.id) {
+      if (activeRenderingSong === song.id && !vocalidoRenderService.getState().isRendering) {
         // Clear it first to prevent infinite loop
         localStorage.removeItem('vocalido_rendering_active_song');
         console.log(`[Vocalido] 🔄 Interrupted render detected for song "${song.id}". Resuming rendering...`);
@@ -1201,6 +1304,26 @@ const PlayerPage: React.FC<{
       const fixedUrl = fixAudioUrl(cached.audioUrl);
       const stemsWithBust = (cached.savedStemUrls || []).map((sUrl: string) => fixAudioUrl(sUrl));
       const primaryTrackId = tracks.find(t => t.mode === 'vocal')?.id || tracks[0]?.id || 'P1';
+
+      const origBpm = (parsedData?.metadata as any)?.bpm || song?.bpm || 120;
+      const renderBpm = Math.round(((origBpm * cached.bpmPercent) / 100) * 10) / 10;
+
+      // Check if vocal layer is already loaded in musicEngine
+      const hasVocalLoaded = musicEngine.hasVocalLayer(primaryTrackId);
+      
+      if (hasVocalLoaded && musicEngine.isSongLoaded) {
+        console.log('[PlayerPage] Vocal layer already loaded in MusicEngine. Skipping reload.');
+        setActiveRenderKey(savedKey);
+        if (cached.engineId) setActiveEngineId(cached.engineId);
+        if (cached.voiceName && cached.voiceName !== 'Auto') {
+          setStoredSinger(cached.voiceName);
+        }
+        const updatedTracks = tracks.map((t: any) => 
+          t.id === primaryTrackId ? { ...t, mode: 'vocal' } as TrackState : t
+        );
+        setTracks(updatedTracks);
+        return;
+      }
 
       // Load vocal layer in background
       setIsAudioLoading(true);
@@ -1473,7 +1596,11 @@ const PlayerPage: React.FC<{
                 root: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dsmain/embeds/acoustic/Root.emb',
                 fragrance: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dsmain/embeds/acoustic/Fragrance.emb',
                 nectar: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dsmain/embeds/acoustic/Nectar.emb'
-              }
+              },
+              linguistic: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dsmain/linguistic.onnx',
+              dur: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dsdur/dur.onnx',
+              pitch: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dspitch/pitch.onnx',
+              pitchLinguistic: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dspitch/linguistic.onnx'
             }
           }]);
           setActiveEngineId('lotte_v_ai_dol');
@@ -1662,15 +1789,26 @@ const PlayerPage: React.FC<{
   });
 
   const cancelVocalSynthesis = () => {
-    if (renderAbortControllerRef.current) {
-      console.log('[Vocalido] 🛑 Cancelling synthesis...');
-      renderAbortControllerRef.current.abort();
-      renderAbortControllerRef.current = null;
+    vocalidoRenderService.cancelRender();
+  };
+
+  const handleClearCache = async () => {
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && (key.startsWith('memo_render_history_') || key.startsWith('active_render_key_'))) {
+          localStorage.removeItem(key);
+          i--;
+        }
+      }
+      await AudioBlobCache.clearAllVocalRenders();
+      setRenderHistory([]);
+      setActiveRenderKey(null);
+      setCacheClearedText(true);
+      setTimeout(() => setCacheClearedText(false), 2000);
+    } catch (e) {
+      console.error('Failed to clear cache:', e);
     }
-    setIsRenderingVocal(false);
-    setRenderProgress(0);
-    setRenderTimer(0);
-    setRenderStatusText('');
   };
 
   const triggerVocalSynthesis = async (forceRender: boolean = false) => {
@@ -1680,661 +1818,39 @@ const PlayerPage: React.FC<{
     if (!parsedData.notes.length) { console.warn('[Vocalido] ⛔ Render blocked: no notes parsed'); return; }
     if (tracks.length === 0) { console.warn('[Vocalido] ⛔ Render blocked: no tracks'); return; }
 
-    setRenderError(null);
-    setIsRenderingVocal(true);
-    setRenderProgress(0);
-    setRenderTimer(0);
-    setRenderStatusText('');
-
-    try {
-      if (song?.id) {
-        localStorage.setItem('vocalido_rendering_active_song', song.id);
-      }
-    } catch (e) {}
-
-    // Pre-unlock the HTMLAudioElement synchronously inside user click gesture
     const primaryTrackId = tracks.find(t => t.mode === 'vocal')?.id || tracks[0]?.id || 'P1';
-    musicEngine.unlockVocalAudio(primaryTrackId);
-
-    const wasPlaying = isPlaying || musicEngine.transportState === 'started';
-    const savedPos = musicEngine.transportSeconds;
-    if (wasPlaying) {
-      musicEngine.pause();
-      setIsPlaying(false);
+    let trackEngineId = tracks.find(t => t.id === primaryTrackId)?.engineId || activeEngineId;
+    if (trackEngineId === 'default' || !voiceEngines.some(v => v.id === trackEngineId)) {
+      trackEngineId = activeEngineId;
+    }
+    if (!voiceEngines.some(v => v.id === trackEngineId) && voiceEngines.length > 0) {
+      trackEngineId = voiceEngines[0].id;
     }
 
-    // Declare these BEFORE try so they are accessible in catch/finally
-    const controller = new AbortController();
-    renderAbortControllerRef.current = controller;
-    const timeoutId = setTimeout(() => {
-      if (renderAbortControllerRef.current === controller) {
-        controller.abort();
-      }
-    }, 90000);
-    const noteCount = parsedData.notes.filter(n => n.trackId === primaryTrackId).length;
-    const hasGpu = typeof navigator !== 'undefined' && !!(navigator as any).gpu;
-    let estimatedDuration = 10;
-    if (svsEngine === 'browser-ai') {
-      estimatedDuration = hasGpu ? (4 + noteCount * 0.05) : (8 + noteCount * 0.4);
-    } else {
-      estimatedDuration = 6 + noteCount * 0.08;
-    }
-    estimatedDuration = Math.max(5, Math.min(180, estimatedDuration));
-
-    const startTime = Date.now();
-    const progressInterval = setInterval(() => {
-      const elapsed = (Date.now() - startTime) / 1000;
-      let simulatedProgress = 0;
-      if (elapsed < estimatedDuration) {
-        simulatedProgress = (elapsed / estimatedDuration) * 95;
-      } else {
-        const extra = elapsed - estimatedDuration;
-        simulatedProgress = 95 + (4.9 * (1 - Math.exp(-extra / 30)));
-      }
-      setRenderProgress(Math.min(99.9, simulatedProgress));
-      setRenderTimer(Math.round(elapsed));
-    }, 250);
-    const cleanupLocal = () => {
-      clearInterval(progressInterval);
-      clearTimeout(timeoutId);
-      if (renderAbortControllerRef.current === controller) {
-        renderAbortControllerRef.current = null;
-      }
-    };
-
-    try {
-      const stepMap: Record<string, number> = { 'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11 };
-      
-      const primaryTrackId = tracks.find(t => t.mode === 'vocal')?.id || tracks[0]?.id || 'P1';
-      // ✅ No slice limit — synthesize ALL notes so repeats/loops are included
-      let sourceNotes = parsedData.notes.filter(n => n.trackId === primaryTrackId);
-      
-      // ✅ Preserving all notes to support multi-voice harmony rendering
-      const sortedSource = [...sourceNotes].sort((a, b) => a.startTime - b.startTime);
-      sourceNotes = sortedSource;
-      
-      // ✅ Apply transpose semitone shift to every note's MIDI pitch
-      const transposeSemitones = transpose; // e.g. -12 for one octave down
-      
-      const notesToSynthesize = sourceNotes.map(n => {
-        let lyric = 'Doh'; // safe fallback — was 'La' which caused unexpected syllables
-        try {
-          const songKey = (parsedData.metadata as any)?.key || 'C';
-          const songFifths = (parsedData.metadata as any)?.fifths ?? 0;
-          const computed = getChromaticSolfege(
-            n.step || 'C', 
-            n.alter || 0, 
-            songKey, 
-            activeLyricMode,
-            n.duration / ((parsedData.timeSignature as any)?.beats || 4),
-            songFifths 
-          );
-          
-          if (activeLyricMode === 'Lyric') {
-            lyric = n.lyric || 'ah';
-          } else if (activeLyricMode === 'Close') {
-            lyric = 'm';
-          } else {
-            lyric = computed || n.solfege || 'Doh';
-          }
-
-          // 🔍 Debug: log each note→lyric to browser console
-          console.log(`[SVS] ${n.step}${n.octave} alter=${n.alter} key=${songKey} mode=${activeLyricMode} → "${lyric}"`);
-        } catch (e) {
-          console.warn('[SVS] Solfege calc error:', e);
-        }
-        
-        const safeStep = (n.step || 'C').toUpperCase();
-        const rawMidi = (n.octave + 1) * 12 + (stepMap[safeStep] || 0) + (n.alter || 0);
-        const transposedMidi = Math.max(24, Math.min(108, rawMidi + transposeSemitones)); // clamp to MIDI 24–108
-        return {
-          pitch: transposedMidi,
-          midi: transposedMidi,
-          duration: isNaN(n.duration) ? 0.5 : n.duration,
-          startTime: isNaN(n.startTime) ? 0 : n.startTime,
-          lyric
-        };
-      });
-
-      console.log(`[SVS] 🎼 ${sourceNotes.length} notes | transpose=${transposeSemitones} semitones`);
-
-      console.log(`[SVS] 🎙️ Initializing ${svsEngine.toUpperCase()} Synthesis...`);
-      
-      const xmlBpm = (parsedData.metadata as any)?.bpm;
-      const actualBpm = xmlBpm || currentBpm || 120;
-
-      // CRITICAL: Set BPM in Tone.Transport BEFORE adding the vocal layer.
-      // If we don't do this, Tone.Player.sync() will record the default 120 BPM,
-      // and when we set it to actualBpm later, it will time-stretch (slow down) the audio!
-      await musicEngine.ensureInitialized();
-      musicEngine.setBpm(actualBpm);
-      setCurrentBpm(actualBpm);
-
-      if (svsEngine === 'vocalido' || svsEngine === 'browser-ai') {
-        const origBpm = (parsedData.metadata as any)?.bpm || 120;
-        const bpmPct = Math.round((actualBpm / origBpm) * 100);
-        const songKey = parsedData.metadata?.key || localSong.key || 'C';
-
-        let trackEngineId = tracks.find(t => t.id === primaryTrackId)?.engineId || activeEngineId;
-        if (trackEngineId === 'default' || !voiceEngines.some(v => v.id === trackEngineId)) {
-          trackEngineId = activeEngineId;
-        }
-        if (!voiceEngines.some(v => v.id === trackEngineId) && voiceEngines.length > 0) {
-          trackEngineId = voiceEngines[0].id;
-        }
-
-        // ── Cache check: skip render if key+bpm+mode+engine+voiceName already saved ─────
-        const currentVoiceName = activeVoiceName || 'Auto';
-        const targetVoice = collapseChords ? currentVoiceName : `${currentVoiceName}poly`;
-        const targetEngine = collapseChords ? (trackEngineId || 'default') : `${trackEngineId || 'default'}poly`;
-
-        const cached = renderHistory.find(
-          h => {
-            if (!h.audioUrl) return false;
-            // 🚫 Never use expired blob: URLs — only allow if they are verified active in this session
-            if (h.audioUrl.startsWith('blob:') && !(h as any).isActiveBlob) return false;
-
-            const hEng = (h.engineId || 'default').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-            const tEng = targetEngine.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-            const hVoice = (h.voiceName || 'Auto').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-            const tVoice = targetVoice.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-            
-            const hLyric = mapToLyricMode(h.lyricMode || 'British Fixed Doh');
-            const tLyric = mapToLyricMode(activeLyricMode);
-            
-            return h.bpmPercent === bpmPct && 
-                   h.songKey === songKey && 
-                   hLyric === tLyric &&
-                   (hEng === tEng || hVoice === tEng || hEng === tVoice || hVoice === tVoice);
-          }
-        );
-        const cachedKey = cached ? `${cached.bpmPercent}_${cached.songKey}_${cached.engineId||'default'}_${cached.lyricMode||''}_${cached.voiceName||'Auto'}` : null;
-        if (cached) {
-          console.log(`[MemoCache] ✅ Found cached render ${cached.label} (${activeLyricMode}, ${trackEngineId}, ${currentVoiceName}) — skipping GPU render`);
-          await musicEngine.ensureInitialized();
-          // For permanent URLs: add cache-bust param. Blob URLs must NOT have params added.
-          const fixedUrl = fixAudioUrl(cached.audioUrl);
-          const cacheBusted = fixedUrl.startsWith('blob:') ? fixedUrl
-            : (fixedUrl.includes('?t=') ? fixedUrl.replace(/\?t=\d+/, `?t=${Date.now()}`) : `${fixedUrl}?t=${Date.now()}`);
-          const stemsWithBust = (cached.savedStemUrls || []).map((sUrl: string) => {
-            const fixed = fixAudioUrl(sUrl);
-            return fixed.startsWith('blob:') ? fixed
-              : (fixed.includes('?t=') ? fixed.replace(/\?t=\d+/, `?t=${Date.now()}`) : `${fixed}?t=${Date.now()}`);
-          });
-          // Set track mode to vocal so Play button / loadSong works correctly
-          const updatedTracks = tracks.map((t: any) => 
-            t.id === primaryTrackId ? { ...t, mode: 'vocal' } as TrackState : t
-          );
-          setTracks(updatedTracks);
-
-          try {
-            setIsAudioLoading(true);
-            await musicEngine.addVocalLayer(primaryTrackId, cacheBusted, stemsWithBust);
-            setAvailableStems(prev => ({ ...prev, [primaryTrackId]: musicEngine.getAvailableStems(primaryTrackId) }));
-            setSoloedStems(prev => ({ ...prev, [primaryTrackId]: null }));
-
-            const livePlaying = isPlaying || musicEngine.transportState === 'started';
-            const livePos = musicEngine.transportSeconds;
-
-            // Reload song to sync Tone.Part with new mode
-            await musicEngine.loadSong(parsedData.notes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn);
-            musicEngine.setTransportSeconds(livePos);
-            if (livePlaying) {
-              await musicEngine.start();
-              setIsPlaying(true);
-            }
-          } catch (e) {
-            console.error('[MemoCache] Failed to load cached vocal layer:', e);
-          } finally {
-            setIsAudioLoading(false);
-          }
-          if (cachedKey) setActiveRenderKey(cachedKey);
-          cleanupLocal();
-          setRenderProgress(100);
-          setTimeout(() => { setIsRenderingVocal(false); setActiveCard('score'); }, 600);
-          return;
-        }
-
-        // ── Dual-Path Synthesis: Browser GPU/CPU → Local Server → RunPod Fallback ──────────────
-        let result: any = null;
-        const synthParams = { singer: activeVoiceName, bpm: actualBpm, transpose: transposeSemitones, voice: trackEngineId, return_stems: true, collapse_chords: collapseChords, steps: svsSteps };
-        
-        let usedRunPod = false;
-        let useDirectBlobUrl = false;
-        let mainAudioBlob: Blob | null = null;
-        let stemBlobs: Blob[] = [];
-
-        const selectedVoice = voiceEngines.find(v => v.id === trackEngineId);
-
-        if (svsEngine === 'browser-ai') {
-          if (!selectedVoice?.model_files) {
-            throw new Error(`The selected voice "${selectedVoice?.name || 'Unknown'}" does not support browser-side SVS rendering. Please select Lotte V or a supported voice.`);
-          }
-          console.log('[Browser AI] Running direct browser-side WebGPU synthesis...');
-          setRenderStatusText('Loading models...');
-          try {
-            const modelFiles = {
-              acoustic: getVoiceModelUrl(selectedVoice.model_files.acoustic),
-              vocoder: getVoiceModelUrl(selectedVoice.model_files.vocoder),
-              dictionary: selectedVoice.model_files.dictionary ? getVoiceModelUrl(selectedVoice.model_files.dictionary) : undefined,
-              phonemes: selectedVoice.model_files.phonemes ? getVoiceModelUrl(selectedVoice.model_files.phonemes) : undefined,
-              embeds: selectedVoice.model_files.embeds ? Object.keys(selectedVoice.model_files.embeds).reduce((acc, key) => {
-                if (selectedVoice.model_files?.embeds?.[key]) {
-                  acc[key] = getVoiceModelUrl(selectedVoice.model_files.embeds[key]);
-                }
-                return acc;
-              }, {} as Record<string, string>) : undefined
-            };
-
-            await clientSvsEngine.loadVoice(selectedVoice.id, modelFiles, (prog) => {
-              setRenderStatusText(prog.message);
-              setRenderProgress(Math.min(99.9, prog.progress));
-            });
-
-            setRenderStatusText('Generating vocals...');
-            const wavBlob = await clientSvsEngine.synthesize(notesToSynthesize, {
-              bpm: actualBpm,
-              formant_shift: 0,
-              speed: 1.0,
-              breathiness: 0,
-              vocal_mode: 'root',
-              steps: svsSteps,
-            });
-
-            const localBlobUrl = URL.createObjectURL(wavBlob);
-            result = {
-              audio_url: localBlobUrl,
-              engine: 'browser_ai_webgpu',
-              stems_b64: []
-            };
-            useDirectBlobUrl = true; // Bypasses cache/fixAudioUrl rewriting, uses local blob url as-is
-            mainAudioBlob = wavBlob;
-          } catch (browserAiError: any) {
-            console.error('[Browser AI] ❌ Browser-side WebGPU/WASM synthesis failed:', browserAiError);
-            throw new Error(`On-device SVS failed: ${browserAiError.message || browserAiError}`);
-          }
-        } else if (svsEngine === 'vocalido') {
-          console.log('[Server SVS] Running server-side SVS rendering...');
-          setRenderStatusText('Sending synthesis request to server...');
-          try {
-            const payload = {
-              notes: notesToSynthesize,
-              song_id: song?.id || 'demo-song',
-              song_key: songKey,
-              bpm_pct: bpmPct,
-              lyric_mode: activeLyricMode,
-              is_public: true,
-              owner_id: authUser?.id || null,
-              params: synthParams
-            };
-
-            const targetUrl = getFetchUrl('/studio/preview');
-            console.log('[Server SVS] Preview URL:', targetUrl);
-            
-            let response: Response;
-            try {
-              response = await svsFetch(targetUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-                signal: controller.signal
-              });
-              
-              if (!response.ok) {
-                const errText = await response.text();
-                throw new Error(`HTTP ${response.status}: ${errText}`);
-              }
-              
-              const data = await response.json();
-              if (data.error) {
-                throw new Error(data.error);
-              }
-              result = data;
-            } catch (fetchErr: any) {
-              const runpodUrl = import.meta.env.VITE_RUNPOD_API_URL;
-              const runpodKey = import.meta.env.VITE_RUNPOD_API_KEY;
-              
-              if (runpodUrl && runpodKey) {
-                console.warn('[Server SVS] ⚠️ Server synthesis failed/offline. Falling back to direct RunPod Serverless API...', fetchErr);
-                setRenderStatusText('Server offline. Rendering via RunPod GPU...');
-                
-                // Map notes exactly as expected by RunPod DiffSinger worker handler
-                const runpodPayload = {
-                  input: {
-                    notes: notesToSynthesize.map(n => ({
-                      midi: n.midi || n.pitch || 60,
-                      duration: n.duration,
-                      startTime: n.startTime,
-                      lyric: n.lyric
-                    })),
-                    params: synthParams
-                  }
-                };
-                
-                const rpResponse = await fetch(runpodUrl, {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${runpodKey}`
-                  },
-                  body: JSON.stringify(runpodPayload),
-                  signal: controller.signal
-                });
-                
-                if (!rpResponse.ok) {
-                  const rpErr = await rpResponse.text();
-                  throw new Error(`RunPod Serverless Error (${rpResponse.status}): ${rpErr}`);
-                }
-                
-                let rpJson = await rpResponse.json();
-                let status = rpJson.status;
-                const jobId = rpJson.id;
-
-                if (status === 'IN_QUEUE' || status === 'IN_PROGRESS') {
-                  console.log(`[RunPod Fallback] Job ${jobId} status is ${status}. Polling...`);
-                  const statusUrl = runpodUrl.endsWith('/runsync')
-                    ? runpodUrl.replace('/runsync', `/status/${jobId}`)
-                    : runpodUrl.replace('/run', `/status/${jobId}`);
-                  let attempts = 0;
-                  const maxAttempts = 120; // 120 attempts * 2 seconds = 240 seconds max wait
-                  
-                  while ((status === 'IN_QUEUE' || status === 'IN_PROGRESS') && attempts < maxAttempts) {
-                    await new Promise(resolve => setTimeout(resolve, 2000));
-                    attempts++;
-                    setRenderStatusText(`Starting GPU container... (${attempts * 2}s)`);
-                    
-                    const pollResponse = await fetch(statusUrl, {
-                      method: 'GET',
-                      headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${runpodKey}`
-                      },
-                      signal: controller.signal
-                    });
-                    
-                    if (!pollResponse.ok) {
-                      throw new Error(`RunPod Status Error (${pollResponse.status})`);
-                    }
-                    
-                    rpJson = await pollResponse.json();
-                    status = rpJson.status;
-                  }
-                }
-
-                if (status === 'COMPLETED' && rpJson.output) {
-                  if (rpJson.output.error) {
-                    throw new Error(rpJson.output.error);
-                  }
-                  result = rpJson.output;
-                  usedRunPod = true; // Actually contacted RunPod API
-                  useDirectBlobUrl = true; // Use the base64-decoded blob URL directly
-                  console.log('[Server SVS] ✅ Direct RunPod Serverless synthesis succeeded!');
-                } else {
-                  throw new Error(`RunPod job failed with status: ${status}`);
-                }
-              } else {
-                throw fetchErr;
-              }
-            }
-          } catch (serverError: any) {
-            console.error('[Server SVS] ❌ Server-side synthesis failed:', serverError);
-            
-            // ── Auto-fallback to on-device Browser AI (WebGPU/WASM) when server fails ──
-            if (selectedVoice?.model_files) {
-              console.log('[Server SVS] 🔄 Server offline — auto-falling back to on-device Browser AI synthesis...');
-              setRenderStatusText('Server offline. Switching to on-device AI...');
-              try {
-                const modelFiles = {
-                  acoustic: getVoiceModelUrl(selectedVoice.model_files.acoustic),
-                  vocoder: getVoiceModelUrl(selectedVoice.model_files.vocoder),
-                  dictionary: selectedVoice.model_files.dictionary ? getVoiceModelUrl(selectedVoice.model_files.dictionary) : undefined,
-                  phonemes: selectedVoice.model_files.phonemes ? getVoiceModelUrl(selectedVoice.model_files.phonemes) : undefined,
-                  embeds: selectedVoice.model_files.embeds ? Object.keys(selectedVoice.model_files.embeds).reduce((acc, key) => {
-                    if (selectedVoice.model_files?.embeds?.[key]) {
-                      acc[key] = getVoiceModelUrl(selectedVoice.model_files.embeds[key]);
-                    }
-                    return acc;
-                  }, {} as Record<string, string>) : undefined
-                };
-
-                await clientSvsEngine.loadVoice(selectedVoice.id, modelFiles, (prog) => {
-                  setRenderStatusText(prog.message);
-                  setRenderProgress(Math.min(99.9, prog.progress));
-                });
-
-                setRenderStatusText('Generating vocals on-device...');
-                const wavBlob = await clientSvsEngine.synthesize(notesToSynthesize, {
-                  bpm: actualBpm,
-                  formant_shift: 0,
-                  speed: 1.0,
-                  breathiness: 0,
-                  vocal_mode: 'root',
-                  steps: svsSteps,
-                });
-
-                const localBlobUrl = URL.createObjectURL(wavBlob);
-                result = {
-                  audio_url: localBlobUrl,
-                  engine: 'browser_ai_webgpu',
-                  stems_b64: []
-                };
-                useDirectBlobUrl = true;
-                mainAudioBlob = wavBlob;
-                console.log('[Server SVS] ✅ On-device fallback synthesis succeeded!');
-              } catch (fallbackErr: any) {
-                console.error('[Server SVS] ❌ On-device fallback also failed:', fallbackErr);
-                throw new Error(`Server-side SVS failed: ${serverError.message || serverError}. On-device fallback also failed: ${fallbackErr.message || fallbackErr}`);
-              }
-            } else {
-              throw new Error(`Server-side SVS failed: ${serverError.message || serverError}`);
-            }
-          }
-        }
-
-        // If all paths failed
-        if (!result) {
-          throw new Error('SVS rendering failed or returned no audio.');
-        }
-
-        clearTimeout(timeoutId);
-
-        // ── Process result (same for local server and RunPod) ──────────────
-        if (result.audio_b64 || result.audio_url || result.saved_url) {
-          let url = '';
-          
-          if (result.audio_url) {
-            url = result.audio_url.startsWith('http') ? result.audio_url : result.audio_url;
-            if (url.startsWith('blob:')) {
-              useDirectBlobUrl = true;
-            }
-          } else if (result.saved_url && !result.audio_b64) {
-            console.log(`[MemoCache] ✅ Server returned cached file: ${result.saved_url}`);
-            url = result.saved_url;
-          } else if (result.audio_b64) {
-            const binary = atob(result.audio_b64);
-            const array = new Uint8Array(binary.length);
-            for (let i = 0; i < binary.length; i++) array[i] = binary.charCodeAt(i);
-            const blob = new Blob([array], { type: result.mime_type || 'audio/wav' });
-            url = URL.createObjectURL(blob);
-            useDirectBlobUrl = true;
-            mainAudioBlob = blob;
-          } else {
-            throw new Error("Invalid synthesis response: no audio data");
-          }
-          
-          let stemUrls: string[] = [];
-          if (result.stems_b64 && result.stems_b64.length > 1) {
-            stemUrls = result.stems_b64.map((b64: string) => {
-              const binary = atob(b64);
-              const array = new Uint8Array(binary.length);
-              for (let i = 0; i < binary.length; i++) array[i] = binary.charCodeAt(i);
-              const blob = new Blob([array], { type: result.mime_type || 'audio/wav' });
-              useDirectBlobUrl = true;
-              stemBlobs.push(blob);
-              return URL.createObjectURL(blob);
-            });
-          }
-          
-          // 🚀 Register with MusicEngine for persistence and sync
-          console.log(`[Vocalido] 🎙️ Registering vocal layer to MusicEngine: ${primaryTrackId} via ${result.engine || 'unknown'}${usedRunPod ? ' (RunPod)' : ''}`);
-          
-          // For RunPod or direct local browser AI responses (blob URLs), use the blob URL directly
-          const finalUrl = useDirectBlobUrl ? url : fixAudioUrl(result.saved_url || url);
-          const finalStemUrls = useDirectBlobUrl ? stemUrls : (result.saved_stem_urls || stemUrls || []).map((sUrl: string) => fixAudioUrl(sUrl));
-
-          const cacheBustedUrl = useDirectBlobUrl ? url : (finalUrl.includes('?t=')
-            ? finalUrl.replace(/\?t=\d+/, `?t=${Date.now()}`)
-            : `${finalUrl}?t=${Date.now()}`);
-            
-          const stemsWithBust = useDirectBlobUrl ? stemUrls : finalStemUrls.map((sUrl: string) => {
-            return sUrl.includes('?t=') ? sUrl.replace(/\?t=\d+/, `?t=${Date.now()}`) : `${sUrl}?t=${Date.now()}`;
-          });
-          
-          // Close the render overlay immediately — don't block on audio loading
-          setRenderProgress(100);
-          cleanupLocal();
-
-          // Save to MemoSongRender history
-          const origBpmForHist = (parsedData.metadata as any)?.bpm || 120;
-          const bpmPctForHist = Math.round((actualBpm / origBpmForHist) * 100);
-          const songKeyForHist = parsedData.metadata?.key || localSong.key || 'C';
-          const filenameFromUrl = result.saved_url ? result.saved_url.split('/').pop() || '' : '';
-          const voiceNameForHist = activeVoiceName || 'Auto';
-          const storedVoiceName = collapseChords ? voiceNameForHist : `${voiceNameForHist}poly`;
-          const storedEngineId = collapseChords ? (trackEngineId || 'default') : `${trackEngineId || 'default'}poly`;
-          const shortVoice = voiceNameForHist !== 'Auto' ? ` · ${voiceNameForHist.split(/[\s_]/)[0]}${collapseChords ? '' : ' (poly)'}` : '';
-          const newLabel = result.label || `${songKeyForHist} ${bpmPctForHist}%${shortVoice}`;
-          const newEntryKey = `${bpmPctForHist}_${songKeyForHist}_${storedEngineId}_${activeLyricMode}_${storedVoiceName}`;
-          
-          if (song?.id) {
-            saveRenderToLocalCache(
-              song.id,
-              newEntryKey,
-              mainAudioBlob || url,
-              stemBlobs.length > 0 ? stemBlobs : stemUrls
-            );
-          }
-
-          setRenderHistory(prev => {
-            const filtered = prev.filter(h => {
-              const hLyric = mapToLyricMode(h.lyricMode || 'British Fixed Doh');
-              const tLyric = mapToLyricMode(activeLyricMode);
-              return !(
-                h.bpmPercent === bpmPctForHist && 
-                h.songKey === songKeyForHist && 
-                hLyric === tLyric &&
-                (h.engineId || 'default') === storedEngineId &&
-                (h.voiceName || 'Auto') === storedVoiceName
-              );
-            });
-            return [{
-              bpmPercent: bpmPctForHist,
-              songKey: songKeyForHist,
-              audioUrl: useDirectBlobUrl ? cacheBustedUrl : finalUrl,
-              label: newLabel,
-              filename: filenameFromUrl,
-              lyricMode: activeLyricMode,
-              engineId: storedEngineId,
-              voiceName: storedVoiceName,
-              savedStemUrls: useDirectBlobUrl ? stemUrls : finalStemUrls,
-              renderedAt: new Date().toISOString(),
-              isActiveBlob: useDirectBlobUrl,
-            }, ...filtered].slice(0, 12);
-          });
-          setActiveRenderKey(newEntryKey);
-
-          setTimeout(() => { setIsRenderingVocal(false); setActiveCard('score'); }, 800);
-          
-          // Set the track mode to 'vocal' in React state so loadSong doesn't conflict
-          const updatedTracks = tracks.map((t: any) => 
-            t.id === primaryTrackId ? { ...t, mode: 'vocal' } as TrackState : t
-          );
-          setTracks(updatedTracks);
-
-          // Load audio — await it so it's ready before user presses play
-          try {
-            setIsAudioLoading(true);
-            const loadSafetyTimeout = setTimeout(() => {
-              setIsAudioLoading(prev => {
-                if (prev) {
-                  console.warn("[PlayerPage] ⚠️ Audio loading safety timeout fired (15s)");
-                  return false;
-                }
-                return prev;
-              });
-            }, 15000);
-
-            await musicEngine.addVocalLayer(primaryTrackId, cacheBustedUrl, stemsWithBust);
-
-            // Also set the blob URL on the HTMLAudioElement for dual-path playback
-            // (HTMLAudioElement is more reliable for blob URL playback in some browsers)
-            if (useDirectBlobUrl && cacheBustedUrl.startsWith('blob:')) {
-              musicEngine.unlockVocalAudio(primaryTrackId);
-              const audioEl = musicEngine.vocalAudioElements.get(primaryTrackId);
-              if (audioEl) {
-                audioEl.src = cacheBustedUrl;
-                audioEl.load();
-                console.log(`[Vocalido] 🔊 Also set HTMLAudioElement src for dual-path playback`);
-              }
-            }
-
-            setAvailableStems(prev => ({ ...prev, [primaryTrackId]: musicEngine.getAvailableStems(primaryTrackId) }));
-            setSoloedStems(prev => ({ ...prev, [primaryTrackId]: null }));
-            console.log(`[Vocalido] ✅ Audio loaded and ready for playback`);
-
-            const livePlaying = isPlaying || musicEngine.transportState === 'started';
-            const livePos = musicEngine.transportSeconds;
-
-            // Reload song to sync Tone.Part with new mode
-            await musicEngine.loadSong(parsedData.notes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn);
-            musicEngine.setTransportSeconds(livePos);
-            if (livePlaying) {
-              await musicEngine.start();
-              setIsPlaying(true);
-            }
-            clearTimeout(loadSafetyTimeout);
-          } catch (e) {
-            console.error(`[Vocalido] ❌ Failed to load audio:`, e);
-          } finally {
-            setIsAudioLoading(false);
-          }
-
-        } else {
-          throw new Error("Invalid synthesis response: no audio data in result");
-        }
-      }
-    } catch (e: any) {
-      if (e.name === 'AbortError' || e.message === 'Aborted' || controller.signal.aborted) {
-        console.log('[Vocalido] Synthesis aborted/cancelled by user');
-        cleanupLocal();
-        return;
-      }
-      console.error(`[VOCALIDO] Error:`, e);
-      setRenderError(e.message || "Synthesis Failed");
-      // Auto-close after 3 seconds so the user can see the error but doesn't get stuck
-      setTimeout(() => {
-        setIsRenderingVocal(false);
-        setRenderError(null);
-      }, 3000);
-      cleanupLocal();
-    } finally {
-      // Safety: always ensure render state is reset after max 90s
-      setTimeout(() => {
-        setIsRenderingVocal(prev => {
-          if (prev) {
-            console.warn('[Vocalido] ⚠️ Safety timeout: force-resetting render state after 90s');
-            return false;
-          }
-          return prev;
-        });
-        setRenderStatusText('');
-      }, 90000);
-    }
+    // DEBUG: Check if voiceEngines contain neural model files
+    const debugVoice = voiceEngines.find(v => v.id === trackEngineId);
+    console.log('[PlayerPage] 🔍 render voice:', trackEngineId, 'model_files keys:', debugVoice?.model_files ? Object.keys(debugVoice.model_files) : 'NO MODEL FILES');
+    
+    vocalidoRenderService.startRender({
+      song: song!,
+      parsedData,
+      tracks,
+      transpose,
+      activeLyricMode,
+      activeVoiceName,
+      trackEngineId,
+      activeEngineId,
+      collapseChords,
+      svsSteps,
+      currentBpm,
+      voiceEngines,
+      isMetronomeOn,
+      userId: authUser?.id || ''
+    });
   };
 
   const closeRenderOverlay = () => {
-    setIsRenderingVocal(false);
-    setRenderError(null);
+    vocalidoRenderService.cancelRender();
   };
 
   const beatsPerMeasure = Math.max(1, parsedData?.timeSignature?.beats || 4);
@@ -2535,14 +2051,45 @@ const PlayerPage: React.FC<{
             </button>
             
             {/* Status Dot */}
-            <div className="relative flex items-center justify-center ml-1" title={isServerOnline ? "SVS Server Online (Vocalido VM)" : "SVS Server Offline (Will use direct RunPod fallback or local browser AI)"}>
-              <div className={`w-2.5 h-2.5 rounded-full transition-all duration-300 ${
-                isServerOnline 
-                  ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.8)]' 
-                  : 'bg-rose-500 shadow-[0_0_10px_rgba(239,68,68,0.8)]'
-              }`} />
-              {isServerOnline && <div className="absolute w-2.5 h-2.5 bg-emerald-500 rounded-full animate-ping opacity-40" />}
-            </div>
+            {(() => {
+              let dotColor = 'bg-rose-500';
+              let shadowColor = 'shadow-[0_0_10px_rgba(239,68,68,0.8)]';
+              let pingColor = '';
+              let statusTitle = 'SVS Server Offline';
+
+              if (svsEngine === 'browser-ai') {
+                dotColor = 'bg-[#00e5ff]';
+                shadowColor = 'shadow-[0_0_10px_rgba(0,229,255,0.8)]';
+                pingColor = 'bg-[#00e5ff]';
+                statusTitle = 'Using On-Device WebGPU Browser SVS (Cyan)';
+              } else {
+                if (isServerOnline) {
+                  dotColor = 'bg-emerald-500';
+                  shadowColor = 'shadow-[0_0_10px_rgba(16,185,129,0.8)]';
+                  pingColor = 'bg-emerald-500';
+                  statusTitle = 'Local SVS Server Online (Vocalido VM - Green)';
+                } else {
+                  const hasRunpod = import.meta.env.VITE_RUNPOD_API_URL && import.meta.env.VITE_RUNPOD_API_KEY;
+                  if (hasRunpod) {
+                    dotColor = 'bg-fuchsia-500';
+                    shadowColor = 'shadow-[0_0_10px_rgba(217,70,239,0.8)]';
+                    pingColor = 'bg-fuchsia-500';
+                    statusTitle = 'Local Server Offline (Using RunPod API Fallback - Purple)';
+                  } else {
+                    dotColor = 'bg-rose-500';
+                    shadowColor = 'shadow-[0_0_10px_rgba(239,68,68,0.8)]';
+                    statusTitle = 'SVS Server Offline & RunPod Fallback Offline (Red)';
+                  }
+                }
+              }
+
+              return (
+                <div className="relative flex items-center justify-center ml-1" title={statusTitle}>
+                  <div className={`w-2.5 h-2.5 rounded-full transition-all duration-300 ${dotColor} ${shadowColor}`} />
+                  {pingColor && <div className={`absolute w-2.5 h-2.5 ${pingColor} rounded-full animate-ping opacity-40`} />}
+                </div>
+              );
+            })()}
           </div>
         </div>
       </div>
@@ -2793,7 +2340,21 @@ const PlayerPage: React.FC<{
                           if (!confirmed) return;
                           if (h.filename) svsFetch(getFetchUrl(`/studio/renders/${encodeURIComponent(h.filename)}?owner_id=${encodeURIComponent(authUser?.id || '')}&song_id=${encodeURIComponent(localSong.id)}`), { method: 'DELETE' }).catch(() => {});
                           setRenderHistory(prev => prev.filter(x => `${x.bpmPercent}_${x.songKey}_${x.engineId||'default'}_${x.lyricMode||''}_${x.voiceName||'Auto'}` !== hKey));
-                          if (activeRenderKey === hKey) setActiveRenderKey(null);
+                          if (activeRenderKey === hKey) {
+                            setActiveRenderKey(null);
+                            // ── Reset playback and clear vocal layer ──
+                            musicEngine.pause();
+                            setIsPlaying(false);
+                            const primaryTrackId = tracks.find(t => t.mode === 'vocal')?.id || tracks[0]?.id || 'P1';
+                            musicEngine.clearVocalLayers(primaryTrackId);
+                            // Set track mode back to instrument
+                            const updatedTracks = tracks.map((t: any) => 
+                              t.id === primaryTrackId ? { ...t, mode: 'instrument' } as TrackState : t
+                            );
+                            setTracks(updatedTracks);
+                            // Reload song to apply instrument sampler
+                            musicEngine.loadSong(parsedData.notes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn).catch(() => {});
+                          }
                           if (memoInfoOpenKey === hKey) setMemoInfoOpenKey(null);
                         }}
                         className="absolute top-0 right-0 w-2.5 h-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded-full text-[5.5px] font-black flex items-center justify-center transition-all shadow-lg pointer-events-auto z-[3100]"
@@ -3574,22 +3135,32 @@ const PlayerPage: React.FC<{
                 <div className="flex gap-2 mt-1">
                   <button
                     onClick={() => handleSvsEngineChange('browser-ai')}
-                    className={`flex-1 py-2 text-[9px] font-black uppercase rounded-xl border transition-all ${
+                    className={`flex-1 py-2 text-[9px] font-black uppercase rounded-xl border transition-all flex items-center justify-center gap-1.5 ${
                       svsEngine === 'browser-ai'
-                        ? 'bg-cyan-500/20 text-cyan-400 border-cyan-500/40 shadow-[0_0_12px_rgba(6,182,212,0.15)]'
+                        ? 'bg-[#00e5ff]/20 text-[#00e5ff] border-[#00e5ff]/40 shadow-[0_0_12px_rgba(0,229,255,0.15)]'
                         : 'bg-transparent text-zinc-400 border-white/5 hover:bg-white/5 hover:text-white'
                     }`}
                   >
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#00e5ff] shadow-[0_0_6px_rgba(0,229,255,0.6)]" />
                     On-Device (Browser AI)
                   </button>
                   <button
                     onClick={() => handleSvsEngineChange('vocalido')}
-                    className={`flex-1 py-2 text-[9px] font-black uppercase rounded-xl border transition-all ${
+                    className={`flex-1 py-2 text-[9px] font-black uppercase rounded-xl border transition-all flex items-center justify-center gap-1.5 ${
                       svsEngine === 'vocalido'
                         ? 'bg-cyan-500/20 text-cyan-400 border-cyan-500/40 shadow-[0_0_12px_rgba(6,182,212,0.15)]'
                         : 'bg-transparent text-zinc-400 border-white/5 hover:bg-white/5 hover:text-white'
                     }`}
                   >
+                    {(() => {
+                      let dotClass = 'bg-rose-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]';
+                      if (isServerOnline) {
+                        dotClass = 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.6)]';
+                      } else if (import.meta.env.VITE_RUNPOD_API_URL && import.meta.env.VITE_RUNPOD_API_KEY) {
+                        dotClass = 'bg-fuchsia-500 shadow-[0_0_6px_rgba(217,70,239,0.6)]';
+                      }
+                      return <span className={`w-1.5 h-1.5 rounded-full ${dotClass}`} />;
+                    })()}
                     Server-Side (Vocalido)
                   </button>
                 </div>
@@ -3601,38 +3172,48 @@ const PlayerPage: React.FC<{
                   SVS Quality & Speed
                 </span>
                 <span className="text-[8px] text-zinc-500">
-                  จำนวนขั้นตอนการสังเคราะห์เสียง (น้อยลง = เร็วขึ้น 2-3 เท่า เหมาะสำหรับมือถือ)
+                  Diffusion Steps — ยิ่งสูง เสียงยิ่งใส คมชัด (ไม่กระทบ Playback, เพิ่มเวลา Render เท่านั้น)
                 </span>
-                <div className="flex gap-2 mt-1">
+                <div className="grid grid-cols-4 gap-1.5 mt-1">
                   <button
                     onClick={() => handleSvsStepsChange(6)}
-                    className={`flex-1 py-2 text-[9px] font-black uppercase rounded-xl border transition-all ${
+                    className={`py-2 text-[8px] font-black uppercase rounded-xl border transition-all ${
                       svsSteps === 6
                         ? 'bg-cyan-500/20 text-cyan-400 border-cyan-500/40 shadow-[0_0_12px_rgba(6,182,212,0.15)]'
                         : 'bg-transparent text-zinc-400 border-white/5 hover:bg-white/5 hover:text-white'
                     }`}
                   >
-                    Fast (6 steps)
+                    Draft<br/><span className="text-[7px] opacity-60">6 steps</span>
                   </button>
                   <button
                     onClick={() => handleSvsStepsChange(10)}
-                    className={`flex-1 py-2 text-[9px] font-black uppercase rounded-xl border transition-all ${
+                    className={`py-2 text-[8px] font-black uppercase rounded-xl border transition-all ${
                       svsSteps === 10
                         ? 'bg-cyan-500/20 text-cyan-400 border-cyan-500/40 shadow-[0_0_12px_rgba(6,182,212,0.15)]'
                         : 'bg-transparent text-zinc-400 border-white/5 hover:bg-white/5 hover:text-white'
                     }`}
                   >
-                    Balanced (10 steps)
+                    Fast<br/><span className="text-[7px] opacity-60">10 steps</span>
                   </button>
                   <button
                     onClick={() => handleSvsStepsChange(20)}
-                    className={`flex-1 py-2 text-[9px] font-black uppercase rounded-xl border transition-all ${
+                    className={`py-2 text-[8px] font-black uppercase rounded-xl border transition-all ${
                       svsSteps === 20
                         ? 'bg-cyan-500/20 text-cyan-400 border-cyan-500/40 shadow-[0_0_12px_rgba(6,182,212,0.15)]'
                         : 'bg-transparent text-zinc-400 border-white/5 hover:bg-white/5 hover:text-white'
                     }`}
                   >
-                    HD (20 steps)
+                    HD<br/><span className="text-[7px] opacity-60">20 steps</span>
+                  </button>
+                  <button
+                    onClick={() => handleSvsStepsChange(40)}
+                    className={`py-2 text-[8px] font-black uppercase rounded-xl border transition-all ${
+                      svsSteps === 40
+                        ? 'bg-amber-500/20 text-amber-400 border-amber-500/40 shadow-[0_0_12px_rgba(245,158,11,0.15)]'
+                        : 'bg-transparent text-zinc-400 border-white/5 hover:bg-white/5 hover:text-white'
+                    }`}
+                  >
+                    Studio<br/><span className="text-[7px] opacity-60">40 steps</span>
                   </button>
                 </div>
               </div>
@@ -3643,6 +3224,26 @@ const PlayerPage: React.FC<{
                 <p className="text-[9px] text-zinc-500">
                   {activeLyricMode === 'Jianpu' ? '🇨🇳 Using Chinese phoneme engine (Jianpu 简谱)' : '🌐 Using English/Solfège phoneme engine'}
                 </p>
+              </div>
+
+              {/* Cache Tools */}
+              <div className="flex flex-col gap-2 bg-white/5 border border-white/10 rounded-2xl p-4">
+                <span className="text-[9px] font-black text-zinc-300 uppercase tracking-widest flex items-center gap-1.5">
+                  Cache Management (จัดการแคชเสียงร้อง)
+                </span>
+                <span className="text-[8px] text-zinc-500">
+                  ล้างข้อมูลเสียงร้องเกรดหยาบ/แหบ เพื่อบังคับสร้างไฟล์เสียงระดับ Studio คุณภาพสูงใหม่
+                </span>
+                <button
+                  onClick={handleClearCache}
+                  className={`mt-1 py-2 text-[9px] font-black uppercase rounded-xl border transition-all ${
+                    cacheClearedText
+                      ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40 shadow-[0_0_12px_rgba(16,185,129,0.15)]'
+                      : 'bg-rose-500/10 text-rose-400 border-rose-500/20 hover:bg-rose-500/20'
+                  }`}
+                >
+                  {cacheClearedText ? '✓ Cleared! (ล้างแคชเรียบร้อยแล้ว)' : 'Clear Vocal Cache (ล้างแคชเสียงร้อง AI)'}
+                </button>
               </div>
 
               {/* Render speed history */}

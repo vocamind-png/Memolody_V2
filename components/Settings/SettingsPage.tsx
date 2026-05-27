@@ -391,6 +391,35 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, on
                                     <strong className="text-cyan-400/80 not-italic mr-1">Mobile Note:</strong>
                                     If you experience stuttering playback or slow loading on mid-range devices (e.g. nubia, Moto, Pixel a-series), we strongly recommend enabling Performance Mode.
                                 </p>
+
+                                <div className="p-6 rounded-[24px] bg-black/40 border border-white/5 space-y-5">
+                                    <h3 className="text-xs font-black uppercase tracking-widest text-zinc-300 flex items-center gap-2">
+                                        <Cpu size={14} className="text-cyan-400" />
+                                        System Requirements (ความต้องการระบบ)
+                                    </h3>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                        <div className="space-y-3">
+                                            <h4 className="text-[9px] font-black uppercase tracking-wider text-cyan-400/80 flex items-center gap-1.5">
+                                                <Cpu size={12} /> Minimum Specs (ความต้องการขั้นต่ำ)
+                                            </h4>
+                                            <ul className="text-[10px] text-zinc-400 space-y-1.5 list-disc pl-4 uppercase tracking-wider leading-relaxed">
+                                                <li><strong>PC/Mac:</strong> Intel Core i5 / Apple M1, RAM 8GB ขึ้นไป, Chrome/Edge/Safari (รุ่นล่าสุด)</li>
+                                                <li><strong>Mobile:</strong> iOS 16 (iPhone 12 ขึ้นไป) หรือ Android 11 (RAM 6GB ขึ้นไป)</li>
+                                                <li><strong>SVS Rendering:</strong> แนะนำให้ใช้โหมด <strong>Server-Side (Vocalido)</strong> เพื่อความเสถียร</li>
+                                            </ul>
+                                        </div>
+                                        <div className="space-y-3">
+                                            <h4 className="text-[9px] font-black uppercase tracking-wider text-amber-400/80 flex items-center gap-1.5">
+                                                <Zap size={12} /> Recommended Specs (ข้อแนะนำเพื่อประสิทธิภาพสูงสุด)
+                                            </h4>
+                                            <ul className="text-[10px] text-zinc-400 space-y-1.5 list-disc pl-4 uppercase tracking-wider leading-relaxed">
+                                                <li><strong>PC/Mac:</strong> Intel Core i7 / Apple Silicon M2, RAM 16GB ขึ้นไป, GPU แยก (Nvidia GTX 1660 / AMD RX 5500 ขึ้นไป)</li>
+                                                <li><strong>Mobile:</strong> iPhone 14 ขึ้นไป หรือ Android ระดับเรือธง (RAM 8GB/12GB ขึ้นไป)</li>
+                                                <li><strong>SVS Rendering:</strong> รองรับการใช้ <strong>On-Device (Browser AI SVS)</strong> ประมวลผลด่วนบนเครื่อง</li>
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     )}

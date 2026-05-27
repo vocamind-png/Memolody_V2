@@ -68,6 +68,33 @@ class DiffSingerONNXEngine:
             providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
             self.sess_acoustic = ort.InferenceSession(self.acoustic_path, providers=providers)
             self.sess_vocoder = ort.InferenceSession(self.vocoder_path, providers=providers)
+            
+            # Look for other ONNX models (linguistic, dur, pitch)
+            self.ling_path = None
+            self.dur_path = None
+            self.pitch_path = None
+            
+            search_roots = [model_dir, os.path.dirname(model_dir)]
+            for sroot in search_roots:
+                for root, dirs, files in os.walk(sroot):
+                    if "linguistic.onnx" in files:
+                        self.ling_path = os.path.join(root, "linguistic.onnx")
+                    if "dur.onnx" in files:
+                        self.dur_path = os.path.join(root, "dur.onnx")
+                    if "pitch.onnx" in files:
+                        self.pitch_path = os.path.join(root, "pitch.onnx")
+                        
+            self.has_pitch_model = False
+            self.sess_ling = None
+            self.sess_dur = None
+            self.sess_pitch = None
+            
+            if self.ling_path and self.dur_path and self.pitch_path:
+                self.sess_ling = ort.InferenceSession(self.ling_path, providers=providers)
+                self.sess_dur = ort.InferenceSession(self.dur_path, providers=providers)
+                self.sess_pitch = ort.InferenceSession(self.pitch_path, providers=providers)
+                self.has_pitch_model = True
+                print(f"[ONNXEngine] Neural Pitch/Duration Models Loaded successfully!")
         except Exception as e:
             print(f"[ONNXEngine] ❌ Failed to load ONNX session: {e}")
             return
@@ -262,23 +289,279 @@ class DiffSingerONNXEngine:
             return out_mixed, all_audio
         return out_mixed
 
+    def _get_spk_embed(self, params):
+        requested_mode = params.get("vocal_mode") if params else None
+        spk_embed_data = None
+        if requested_mode and isinstance(requested_mode, str):
+            spk_embed_data = self.spk_embeds.get(requested_mode.lower())
+        if spk_embed_data is None:
+            spk_embed_data = self.default_spk_embed
+        return spk_embed_data
+
     def _synthesize_track(self, track_notes, params):
+        if self.has_pitch_model:
+            return self._synthesize_track_neural(track_notes, params)
+        else:
+            return self._synthesize_track_fallback(track_notes, params)
+
+    def _synthesize_track_neural(self, track_notes, params):
+        hop_size = 512
+        frame_sec = hop_size / self.sr
+        frame_hz = self.sr / hop_size
+        SP_ID = self.phoneme_to_id.get("SP", 2)
+        
+        # 1. Get Speaker Embedding
+        spk_embed_data = self._get_spk_embed(params)
+        embed_dim = 256
+        spk_embed_node = next((i for i in self.sess_acoustic.get_inputs() if i.name == "spk_embed"), None)
+        if spk_embed_node:
+            if len(spk_embed_node.shape) >= 3 and isinstance(spk_embed_node.shape[2], int):
+                embed_dim = spk_embed_node.shape[2]
+            elif len(spk_embed_node.shape) >= 3:
+                if spk_embed_data is not None:
+                    embed_dim = len(spk_embed_data)
+        
+        spk256 = np.zeros(embed_dim, dtype=np.float32)
+        if spk_embed_data is not None:
+            if len(spk_embed_data) == embed_dim:
+                spk256 = spk_embed_data
+            else:
+                if len(spk_embed_data) < embed_dim:
+                    spk256[:len(spk_embed_data)] = spk_embed_data
+                else:
+                    spk256 = spk_embed_data[:embed_dim]
+
+        # 2. Build timing sequences
+        all_tok = []
+        all_ph_midi = []
+        word_div = []
+        word_dur_fr = []
+        note_midi = []
+        note_rest = []
+        note_dur_fr = []
+
+        initial_ap_sec = 0.02
+        initial_ap_fr = max(1, round(initial_ap_sec * frame_hz))
+        
+        all_tok.append(SP_ID)
+        all_ph_midi.append(0)
+        word_div.append(1)
+        word_dur_fr.append(initial_ap_fr)
+        note_midi.append(0.0)
+        note_rest.append(True)
+        note_dur_fr.append(initial_ap_fr)
+        
+        prev_end = -initial_ap_sec
+
+        for i, (start, dur, note) in enumerate(track_notes):
+            gap = start - prev_end
+            if gap > 0.02:
+                gap_fr = max(2, round(gap * frame_hz))
+                all_tok.append(SP_ID)
+                all_ph_midi.append(0)
+                word_div.append(1)
+                word_dur_fr.append(gap_fr)
+                note_midi.append(0.0)
+                note_rest.append(True)
+                note_dur_fr.append(gap_fr)
+
+            midi = int(note.get("midi") or note.get("pitch") or 60)
+            lyric = note.get("lyric", "a").strip()
+            dur_fr = max(2, round(dur * frame_hz))
+            is_rest = lyric in ("", "-", "~", "rest", "_")
+            
+            if self.language == 'zh':
+                phonemes = self.lyric_to_phonemes_zh(lyric)
+            else:
+                phonemes = self.lyric_to_phonemes_en(lyric)
+                
+            ids = [self.phoneme_to_id.get(p, SP_ID) for p in phonemes]
+            if not ids:
+                ids = [SP_ID]
+                
+            all_tok.extend(ids)
+            all_ph_midi.extend([midi] * len(ids))
+            word_div.append(len(ids))
+            word_dur_fr.append(dur_fr)
+            note_midi.append(float(midi))
+            note_rest.append(is_rest)
+            note_dur_fr.append(dur_fr)
+
+            prev_end = start + dur
+            
+        final_sp_fr = max(2, round(0.1 * frame_hz))
+        all_tok.append(SP_ID)
+        all_ph_midi.append(0)
+        word_div.append(1)
+        word_dur_fr.append(final_sp_fr)
+        note_midi.append(0.0)
+        note_rest.append(True)
+        note_dur_fr.append(final_sp_fr)
+
+        n_tok = len(all_tok)
+        n_notes = len(note_midi)
+        tok_t = np.array([all_tok], dtype=np.int64)
+        ph_midi_t = np.array([all_ph_midi], dtype=np.int64)
+        wd_t = np.array([word_div], dtype=np.int64)
+        wdur_t = np.array([word_dur_fr], dtype=np.int64)
+        nm_t = np.array([note_midi], dtype=np.float32)
+        nr_t = np.array([note_rest], dtype=bool)
+        nd_t = np.array([note_dur_fr], dtype=np.int64)
+
+        # Pre-compute durations/frames before running session since newer sess_ling requires ph_dur
+        upd = []
+        for wdur, wdiv in zip(word_dur_fr, word_div):
+            per = max(1, wdur // wdiv)
+            rem = wdur - per * wdiv
+            for k in range(wdiv):
+                upd.append(per + (1 if k == wdiv - 1 and rem > 0 else 0))
+        ph_dur = np.array(upd, dtype=np.int64)
+        n_frames = int(ph_dur.sum())
+        pdt = ph_dur[None, :]
+
+        try:
+            # 3. Linguistic model - Handle newer DiffSinger models needing ph_dur vs older ones needing word_div
+            ling_sess_inputs = [i.name for i in self.sess_ling.get_inputs()]
+            if "ph_dur" in ling_sess_inputs:
+                enc, masks = self.sess_ling.run(None, {"tokens": tok_t, "ph_dur": pdt})
+            else:
+                enc, masks = self.sess_ling.run(None, {"tokens": tok_t, "word_div": wd_t, "word_dur": wdur_t})
+            
+            # 4. Duration model
+            sk_tok = np.tile(spk256[None, None, :], (1, n_tok, 1))
+            dur_inputs = {
+                "encoder_out": enc,
+                "x_masks": masks,
+                "ph_midi": ph_midi_t,
+                "spk_embed": sk_tok
+            }
+            dur_sess_inputs = [i.name for i in self.sess_dur.get_inputs()]
+            dur_inputs_filtered = {k: v for k, v in dur_inputs.items() if k in dur_sess_inputs}
+            (dpred,) = self.sess_dur.run(None, dur_inputs_filtered)
+
+            # F0 guide (MIDI scale vs Hz guide)
+            # Modern models expect MIDI semitones for the pitch guide input
+            f0_midi_list = []
+            ti = 0
+            ni = 0
+            for wdiv_v, wdur_v in zip(word_div, word_dur_fr):
+                nr = note_rest[ni] if ni < len(note_rest) else True
+                nm = note_midi[ni] if ni < len(note_midi) else 0
+                midi_val = 0.0 if nr else nm
+                ni += 1
+                for k in range(wdiv_v):
+                    f0_midi_list.extend([midi_val] * int(ph_dur[ti+k]))
+                ti += wdiv_v
+            
+            f0_midi_arr = np.array(f0_midi_list[:n_frames], dtype=np.float32)
+            if len(f0_midi_arr) < n_frames:
+                f0_midi_arr = np.pad(f0_midi_arr, (0, n_frames - len(f0_midi_arr)))
+            f0i = f0_midi_t = f0_midi_arr[None, :]
+
+            # 5. Pitch model
+            sk_fr = np.tile(spk256[None, None, :], (1, n_frames, 1))
+            ex = np.ones((1, n_frames), dtype=np.float32)
+            rt = np.ones((1, n_frames), dtype=bool)
+            steps_val = int(params.get("steps", 20)) if params else 20
+            st = np.array(steps_val, dtype=np.int64)
+
+            pitch_inputs = {
+                "encoder_out": enc,
+                "ph_dur": pdt,
+                "note_midi": nm_t,
+                "note_rest": nr_t,
+                "note_dur": nd_t,
+                "pitch": f0i,
+                "expr": ex,
+                "retake": rt,
+                "spk_embed": sk_fr,
+                "steps": st
+            }
+            pitch_sess_inputs = [i.name for i in self.sess_pitch.get_inputs()]
+            pitch_inputs_filtered = {k: v for k, v in pitch_inputs.items() if k in pitch_sess_inputs}
+            (pp,) = self.sess_pitch.run(None, pitch_inputs_filtered)
+
+            # Convert predicted pitch (pp) to Hz for acoustic session and vocoder
+            pp_final = pp.copy()
+            voiced_frames = pp_final[pp_final > 2.0]
+            v_mean = np.mean(voiced_frames) if len(voiced_frames) > 0 else 0.0
+            
+            if 0.1 < v_mean < 10.0:
+                # Log F0 -> convert to Hz
+                voicing_mask = pp_final > 0
+                pp_hz = np.zeros_like(pp_final)
+                pp_hz[voicing_mask] = np.exp(pp_final[voicing_mask])
+                pp_final = pp_hz
+            elif 10.0 <= v_mean < 100.0:
+                # MIDI semitones -> convert to Hz
+                voicing_mask = pp_final > 0
+                pp_hz = np.zeros_like(pp_final)
+                pp_hz[voicing_mask] = 440.0 * (2.0 ** ((pp_final[voicing_mask] - 69.0) / 12.0))
+                pp_final = pp_hz
+            # If v_mean >= 100.0, it is already in Hz.
+
+            # 6. Acoustic model
+            no = pp_final.shape[1]
+            sk_o = np.tile(spk256[None, None, :], (1, no, 1))
+            formant_val = float(params.get("formant_shift", 0.0)) if params else 0.0
+            gender_val = -formant_val / 6.0
+            ga = np.full((1, no), gender_val, dtype=np.float32)
+            speed_val = float(params.get("speed", 1.0)) if params else 1.0
+            va = np.full((1, no), speed_val, dtype=np.float32)
+            depth_val = float(params.get("depth", self.max_depth)) if params else self.max_depth
+            dp = np.array(depth_val, dtype=np.float32)
+
+            acou_inputs = {
+                "tokens": tok_t,
+                "durations": pdt,
+                "f0": pp_final,
+                "gender": ga,
+                "velocity": va,
+                "spk_embed": sk_o,
+                "depth": dp,
+                "steps": st
+            }
+            acou_sess_inputs = [i.name for i in self.sess_acoustic.get_inputs()]
+            if "breathiness" in acou_sess_inputs:
+                breath_val = float(params.get("breathiness", 0.0)) / 100.0 if params else 0.0
+                acou_inputs["breathiness"] = np.full((1, no), breath_val, dtype=np.float32)
+            if "voicing" in acou_sess_inputs:
+                acou_inputs["voicing"] = np.zeros((1, no), dtype=np.float32)
+            if "tension" in acou_sess_inputs:
+                acou_inputs["tension"] = np.zeros((1, no), dtype=np.float32)
+            if "languages" in acou_sess_inputs:
+                acou_inputs["languages"] = np.zeros_like(tok_t)
+
+            acou_inputs_filtered = {k: v for k, v in acou_inputs.items() if k in acou_sess_inputs}
+            mel = self.sess_acoustic.run(["mel"], acou_inputs_filtered)[0]
+
+            # 7. Vocoder
+            voc_inputs = {"mel": mel, "f0": pp_final}
+            waveform = self.sess_vocoder.run(["waveform"], voc_inputs)[0]
+            audio = waveform[0].copy().astype(np.float32)
+
+            # Apply post-processing (EQ, Reverb, Norm)
+            return self._apply_post_processing(audio, params)
+        except Exception as e:
+            print(f"[ONNXEngine] ❌ Neural synthesis failed, falling back to manual pitch mode: {e}")
+            import traceback
+            traceback.print_exc()
+            return self._synthesize_track_fallback(track_notes, params)
+
+    def _synthesize_track_fallback(self, track_notes, params):
         hop_size = 512
         frame_sec = hop_size / self.sr
         
-        # Minimal initial SP for clean DiffSinger onset — kept as small as possible
-        # to minimize timing offset between vocal audio and MIDI playback
-        initial_sp_sec = 0.02  # 20ms — just enough for onset, was 100ms causing delay
+        initial_sp_sec = 0.02
         initial_sp_frames = max(1, round(initial_sp_sec / frame_sec))
         
         ph_list = ["SP"]
         ph_dur_frames = [initial_sp_frames]
-        ph_f0 = [0.0]  # one F0 per phoneme slot, expanded later
+        ph_f0 = [0.0]
+        
+        note_ranges = []
         
         for i, (start, dur, note) in enumerate(track_notes):
-            # Silence before note — compute from absolute target position to avoid drift
-            # Account for initial SP offset: audio sample 0 = time -initial_sp_sec
-            # so the note at time `start` should appear at frame (start + initial_sp_sec) / frame_sec
             target_frames_total = round((start + initial_sp_sec) / frame_sec)
             current_frames_total = sum(ph_dur_frames)
             if target_frames_total > current_frames_total:
@@ -288,7 +571,8 @@ class DiffSingerONNXEngine:
                     ph_dur_frames.append(sil_frames)
                     ph_f0.append(0.0)
             
-            # Phonemes
+            note_start_f = sum(ph_dur_frames)
+            
             lyric = note.get("lyric", "doh")
             if self.language == 'zh':
                 phonemes = self.lyric_to_phonemes_zh(lyric)
@@ -301,9 +585,6 @@ class DiffSingerONNXEngine:
                 
             midi = float(note.get("midi") or note.get("pitch", 60))
             f0_val = 440.0 * (2.0 ** ((midi - 69.0) / 12.0))
-            
-            if i < 5 or i == len(track_notes) - 1:
-                print(f"[ONNXEngine] Note {i}: lyric='{lyric}' midi={midi} f0={f0_val:.1f}Hz ph={phonemes} frames={note_frames}")
             
             if len(phonemes) == 1:
                 ph_list.append(phonemes[0])
@@ -323,6 +604,9 @@ class DiffSingerONNXEngine:
                         ph_dur_frames.append(vowel_frames)
                     ph_f0.append(f0_val)
             
+            note_end_f = sum(ph_dur_frames)
+            note_ranges.append((note_start_f, note_end_f, f0_val))
+            
         ph_list.append("SP")
         ph_dur_frames.append(int(0.1 / frame_sec))
         ph_f0.append(0.0)
@@ -332,11 +616,59 @@ class DiffSingerONNXEngine:
         for f0, nf in zip(ph_f0, ph_dur_frames):
             f0_list.extend([f0] * nf)
         
-        n_frames = len(f0_list)
+        f0_arr = np.array(f0_list, dtype=np.float32)
         
-        # Debug summary
-        unique_f0 = sorted(set(f for f in f0_list if f > 0))
-        print(f"[ONNXEngine] Track: {len(ph_list)} phonemes, {n_frames} frames, {len(unique_f0)} unique pitches: {[f'{f:.0f}Hz' for f in unique_f0[:8]]}")
+        # 1. Portamento (pitch glide between adjacent notes)
+        PORTA_FRAMES = int(0.08 / frame_sec)
+        frame_idx = 0
+        for pi, (nf, hz) in enumerate(zip(ph_dur_frames, ph_f0)):
+            if pi > 0 and hz > 0.0 and ph_f0[pi-1] > 0.0 and hz != ph_f0[pi-1]:
+                prev_hz = ph_f0[pi-1]
+                ramp = min(PORTA_FRAMES, nf)
+                f0_arr[frame_idx:frame_idx+ramp] = np.linspace(prev_hz, hz, ramp)
+            frame_idx += nf
+            
+        # 2. Ramp-in and Ramp-out at boundaries
+        RAMP = int(0.05 / frame_sec)
+        for i in range(1, len(f0_arr)):
+            prev, cur = f0_arr[i-1], f0_arr[i]
+            if prev == 0.0 and cur > 0.0:
+                end = min(i + RAMP, len(f0_arr))
+                f0_arr[i:end] = np.linspace(cur * 0.15, cur, end - i)
+            elif prev > 0.0 and cur == 0.0:
+                start = max(0, i - RAMP)
+                f0_arr[start:i] = np.linspace(prev, prev * 0.15, i - start)
+                
+        # 3. Vibrato (5.5 Hz vibrato with 20 cents amplitude)
+        VIBRATO_HZ = 5.5
+        VIBRATO_CENTS = 20
+        VIBRATO_DELAY = int(0.12 / frame_sec)
+        MIN_VIBE_FRAMES = int(0.35 / frame_sec)
+        
+        for (start_f, end_f, hz) in note_ranges:
+            nf = end_f - start_f
+            if hz > 0.0 and nf > MIN_VIBE_FRAMES:
+                onset = start_f + VIBRATO_DELAY
+                if onset < end_f:
+                    vib_len = end_f - onset
+                    t_arr = np.arange(vib_len) * frame_sec
+                    cents = VIBRATO_CENTS * np.sin(2 * np.pi * VIBRATO_HZ * t_arr)
+                    
+                    fade_in_n = min(int(0.10 / frame_sec), vib_len)
+                    vib_env = np.ones(vib_len)
+                    vib_env[:fade_in_n] = np.linspace(0.0, 1.0, fade_in_n)
+                    cents *= vib_env
+                    
+                    fade_out_n = min(int(0.05 / frame_sec), vib_len)
+                    if fade_out_n > 0:
+                        cents[-fade_out_n:] *= np.linspace(1.0, 0.0, fade_out_n)
+                        
+                    ratio = 2.0 ** (cents / 1200.0)
+                    f0_arr[onset:end_f] *= ratio.astype(np.float32)
+                    
+        f0_list = f0_arr.tolist()
+        n_frames = len(f0_list)
+        f0_np = np.array([f0_list], dtype=np.float32)
         
         # Prepare ONNX Inputs
         tokens = []
@@ -344,19 +676,14 @@ class DiffSingerONNXEngine:
             if p in self.phoneme_to_id:
                 tokens.append(self.phoneme_to_id[p])
             else:
-                print(f"[ONNXEngine] ⚠️ Unknown phoneme '{p}', using 0")
                 tokens.append(0)
                 
         tokens_np = np.array([tokens], dtype=np.int64)
         durations_np = np.array([ph_dur_frames], dtype=np.int64)
-        f0_np = np.array([f0_list], dtype=np.float32)
-        # Formant shift / Gender control: UI goes from -6 to 6
-        # A positive formant_shift in UI means lighter/more feminine voice, which translates to a negative gender in DiffSinger
-        formant_val = float(params.get("formant_shift", 0.0)) if params else 0.0
-        gender_val = -formant_val / 6.0  # Scale -6..6 to -1.0..1.0 range
-        gender_np = np.full((1, n_frames), gender_val, dtype=np.float32)
         
-        # Speed / Velocity control: UI speed ranges from 0.5 to 2.0
+        formant_val = float(params.get("formant_shift", 0.0)) if params else 0.0
+        gender_val = -formant_val / 6.0
+        gender_np = np.full((1, n_frames), gender_val, dtype=np.float32)
         speed_val = float(params.get("speed", 1.0)) if params else 1.0
         velocity_np = np.full((1, n_frames), speed_val, dtype=np.float32)
         
@@ -370,44 +697,28 @@ class DiffSingerONNXEngine:
         
         if "gender" in input_names: inputs["gender"] = gender_np
         if "velocity" in input_names: inputs["velocity"] = velocity_np
-        if "languages" in input_names:
-            inputs["languages"] = np.zeros_like(tokens_np)
+        if "languages" in input_names: inputs["languages"] = np.zeros_like(tokens_np)
         if "breathiness" in input_names:
             breath_val = float(params.get("breathiness", 0.0)) / 100.0 if params else 0.0
             inputs["breathiness"] = np.full((1, n_frames), breath_val, dtype=np.float32)
-        if "voicing" in input_names:
-            inputs["voicing"] = np.zeros((1, n_frames), dtype=np.float32)
-        if "tension" in input_names:
-            inputs["tension"] = np.zeros((1, n_frames), dtype=np.float32)
-            
-        if "spk_embed" in input_names: 
-            # Find the input shape dim for spk_embed
+        if "voicing" in input_names: inputs["voicing"] = np.zeros((1, n_frames), dtype=np.float32)
+        if "tension" in input_names: inputs["tension"] = np.zeros((1, n_frames), dtype=np.float32)
+        
+        if "spk_embed" in input_names:
+            spk_embed_data = self._get_spk_embed(params)
             spk_embed_node = next(i for i in self.sess_acoustic.get_inputs() if i.name == "spk_embed")
-            embed_dim = 256  # fallback default
+            embed_dim = 256
             if len(spk_embed_node.shape) >= 3 and isinstance(spk_embed_node.shape[2], int):
                 embed_dim = spk_embed_node.shape[2]
             elif len(spk_embed_node.shape) >= 3:
-                # If shape has dynamic dimension or string representation, check loaded embedding length
-                if hasattr(self, 'default_spk_embed') and self.default_spk_embed is not None:
-                    embed_dim = len(self.default_spk_embed)
-            
-            # Retrieve from params, fallback to default
-            requested_mode = params.get("vocal_mode") if params else None
-            spk_embed_data = None
-            if requested_mode and isinstance(requested_mode, str):
-                spk_embed_data = self.spk_embeds.get(requested_mode.lower())
                 if spk_embed_data is not None:
-                    print(f"[ONNXEngine] Using requested vocal mode: '{requested_mode}'")
+                    embed_dim = len(spk_embed_data)
             
-            if spk_embed_data is None:
-                spk_embed_data = self.default_spk_embed
-                
             actual_embed = np.zeros(embed_dim, dtype=np.float32)
             if spk_embed_data is not None:
                 if len(spk_embed_data) == embed_dim:
                     actual_embed = spk_embed_data
                 else:
-                    print(f"[ONNXEngine] ⚠️ Speaker embed size mismatch: model expects {embed_dim}, got {len(spk_embed_data)}")
                     if len(spk_embed_data) < embed_dim:
                         actual_embed[:len(spk_embed_data)] = spk_embed_data
                     else:
@@ -425,45 +736,44 @@ class DiffSingerONNXEngine:
             mel = self.sess_acoustic.run(["mel"], inputs)[0]
             voc_inputs = { "mel": mel, "f0": f0_np }
             waveform = self.sess_vocoder.run(["waveform"], voc_inputs)[0]
-            print(f"[ONNXEngine] ✅ Audio generated: {len(waveform[0])} samples, peak={np.max(np.abs(waveform[0])):.3f}")
-            
-            # Post-processing EQ and Reverb
             audio = waveform[0].copy().astype(np.float32)
-            
-            # 1. Warmth (low shelf) & Brightness (high shelf)
-            warmth = float(params.get('warmth', 0.0)) if params else 0.0
-            brightness = float(params.get('brightness', 0.0)) if params else 0.0
-            
-            from scipy import signal
-            if abs(warmth) > 0.05:
-                sos = signal.butter(2, 300 / (self.sr/2), btype='low', output='sos')
-                low_band = signal.sosfilt(sos, audio)
-                audio = audio + low_band * warmth * 0.5
-                
-            if abs(brightness) > 0.05:
-                sos = signal.butter(2, 4000 / (self.sr/2), btype='high', output='sos')
-                hi_band = signal.sosfilt(sos, audio)
-                audio = audio + hi_band * brightness * 0.5
-                
-            # 2. Reverb
-            reverb = float(params.get('reverb', 0.0)) if params else 0.0
-            if reverb > 0.01:
-                delays = [int(self.sr * d) for d in [0.030, 0.037, 0.041, 0.043]]
-                out = audio.copy()
-                for d in delays:
-                    if d < len(audio):
-                        padded = np.pad(audio, (d, 0))[:len(audio)]
-                        out = out + padded * reverb * 0.3
-                audio = out
-                
-            # Normalize
-            peak = np.max(np.abs(audio))
-            if peak > 0.001:
-                audio = audio / peak * 0.90
-                
-            return audio
+            return self._apply_post_processing(audio, params)
         except Exception as e:
-            print(f"[ONNXEngine] ❌ Inference failed: {e}")
+            print(f"[ONNXEngine] ❌ Fallback acoustic synthesis failed: {e}")
             import traceback
             traceback.print_exc()
             return None
+
+    def _apply_post_processing(self, audio, params):
+        # 1. Warmth (low shelf) & Brightness (high shelf)
+        warmth = float(params.get('warmth', 0.0)) if params else 0.0
+        brightness = float(params.get('brightness', 0.0)) if params else 0.0
+        
+        from scipy import signal
+        if abs(warmth) > 0.05:
+            sos = signal.butter(2, 300 / (self.sr/2), btype='low', output='sos')
+            low_band = signal.sosfilt(sos, audio)
+            audio = audio + low_band * warmth * 0.5
+            
+        if abs(brightness) > 0.05:
+            sos = signal.butter(2, 4000 / (self.sr/2), btype='high', output='sos')
+            hi_band = signal.sosfilt(sos, audio)
+            audio = audio + hi_band * brightness * 0.5
+            
+        # 2. Reverb
+        reverb = float(params.get('reverb', 0.0)) if params else 0.0
+        if reverb > 0.01:
+            delays = [int(self.sr * d) for d in [0.030, 0.037, 0.041, 0.043]]
+            out = audio.copy()
+            for d in delays:
+                if d < len(audio):
+                    padded = np.pad(audio, (d, 0))[:len(audio)]
+                    out = out + padded * reverb * 0.3
+            audio = out
+            
+        # Normalize
+        peak = np.max(np.abs(audio))
+        if peak > 0.001:
+            audio = audio / peak * 0.90
+            
+        return audio

@@ -35,6 +35,7 @@ export class MusicEngine {
   private currentPart: Tone.Part | null = null;
   private loadedSongHash = '';  // Cache to prevent re-loading the same song
   public lastLoadedNotes: ParsedNote[] = []; // Store notes for plugins/rendering
+  public unrolledMeasures: { measureId: string; startTime: number; duration: number }[] = [];
 
   // ── Loop (Section repeat) ──────────────────────────────────────────────
   private loopStartBeats = 0;
@@ -109,7 +110,16 @@ export class MusicEngine {
   constructor() { }
 
   get transportState() { return Tone.Transport.state; }
-  get isSongLoaded() { return this.currentPart !== null; }
+
+  get isSongLoaded(): boolean {
+    return this.currentPart !== null;
+  }
+
+  hasVocalLayer(trackId: string): boolean {
+    const audioEl = this.vocalAudioElements.get(trackId);
+    const hasRealAudio = audioEl && audioEl.src && !audioEl.src.startsWith('data:');
+    return this.trackVocalLayers.has(trackId) || !!hasRealAudio;
+  }
 
   toggleMetronome(enabled: boolean) { this.clickMetronomeEnabled = enabled; }
 
@@ -189,7 +199,8 @@ export class MusicEngine {
 
     try {
       const parts = xmlDoc.querySelectorAll("part");
-      parts.forEach((part) => {
+      this.unrolledMeasures = [];
+      parts.forEach((part, partIdx) => {
         const partId = part.getAttribute("id") || "P1";
         // Escape partId for safe use in selector
         const safePartId = partId.replace(/"/g, '\\"');
@@ -307,6 +318,7 @@ export class MusicEngine {
         measureOrder.forEach((mIdx) => {
           const measure = physicalMeasures[mIdx];
           const measureNum = measure.getAttribute("number") || "1";
+          const startBeat = currentTime;
           const timeNode = measure.querySelector("time");
           if (timeNode) {
             beats = parseInt(timeNode.querySelector("beats")?.textContent || "4");
@@ -395,6 +407,19 @@ export class MusicEngine {
               if (!isChord) currentTime += duration;
             }
           });
+
+          const endBeat = currentTime;
+          let measureDuration = endBeat - startBeat;
+          if (measureDuration <= 0) {
+            measureDuration = beats * (4 / beatType);
+          }
+          if (partIdx === 0) {
+            this.unrolledMeasures.push({
+              measureId: measureNum,
+              startTime: startBeat,
+              duration: measureDuration
+            });
+          }
         });
 
         // Clean up part names if a part only ever had one staff
@@ -421,15 +446,8 @@ export class MusicEngine {
   async ensureInitialized() {
     try {
       if (Tone.getContext().state !== 'running') {
-        console.log("[MusicEngine] ensureInitialized: Context state is not running. Resuming with timeout...");
-        await Promise.race([
-          Promise.all([
-            Tone.start(),
-            Tone.getContext().resume()
-          ]),
-          new Promise((resolve) => setTimeout(resolve, 2000))
-        ]);
-        console.log("[MusicEngine] ensureInitialized: Context state now:", Tone.getContext().state);
+        await Tone.start();
+        await Tone.getContext().resume();
       }
 
       if (!this.isInitialized) {
@@ -470,11 +488,11 @@ export class MusicEngine {
       this.vocalAudioElements.set(trackId, audio);
     }
     
-    // If it already has a real source, do NOT play/pause it to "unlock" it.
-    // We will play it for real when start() or resume() is called synchronously.
+    // If it has a real source, do not run the dummy unlock sequence to prevent the async pause() race condition!
+    // Since start() or resume() will play it synchronously inside the click handler anyway.
     const hasRealSource = audio.src && !audio.src.startsWith('data:');
     if (hasRealSource) {
-      console.log(`[MusicEngine] 🔓 HTMLAudio for ${trackId} already has a real source, skipping dummy unlock`);
+      console.log(`[MusicEngine] 🔓 Skipping dummy unlock for ${trackId} because it has a real source URL.`);
       return;
     }
     
@@ -482,19 +500,13 @@ export class MusicEngine {
       audio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==';
     }
     
-    // Save original mute state
-    const originalMuted = audio.muted;
-    audio.muted = true; // Mute during unlock to prevent short audio burst/glitch
-    
-    console.log(`[MusicEngine] 🔓 Synchronously unlocking vocal HTMLAudio for ${trackId}`);
+    console.log(`[MusicEngine] 🔓 Synchronously unlocking vocal HTMLAudio for ${trackId} (hasRealSource=false)`);
     const playPromise = audio.play();
     if (playPromise !== undefined) {
       playPromise.then(() => {
         audio.pause();
-        audio.muted = originalMuted; // Restore original mute state after pause
         console.log(`[MusicEngine] 🔓 HTMLAudio unlocked successfully for ${trackId}`);
       }).catch(e => {
-        audio.muted = originalMuted; // Restore on error
         console.warn(`[MusicEngine] ⚠️ HTMLAudio unlock failed/deferred for ${trackId}:`, e);
       });
     }
@@ -535,38 +547,20 @@ export class MusicEngine {
     let mainPlayer: Tone.Player | null = null;
     if (audioUrl) {
       loadPromises.push(new Promise<void>((resolve) => {
-        let resolved = false;
-        const timeoutId = setTimeout(() => {
-          if (!resolved) {
-            resolved = true;
-            console.warn(`[MusicEngine] ⚠️ Tone.Player load timeout (10s) for url=${audioUrl.substring(0, 40)}...`);
-            resolve();
-          }
-        }, 10000);
-
         const player = new Tone.Player({
           url: audioUrl,
           autostart: false,
           onload: () => {
-            clearTimeout(timeoutId);
-            if (!resolved) {
-              resolved = true;
-              if (myGeneration === this._vocalGeneration) {
-                mainPlayer = player;
-                console.log(`[MusicEngine] ✅ mainPlayer loaded successfully. url=${audioUrl.substring(0, 60)}..., duration: ${player.buffer.duration}s`);
-              } else {
-                player.dispose();
-              }
-              resolve();
+            if (myGeneration === this._vocalGeneration) {
+              mainPlayer = player;
+            } else {
+              player.dispose();
             }
+            resolve();
           },
           onerror: (err) => {
-            clearTimeout(timeoutId);
-            if (!resolved) {
-              resolved = true;
-              console.error(`[MusicEngine] ❌ Main mix Tone.Player load error for ${trackId}:`, err);
-              resolve(); // Resolve to prevent blocking the user
-            }
+            console.error(`[MusicEngine] ❌ Main mix Tone.Player load error for ${trackId}:`, err);
+            resolve(); // Resolve to prevent blocking the user
           }
         }).connect(channel);
       }));
@@ -577,37 +571,20 @@ export class MusicEngine {
     if (stemUrls && stemUrls.length > 0) {
       stemUrls.forEach((url, index) => {
         loadPromises.push(new Promise<void>((resolve) => {
-          let resolved = false;
-          const timeoutId = setTimeout(() => {
-            if (!resolved) {
-              resolved = true;
-              console.warn(`[MusicEngine] ⚠️ Stem ${index} Tone.Player load timeout (10s)`);
-              resolve();
-            }
-          }, 10000);
-
           const player = new Tone.Player({
             url: url,
             autostart: false,
             onload: () => {
-              clearTimeout(timeoutId);
-              if (!resolved) {
-                resolved = true;
-                if (myGeneration === this._vocalGeneration) {
-                  loadedStems[index] = player;
-                } else {
-                  player.dispose();
-                }
-                resolve();
+              if (myGeneration === this._vocalGeneration) {
+                loadedStems[index] = player;
+              } else {
+                player.dispose();
               }
+              resolve();
             },
             onerror: (err) => {
-              clearTimeout(timeoutId);
-              if (!resolved) {
-                resolved = true;
-                console.error(`[MusicEngine] ❌ Stem ${index} Tone.Player load error for ${trackId}:`, err);
-                resolve();
-              }
+              console.error(`[MusicEngine] ❌ Stem ${index} Tone.Player load error for ${trackId}:`, err);
+              resolve();
             }
           }).connect(channel);
         }));
@@ -831,26 +808,22 @@ export class MusicEngine {
         channel.pan.rampTo(pan, 0.1);
         channel.mute = t.isMuted || (hasSolo && !t.isSolo);
 
-        // If in vocal mode and we actually have a vocal layer loaded, instrument sampler should be silent
+        // If in vocal mode, the instrument sampler should be completely silent (strict separation)
         const sampler = this.trackSamplers.get(t.id);
         if (sampler && sampler.volume) {
-          const audio = this.vocalAudioElements.get(t.id);
-          const hasRealVocal = (audio && audio.src && !audio.src.startsWith('data:')) || this.trackVocalLayers.has(t.id);
-          sampler.volume.value = (t.mode === 'vocal' && hasRealVocal) ? -100 : 0;
+          sampler.volume.value = (t.mode === 'vocal') ? -100 : 0;
         }
       }
 
       const activeStemIdx = this.trackActiveStem.get(t.id) ?? null;
       const isVocalPlaying = t.mode === 'vocal' && !t.isMuted && (!hasSolo || t.isSolo);
-      console.log(`[MusicEngine] updateTrackStates t.id=${t.id}: mode=${t.mode}, isMuted=${t.isMuted}, isVocalPlaying=${isVocalPlaying}, activeStemIdx=${activeStemIdx}, vocalPlayersCount=${this.trackVocalLayers.get(t.id)?.length || 0}`);
 
       // Sync vocal layer volume and mute states dynamically
       const vocalPlayers = this.trackVocalLayers.get(t.id);
       if (vocalPlayers) {
-        vocalPlayers.forEach((p, idx) => {
+        vocalPlayers.forEach(p => {
           const isMainLayerActive = isVocalPlaying && (activeStemIdx === null);
           p.volume.value = isMainLayerActive ? 0 : -100;
-          console.log(`[MusicEngine] vocalPlayer #${idx} (main): isMainLayerActive=${isMainLayerActive}, volume=${p.volume.value}`);
         });
       }
 
@@ -861,7 +834,6 @@ export class MusicEngine {
         const vol = typeof t.volume === 'number' ? t.volume : 0.8;
         audio.volume = isMainLayerActive ? vol : 0.0;
         audio.muted = !isMainLayerActive;
-        console.log(`[MusicEngine] HTMLAudio vocal element: isMainLayerActive=${isMainLayerActive}, volume=${audio.volume}, muted=${audio.muted}`);
       }
 
       const vocalStems = this.trackVocalStems.get(t.id);
@@ -870,7 +842,6 @@ export class MusicEngine {
           if (p) {
             const isStemActive = isVocalPlaying && (activeStemIdx === i);
             p.volume.value = isStemActive ? 0 : -100;
-            console.log(`[MusicEngine] vocalStem #${i}: isStemActive=${isStemActive}, volume=${p.volume.value}`);
           }
         });
       }
@@ -891,58 +862,23 @@ export class MusicEngine {
     this.trackVocalLayers.forEach(players => allPlayers.push(...players));
     this.trackVocalStems.forEach(players => allPlayers.push(...players.filter(Boolean)));
 
-    console.log(`[MusicEngine] updateVocalPlaybackState: transportState=${transportState}, transportSeconds=${transportSeconds}, songTime=${songTime}, playersCount=${allPlayers.length}`);
-
     if (transportState === 'started') {
-      allPlayers.forEach((player, idx) => {
-        const isLoaded = player && player.buffer && player.buffer.loaded;
-        console.log(`[MusicEngine] player #${idx} play check: loaded=${isLoaded}`);
+      allPlayers.forEach(player => {
         if (!player || !player.buffer || !player.buffer.loaded) return;
-        
         try { player.stop(triggerTime); } catch (e) {}
-
-        // Enforce correct volume level robustly right before starting to play
-        const track = this.tracks.find(t => 
-          (this.trackVocalLayers.get(t.id) || []).includes(player) || 
-          (this.trackVocalStems.get(t.id) || []).includes(player)
-        );
-        
-        const hasSolo = this.tracks.some(tr => tr.isSolo);
-        const isTrackPlaying = track ? (!track.isMuted && (!hasSolo || track.isSolo)) : true;
-        
-        let isPlayerActive = isTrackPlaying;
-        if (track) {
-          const activeStemIdx = this.trackActiveStem.get(track.id) ?? null;
-          const layers = this.trackVocalLayers.get(track.id) || [];
-          if (layers.includes(player)) {
-            isPlayerActive = isTrackPlaying && (activeStemIdx === null);
-          } else {
-            const stems = this.trackVocalStems.get(track.id) || [];
-            const stemIdx = stems.indexOf(player);
-            isPlayerActive = isTrackPlaying && (activeStemIdx === stemIdx);
-          }
-        }
-
-        player.volume.value = isPlayerActive ? 0 : -100;
-        console.log(`[MusicEngine] player #${idx}: isPlayerActive=${isPlayerActive}, volume enforced=${player.volume.value}`);
-
         const offsetInAudio = Math.max(0, songTime);
         const duration = player.buffer.duration;
-        console.log(`[MusicEngine] player #${idx}: offsetInAudio=${offsetInAudio}, duration=${duration}`);
         if (offsetInAudio < duration) {
           if (songTime < 0) {
             const delay = -songTime;
             player.start(triggerTime + delay, 0);
-            console.log(`[MusicEngine] player #${idx}: started with count-in delay ${delay}`);
           } else {
             player.start(triggerTime, offsetInAudio);
-            console.log(`[MusicEngine] player #${idx}: started at offset ${offsetInAudio}`);
           }
         }
       });
     } else {
-      allPlayers.forEach((player, idx) => {
-        console.log(`[MusicEngine] player #${idx}: stopping`);
+      allPlayers.forEach(player => {
         try { player.stop(triggerTime); } catch (e) {}
       });
     }
@@ -974,7 +910,16 @@ export class MusicEngine {
     this.baseStartTime = Math.max(0, s);
     Tone.Transport.seconds = this.baseStartTime + this.countInDuration;
     // 🎤 Sync HTMLAudio vocal elements to new position
-    this.vocalAudioElements.forEach(audio => {
+    this.vocalAudioElements.forEach((audio, trackId) => {
+      // Check if Tone.Player is loaded
+      const hasTonePlayer = this.trackVocalLayers.has(trackId) && 
+        this.trackVocalLayers.get(trackId)!.some(p => p.buffer && p.buffer.loaded);
+
+      if (hasTonePlayer) {
+        audio.pause();
+        return;
+      }
+
       audio.currentTime = s;
       if (Tone.Transport.state === 'started') {
         audio.play().catch(() => {});
@@ -990,23 +935,14 @@ export class MusicEngine {
     console.log("[MusicEngine] [loadSong] starting...", { notesCount: notes.length, tracksCount: tracks.length });
     await this.ensureInitialized();
     console.log("[MusicEngine] [loadSong] ensureInitialized done");
-    
-    // Filter out invalid or corrupted notes before processing or scheduling
-    const validNotes = (notes || []).filter(n => 
-      n && 
-      typeof n.startTime === 'number' && isFinite(n.startTime) && n.startTime >= 0 &&
-      typeof n.duration === 'number' && isFinite(n.duration) && n.duration > 0 &&
-      typeof n.step === 'string' && n.step.trim().length > 0
-    );
-
-    this.lastLoadedNotes = validNotes; // Cache for plugins/rendering
-    if (validNotes.length === 0) {
-      console.warn("[MusicEngine] [loadSong] No valid notes found after filtering, returning");
+    this.lastLoadedNotes = notes; // Cache for plugins/rendering
+    if (notes.length === 0) {
+      console.log("[MusicEngine] [loadSong] notes list is empty, returning");
       return;
     }
 
     // Generate a hash to check if data actually changed
-    const hash = `${validNotes.length}-${transpose}-${isMetronomeOn}-${tracks.map(t => t.id + t.mode).join(',')}`;
+    const hash = `${notes.length}-${transpose}-${isMetronomeOn}-${tracks.map(t => t.id + t.mode).join(',')}`;
 
     // — If it's the same data, just update track states and skip the heavy Part rebuild
     // DISABLED: Always rebuild to ensure latest event schema (measure field etc.)
@@ -1035,17 +971,14 @@ export class MusicEngine {
     this.countInDuration = isMetronomeOn ? (timeSignature.beats * 2 * beatDuration) : 0;
     this.countInTicks = isMetronomeOn ? (timeSignature.beats * 2 * Tone.Transport.PPQ) : 0;
 
-    // Pre-calculate seconds instead of using tick string for smoother scheduling
     const ppq = Tone.Transport.PPQ;
-    const bpmVal = Tone.Transport.bpm.value;
-    const ticksToSeconds = (ticks: number) => (ticks / ppq) * (60 / bpmVal);
 
-    const events = validNotes.map(n => {
+    const events = notes.map(n => {
       const startTicks = n.startTime * ppq + this.countInTicks;
       const durTicks = n.duration * ppq;
       return {
-        time: ticksToSeconds(startTicks),
-        duration: ticksToSeconds(durTicks),
+        time: `${startTicks}i`,
+        duration: `${durTicks}i`,
         trackId: n.trackId,
         freq: this.calculateNoteFrequency(n, transpose),
         noteId: (n as any).id || '',          // DOM note ID from svgNoteMap
@@ -1055,16 +988,10 @@ export class MusicEngine {
     });
 
     this.currentPart = new Tone.Part((time, event) => {
-      // Play the sampler if:
-      // 1. The track mode is NOT 'vocal'
-      // 2. OR the track mode is 'vocal' but NO vocal layer is currently loaded for it
-      //    (either via Tone.Player or HTMLAudioElement)
+      // Play the sampler only if the track mode is NOT 'vocal' (strict separation)
       const isVocalMode = this.trackModes.get(event.trackId) === 'vocal';
-      const audioEl = this.vocalAudioElements.get(event.trackId);
-      const hasRealAudio = audioEl && audioEl.src && !audioEl.src.startsWith('data:');
-      const hasVocalLayer = this.trackVocalLayers.has(event.trackId) || hasRealAudio;
       
-      if (!isVocalMode || !hasVocalLayer) {
+      if (!isVocalMode) {
         const sampler = this.trackSamplers.get(event.trackId);
         if (sampler) {
           sampler.triggerAttackRelease(event.freq, event.duration, time, 0.75);
@@ -1090,11 +1017,8 @@ export class MusicEngine {
   }
 
   private calculateNoteFrequency(n: ParsedNote, transpose: number): number {
-    if (!n || typeof n.step !== 'string') return 261.63; // Default to Middle C
     const stepIdx = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"].indexOf(n.step.toUpperCase());
-    const octave = typeof n.octave === 'number' && isFinite(n.octave) ? n.octave : 4;
-    const alter = typeof n.alter === 'number' && isFinite(n.alter) ? n.alter : 0;
-    const midi = (octave + 1) * 12 + (stepIdx === -1 ? 0 : stepIdx) + alter + transpose;
+    const midi = (n.octave + 1) * 12 + (stepIdx === -1 ? 0 : stepIdx) + n.alter + transpose;
     return Tone.Frequency(midi, "midi").toFrequency();
   }
 
@@ -1113,14 +1037,11 @@ export class MusicEngine {
             const track = this.tracks.find(t => t.id === trackId);
             const isVocalPlaying = track && track.mode === 'vocal' && !track.isMuted;
             
-            if (isVocalPlaying && audio.src && !audio.src.startsWith('data:')) {
-              // Bypasses HTMLAudioElement play if a working Tone.Player layer already handles the audio
-              const hasTonePlayer = this.trackVocalLayers.has(trackId) && this.trackVocalLayers.get(trackId)!.some(p => p.buffer && p.buffer.loaded);
-              if (hasTonePlayer) {
-                console.log(`[MusicEngine] Skipping HTMLAudio play for track ${trackId} because Tone.Player fallback is loaded.`);
-                return;
-              }
+            // Check if Tone.Player is loaded
+            const hasTonePlayer = this.trackVocalLayers.has(trackId) && 
+              this.trackVocalLayers.get(trackId)!.some(p => p.buffer && p.buffer.loaded);
 
+            if (isVocalPlaying && !hasTonePlayer && audio.src && !audio.src.startsWith('data:')) {
               audio.currentTime = Math.min(songOffset, Math.max(0, (isFinite(audio.duration) ? audio.duration - 0.01 : 0)));
               audio.play().catch(e => {
                 console.warn('[MusicEngine] Vocal audio.play() failed:', e);
@@ -1167,13 +1088,11 @@ export class MusicEngine {
           const track = this.tracks.find(t => t.id === trackId);
           const isVocalPlaying = track && track.mode === 'vocal' && !track.isMuted;
           
-          if (isVocalPlaying && audio.src && !audio.src.startsWith('data:')) {
-            const hasTonePlayer = this.trackVocalLayers.has(trackId) && this.trackVocalLayers.get(trackId)!.some(p => p.buffer && p.buffer.loaded);
-            if (hasTonePlayer) {
-              console.log(`[MusicEngine] Skipping HTMLAudio resume for track ${trackId} because Tone.Player fallback is loaded.`);
-              return;
-            }
+          // Check if Tone.Player is loaded
+          const hasTonePlayer = this.trackVocalLayers.has(trackId) && 
+            this.trackVocalLayers.get(trackId)!.some(p => p.buffer && p.buffer.loaded);
 
+          if (isVocalPlaying && !hasTonePlayer && audio.src && !audio.src.startsWith('data:')) {
             audio.currentTime = offset;
             audio.play().catch(e => {
               console.warn('[MusicEngine] Vocal audio.play() resume failed:', e);

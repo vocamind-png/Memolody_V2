@@ -628,8 +628,17 @@ class StudioPreviewReq(BaseModel):
     bpm_pct: int = 100  # ← e.g. 100, 75, 50
     song_key: str = "C" # ← e.g. "C", "G", "Bb" — included in filename/label
     lyric_mode: str = "default"  # ← e.g. "Jianpu", "Ju Solfege Movable Doh"
-    owner_id: str = ""  # ← for user-isolation cache
+    owner_id: Optional[str] = ""  # ← for user-isolation cache
     is_public: bool = True  # ← for user-isolation cache
+
+    # Fix: Coerce null/None owner_id to empty string to prevent 422 errors
+    from pydantic import field_validator
+    @field_validator('owner_id', mode='before')
+    @classmethod
+    def coerce_owner_id(cls, v):
+        if v is None:
+            return ""
+        return str(v)
 
 class StudioNoteReq(BaseModel):
     midi: int = 60
@@ -1052,11 +1061,25 @@ def get_model_files(voice_id):
     vocoder_path = None
     dict_path = None
     phonemes_path = None
+    ling_path = None          # dsmain/linguistic.onnx
+    dur_path = None           # dsdur/dur.onnx
+    pitch_path = None         # dspitch/pitch.onnx
+    pitch_ling_path = None    # dspitch/linguistic.onnx
     embeds = {}
     for root, dirs, files in os.walk(voice_dir):
         for f in files:
             if f == "acoustic.onnx":
                 acoustic_path = os.path.join(root, f)
+            elif f == "linguistic.onnx":
+                # Distinguish between dsmain/linguistic.onnx and dspitch/linguistic.onnx
+                if "pitch" in root.lower() or "dspitch" in os.path.basename(root).lower():
+                    pitch_ling_path = os.path.join(root, f)
+                elif ling_path is None:
+                    ling_path = os.path.join(root, f)
+            elif f == "dur.onnx":
+                dur_path = os.path.join(root, f)
+            elif f == "pitch.onnx":
+                pitch_path = os.path.join(root, f)
             elif f == "dictionary.txt":
                 dict_path = os.path.join(root, f)
             elif f == "phonemes.txt":
@@ -1077,7 +1100,12 @@ def get_model_files(voice_id):
             "vocoder": to_static_url(vocoder_path),
             "dictionary": to_static_url(dict_path),
             "phonemes": to_static_url(phonemes_path),
-            "embeds": {k: to_static_url(v) for k, v in embeds.items()}
+            "embeds": {k: to_static_url(v) for k, v in embeds.items()},
+            # Neural sub-models for full DiffSinger pipeline
+            "linguistic": to_static_url(ling_path),
+            "dur": to_static_url(dur_path),
+            "pitch": to_static_url(pitch_path),
+            "pitchLinguistic": to_static_url(pitch_ling_path),
         }
     return None
 

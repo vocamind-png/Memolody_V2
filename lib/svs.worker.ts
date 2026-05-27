@@ -17,6 +17,13 @@ self.onmessage = async (e: MessageEvent) => {
   
   if (type === 'loadVoice') {
     const { voiceId, files } = payload;
+    
+    // Forward debug info back to main thread (worker console.log is invisible)
+    self.postMessage({
+      type: 'workerDebug',
+      payload: `[Worker] loadVoice: voiceId=${voiceId}, files.linguistic=${!!files.linguistic}, files.dur=${!!files.dur}, files.pitch=${!!files.pitch}, files.pitchLinguistic=${!!files.pitchLinguistic}`
+    });
+    
     try {
       await engine.loadVoice(voiceId, files, (prog) => {
         self.postMessage({
@@ -24,9 +31,15 @@ self.onmessage = async (e: MessageEvent) => {
           payload: prog
         });
       });
+      
+      self.postMessage({
+        type: 'workerDebug',
+        payload: `[Worker] loadVoice complete: hasNeuralPipeline=${engine.hasNeuralPipeline}, provider=${engine.actualProvider}`
+      });
+      
       self.postMessage({
         type: 'loadSuccess',
-        payload: { provider: engine.actualProvider }
+        payload: { provider: engine.actualProvider, loadStats: engine.lastLoadStats, hasNeuralPipeline: engine.hasNeuralPipeline }
       });
     } catch (err: any) {
       self.postMessage({
