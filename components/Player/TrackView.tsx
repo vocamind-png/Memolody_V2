@@ -608,7 +608,7 @@ const TrackView: React.FC<TrackViewProps> = ({ song, musicXml, tracks, setTracks
               </button>
             </div>
           </div>
-          <div className="flex-[5.5] h-[44px] bg-[#0a0a0c] rounded-full flex items-center border border-black shadow-[inset_0_2px_8px_rgba(0,0,0,0.8)] overflow-hidden mx-1.5">
+          <div className="flex-1 max-w-[130px] min-[350px]:max-w-[150px] min-[380px]:max-w-[180px] sm:max-w-[230px] md:max-w-[260px] mx-auto h-[44px] bg-[#0a0a0c] rounded-full flex items-center border border-black shadow-[inset_0_2px_8px_rgba(0,0,0,0.8)] overflow-hidden">
             <div className="flex-1 h-full border-r border-white/5 flex items-center justify-center scale-[0.95]"><KeyTransposeDisplay keySig={song?.key || 'C'} transpose={transpose} onTransposeChange={setTranspose} /></div>
             <div className="flex-1 h-full border-r border-white/5 flex items-center justify-center scale-[0.95]"><BpmDisplay bpm={currentBpm} onBpmChange={(b) => { setCurrentBpm(b); musicEngine.setBpm(b); }} /></div>
             <div className="flex-[0.5] h-full border-r border-white/5 flex items-center justify-center scale-90"><TimeSigDisplay beats={parsedData.timeSignature.beats} beatType={parsedData.timeSignature.beatType} /></div>

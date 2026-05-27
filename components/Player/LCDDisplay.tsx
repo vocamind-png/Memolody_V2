@@ -205,7 +205,7 @@ export const BarBeatPositionDisplay: React.FC<{ bar: number; beat: number; onSee
         <span className="text-[10px] min-[360px]:text-[13px] sm:text-[17px] font-black text-white/40 mx-0.5">
             :
         </span>
-        <span className="text-[13px] min-[360px]:text-[16px] sm:text-[22px] font-black italic text-[#00e5ff] lcd-font tracking-tighter">
+        <span className="text-[13px] min-[360px]:text-[16px] sm:text-[22px] font-black italic text-[#ffab00] lcd-font tracking-tighter">
             {beat}
         </span>
       </div>
