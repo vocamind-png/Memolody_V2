@@ -7,16 +7,25 @@ import { ParsedNote, TrackState, Song, LyricMode } from '../types';
 
 // ── ONE-TIME CACHE BUST FOR NEW F0 PITCH FIX ─────────────────────────────────
 if (typeof window !== 'undefined') {
-  const BUST_KEY = 'vocalido_cache_bust_v9_force_lotte_v_server_final';
+  const BUST_KEY = 'vocalido_cache_bust_v15_measure_sync';
   if (!localStorage.getItem(BUST_KEY)) {
-    console.log('[Vocalido] ⚡ Cache bust: Clearing old vocal render history and forcing high-quality server SVS engine (Lotte V)...');
+    console.log('[Vocalido] ⚡ Cache bust v15: Enforce global measure start time alignment and sync...');
     try {
-      // 1. Force default engine selection to Server-Side (Vocalido) and select Lotte V as active
-      localStorage.setItem('vocalido_svs_engine', 'vocalido');
-      localStorage.setItem('vocalido_svs_steps', '40');
+      // Force default SVS engine based on platform: Server-side on localhost/LAN for dev, browser-ai on Vercel
+      const hostname = window.location.hostname;
+      const isLocal = hostname === 'localhost' || 
+                      hostname === '127.0.0.1' || 
+                      hostname.endsWith('.local') || 
+                      !hostname.includes('.') ||
+                      /^192\.168\./.test(hostname) ||
+                      /^10\./.test(hostname) ||
+                      /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(hostname);
+      localStorage.setItem('vocalido_svs_engine', isLocal ? 'vocalido' : 'browser-ai');
+      localStorage.setItem('vocalido_svs_steps', '10');
       localStorage.setItem('vocalido_active_engine', 'lotte_v_ai_dol');
 
-      // 2. Clear all active render keys, tracks state, and history entries from localStorage
+      // 2. Clear all active render keys, tracks state, and history entries from localStorage safely
+      const keysToRemove: string[] = [];
       for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i);
         if (key && (
@@ -24,10 +33,10 @@ if (typeof window !== 'undefined') {
           key.startsWith('active_render_key_') ||
           key.startsWith('tracks_state_')
         )) {
-          localStorage.removeItem(key);
-          i--;
+          keysToRemove.push(key);
         }
       }
+      keysToRemove.forEach(k => localStorage.removeItem(k));
 
       // 3. Clear all cached vocal render audio blobs from IndexedDB
       AudioBlobCache.clearAllVocalRenders().catch(err => {
@@ -291,6 +300,7 @@ class VocalidoRenderService {
     trackEngineId: string;
     activeEngineId: string;
     collapseChords: boolean;
+    svsEngine: 'vocalido' | 'browser-ai';
     svsSteps: number;
     currentBpm: number;
     voiceEngines: any[];
@@ -312,6 +322,7 @@ class VocalidoRenderService {
       trackEngineId,
       activeEngineId,
       collapseChords,
+      svsEngine,
       svsSteps,
       currentBpm,
       voiceEngines,
@@ -356,7 +367,6 @@ class VocalidoRenderService {
     const hasGpu = typeof navigator !== 'undefined' && !!(navigator as any).gpu;
     let estimatedDuration = 10;
     
-    const svsEngine = localStorage.getItem('vocalido_svs_engine') || 'vocalido';
     const selectedVoice = voiceEngines.find(v => v.id === trackEngineId);
 
     if (svsEngine === 'browser-ai') {
@@ -891,6 +901,7 @@ class VocalidoRenderService {
       this.timeoutId = null;
     }
     this.isRendering = false;
+    this.error = null;
     this.progress = 0;
     this.timer = 0;
     this.statusText = '';

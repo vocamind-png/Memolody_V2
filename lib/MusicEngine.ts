@@ -200,30 +200,21 @@ export class MusicEngine {
     try {
       const parts = xmlDoc.querySelectorAll("part");
       this.unrolledMeasures = [];
-      parts.forEach((part, partIdx) => {
-        const partId = part.getAttribute("id") || "P1";
-        // Escape partId for safe use in selector
-        const safePartId = partId.replace(/"/g, '\\"');
-        const basePartName = xmlDoc.querySelector(`score-part[id="${safePartId}"] part-name`)?.textContent || "Part";
-        let currentTime = 0;
-        let divisions = 1; // persists across measures — most MusicXML only declares this in measure 1
-        // --- [UNROLL REPEATS — STACK-BASED SIMULATOR] ---
-        //
-        //  Rules implemented (standard Western music notation):
-        //  1.  |:   (forward repeat)  → push current measure onto repeatStack
-        //  2.  :|   (backward repeat) → first time: jump back to top of stack, increment pass
-        //                               second time: pop stack, continue
-        //  3.  [1]  (volta 1)         → play only on pass 1; skip on all subsequent passes
-        //  4.  [2]  (volta 2)         → skip on pass 1; play on pass 2
-        //  5.  [1,2](combined)        → play on both passes
-        //  6. Nested repeats          → each :| goes back to its own matching |: via stack
-        //  7. Implicit start          → :| with empty stack repeats from measure 0
 
-        const physicalMeasures = Array.from(part.querySelectorAll("measure"));
-        const measureOrder: number[] = [];
+      // ── SIMULATE REPEATS ONCE USING THE FIRST PART ──
+      const globalMeasureOrder: number[] = [];
+      const globalMeasureStartTimes: number[] = [];
+      const globalMeasureDurations: number[] = [];
 
-        // ── Helpers ──────────────────────────────────────────────────────────
-        /** Returns ending numbers (e.g. "1,2" → [1,2]) for all barline endings */
+      if (parts.length > 0) {
+        const primaryPart = parts[0];
+        const physicalMeasures = Array.from(primaryPart.querySelectorAll("measure"));
+        
+        const repeatStack: number[] = [];          // indices of |: measures
+        const passCount = new Map<number, number>(); // repeatStart → current pass (1-based)
+        const repeatInited = new Set<number>();    // which |: have been initialized
+        const bwdDone = new Set<number>();         // which :| have been taken once
+
         const getEndingNums = (m: Element): number[] => {
           const nums: number[] = [];
           m.querySelectorAll('barline ending').forEach(e => {
@@ -235,19 +226,11 @@ export class MusicEngine {
           return nums;
         };
 
-        /** True if this measure starts a repeated section |: */
         const hasFwdRepeat = (m: Element) =>
           !!m.querySelector('barline repeat[direction="forward"]');
 
-        /** True if this measure ends a repeated section :| */
         const hasBwdRepeat = (m: Element) =>
           !!m.querySelector('barline repeat[direction="backward"]');
-
-        // ── Simulator state ───────────────────────────────────────────────────
-        const repeatStack: number[] = [];          // indices of |: measures
-        const passCount = new Map<number, number>(); // repeatStart → current pass (1-based)
-        const repeatInited = new Set<number>();    // which |: have been initialized
-        const bwdDone = new Set<number>();         // which :| have been taken once
 
         let cursor = 0;
         const MAX_ITER = physicalMeasures.length * 8; // safety guard
@@ -257,33 +240,28 @@ export class MusicEngine {
           iter++;
           const m = physicalMeasures[cursor];
 
-          // ── Push |: onto stack (only on first encounter) ──────────────────
+          // Push |: onto stack (only on first encounter)
           if (hasFwdRepeat(m) && !repeatInited.has(cursor)) {
             repeatInited.add(cursor);
             repeatStack.push(cursor);
             passCount.set(cursor, 1);
           }
 
-          // ── Determine current pass for the inner-most repeat ──────────────
           const innerStart = repeatStack.length > 0 ? repeatStack[repeatStack.length - 1] : -1;
           const currentPass = innerStart >= 0 ? (passCount.get(innerStart) ?? 1) : 1;
 
-          // ── Check volta: should we skip this measure? ─────────────────────
           const endings = getEndingNums(m);
           const shouldSkip = endings.length > 0 && !endings.includes(currentPass);
 
           if (!shouldSkip) {
-            measureOrder.push(cursor);
+            globalMeasureOrder.push(cursor);
           }
 
-          // ── Handle :| (backward repeat) ──────────────────────────────────
           if (hasBwdRepeat(m) && !shouldSkip) {
-            // Determine where to jump back
             let repeatStart: number;
             if (repeatStack.length > 0) {
               repeatStart = repeatStack[repeatStack.length - 1];
             } else {
-              // No explicit |: → treat measure 0 as the implicit start
               repeatStart = 0;
               if (!repeatInited.has(0)) {
                 repeatInited.add(0);
@@ -293,13 +271,11 @@ export class MusicEngine {
             }
 
             if (!bwdDone.has(cursor)) {
-              // First time hitting this :| → take the repeat
               bwdDone.add(cursor);
               passCount.set(repeatStart, (passCount.get(repeatStart) ?? 1) + 1);
               cursor = repeatStart;
-              continue; // jump to top of loop
+              continue;
             } else {
-              // Already taken this repeat → pop the stack, continue forward
               if (repeatStack.length > 0 && repeatStack[repeatStack.length - 1] === repeatStart) {
                 repeatStack.pop();
                 passCount.delete(repeatStart);
@@ -314,11 +290,85 @@ export class MusicEngine {
           console.warn('[MusicEngine] ⚠️ Repeat unrolling hit safety limit — possible notation error in XML');
         }
 
+        // Calculate step durations and start times globally based on the primary part's measures
+        let runningBeats = 4;
+        let runningBeatType = 4;
+        let runningDivisions = 1;
+        let accumulatedBeat = 0;
+
+        for (let i = 0; i < globalMeasureOrder.length; i++) {
+          const mIdx = globalMeasureOrder[i];
+          const measure = physicalMeasures[mIdx];
+
+          // Update time signature if present
+          const timeNode = measure.querySelector("time");
+          if (timeNode) {
+            runningBeats = parseInt(timeNode.querySelector("beats")?.textContent || "4") || 4;
+            runningBeatType = parseInt(timeNode.querySelector("beat-type")?.textContent || "4") || 4;
+          }
+
+          const divNode = measure.querySelector("attributes divisions");
+          if (divNode) {
+            runningDivisions = parseInt(divNode.textContent || "1") || 1;
+          }
+
+          const nominalDuration = runningBeats * (4 / runningBeatType);
+
+          // Calculate actual note duration in this measure
+          let measurePlayTime = 0;
+          Array.from(measure.children).forEach((child) => {
+            if (child.tagName === "backup") {
+              const duration = (parseInt(child.querySelector("duration")?.textContent || "0") / runningDivisions);
+              measurePlayTime -= duration;
+            } else if (child.tagName === "forward") {
+              const duration = (parseInt(child.querySelector("duration")?.textContent || "0") / runningDivisions);
+              measurePlayTime += duration;
+            } else if (child.tagName === "note") {
+              const isChord = child.querySelector("chord");
+              const duration = (parseInt(child.querySelector("duration")?.textContent || "0") / runningDivisions);
+              if (!isChord) {
+                measurePlayTime += duration;
+              }
+            }
+          });
+
+          let stepDuration = nominalDuration;
+          // If first measure (pickup) and actual duration is less than nominal, use actual
+          if (i === 0 && measurePlayTime > 0 && measurePlayTime < nominalDuration) {
+            stepDuration = measurePlayTime;
+          } else {
+            // Keep nominal duration, but if actual notes overflow it, expand it to fit them
+            stepDuration = Math.max(nominalDuration, measurePlayTime);
+          }
+
+          globalMeasureStartTimes.push(accumulatedBeat);
+          globalMeasureDurations.push(stepDuration);
+          accumulatedBeat += stepDuration;
+        }
+      }
+
+      // Now iterate through each part using globalMeasureOrder
+      parts.forEach((part, partIdx) => {
+        const partId = part.getAttribute("id") || "P1";
+        // Escape partId for safe use in selector
+        const safePartId = partId.replace(/"/g, '\\"');
+        const basePartName = xmlDoc.querySelector(`score-part[id="${safePartId}"] part-name`)?.textContent || "Part";
+        let currentTime = 0;
+        let divisions = 1; // persists across measures — most MusicXML only declares this in measure 1
+
+        const physicalMeasures = Array.from(part.querySelectorAll("measure"));
+        // Align this part's measure order with the global measure order computed from the first part
+        const measureOrder = globalMeasureOrder.filter(idx => idx < physicalMeasures.length);
+
         // Process measures in unrolled order
-        measureOrder.forEach((mIdx) => {
+        measureOrder.forEach((mIdx, stepIdx) => {
           const measure = physicalMeasures[mIdx];
           const measureNum = measure.getAttribute("number") || "1";
+          
+          // Force align to global measure start time
+          currentTime = globalMeasureStartTimes[stepIdx] ?? currentTime;
           const startBeat = currentTime;
+
           const timeNode = measure.querySelector("time");
           if (timeNode) {
             beats = parseInt(timeNode.querySelector("beats")?.textContent || "4");
@@ -408,16 +458,12 @@ export class MusicEngine {
             }
           });
 
-          const endBeat = currentTime;
-          let measureDuration = endBeat - startBeat;
-          if (measureDuration <= 0) {
-            measureDuration = beats * (4 / beatType);
-          }
+          const stepDuration = globalMeasureDurations[stepIdx] ?? (beats * (4 / beatType));
           if (partIdx === 0) {
             this.unrolledMeasures.push({
               measureId: measureNum,
               startTime: startBeat,
-              duration: measureDuration
+              duration: stepDuration
             });
           }
         });
