@@ -308,11 +308,11 @@ const PlayerPage: React.FC<{
   const [svsEngine, setSvsEngine] = useState<'vocalido' | 'browser-ai'>(() => {
     try {
       const saved = localStorage.getItem('vocalido_svs_engine');
-      if (saved === 'vocalido' || saved === 'browser-ai') {
+      if (saved === 'browser-ai') {
         return saved;
       }
     } catch (e) {}
-    return 'vocalido';
+    return 'browser-ai';
   });
 
   const handleSvsEngineChange = (engine: 'vocalido' | 'browser-ai') => {
@@ -3145,23 +3145,12 @@ const PlayerPage: React.FC<{
                     On-Device (Browser AI)
                   </button>
                   <button
+                    disabled
                     onClick={() => handleSvsEngineChange('vocalido')}
-                    className={`flex-1 py-2 text-[9px] font-black uppercase rounded-xl border transition-all flex items-center justify-center gap-1.5 ${
-                      svsEngine === 'vocalido'
-                        ? 'bg-cyan-500/20 text-cyan-400 border-cyan-500/40 shadow-[0_0_12px_rgba(6,182,212,0.15)]'
-                        : 'bg-transparent text-zinc-400 border-white/5 hover:bg-white/5 hover:text-white'
-                    }`}
+                    className="flex-1 py-2 text-[9px] font-black uppercase rounded-xl border transition-all flex items-center justify-center gap-1.5 bg-[#0c0c0e]/60 text-zinc-600 border-white/5 cursor-not-allowed opacity-50"
                   >
-                    {(() => {
-                      let dotClass = 'bg-rose-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]';
-                      if (isServerOnline) {
-                        dotClass = 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.6)]';
-                      } else if (import.meta.env.VITE_RUNPOD_API_URL && import.meta.env.VITE_RUNPOD_API_KEY) {
-                        dotClass = 'bg-fuchsia-500 shadow-[0_0_6px_rgba(217,70,239,0.6)]';
-                      }
-                      return <span className={`w-1.5 h-1.5 rounded-full ${dotClass}`} />;
-                    })()}
-                    Server-Side (Vocalido)
+                    <span className="w-1.5 h-1.5 rounded-full bg-zinc-700 shadow-none" />
+                    Server-Side (Locked)
                   </button>
                 </div>
               </div>
