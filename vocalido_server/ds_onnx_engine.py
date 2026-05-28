@@ -389,7 +389,7 @@ class DiffSingerONNXEngine:
 
             prev_end = start + dur
             
-        final_sp_fr = max(2, round(0.1 * frame_hz))
+        final_sp_fr = max(2, round(0.4 * frame_hz))
         all_tok.append(SP_ID)
         all_ph_midi.append(0)
         word_div.append(1)
@@ -410,11 +410,85 @@ class DiffSingerONNXEngine:
 
         # Pre-compute durations/frames before running session since newer sess_ling requires ph_dur
         upd = []
+        tok_idx = 0
+        vowel_indices_abs = []
+        
+        zh_vowels = {
+            "a", "ai", "an", "ang", "ao",
+            "e", "ei", "en", "eng", "er",
+            "i", "i0", "ia", "ian", "iang", "iao", "ie", "in", "ing", "iong", "ir", "iu",
+            "o", "ong", "ou",
+            "u", "ua", "uai", "uan", "uang", "ui", "un", "uo",
+            "v", "van", "ve", "vn",
+        }
+        en_vowels = {"ah","ow","iy","ey","aa","ao","er","uh","uw","ae"}
+        vowel_set = zh_vowels if self.language == 'zh' else en_vowels
+
+        id_to_phoneme = {v: k for k, v in self.phoneme_to_id.items()}
+        ph_names = [id_to_phoneme.get(t, f"ID_{t}") for t in all_tok]
+        
+        timing_feel = float(params.get("timing_feel", 50.0)) if params else 50.0
+        base_cons_sec = 0.015 + 0.020 * (timing_feel / 100.0)
+        base_cons_fr = max(1, round(base_cons_sec * frame_hz))
+
+        last_vowel_upd_idx = -1
+        
         for wdur, wdiv in zip(word_dur_fr, word_div):
-            per = max(1, wdur // wdiv)
-            rem = wdur - per * wdiv
-            for k in range(wdiv):
-                upd.append(per + (1 if k == wdiv - 1 and rem > 0 else 0))
+            if wdiv <= 1:
+                upd.append(wdur)
+                last_vowel_upd_idx = len(upd) - 1
+                vowel_indices_abs.append(tok_idx)
+                tok_idx += wdiv
+            else:
+                word_ph_names = ph_names[tok_idx : tok_idx + wdiv]
+                vowel_local_idx = next(
+                    (i for i, p in enumerate(word_ph_names)
+                     if p in vowel_set or (p and p[0] in "aeiouAEIOU")),
+                    wdiv - 1
+                )
+                
+                cons_fr_list = []
+                for i in range(wdiv):
+                    if i == vowel_local_idx:
+                        cons_fr_list.append(0)
+                        continue
+                    p = word_ph_names[i]
+                    if p in ["s", "sh", "f", "h", "z", "v", "th", "dh"]:
+                        c_fr = max(3, int(base_cons_fr * 2.0)) # Fricatives
+                    elif p in ["ch", "t", "k", "p", "ts", "th"]:
+                        c_fr = max(2, int(base_cons_fr * 2.0)) # Aspirated stops & affricates
+                    elif p in ["m", "n", "l", "r", "w", "y", "ng"]:
+                        c_fr = max(2, int(base_cons_fr * 1.5)) # Liquids/Nasals
+                    else:
+                        c_fr = max(1, int(base_cons_fr * 1.2)) # Voiced Plosives (b, d, g)
+                    cons_fr_list.append(c_fr)
+                
+                total_cons_fr = sum(cons_fr_list)
+                
+                # --- PRE-UTTERANCE: Steal time from previous note ---
+                stolen = 0
+                if total_cons_fr > 0 and last_vowel_upd_idx != -1:
+                    max_steal = min(total_cons_fr, max(0, upd[last_vowel_upd_idx] - 2))
+                    stolen = max_steal
+                    upd[last_vowel_upd_idx] -= stolen
+                
+                remaining_cons_fr = total_cons_fr - stolen
+                if remaining_cons_fr >= wdur:
+                    scale = max(0.1, (wdur - 1) / remaining_cons_fr)
+                    cons_fr_list = [int(c * scale) for c in cons_fr_list]
+                    remaining_cons_fr = sum(cons_fr_list)
+                
+                v_fr = max(1, wdur - remaining_cons_fr)
+                
+                for i in range(wdiv):
+                    if i == vowel_local_idx:
+                        upd.append(v_fr)
+                        last_vowel_upd_idx = len(upd) - 1
+                        vowel_indices_abs.append(tok_idx + i)
+                    else:
+                        upd.append(cons_fr_list[i])
+                
+                tok_idx += wdiv
         ph_dur = np.array(upd, dtype=np.int64)
         n_frames = int(ph_dur.sum())
         pdt = ph_dur[None, :]
@@ -499,6 +573,17 @@ class DiffSingerONNXEngine:
                 pp_hz[voicing_mask] = 440.0 * (2.0 ** ((pp_final[voicing_mask] - 69.0) / 12.0))
                 pp_final = pp_hz
             # If v_mean >= 100.0, it is already in Hz.
+
+            # ----- FLAT INTONATION / STRICT ROBOT OVERRIDE -----
+            # By user request ("ก็ยังไม่ 100 % ปิดตัว blend ไปเลยได้ไหมครับ", "ห้ามสุ่ม blend เด็ดขาด"),
+            # we COMPLETELY BYPASS the neural pitch and use perfectly flat F0 generated directly from MIDI.
+            f0_hz_ideal = np.zeros_like(f0_midi_arr)
+            voicing_mask = f0_midi_arr > 0.0
+            f0_hz_ideal[voicing_mask] = 440.0 * (2.0 ** ((f0_midi_arr[voicing_mask] - 69.0) / 12.0))
+            
+            # Force exact perfect flat pitch without any glides or vibrato
+            pp_final[0] = f0_hz_ideal
+            # ---------------------------------------------------
 
             # 6. Acoustic model
             no = pp_final.shape[1]

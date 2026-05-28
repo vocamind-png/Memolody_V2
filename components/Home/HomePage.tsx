@@ -671,7 +671,7 @@ const HomePage: React.FC<HomePageProps> = ({
       <div className="shrink-0 p-6 space-y-6 bg-gradient-to-b from-white/[0.02] to-transparent border-b border-white/5">
 
         {/* Brand/Hero */}
-        <div className="flex flex-col items-center gap-2">
+        <div className="flex flex-col items-center gap-1.5">
           <h1 className="text-2xl font-black text-white tracking-[0.4em] uppercase italic">MEMOLODY</h1>
           <p className="text-[8px] font-black text-zinc-500 uppercase tracking-[0.3em]">Hear by Eye, Play by Ear</p>
         </div>

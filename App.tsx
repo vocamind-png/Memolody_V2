@@ -457,108 +457,117 @@ const App: React.FC = () => {
     fromMarket = false,
     desiredView?: { main: 'player' | 'tracks', player?: 'score' | 'pianoroll' }
   ) => {
-    let finalXml = xml;
-    const owned = userSongsRef.current.find(s => String(s.metadata.id) === String(song.id)); // use ref — stable
-    if (!finalXml) finalXml = owned?.xmlData || '';
-
-    if (finalXml && finalXml.startsWith('http')) {
-      try {
-        const url = finalXml;
-        const isMxl = url.endsWith('.mxl');
-        const resp = await fetch(url);
-        if (resp.ok) {
-          if (isMxl) {
-            const blob = await resp.blob();
-            const zip = await JSZip.loadAsync(blob);
-            let xmlContent = '';
-            for (const [name, file] of Object.entries(zip.files)) {
-              if (name.endsWith('.xml') && !name.startsWith('META-INF')) {
-                xmlContent = await (file as any).async('string');
-                break;
-              }
-            }
-            finalXml = xmlContent || '';
-          } else {
-            finalXml = await resp.text();
-          }
-          if (owned && finalXml) {
-            await songStorage.saveSong(owned.metadata, finalXml);
-          }
-        }
-      } catch (e) {
-        console.warn('[Neural] Fetch error:', e);
-      }
-    }
-
-    setSelectedSong(song);
-    setUploadedMusicXml(finalXml);
-    setSelectedLayoutBundle(owned?.layoutBundle || null);
-    
-    // Track song play
-    telemetry.track('song_play', { songTitle: song.title, mode });
-
-    // Lazy-load Tone.js engine only when needed
-    const engine = await getMusicEngine();
-    engine.pause();
-    engine.setTransportSeconds(0);
-
-    let parsed;
     try {
-      parsed = engine.parseMusicXml(finalXml);
-    } catch (e) {
-      console.error('[App] Failed to parse MusicXML:', e);
-      parsed = { partNames: { 'P1': 'Track 1' }, trackClefs: {} }; // Safe fallback
-    }
-    
-    let vocalTrackSelected = false;
-    const trackIds = Object.keys(parsed.partNames);
-    
-    const savedLyricMode = (() => {
-      try { return localStorage.getItem('memo_lyric_mode') || 'British Fixed Doh'; } catch { return 'British Fixed Doh'; }
-    })();
+      let finalXml = xml;
+      const owned = userSongsRef.current.find(s => String(s.metadata.id) === String(song.id)); // use ref — stable
+      if (!finalXml) finalXml = owned?.xmlData || '';
 
-    const newTracks: TrackState[] = trackIds.map((id, index) => {
-      const name = parsed.partNames[id] || 'Track';
-      const clef = parsed.trackClefs?.[id];
-      const low = name.toLowerCase();
-      
-      // Auto-logic: 
-      // 1. If only one track total, it's vocal.
-      // 2. Otherwise, the first Treble Clef (G) track found is vocal.
-      // 3. All others are instruments.
-      let isVocal = false;
-      if (trackIds.length === 1) {
-        isVocal = true;
-      } else if (!vocalTrackSelected && clef === 'G') {
-        isVocal = true;
-        vocalTrackSelected = true;
-      } else if (!vocalTrackSelected && index === 0 && !clef) {
-        // Fallback for cases where clef detection might fail on first track
-        isVocal = true;
-        vocalTrackSelected = true;
+      if (finalXml && finalXml.startsWith('http')) {
+        try {
+          const url = finalXml;
+          const isMxl = url.endsWith('.mxl');
+          const resp = await fetch(url);
+          if (resp.ok) {
+            if (isMxl) {
+              const blob = await resp.blob();
+              const zip = await JSZip.loadAsync(blob);
+              let xmlContent = '';
+              for (const [name, file] of Object.entries(zip.files)) {
+                if (name.endsWith('.xml') && !name.startsWith('META-INF')) {
+                  xmlContent = await (file as any).async('string');
+                  break;
+                }
+              }
+              finalXml = xmlContent || '';
+            } else {
+              finalXml = await resp.text();
+            }
+            if (owned && finalXml) {
+              await songStorage.saveSong(owned.metadata, finalXml);
+            }
+          }
+        } catch (e) {
+          console.warn('[Neural] Fetch error:', e);
+        }
       }
 
-      return {
-        id, name, isMuted: false, isSolo: false, lyricMode: savedLyricMode as LyricMode, volume: 0.8, pan: 0,
-        mode: isVocal ? 'vocal' as const : 'instrument' as const,
-        instrument: isVocal ? 'Auto' : 'Piano', 
-        effects: Array(6).fill(null)
-      };
-    });
-    setTracks(newTracks);
+      setSelectedSong(song);
+      setUploadedMusicXml(finalXml);
+      setSelectedLayoutBundle(owned?.layoutBundle || null);
+      
+      // Track song play
+      try {
+        telemetry.track('song_play', { songTitle: song.title, mode });
+      } catch (e) {
+        console.warn('[App] Telemetry track failed:', e);
+      }
 
-    if (desiredView) {
-      if (desiredView.player) setPlayerViewMode(desiredView.player);
-      setCurrentView(desiredView.main as ViewId);
-    } else if (mode === 'studio' || mode === 'edit') {
-      setCurrentView('forge');
-    } else {
-      // 'listen' mode → go to Player and auto-play
-      setAutoPlayOnLoad(true);
-      setCurrentView('player');
-      setPlayerViewMode('score');
+      // Lazy-load Tone.js engine only when needed
+      const engine = await getMusicEngine();
+      engine.pause();
+      engine.setTransportSeconds(0);
+
+      let parsed;
+      try {
+        parsed = engine.parseMusicXml(finalXml);
+      } catch (e) {
+        console.error('[App] Failed to parse MusicXML:', e);
+        parsed = { partNames: { 'P1': 'Track 1' }, trackClefs: {} }; // Safe fallback
+      }
+      
+      let vocalTrackSelected = false;
+      const trackIds = Object.keys(parsed.partNames);
+      
+      const savedLyricMode = (() => {
+        try { return localStorage.getItem('memo_lyric_mode') || 'British Fixed Doh'; } catch { return 'British Fixed Doh'; }
+      })();
+
+      const newTracks: TrackState[] = trackIds.map((id, index) => {
+        const name = parsed.partNames[id] || 'Track';
+        const clef = parsed.trackClefs?.[id];
+        const low = name.toLowerCase();
+        
+        // Auto-logic: 
+        // 1. If only one track total, it's vocal.
+        // 2. Otherwise, the first Treble Clef (G) track found is vocal.
+        // 3. All others are instruments.
+        let isVocal = false;
+        if (trackIds.length === 1) {
+          isVocal = true;
+        } else if (!vocalTrackSelected && clef === 'G') {
+          isVocal = true;
+          vocalTrackSelected = true;
+        } else if (!vocalTrackSelected && index === 0 && !clef) {
+          // Fallback for cases where clef detection might fail on first track
+          isVocal = true;
+          vocalTrackSelected = true;
+        }
+
+        return {
+          id, name, isMuted: false, isSolo: false, lyricMode: savedLyricMode as LyricMode, volume: 0.8, pan: 0,
+          mode: isVocal ? 'vocal' as const : 'instrument' as const,
+          instrument: isVocal ? 'Auto' : 'Piano', 
+          effects: Array(6).fill(null)
+        };
+      });
+      setTracks(newTracks);
+
+      if (desiredView) {
+        if (desiredView.player) setPlayerViewMode(desiredView.player);
+        setCurrentView(desiredView.main as ViewId);
+      } else if (mode === 'studio' || mode === 'edit') {
+        setCurrentView('forge');
+      } else {
+        // 'listen' mode → go to Player and auto-play
+        setAutoPlayOnLoad(true);
+        setCurrentView('player');
+        setPlayerViewMode('score');
+      }
+    } catch (err) {
+      console.error('[App] handleSongSelect critical error:', err);
+      alert("❌ ไม่สามารถเลือกเพลงได้:\n" + (err instanceof Error ? err.stack || err.message : String(err)));
     }
-  }, []); // ← no deps: reads userSongsRef instead of closing over state
+  }, []); // ← no deps: reads userSongsRef instead of closing over state // ← no deps: reads userSongsRef instead of closing over state
 
   const handleLanguageChange = (lang: 'th' | 'en') => { setPreferredLanguage(lang); localStorage.setItem('nimo_lang', lang); };
   const handleCountryChange = (c: string) => { setUserCountry(c); localStorage.setItem('nimo_country', c); };

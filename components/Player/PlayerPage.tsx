@@ -174,6 +174,9 @@ const getCustomBackendUrl = () => {
 };
 
 const getFetchUrl = (path: string) => {
+  if (path.startsWith('blob:') || path.startsWith('data:') || path.startsWith('http://') || path.startsWith('https://')) {
+    return path;
+  }
   const customBackend = getCustomBackendUrl();
   if (!customBackend) return path;
 
@@ -201,6 +204,7 @@ const svsFetch = (url: string, options?: RequestInit) => {
 
 const fixAudioUrl = (u: string) => {
   if (typeof u !== 'string') return u;
+  if (u.startsWith('blob:') || u.startsWith('data:')) return u;
   let url = u;
   
   // If it's an absolute URL, convert it to a relative path
@@ -308,12 +312,13 @@ const PlayerPage: React.FC<{
   const [svsEngine, setSvsEngine] = useState<'vocalido' | 'browser-ai'>(() => {
     try {
       const saved = localStorage.getItem('vocalido_svs_engine');
-      if (saved === 'browser-ai') {
+      if (saved === 'vocalido' || saved === 'browser-ai') {
         return saved;
       }
     } catch (e) {}
-    return 'browser-ai';
+    return 'vocalido';
   });
+
 
   const handleSvsEngineChange = (engine: 'vocalido' | 'browser-ai') => {
     setSvsEngine(engine);
@@ -356,6 +361,24 @@ const PlayerPage: React.FC<{
     } catch (e) {}
   };
 
+  const [svsTimingFeel, setSvsTimingFeel] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('vocalido_svs_timing_feel');
+      if (saved) {
+        const val = parseInt(saved, 10);
+        if (!isNaN(val) && val >= 0 && val <= 100) return val;
+      }
+    } catch (e) {}
+    return 50; // Default to 50% (Balanced)
+  });
+
+  const handleSvsTimingFeelChange = (val: number) => {
+    setSvsTimingFeel(val);
+    try {
+      localStorage.setItem('vocalido_svs_timing_feel', val.toString());
+    } catch (e) {}
+  };
+
   // Keep the user's preferred SVS engine (migrates legacy states).
   useEffect(() => {
     try {
@@ -382,6 +405,21 @@ const PlayerPage: React.FC<{
   const [renderTimer, setRenderTimer] = useState(0);
   const [renderError, setRenderError] = useState<string | null>(null);
   const [renderStatusText, setRenderStatusText] = useState('');
+
+  const [showRenderPrompt, setShowRenderPrompt] = useState(false);
+  const [modalSelectedTracks, setModalSelectedTracks] = useState<string[]>([]);
+  const hasPromptedRenderRef = useRef(false);
+
+  useEffect(() => {
+    if (showRenderPrompt && tracks.length > 0) {
+      setModalSelectedTracks([tracks[0].id]);
+    }
+  }, [showRenderPrompt, tracks]);
+
+  useEffect(() => {
+    setShowRenderPrompt(false);
+    hasPromptedRenderRef.current = false;
+  }, [song?.id]);
 
   // Subscribe to background rendering service updates
   useEffect(() => {
@@ -460,18 +498,18 @@ const PlayerPage: React.FC<{
     return () => clearTimeout(timeoutId);
   }, [isAudioLoading]);
 
-  // Safety watchdog: Force reset isRenderingVocal to false if it remains true for more than 90 seconds
+  // Safety watchdog: Force reset isRenderingVocal to false if it remains true for more than 5 minutes
   useEffect(() => {
     if (!isRenderingVocal) return;
     const timeoutId = setTimeout(() => {
       setIsRenderingVocal(prev => {
         if (prev) {
-          console.warn("[PlayerPage] ⚠️ Global watchdog: force-resetting isRenderingVocal after 90s");
+          console.warn("[PlayerPage] ⚠️ Global watchdog: force-resetting isRenderingVocal after 300s");
           return false;
         }
         return prev;
       });
-    }, 90000);
+    }, 300000);
     return () => clearTimeout(timeoutId);
   }, [isRenderingVocal]);
 
@@ -660,6 +698,15 @@ const PlayerPage: React.FC<{
             setModelLoadProgress(prog.progress);
             if (prog.stage === 'ready') {
               setIsModelLoading(false);
+              if (!hasPromptedRenderRef.current) {
+                hasPromptedRenderRef.current = true;
+                // Only prompt for songs that have never been rendered before
+                const histStr = song?.id ? localStorage.getItem(`memo_render_history_${song.id}`) : null;
+                const hasExistingRender = histStr ? (JSON.parse(histStr) || []).length > 0 : false;
+                if (!hasExistingRender) {
+                  setShowRenderPrompt(true);
+                }
+              }
               // Auto-hide banner faster if everything was from cache
               const stats = clientSvsEngine.lastLoadStats;
               if (stats.downloaded === 0 && stats.cached > 0) {
@@ -682,6 +729,23 @@ const PlayerPage: React.FC<{
       active = false;
     };
   }, [activeEngineId, voiceEngines, svsEngine]);
+
+  // Show prompt if using vocalido server, server is online, and song has never been rendered before
+  useEffect(() => {
+    if (svsEngine === 'vocalido' && isServerOnline && song?.id) {
+      if (!hasPromptedRenderRef.current) {
+        hasPromptedRenderRef.current = true;
+        const histStr = localStorage.getItem(`memo_render_history_${song.id}`);
+        const hasExistingRender = histStr ? (JSON.parse(histStr) || []).length > 0 : false;
+        if (!hasExistingRender) {
+          const timer = setTimeout(() => {
+            setShowRenderPrompt(true);
+          }, 1000);
+          return () => clearTimeout(timer);
+        }
+      }
+    }
+  }, [svsEngine, isServerOnline, song?.id]);
 
   // Stem Solo/Mute State for polyphonic choral lines
   const [soloedStems, setSoloedStems] = useState<Record<string, number | null>>({});
@@ -736,9 +800,9 @@ const PlayerPage: React.FC<{
   const [collapseChords, setCollapseChords] = useState<boolean>(() => {
     try {
       const val = localStorage.getItem('vocalido_collapse_chords');
-      return val !== 'false'; // default is true
+      return val === 'true'; // default is false (Auto Polyphony)
     } catch (e) {
-      return true;
+      return false;
     }
   });
   useEffect(() => {
@@ -1229,7 +1293,7 @@ const PlayerPage: React.FC<{
         const newTracks = partIds.map((id, index) => ({
           id,
           name: parsedData.partNames[id] || `Track ${index + 1}`,
-          volume: 0.8,
+          volume: 1.0,
           pan: 0,
           isMuted: false,
           isSolo: false,
@@ -1556,6 +1620,13 @@ const PlayerPage: React.FC<{
           setIsServerOnline(true);
           setVoiceEngines(data.voices);
           
+          // Auto-select SVS rendering mode: prioritize server-side vocalido when local server is online
+          const savedSvsEngine = localStorage.getItem('vocalido_svs_engine');
+          if (!savedSvsEngine || savedSvsEngine === 'browser-ai') {
+            setSvsEngine('vocalido');
+            localStorage.setItem('vocalido_svs_engine', 'vocalido');
+          }
+
           // Auto-select lotte_v_ai_dol or first non-default voice as default if not already set or if set to 'default'
           const storedEngine = localStorage.getItem('vocalido_active_engine');
           const hasLotte = data.voices.some((v: any) => v.id === 'lotte_v_ai_dol');
@@ -1811,15 +1882,46 @@ const PlayerPage: React.FC<{
     }
   };
 
-  const triggerVocalSynthesis = async (forceRender: boolean = false) => {
-    if (isRenderingVocal) { console.warn('[Vocalido] ⛔ Render blocked: already rendering'); return; }
+  const triggerVocalSynthesis = async (forceRender: boolean = false, selectedTrackIds?: string[]) => {
+    console.log('[PlayerPage] 🎤 triggerVocalSynthesis called:', { 
+      isRenderingVocal, isModelLoading, hasMusicXml: !!musicXml, 
+      noteCount: parsedData.notes.length, trackCount: tracks.length,
+      selectedTrackIds, forceRender 
+    });
+    
+    // If UI thinks we're rendering but service disagrees, force-reset stale state
+    if (isRenderingVocal && !vocalidoRenderService.getState().isRendering) {
+      console.warn('[Vocalido] ⚠️ isRenderingVocal was stale (true), but service says false. Force-resetting.');
+      setIsRenderingVocal(false);
+      // Continue — don't return
+    } else if (isRenderingVocal) { 
+      console.warn('[Vocalido] ⛔ Render blocked: already rendering'); 
+      return; 
+    }
     if (isModelLoading) { console.warn('[Vocalido] ⛔ Render blocked: vocal model is still loading in the background'); return; }
     if (!musicXml) { console.warn('[Vocalido] ⛔ Render blocked: no musicXml'); return; }
     if (!parsedData.notes.length) { console.warn('[Vocalido] ⛔ Render blocked: no notes parsed'); return; }
     if (tracks.length === 0) { console.warn('[Vocalido] ⛔ Render blocked: no tracks'); return; }
 
-    const primaryTrackId = tracks.find(t => t.mode === 'vocal')?.id || tracks[0]?.id || 'P1';
-    let trackEngineId = tracks.find(t => t.id === primaryTrackId)?.engineId || activeEngineId;
+    let renderTracks = tracks;
+    if (selectedTrackIds && selectedTrackIds.length > 0) {
+      renderTracks = tracks.map(t => ({
+        ...t,
+        mode: selectedTrackIds.includes(t.id) ? 'vocal' : 'instrument'
+      }));
+      setTracks(renderTracks);
+      
+      // Clear cached renders when track selection changes to force fresh render
+      // This prevents stale melody-only cache from being used when user selects all tracks
+      console.log('[PlayerPage] 🗑️ Clearing render cache due to track selection change');
+      try {
+        localStorage.removeItem(`memo_render_history_${song?.id}`);
+        setRenderHistory([]);
+      } catch (e) {}
+    }
+
+    const primaryTrackId = renderTracks.find(t => t.mode === 'vocal')?.id || renderTracks[0]?.id || 'P1';
+    let trackEngineId = renderTracks.find(t => t.id === primaryTrackId)?.engineId || activeEngineId;
     if (trackEngineId === 'default' || !voiceEngines.some(v => v.id === trackEngineId)) {
       trackEngineId = activeEngineId;
     }
@@ -1830,23 +1932,36 @@ const PlayerPage: React.FC<{
     // DEBUG: Check if voiceEngines contain neural model files
     const debugVoice = voiceEngines.find(v => v.id === trackEngineId);
     console.log('[PlayerPage] 🔍 render voice:', trackEngineId, 'model_files keys:', debugVoice?.model_files ? Object.keys(debugVoice.model_files) : 'NO MODEL FILES');
+    console.log('[PlayerPage] 🎵 renderTracks vocal IDs:', renderTracks.filter(t => t.mode === 'vocal').map(t => t.id));
     
-    vocalidoRenderService.startRender({
-      song: song!,
-      parsedData,
-      tracks,
-      transpose,
-      activeLyricMode,
-      activeVoiceName,
-      trackEngineId,
-      activeEngineId,
-      collapseChords,
-      svsSteps,
-      currentBpm,
-      voiceEngines,
-      isMetronomeOn,
-      userId: authUser?.id || ''
-    });
+    // Allow React to paint the UI (closing modal, showing render card) before potential main thread blocking
+    const capturedRenderTracks = [...renderTracks]; // Capture to avoid stale closure
+    const capturedTrackEngineId = trackEngineId;
+    setTimeout(() => {
+      try {
+        vocalidoRenderService.startRender({
+        song: song!,
+        parsedData,
+        tracks: capturedRenderTracks,
+        transpose,
+        activeLyricMode,
+        activeVoiceName,
+        trackEngineId: capturedTrackEngineId,
+        activeEngineId,
+        collapseChords,
+        svsEngine,
+        svsSteps,
+        svsTimingFeel,
+        currentBpm,
+        voiceEngines,
+        isMetronomeOn,
+        userId: authUser?.id || ''
+        });
+      } catch (err) {
+        console.error('[PlayerPage] ❌ startRender threw:', err);
+        vocalidoRenderService.cancelRender();
+      }
+    }, 150);
   };
 
   const closeRenderOverlay = () => {
@@ -2162,6 +2277,18 @@ const PlayerPage: React.FC<{
 
         {/* ── MAIN CONTENT AREA (RIGHT SIDE IN SPLIT VIEW) ── */}
         <div className="flex-1 flex flex-col relative overflow-hidden pointer-events-auto pb-[54px]">
+        {renderHistory.length === 0 && activeCard === 'score' && (
+          <div className="absolute left-1 top-1/2 -translate-y-1/2 z-[3000] flex flex-col items-center pointer-events-auto bg-[#0c0c0e]/95 p-1.5 rounded-lg border border-white/10 backdrop-blur-xl shadow-2xl w-[34px]">
+            <button
+              onClick={() => setShowRenderPrompt(true)}
+              className="w-6 h-6 rounded-lg flex flex-col items-center justify-center border font-bold uppercase transition-all bg-zinc-900 border-zinc-800 text-[#00e5ff] hover:text-white hover:border-[#00e5ff] hover:shadow-[0_0_10px_rgba(0,229,255,0.4)] animate-pulse"
+              title="Render AI Vocals"
+            >
+              <Sparkles size={12} className="text-[#00e5ff]" />
+              <span className="text-[4px] tracking-tighter leading-none mt-0.5">Render</span>
+            </button>
+          </div>
+        )}
         {/* ── MEMO SONG RENDER: Speed Panel (left floating) ── */}
         {renderHistory.length > 0 && activeCard === 'score' && (
           <>
@@ -2703,6 +2830,105 @@ const PlayerPage: React.FC<{
           </div>
         )}
 
+        {/* ── [SVS READY RENDER PROMPT] ── */}
+        {showRenderPrompt && (
+          <div className="fixed inset-0 z-[6000] flex items-center justify-center bg-black/70 backdrop-blur-md pointer-events-auto">
+            <div className="relative flex flex-col items-center p-8 bg-zinc-950/95 border border-zinc-800 rounded-3xl w-[320px] shadow-[0_20px_50px_rgba(0,0,0,0.8)] animate-in zoom-in-95 duration-300">
+              <div className="relative w-28 h-28 flex items-center justify-center mb-6">
+                <div className="absolute inset-0 rounded-full bg-cyan-500/20 animate-ping" style={{ animationDuration: '3s' }} />
+                <div className="absolute -inset-2 rounded-full bg-gradient-to-tr from-cyan-400 to-indigo-500 opacity-20 blur-xl animate-pulse" />
+                <div className="relative w-24 h-24 rounded-full bg-gradient-to-br from-cyan-500 to-indigo-600 shadow-[0_0_30px_rgba(6,182,212,0.4)] flex items-center justify-center border border-white/10">
+                  <Sparkles size={36} className="text-black animate-pulse" />
+                </div>
+              </div>
+              <h3 className="text-base font-black text-white text-center mb-2 uppercase tracking-widest">Render AI Vocals?</h3>
+              <p className="text-[10px] text-zinc-400 text-center mb-4 px-1 leading-relaxed">
+                {svsEngine === 'vocalido' ? (
+                  <>
+                    Would you like to render the AI vocals now using the <span className="text-cyan-400 font-bold">Local SVS Server (Vocalido)</span>?
+                  </>
+                ) : (
+                  <>
+                    The voice model is ready on your device. Would you like to render the AI vocals now using <span className="text-cyan-400 font-bold">On-Device (20 Steps HD)</span>?
+                  </>
+                )}
+              </p>
+
+              {/* Track Selection UI */}
+              {tracks.length > 1 && (
+                <div className="w-full flex flex-col gap-2 mb-6">
+                  <span className="text-[9px] font-black text-cyan-400 uppercase tracking-widest mb-1 border-b border-white/10 pb-1">Select Tracks</span>
+                  
+                  <label className="flex items-center gap-2 cursor-pointer group">
+                    <div className="relative flex items-center justify-center">
+                      <input 
+                        type="checkbox" 
+                        checked={modalSelectedTracks.length === 1 && modalSelectedTracks[0] === tracks[0].id}
+                        onChange={() => setModalSelectedTracks([tracks[0].id])}
+                        className="peer sr-only" 
+                      />
+                      <div className="w-4 h-4 rounded border border-zinc-600 bg-zinc-900 peer-checked:bg-cyan-500 peer-checked:border-cyan-400 transition-all flex items-center justify-center">
+                        <svg className="w-2.5 h-2.5 text-black opacity-0 peer-checked:opacity-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-bold text-zinc-300 group-hover:text-white transition-colors">Select Melody only</span>
+                  </label>
+
+                  <label className="flex items-center gap-2 cursor-pointer group">
+                    <div className="relative flex items-center justify-center">
+                      <input 
+                        type="checkbox" 
+                        checked={modalSelectedTracks.length === tracks.length}
+                        onChange={() => setModalSelectedTracks(tracks.map(t => t.id))}
+                        className="peer sr-only" 
+                      />
+                      <div className="w-4 h-4 rounded border border-zinc-600 bg-zinc-900 peer-checked:bg-cyan-500 peer-checked:border-cyan-400 transition-all flex items-center justify-center">
+                        <svg className="w-2.5 h-2.5 text-black opacity-0 peer-checked:opacity-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-bold text-zinc-300 group-hover:text-white transition-colors">Select All Tracks</span>
+                  </label>
+
+                  <div className="max-h-24 overflow-y-auto no-scrollbar flex flex-col gap-1.5 mt-1 border border-zinc-800 rounded-lg p-2 bg-black/40">
+                    {tracks.map(t => (
+                      <label key={t.id} className="flex items-center gap-2 cursor-pointer group">
+                        <div className="relative flex items-center justify-center">
+                          <input 
+                            type="checkbox" 
+                            checked={modalSelectedTracks.includes(t.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setModalSelectedTracks(prev => [...prev.filter(id => id !== t.id), t.id]);
+                              } else {
+                                setModalSelectedTracks(prev => prev.filter(id => id !== t.id));
+                              }
+                            }}
+                            className="peer sr-only" 
+                          />
+                          <div className="w-3.5 h-3.5 rounded-sm border border-zinc-700 bg-zinc-900 peer-checked:bg-cyan-600 peer-checked:border-cyan-500 transition-all flex items-center justify-center">
+                            <svg className="w-2 h-2 text-white opacity-0 peer-checked:opacity-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                          </div>
+                        </div>
+                        <span className="text-[9px] font-medium text-zinc-400 group-hover:text-zinc-200 transition-colors truncate flex-1">{t.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <button
+                onClick={() => { setShowRenderPrompt(false); triggerVocalSynthesis(false, tracks.length > 1 ? modalSelectedTracks : undefined); }}
+                className="w-full py-3 px-4 bg-gradient-to-r from-cyan-400 to-indigo-500 text-black font-black text-xs uppercase tracking-widest rounded-xl hover:shadow-[0_0_20px_rgba(6,182,212,0.4)] active:scale-98 transition-all duration-200 mt-2"
+              >
+                Render Now
+              </button>
+              <button onClick={() => setShowRenderPrompt(false)} className="w-full mt-2.5 py-3 px-4 bg-transparent border border-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-white font-black text-[10px] uppercase tracking-widest rounded-xl active:scale-98 transition-all duration-200">
+                Close
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* ── [VOCALIDO RENDER OVERLAY] ── */}
         {isRenderingVocal && (
           <div className="absolute bottom-24 right-4 z-[5000] w-80 p-3.5 bg-zinc-950/90 border border-zinc-800 rounded-2xl shadow-[0_10px_40px_rgba(0,0,0,0.5)] backdrop-blur-xl flex items-center gap-3.5 animate-in slide-in-from-bottom-4 duration-300 pointer-events-auto">
@@ -3145,12 +3371,24 @@ const PlayerPage: React.FC<{
                     On-Device (Browser AI)
                   </button>
                   <button
-                    disabled
+                    disabled={!isServerOnline}
                     onClick={() => handleSvsEngineChange('vocalido')}
-                    className="flex-1 py-2 text-[9px] font-black uppercase rounded-xl border transition-all flex items-center justify-center gap-1.5 bg-[#0c0c0e]/60 text-zinc-600 border-white/5 cursor-not-allowed opacity-50"
+                    className={`flex-1 py-2 text-[9px] font-black uppercase rounded-xl border transition-all flex items-center justify-center gap-1.5 ${
+                      !isServerOnline
+                        ? 'bg-[#0c0c0e]/60 text-zinc-600 border-white/5 cursor-not-allowed opacity-50'
+                        : svsEngine === 'vocalido'
+                        ? 'bg-[#00e5ff]/20 text-[#00e5ff] border-[#00e5ff]/40 shadow-[0_0_12px_rgba(0,229,255,0.15)]'
+                        : 'bg-transparent text-zinc-400 border-white/5 hover:bg-white/5 hover:text-white'
+                    }`}
                   >
-                    <span className="w-1.5 h-1.5 rounded-full bg-zinc-700 shadow-none" />
-                    Server-Side (Locked)
+                    <span className={`w-1.5 h-1.5 rounded-full ${
+                      !isServerOnline 
+                        ? 'bg-zinc-700 shadow-none' 
+                        : svsEngine === 'vocalido' 
+                        ? 'bg-[#00e5ff] shadow-[0_0_6px_rgba(0,229,255,0.6)]' 
+                        : 'bg-zinc-500 shadow-none'
+                    }`} />
+                    Server-Side {isServerOnline ? '(Vocalido)' : '(Offline)'}
                   </button>
                 </div>
               </div>
@@ -3207,6 +3445,54 @@ const PlayerPage: React.FC<{
                 </div>
               </div>
 
+              {/* SVS Timing Feel */}
+              <div className="flex flex-col gap-2 bg-white/5 border border-white/10 rounded-2xl p-4">
+                <div className="flex justify-between items-center">
+                  <span className="text-[9px] font-black text-zinc-300 uppercase tracking-widest flex items-center gap-1.5">
+                    SVS Timing Feel (จังหวะร้อง)
+                  </span>
+                  <span className="text-[9px] font-black text-[#00e5ff] shadow-[0_0_8px_rgba(0,229,255,0.2)]">
+                    {svsTimingFeel}%
+                  </span>
+                </div>
+                <span className="text-[8px] text-zinc-500 leading-normal">
+                  ปรับฟีลลิ่งจังหวะ: 0% ตรงจังหวะเป๊ะหุ่นยนต์ (Robot) &rarr; 50% สมดุลธรรมชาติ &rarr; 100% เลย์แบ็คเยื้องหลังสไตล์ธรรมชาติสมบูรณ์ (Human)
+                </span>
+                
+                <div className="flex items-center gap-3 mt-1.5">
+                  <span className="text-[7px] font-black text-zinc-500 uppercase tracking-widest">Robot</span>
+                  <div className="relative flex-1 h-1.5 bg-zinc-950 rounded-full overflow-hidden border border-white/5">
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      step="1"
+                      value={svsTimingFeel}
+                      onChange={(e) => handleSvsTimingFeelChange(parseInt(e.target.value, 10))}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20"
+                    />
+                    <div
+                      className="absolute h-full bg-gradient-to-r from-[#00e5ff] to-cyan-500 rounded-full shadow-[0_0_8px_rgba(0,229,255,0.4)] transition-all duration-75"
+                      style={{ width: `${svsTimingFeel}%` }}
+                    />
+                  </div>
+                  <span className="text-[7px] font-black text-zinc-500 uppercase tracking-widest">Human</span>
+                </div>
+              </div>
+
+              {/* SVS Legato / Portamento Status */}
+              <div className="flex flex-col gap-1.5 bg-white/5 border border-white/10 rounded-2xl p-4">
+                <span className="text-[9px] font-black text-zinc-300 uppercase tracking-widest flex items-center gap-1.5">
+                  Legato Curve (การเอื้อนเชื่อมโน้ต)
+                </span>
+                <span className="text-[8px] text-[#00e5ff] leading-none font-black tracking-widest shadow-[0_0_8px_rgba(0,229,255,0.2)]">
+                  AUTOMATIC / เปิดใช้งานตลอดเวลา
+                </span>
+                <span className="text-[8px] text-zinc-500 leading-normal">
+                  ประยุกต์ใช้ Cosine Legato Curve ขนาด 70ms อัตโนมัติระหว่างรอยต่อของโน้ตมีเสียง (voiced-to-voiced transitions) เพื่อเกลี่ยเสียงเอื้อนเชื่อมให้เป็นธรรมชาติไร้รอยต่อ
+                </span>
+              </div>
+
               {/* Jianpu info */}
               <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
                 <p className="text-[9px] font-black text-zinc-300 uppercase tracking-widest mb-1">Active Mode: <span className="text-cyan-400">{activeLyricMode}</span></p>
@@ -3246,7 +3532,25 @@ const PlayerPage: React.FC<{
                       </span>
                     ))}
                   </div>
-                  <button onClick={() => { setRenderHistory([]); if (song?.id) { localStorage.removeItem(`memo_render_history_${song.id}`); AudioBlobCache.deleteSongCache(song.id); } }}
+                  <button onClick={() => { 
+                    setRenderHistory([]); 
+                    if (song?.id) { 
+                      localStorage.removeItem(`memo_render_history_${song.id}`); 
+                      AudioBlobCache.deleteSongCache(song.id); 
+                    }
+                    if (activeRenderKey) {
+                      setActiveRenderKey(null);
+                      musicEngine.pause();
+                      setIsPlaying(false);
+                      const primaryTrackId = tracks.find(t => t.mode === 'vocal')?.id || tracks[0]?.id || 'P1';
+                      musicEngine.clearVocalLayers(primaryTrackId);
+                      const updatedTracks = tracks.map((t: any) => 
+                        t.id === primaryTrackId ? { ...t, mode: 'instrument' } as TrackState : t
+                      );
+                      setTracks(updatedTracks);
+                      musicEngine.loadSong(parsedData?.notes || [], updatedTracks, transpose, parsedData?.timeSignature, isMetronomeOn).catch(() => {});
+                    }
+                  }}
                     className="text-[8px] text-zinc-600 underline text-right">Clear History</button>
                 </div>
               )}

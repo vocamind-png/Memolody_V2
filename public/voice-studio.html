@@ -596,15 +596,29 @@
           </div>
         </div>
 
-        <!-- Speed -->
+        <!-- Speed & SVS Timing Feel -->
         <div style="grid-column:1/-1">
-          <div class="slider-group">
-            <div class="slider-header">
-              <div class="slider-label">⏱️ Speed</div>
-              <div class="slider-val" id="valSpeed">1.0×</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 24px">
+            <div class="slider-group">
+              <div class="slider-header">
+                <div class="slider-label">⏱️ Speed</div>
+                <div class="slider-val" id="valSpeed">1.00×</div>
+              </div>
+              <input type="range" id="slSpeed" min="50" max="200" step="5" value="100"
+                oninput="updateSlider('Speed', (this.value/100).toFixed(2), '×')" onchange="schedulePreview()">
             </div>
-            <input type="range" id="slSpeed" min="50" max="200" step="5" value="100"
-              oninput="updateSlider('Speed', (this.value/100).toFixed(2), '×')" onchange="schedulePreview()">
+            <div class="slider-group">
+              <div class="slider-header">
+                <div class="slider-label" data-tip="Consonant alignment - 0% on-beat vowel target (Robot), 50% standard, 100% full consonant borrow">⏳ SVS Timing Feel</div>
+                <div class="slider-val" id="valTimingFeel">50%</div>
+              </div>
+              <input type="range" id="slTimingFeel" min="0" max="100" step="1" value="50"
+                oninput="updateSlider('TimingFeel', this.value, '%')" onchange="schedulePreview()">
+              <div style="display: flex; justify-content: space-between; margin-top: 4px; font-size: 9px; color: var(--text3); font-weight: bold; text-transform: uppercase; letter-spacing: 0.05em;">
+                <span>Robot</span>
+                <span>Human</span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -697,6 +711,9 @@ function getCustomBackendUrl() {
 }
 
 function getFetchUrl(path) {
+  if (path.startsWith('blob:') || path.startsWith('data:') || path.startsWith('http://') || path.startsWith('https://')) {
+    return path;
+  }
   const customBackend = getCustomBackendUrl();
   if (!customBackend) return path;
   
@@ -713,7 +730,8 @@ const state = {
   params: {
     pitch_shift: 0, formant_shift: 0,
     breathiness: 0, vibrato_rate: 0, vibrato_depth: 0,
-    reverb: 0, warmth: 0, brightness: 0, speed: 1.0
+    reverb: 0, warmth: 0, brightness: 0, speed: 1.0,
+    timing_feel: 50
   },
   singerName: 'Luna',
   singerColor: '#7c6df5',
@@ -741,7 +759,7 @@ const PRESETS = [
   {name:'Anime',emoji:'✨',desc:'High & breathy',params:{pitch_shift:6,formant_shift:3,breathiness:25,brightness:40}},
   {name:'Dark',emoji:'🌑',desc:'Deep & mysterious',params:{pitch_shift:-5,formant_shift:-4,warmth:50,reverb:40}},
   {name:'Celestial',emoji:'🌟',desc:'Etheral reverb',params:{reverb:70,brightness:30,vibrato_rate:3,vibrato_depth:0.2}},
-  {name:'Robot',emoji:'🤖',desc:'Mechanical',params:{pitch_shift:0,breathiness:0,vibrato_rate:0,speed:0.95}},
+  {name:'Robot',emoji:'🤖',desc:'Mechanical',params:{pitch_shift:0,breathiness:0,vibrato_rate:0,speed:0.95,timing_feel:0}},
 ];
 
 // ── Init ──
@@ -774,13 +792,13 @@ function applyPreset(name) {
     breathiness: 'slBreath', vibrato_rate: 'slVibRate',
     vibrato_depth: 'slVibDepth', reverb: 'slReverb',
     warmth: 'slWarmth', brightness: 'slBrightness',
-    speed: 'slSpeed'
+    speed: 'slSpeed', timing_feel: 'slTimingFeel'
   };
   Object.entries(sliderMap).forEach(([param, slId]) => {
     const sl = document.getElementById(slId);
     if (sl && state.params[param] !== undefined) {
       if (slId === 'slSpeed') sl.value = state.params[param] * 100;
-      else if (slId === 'slBreath' || slId === 'slReverb') sl.value = state.params[param];
+      else if (slId === 'slBreath' || slId === 'slReverb' || slId === 'slTimingFeel') sl.value = state.params[param];
       else sl.value = state.params[param];
     }
   });
@@ -803,6 +821,7 @@ function syncAllSliderLabels() {
   document.getElementById('valWarmth').textContent = state.params.warmth;
   document.getElementById('valBrightness').textContent = state.params.brightness;
   document.getElementById('valSpeed').textContent = state.params.speed.toFixed(2) + '×';
+  document.getElementById('valTimingFeel').textContent = Math.round(state.params.timing_feel) + '%';
 }
 
 function updateSlider(name, val, unit) {
@@ -813,11 +832,11 @@ function updateSlider(name, val, unit) {
     Breath:'breathiness', VibRate:'vibrato_rate',
     VibDepth:'vibrato_depth', Reverb:'reverb',
     Warmth:'warmth', Brightness:'brightness',
-    Speed:'speed'
+    Speed:'speed', TimingFeel:'timing_feel'
   };
   const key = paramMap[name];
   if (key === 'speed') state.params[key] = v / 100;
-  else if (key === 'breathiness' || key === 'reverb') state.params[key] = v;
+  else if (key === 'breathiness' || key === 'reverb' || key === 'timing_feel') state.params[key] = v;
   else state.params[key] = v;
   updateParamSummary();
 }
@@ -826,7 +845,7 @@ function resetTimbre(preview = true) {
   state.params = {
     pitch_shift:0, formant_shift:0, breathiness:0,
     vibrato_rate:0, vibrato_depth:0, reverb:0,
-    warmth:0, brightness:0, speed:1.0
+    warmth:0, brightness:0, speed:1.0, timing_feel:50
   };
   ['slPitch','slFormant','slWarmth','slBrightness'].forEach(id => {
     const sl = document.getElementById(id); if(sl) sl.value = 0;
@@ -835,6 +854,7 @@ function resetTimbre(preview = true) {
     const sl = document.getElementById(id); if(sl) sl.value = 0;
   });
   document.getElementById('slSpeed').value = 100;
+  document.getElementById('slTimingFeel').value = 50;
   syncAllSliderLabels();
   updateParamSummary();
   if (preview) schedulePreview();
@@ -879,9 +899,15 @@ async function previewPhrase() {
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
 
-    if (data.audio_b64) {
-      const wavBlob = base64ToBlob(data.audio_b64, 'audio/wav');
-      const url = URL.createObjectURL(wavBlob);
+    if (data.audio_b64 || data.saved_url) {
+      let url;
+      if (data.audio_b64) {
+        const wavBlob = base64ToBlob(data.audio_b64, 'audio/wav');
+        url = URL.createObjectURL(wavBlob);
+      } else {
+        url = getFetchUrl(data.saved_url); // Uses full host if on a different server
+      }
+      
       state.lastAudio = url;
       const audio = document.getElementById('mainAudio');
       audio.src = url;
@@ -891,9 +917,13 @@ async function previewPhrase() {
       });
       document.getElementById('audioPlayer').style.display = 'flex';
       document.getElementById('waveformWrap').style.display = 'block';
-      drawWaveform(data.audio_b64);
+      if (data.audio_b64) {
+        drawWaveform(data.audio_b64);
+      }
       updateAudioProgress(audio);
       document.getElementById('statusText').textContent = `✅ Rendered ${data.duration?.toFixed(2)}s`;
+    } else {
+      throw new Error("No audio returned from server");
     }
   } catch (e) {
     console.error(e);
@@ -1175,13 +1205,13 @@ function loadSinger(idx) {
     breathiness: 'slBreath', vibrato_rate: 'slVibRate',
     vibrato_depth: 'slVibDepth', reverb: 'slReverb',
     warmth: 'slWarmth', brightness: 'slBrightness',
-    speed: 'slSpeed'
+    speed: 'slSpeed', timing_feel: 'slTimingFeel'
   };
   Object.entries(sliderMap).forEach(([paramKey, slId]) => {
     const sl = document.getElementById(slId);
     if (sl && state.params[paramKey] !== undefined) {
       if (slId === 'slSpeed') sl.value = state.params[paramKey] * 100;
-      else if (slId === 'slBreath' || slId === 'slReverb') sl.value = state.params[paramKey];
+      else if (slId === 'slBreath' || slId === 'slReverb' || slId === 'slTimingFeel') sl.value = state.params[paramKey];
       else sl.value = state.params[paramKey];
     }
   });
@@ -1209,6 +1239,7 @@ function updateParamSummary() {
     `Reverb: ${Math.round(p.reverb)}%`,
     `EQ: Warmth ${p.warmth > 0?'+':''}${p.warmth} / Bright ${p.brightness > 0?'+':''}${p.brightness}`,
     `Speed: ${p.speed.toFixed(2)}×`,
+    `Timing Feel: ${Math.round(p.timing_feel)}%`,
   ];
   if (p.vocal_mode) {
     lines.push(`Vocal Mode: ${p.vocal_mode.toUpperCase()}`);

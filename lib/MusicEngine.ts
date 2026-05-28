@@ -8,9 +8,10 @@ export class MusicEngine {
   private trackSamplers: Map<string, Tone.Sampler> = new Map();
   private trackChannels: Map<string, Tone.Channel> = new Map();
   private trackMeters: Map<string, Tone.Meter> = new Map();
-  private trackVocalLayers: Map<string, Tone.Player[]> = new Map();
-  private trackVocalStems: Map<string, Tone.Player[]> = new Map();
+  private trackVocalLayers: Map<string, Tone.GrainPlayer[]> = new Map();
+  private trackVocalStems: Map<string, Tone.GrainPlayer[]> = new Map();
   private trackActiveStem: Map<string, number | null> = new Map();
+  private trackVocalRenderBpm: Map<string, number> = new Map();
   private trackModes: Map<string, 'instrument' | 'vocal'> = new Map();
   public vocalAudioElements: Map<string, HTMLAudioElement> = new Map(); // For AI Vocal playback
   private vocalBlobUrls: Map<string, string> = new Map(); // Track pre-fetched local Blob URLs
@@ -80,19 +81,45 @@ export class MusicEngine {
     
     // Schedule repeating loop event to manually loop the unsynced vocal players
     this.vocalLoopId = Tone.Transport.scheduleRepeat((time) => {
+      if (!this.loopActive) return;
+      
       const songTime = startSec - this.countInDuration;
-      const allPlayers: Tone.Player[] = [];
+      const allPlayers: Tone.GrainPlayer[] = [];
       this.trackVocalLayers.forEach(players => allPlayers.push(...players));
       this.trackVocalStems.forEach(players => allPlayers.push(...players.filter(Boolean)));
       
+      const currentBpm = Tone.Transport.bpm.value;
       allPlayers.forEach(player => {
         if (!player || !player.buffer || !player.buffer.loaded) return;
         player.stop(time);
+        
+        const renderBpm = (player as any).renderBpm || currentBpm;
+        const ratio = currentBpm / renderBpm;
+        if (typeof player.playbackRate === 'number') {
+          player.playbackRate = ratio;
+        } else if (player.playbackRate && (player.playbackRate as any).value !== undefined) {
+          (player.playbackRate as any).value = ratio;
+        }
+
+        const offsetInAudio = Math.max(0, songTime * ratio);
         const duration = player.buffer.duration;
-        if (songTime >= 0 && songTime < duration) {
-          player.start(time, songTime);
+        if (offsetInAudio < duration) {
+          player.start(time, offsetInAudio);
         }
       });
+      
+      // Also loop HTMLAudioElements
+      Tone.Draw.schedule(() => {
+        this.vocalAudioElements.forEach(audio => {
+          if (!audio || !audio.src || audio.src.startsWith('data:')) return;
+          const ratio = currentBpm / ((audio as any).renderBpm || currentBpm);
+          const offsetInAudio = Math.max(0, songTime * ratio);
+          audio.currentTime = offsetInAudio;
+          if (Tone.Transport.state === 'started') {
+            audio.play().catch(() => {});
+          }
+        });
+      }, time);
     }, `${endSec - startSec}`, startSec);
   }
 
@@ -311,9 +338,6 @@ export class MusicEngine {
           if (divNode) {
             runningDivisions = parseInt(divNode.textContent || "1") || 1;
           }
-          if (isNaN(runningDivisions) || runningDivisions <= 0) {
-            runningDivisions = 1;
-          }
 
           const nominalDuration = runningBeats * (4 / runningBeatType);
 
@@ -321,47 +345,33 @@ export class MusicEngine {
           let measurePlayTime = 0;
           Array.from(measure.children).forEach((child) => {
             if (child.tagName === "backup") {
-              const rawDuration = parseInt(child.querySelector("duration")?.textContent || "0");
-              const duration = (isNaN(rawDuration) || runningDivisions <= 0) ? 0 : (rawDuration / runningDivisions);
-              measurePlayTime -= duration;
+              const duration = (parseInt(child.querySelector("duration")?.textContent || "0") / runningDivisions);
+              measurePlayTime = Math.round((measurePlayTime - duration) * 100000) / 100000;
             } else if (child.tagName === "forward") {
-              const rawDuration = parseInt(child.querySelector("duration")?.textContent || "0");
-              const duration = (isNaN(rawDuration) || runningDivisions <= 0) ? 0 : (rawDuration / runningDivisions);
-              measurePlayTime += duration;
+              const duration = (parseInt(child.querySelector("duration")?.textContent || "0") / runningDivisions);
+              measurePlayTime = Math.round((measurePlayTime + duration) * 100000) / 100000;
             } else if (child.tagName === "note") {
               const isChord = child.querySelector("chord");
-              const rawDuration = parseInt(child.querySelector("duration")?.textContent || "0");
-              const duration = (isNaN(rawDuration) || runningDivisions <= 0) ? 0 : (rawDuration / runningDivisions);
+              const duration = (parseInt(child.querySelector("duration")?.textContent || "0") / runningDivisions);
               if (!isChord) {
-                measurePlayTime += duration;
+                measurePlayTime = Math.round((measurePlayTime + duration) * 100000) / 100000;
               }
             }
           });
 
-          if (isNaN(measurePlayTime)) {
-            measurePlayTime = 0;
-          }
-
           let stepDuration = nominalDuration;
-          if (isNaN(stepDuration) || stepDuration <= 0) {
-            stepDuration = 4;
-          }
-
-          // If first measure (pickup) and actual duration is less than nominal, use actual
-          if (i === 0 && measurePlayTime > 0 && measurePlayTime < nominalDuration) {
+          if (measurePlayTime > 0 && measurePlayTime < nominalDuration) {
+            // Support incomplete measures anywhere (pickups, repeat boundaries)
             stepDuration = measurePlayTime;
           } else {
             // Keep nominal duration, but if actual notes overflow it, expand it to fit them
-            stepDuration = Math.max(stepDuration, measurePlayTime);
+            stepDuration = Math.max(nominalDuration, measurePlayTime);
           }
+          stepDuration = Math.round(stepDuration * 100000) / 100000;
 
-          if (isNaN(stepDuration) || stepDuration <= 0) {
-            stepDuration = 4;
-          }
-
-          globalMeasureStartTimes.push(accumulatedBeat);
+          globalMeasureStartTimes.push(Math.round(accumulatedBeat * 100000) / 100000);
           globalMeasureDurations.push(stepDuration);
-          accumulatedBeat += stepDuration;
+          accumulatedBeat = Math.round((accumulatedBeat + stepDuration) * 100000) / 100000;
         }
       }
 
@@ -385,22 +395,16 @@ export class MusicEngine {
           
           // Force align to global measure start time
           currentTime = globalMeasureStartTimes[stepIdx] ?? currentTime;
-          if (isNaN(currentTime)) {
-            currentTime = 0;
-          }
           const startBeat = currentTime;
 
           const timeNode = measure.querySelector("time");
           if (timeNode) {
-            beats = parseInt(timeNode.querySelector("beats")?.textContent || "4") || 4;
-            beatType = parseInt(timeNode.querySelector("beat-type")?.textContent || "4") || 4;
+            beats = parseInt(timeNode.querySelector("beats")?.textContent || "4");
+            beatType = parseInt(timeNode.querySelector("beat-type")?.textContent || "4");
           }
           const divNode = measure.querySelector("attributes divisions");
           if (divNode) {
             divisions = parseInt(divNode.textContent || "1") || 1;
-          }
-          if (isNaN(divisions) || divisions <= 0) {
-            divisions = 1;
           }
 
           // Detect Clefs
@@ -413,18 +417,16 @@ export class MusicEngine {
 
           Array.from(measure.children).forEach((child) => {
             if (child.tagName === "backup") {
-              const rawDuration = parseInt(child.querySelector("duration")?.textContent || "0");
-              const duration = (isNaN(rawDuration) || divisions <= 0) ? 0 : (rawDuration / divisions);
-              currentTime -= duration;
+              const duration = (parseInt(child.querySelector("duration")?.textContent || "0") / divisions);
+              currentTime = Math.round((currentTime - duration) * 100000) / 100000;
             } else if (child.tagName === "forward") {
-              const rawDuration = parseInt(child.querySelector("duration")?.textContent || "0");
-              const duration = (isNaN(rawDuration) || divisions <= 0) ? 0 : (rawDuration / divisions);
-              currentTime += duration;
+              const duration = (parseInt(child.querySelector("duration")?.textContent || "0") / divisions);
+              currentTime = Math.round((currentTime + duration) * 100000) / 100000;
             } else if (child.tagName === "note") {
               const isRest = child.querySelector("rest");
               const isChord = child.querySelector("chord");
-              const rawDuration = parseInt(child.querySelector("duration")?.textContent || "0");
-              const duration = (isNaN(rawDuration) || divisions <= 0) ? 0.5 : (rawDuration / divisions);
+              const rawDuration = (parseInt(child.querySelector("duration")?.textContent || "0") / divisions);
+              const duration = Math.round((isNaN(rawDuration) ? 0.5 : rawDuration) * 100000) / 100000;
               const staff = parseInt(child.querySelector("staff")?.textContent || "1");
               const voice = parseInt(child.querySelector("voice")?.textContent || "1");
 
@@ -456,15 +458,20 @@ export class MusicEngine {
                 // If this note is tied from the previous note (tie stop),
                 // merge by extending the previous note's duration instead of creating a new note.
                 if (isTieStop) {
-                  // Find the matching previous note with the same pitch in the same track
+                  // Find the matching previous note with the same pitch in the same track that ends exactly at currentTime
+                  let merged = false;
                   for (let j = notes.length - 1; j >= 0; j--) {
                     const prev = notes[j];
                     if (prev.trackId === currentTrackId && prev.step === step && prev.octave === safeOctave && prev.alter === safeAlter) {
-                      prev.duration += isNaN(duration) ? 0.5 : duration;
-                      break;
+                      const prevEnd = Math.round((prev.startTime + prev.duration) * 100000) / 100000;
+                      if (Math.abs(prevEnd - currentTime) < 0.02) {
+                        prev.duration = Math.round((prev.duration + duration) * 100000) / 100000;
+                        merged = true;
+                        break;
+                      }
                     }
                   }
-                  if (!isChord) currentTime += duration;
+                  if (!isChord) currentTime = Math.round((currentTime + duration) * 100000) / 100000;
                   return; // skip creating a new note for the tied continuation
                 }
 
@@ -475,13 +482,14 @@ export class MusicEngine {
                   solfegeVal = lyricTextNode.textContent?.trim() || "";
                 }
 
+                const startTimeVal = isChord ? (currentTime - duration) : currentTime;
                 notes.push({
-                  trackId: currentTrackId, step, octave: safeOctave, alter: safeAlter, duration: isNaN(duration) ? 0.5 : duration,
-                  startTime: isChord ? (currentTime - (isNaN(duration) ? 0.5 : duration)) : currentTime,
+                  trackId: currentTrackId, step, octave: safeOctave, alter: safeAlter, duration: duration,
+                  startTime: Math.round(startTimeVal * 100000) / 100000,
                   solfege: solfegeVal, staff: isNaN(staff) ? 1 : staff, voice: isNaN(voice) ? 1 : voice, measure: measureNum
                 });
               }
-              if (!isChord) currentTime += duration;
+              if (!isChord) currentTime = Math.round((currentTime + duration) * 100000) / 100000;
             }
           });
 
@@ -558,6 +566,7 @@ export class MusicEngine {
       audio = new Audio();
       audio.preload = 'auto';
       audio.crossOrigin = 'anonymous';
+      audio.preservesPitch = true;
       this.vocalAudioElements.set(trackId, audio);
     }
     
@@ -585,7 +594,7 @@ export class MusicEngine {
     }
   }
 
-  async addVocalLayer(trackId: string, audioUrl: string, stemUrls?: string[]) {
+  async addVocalLayer(trackId: string, audioUrl: string, stemUrls?: string[], renderBpm?: number) {
     // Increment generation — any previous in-flight loads become stale
     const myGeneration = ++this._vocalGeneration;
     console.log(`[MusicEngine] 🎤 addVocalLayer gen=${myGeneration} track=${trackId}, url=${audioUrl.substring(0, 60)}...`);
@@ -617,22 +626,23 @@ export class MusicEngine {
     const loadPromises: Promise<void>[] = [];
 
     // 1. Load Main Mix Player
-    let mainPlayer: Tone.Player | null = null;
+    let mainPlayer: Tone.GrainPlayer | null = null;
     if (audioUrl) {
       loadPromises.push(new Promise<void>((resolve) => {
-        const player = new Tone.Player({
+        const player = new Tone.GrainPlayer({
           url: audioUrl,
           autostart: false,
           onload: () => {
             if (myGeneration === this._vocalGeneration) {
               mainPlayer = player;
+              if (renderBpm) (mainPlayer as any).renderBpm = renderBpm;
             } else {
               player.dispose();
             }
             resolve();
           },
           onerror: (err) => {
-            console.error(`[MusicEngine] ❌ Main mix Tone.Player load error for ${trackId}:`, err);
+            console.error(`[MusicEngine] ❌ Main mix Tone.GrainPlayer load error for ${trackId}:`, err);
             resolve(); // Resolve to prevent blocking the user
           }
         }).connect(channel);
@@ -640,23 +650,24 @@ export class MusicEngine {
     }
 
     // 2. Load Stems Players
-    const loadedStems: (Tone.Player | null)[] = [];
+    const loadedStems: (Tone.GrainPlayer | null)[] = [];
     if (stemUrls && stemUrls.length > 0) {
       stemUrls.forEach((url, index) => {
         loadPromises.push(new Promise<void>((resolve) => {
-          const player = new Tone.Player({
+          const player = new Tone.GrainPlayer({
             url: url,
             autostart: false,
             onload: () => {
               if (myGeneration === this._vocalGeneration) {
                 loadedStems[index] = player;
+                if (renderBpm) (player as any).renderBpm = renderBpm;
               } else {
                 player.dispose();
               }
               resolve();
             },
             onerror: (err) => {
-              console.error(`[MusicEngine] ❌ Stem ${index} Tone.Player load error for ${trackId}:`, err);
+              console.error(`[MusicEngine] ❌ Stem ${index} Tone.GrainPlayer load error for ${trackId}:`, err);
               resolve();
             }
           }).connect(channel);
@@ -669,7 +680,7 @@ export class MusicEngine {
     // If generation changed during load, discard new nodes
     if (myGeneration !== this._vocalGeneration) {
       console.log(`[MusicEngine] 🗑️ Stale gen=${myGeneration} after loading — discarding players`);
-      if (mainPlayer) (mainPlayer as Tone.Player).dispose();
+      if (mainPlayer) (mainPlayer as Tone.GrainPlayer).dispose();
       loadedStems.forEach(p => p?.dispose());
       return;
     }
@@ -678,7 +689,7 @@ export class MusicEngine {
       this.trackVocalLayers.set(trackId, [mainPlayer]);
     }
     if (loadedStems.length > 0) {
-      this.trackVocalStems.set(trackId, loadedStems.filter(Boolean) as Tone.Player[]);
+      this.trackVocalStems.set(trackId, loadedStems.filter(Boolean) as Tone.GrainPlayer[]);
     }
 
     this.trackModes.set(trackId, 'vocal');
@@ -711,6 +722,14 @@ export class MusicEngine {
     if (oldUrl) {
       try { URL.revokeObjectURL(oldUrl); } catch(e){}
       this.vocalBlobUrls.delete(trackId);
+    }
+    this.trackVocalRenderBpm.delete(trackId);
+
+    // Reset/clear any active HTMLAudioElement for this track to prevent phantom playing after deletion
+    const oldAudio = this.vocalAudioElements.get(trackId);
+    if (oldAudio) {
+      oldAudio.pause();
+      oldAudio.src = '';
     }
   }
 
@@ -754,7 +773,7 @@ export class MusicEngine {
     if (requestedMode === 'vocal' && this.trackVocalLayers.has(trackId)) {
       if (this.trackSamplers.has(trackId)) {
         console.log(`[MusicEngine] [initSampler] disposing sampler for trackId=${trackId} because vocal layer is active`);
-        // Only dispose the sampler, NOT the channel — the vocal Tone.Player routes through the channel
+        // Only dispose the sampler, NOT the channel — the vocal Tone.GrainPlayer routes through the channel
         const sampler = this.trackSamplers.get(trackId);
         if (sampler) {
           try { (sampler as any).releaseAll?.(); } catch (e) { }
@@ -866,7 +885,40 @@ export class MusicEngine {
   }
 
   setMasterVolume(vol: number) { if (this.masterGain) this.masterGain.gain.rampTo(vol, 0.1); }
-  setBpm(bpm: number) { if (bpm >= 20 && bpm <= 400) Tone.Transport.bpm.rampTo(bpm, 0.05); }
+  setBpm(bpm: number) {
+    if (bpm >= 20 && bpm <= 400) {
+      Tone.Transport.bpm.rampTo(bpm, 0.05);
+      
+      // Update playbackRate of all vocal players to match the BPM ratio
+      this.trackVocalRenderBpm.forEach((renderBpm, trackId) => {
+        const ratio = bpm / renderBpm;
+        const layers = this.trackVocalLayers.get(trackId);
+        if (layers) {
+          layers.forEach(p => {
+            if (p) {
+              if (typeof p.playbackRate === 'number') {
+                p.playbackRate = ratio;
+              } else if (p.playbackRate && (p.playbackRate as any).value !== undefined) {
+                (p.playbackRate as any).value = ratio;
+              }
+            }
+          });
+        }
+        const stems = this.trackVocalStems.get(trackId);
+        if (stems) {
+          stems.forEach(p => {
+            if (p) {
+              if (typeof p.playbackRate === 'number') {
+                p.playbackRate = ratio;
+              } else if (p.playbackRate && (p.playbackRate as any).value !== undefined) {
+                (p.playbackRate as any).value = ratio;
+              }
+            }
+          });
+        }
+      });
+    }
+  }
 
   updateTrackStates(tracks: TrackState[]) {
     this.tracks = tracks;
@@ -884,7 +936,7 @@ export class MusicEngine {
         // If in vocal mode, the instrument sampler should be completely silent (strict separation)
         const sampler = this.trackSamplers.get(t.id);
         if (sampler && sampler.volume) {
-          sampler.volume.value = (t.mode === 'vocal') ? -100 : 0;
+          sampler.volume.value = (t.mode === 'vocal') ? -100 : 4;
         }
       }
 
@@ -931,7 +983,7 @@ export class MusicEngine {
     const songTime = transportSeconds - countIn;
     const triggerTime = time !== undefined ? time : Tone.now();
 
-    const allPlayers: Tone.Player[] = [];
+    const allPlayers: Tone.GrainPlayer[] = [];
     this.trackVocalLayers.forEach(players => allPlayers.push(...players));
     this.trackVocalStems.forEach(players => allPlayers.push(...players.filter(Boolean)));
 
@@ -939,7 +991,20 @@ export class MusicEngine {
       allPlayers.forEach(player => {
         if (!player || !player.buffer || !player.buffer.loaded) return;
         try { player.stop(triggerTime); } catch (e) {}
-        const offsetInAudio = Math.max(0, songTime);
+        
+        // Calculate ratio based on transport bpm vs player renderBpm
+        const currentBpm = Tone.Transport.bpm.value;
+        const renderBpm = (player as any).renderBpm || currentBpm;
+        const ratio = currentBpm / renderBpm;
+        
+        // Dynamically set player playbackRate
+        if (typeof player.playbackRate === 'number') {
+          player.playbackRate = ratio;
+        } else if (player.playbackRate && (player.playbackRate as any).value !== undefined) {
+          (player.playbackRate as any).value = ratio;
+        }
+
+        const offsetInAudio = Math.max(0, songTime * ratio);
         const duration = player.buffer.duration;
         if (offsetInAudio < duration) {
           if (songTime < 0) {
@@ -984,7 +1049,7 @@ export class MusicEngine {
     Tone.Transport.seconds = this.baseStartTime + this.countInDuration;
     // 🎤 Sync HTMLAudio vocal elements to new position
     this.vocalAudioElements.forEach((audio, trackId) => {
-      // Check if Tone.Player is loaded
+      // Check if Tone.GrainPlayer is loaded
       const hasTonePlayer = this.trackVocalLayers.has(trackId) && 
         this.trackVocalLayers.get(trackId)!.some(p => p.buffer && p.buffer.loaded);
 
@@ -1110,7 +1175,7 @@ export class MusicEngine {
             const track = this.tracks.find(t => t.id === trackId);
             const isVocalPlaying = track && track.mode === 'vocal' && !track.isMuted;
             
-            // Check if Tone.Player is loaded
+            // Check if Tone.GrainPlayer is loaded
             const hasTonePlayer = this.trackVocalLayers.has(trackId) && 
               this.trackVocalLayers.get(trackId)!.some(p => p.buffer && p.buffer.loaded);
 
@@ -1161,7 +1226,7 @@ export class MusicEngine {
           const track = this.tracks.find(t => t.id === trackId);
           const isVocalPlaying = track && track.mode === 'vocal' && !track.isMuted;
           
-          // Check if Tone.Player is loaded
+          // Check if Tone.GrainPlayer is loaded
           const hasTonePlayer = this.trackVocalLayers.has(trackId) && 
             this.trackVocalLayers.get(trackId)!.some(p => p.buffer && p.buffer.loaded);
 

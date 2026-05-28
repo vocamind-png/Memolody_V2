@@ -126,6 +126,7 @@ export interface ClientSvsParams {
   warmth?: number; // EQ -1..1
   brightness?: number; // EQ -1..1
   reverb?: number; // 0..1
+  timing_feel?: number; // 0..100 (0 = quantized, 100 = lazy/jazz)
 }
 
 export interface NoteData {
@@ -688,8 +689,13 @@ export class ClientSvsEngine {
         sendWorkerDebug('[ClientSvsEngine] ✅ Full neural pipeline loaded (linguistic + dur + pitch)');
         onProgress({ stage: 'initializing', message: '✅ Neural pipeline ACTIVE!', progress: 88 });
       } else {
-        sendWorkerDebug(`[ClientSvsEngine] ⚠️ Neural sub-models not fully available — using flat-F0 fallback pipeline. States: ling=${!!this.linguisticSession}, dur=${!!this.durSession}, pitch=${!!this.pitchSession}`);
-        onProgress({ stage: 'initializing', message: `⚠️ Neural FALLBACK: ling=${!!this.linguisticSession}, dur=${!!this.durSession}, pitch=${!!this.pitchSession}`, progress: 88 });
+        const missing: string[] = [];
+        if (!this.linguisticSession) missing.push('linguistic');
+        if (!this.durSession) missing.push('dur');
+        if (!this.pitchSession) missing.push('pitch');
+        const errMsg = `❌ Neural pipeline models missing: ${missing.join(', ')}. Flat-F0 fallback has been disabled.`;
+        sendWorkerDebug(`[ClientSvsEngine] ${errMsg}`);
+        onProgress({ stage: 'initializing', message: errMsg, progress: 88 });
       }
 
       console.log('[ClientSvsEngine] Inference Sessions loaded successfully!', {
@@ -838,7 +844,11 @@ export class ClientSvsEngine {
       // 2. Synthesize each track sequentially
       const trackAudios: Float32Array[] = [];
       for (let tIdx = 0; tIdx < tracks.length; tIdx++) {
+        // Yield to event loop to allow UI progress updates
+        await new Promise(resolve => setTimeout(resolve, 10));
+        
         const track = tracks[tIdx];
+        console.log(`[ClientSvsEngine] 🎵 Synthesizing polyphony track ${tIdx + 1}/${tracks.length} (${track.length} notes)...`);
         const audio = await this.synthesizeTrack(track, params);
         if (!audio) {
           throw new Error(`Inference returned empty audio for track ${tIdx}`);
@@ -1023,12 +1033,12 @@ export class ClientSvsEngine {
     if (this.hasNeuralPipeline) {
       try {
         return await this.synthesizeChunkNeural(trackNotes, params);
-      } catch (e) {
-        console.warn('[ClientSvsEngine] ⚠️ Neural pipeline failed, falling back to flat-F0:', e);
-        return await this.synthesizeChunkFallback(trackNotes, params);
+      } catch (e: any) {
+        console.error('[ClientSvsEngine] ❌ Neural pipeline failed:', e);
+        throw new Error(`Neural synthesis pipeline failed: ${e.message || e}`);
       }
     }
-    return await this.synthesizeChunkFallback(trackNotes, params);
+    throw new Error('Neural pipeline is not active/available. Flat-F0 fallback has been disabled.');
   }
 
   /**
@@ -1070,27 +1080,35 @@ export class ClientSvsEngine {
     noteRest.push(true);
     noteDurFr.push(initialApFr);
 
-    let prevEnd = -initialApSec;
+    let currentFr = initialApFr;
 
     for (let i = 0; i < trackNotes.length; i++) {
       const { start, dur, note } = trackNotes[i];
 
-      // Insert silence gap between notes if needed
-      const gap = start - prevEnd;
-      if (gap > 0.02) {
-        const gapFr = Math.max(2, Math.round(gap * frameHz));
-        allTok.push(SP_ID);
-        allPhMidi.push(0);
-        wordDiv.push(1);
-        wordDurFr.push(gapFr);
-        noteMidi.push(0.0);
-        noteRest.push(true);
-        noteDurFr.push(gapFr);
+      const noteStartFr = Math.round((start + initialApSec) * frameHz);
+      const noteEndFr = Math.round((start + dur + initialApSec) * frameHz);
+
+      // Insert silence gap if needed
+      if (noteStartFr > currentFr) {
+        const gapFr = noteStartFr - currentFr;
+        if (gapFr > 0) {
+          allTok.push(SP_ID);
+          allPhMidi.push(0);
+          wordDiv.push(1);
+          wordDurFr.push(gapFr);
+          noteMidi.push(0.0);
+          noteRest.push(true);
+          noteDurFr.push(gapFr);
+          currentFr += gapFr;
+        }
       }
+
+      // Align start to currentFr to handle any slight overlap/float precision issues
+      const actualStartFr = Math.max(currentFr, noteStartFr);
+      const durFr = Math.max(2, noteEndFr - actualStartFr);
 
       const midi = note.midi ?? note.pitch ?? 60;
       const lyric = (note.lyric || 'a').trim();
-      const durFr = Math.max(2, Math.round(dur * frameHz));
       const isRest = ['', '-', '~', 'rest', '_'].includes(lyric);
 
       const phonemes = this.lyricToPhonemes(lyric);
@@ -1105,11 +1123,11 @@ export class ClientSvsEngine {
       noteRest.push(isRest);
       noteDurFr.push(durFr);
 
-      prevEnd = start + dur;
+      currentFr += durFr;
     }
 
     // Final silence
-    const finalSpFr = Math.max(2, Math.round(0.1 * frameHz));
+    const finalSpFr = Math.max(2, Math.round(0.4 * frameHz));
     allTok.push(SP_ID);
     allPhMidi.push(0);
     wordDiv.push(1);
@@ -1121,17 +1139,53 @@ export class ClientSvsEngine {
     const nTok = allTok.length;
     const nNotes = noteMidi.length;
 
-    // Pre-compute phoneme-level durations from word-level data
+    // Pre-compute phoneme-level durations from word-level data based on SVS Timing Feel setting
+    const timingFeel = params?.timing_feel ?? 50.0;
     const phDur: number[] = [];
     for (let wi = 0; wi < wordDiv.length; wi++) {
       const wdur = wordDurFr[wi];
       const wdiv = wordDiv[wi];
-      const per = Math.max(1, Math.floor(wdur / wdiv));
-      const rem = wdur - per * wdiv;
-      for (let k = 0; k < wdiv; k++) {
-        phDur.push(per + (k === wdiv - 1 && rem > 0 ? rem : 0));
+      if (wdiv <= 1) {
+        phDur.push(wdur);
+      } else {
+        const equalVal = Math.floor(wdur / wdiv);
+        const minVal = 2;
+        let consDur = Math.round(minVal + (equalVal - minVal) * (timingFeel / 100.0));
+        if (consDur < minVal) consDur = minVal;
+        if (consDur > equalVal) consDur = equalVal;
+        
+        const totalConsDur = consDur * (wdiv - 1);
+        const vowelDur = Math.max(1, wdur - totalConsDur);
+        
+        for (let k = 0; k < wdiv - 1; k++) {
+          phDur.push(consDur);
+        }
+        phDur.push(vowelDur);
       }
     }
+
+    // Pre-beat Consonant Borrowing: shift consonants earlier to place vowel target on-beat
+    let tokStart = 0;
+    for (let wi = 0; wi < wordDiv.length; wi++) {
+      const wdiv = wordDiv[wi];
+      if (wi > 0 && wdiv > 1) {
+        let consDurSum = 0;
+        for (let k = 0; k < wdiv - 1; k++) {
+          consDurSum += phDur[tokStart + k];
+        }
+        const targetBorrow = Math.round(consDurSum * (1.0 - timingFeel / 100.0));
+        const minPrecedingDur = 2;
+        const availableToBorrow = Math.max(0, phDur[tokStart - 1] - minPrecedingDur);
+        const borrowDur = Math.min(targetBorrow, availableToBorrow);
+        
+        if (borrowDur > 0) {
+          phDur[tokStart - 1] -= borrowDur;
+          phDur[tokStart + wdiv - 1] += borrowDur;
+        }
+      }
+      tokStart += wdiv;
+    }
+
     const nFrames = phDur.reduce((a, b) => a + b, 0);
 
     // Build tensors
@@ -1276,6 +1330,38 @@ export class ClientSvsEngine {
       }
     }
 
+    // Apply Cosine Legato smoothing on voiced-to-voiced note transitions
+    const glideTimeMs = 70.0;
+    const glideFrames = Math.round((glideTimeMs / 1000.0) * frameHz);
+    const halfGlide = Math.floor(glideFrames / 2);
+
+    for (let i = 1; i < f0MidiArr.length; i++) {
+      if (f0MidiArr[i - 1] > 0 && f0MidiArr[i] > 0 && f0MidiArr[i - 1] !== f0MidiArr[i]) {
+        // Found transition boundary at index i
+        const startIdx = Math.max(0, i - halfGlide);
+        const endIdx = Math.min(ppFinal.length - 1, i + halfGlide);
+        
+        // Ensure all frames in the transition window are voiced
+        let allVoiced = true;
+        for (let k = startIdx; k <= endIdx; k++) {
+          if (ppFinal[k] <= 0 || f0MidiArr[k] <= 0) {
+            allVoiced = false;
+            break;
+          }
+        }
+        
+        if (allVoiced && startIdx < endIdx) {
+          const valStart = ppFinal[startIdx];
+          const valEnd = ppFinal[endIdx];
+          for (let k = startIdx; k <= endIdx; k++) {
+            const t = (k - startIdx) / (endIdx - startIdx);
+            const factor = (1.0 - Math.cos(Math.PI * t)) / 2.0;
+            ppFinal[k] = valStart + (valEnd - valStart) * factor;
+          }
+        }
+      }
+    }
+
     const f0Tensor = new ort.Tensor('float32', ppFinal, [1, nFrames]);
 
     // 8. Run acoustic model with predicted F0
@@ -1363,25 +1449,23 @@ export class ClientSvsEngine {
     for (let i = 0; i < trackNotes.length; i++) {
       const { start, dur, note } = trackNotes[i];
       
-      // Add silence between notes if necessary
-      const targetFramesTotal = Math.round((start + initialSpSec) / frameSec);
-      const currentFramesTotal = phDurFrames.reduce((a, b) => a + b, 0);
+      const noteStartFr = Math.round((start + initialSpSec) / frameSec);
+      const noteEndFr = Math.round((start + dur + initialSpSec) / frameSec);
       
-      if (targetFramesTotal > currentFramesTotal) {
-        const silFrames = targetFramesTotal - currentFramesTotal;
-        if (silFrames > 0) {
-          phList.push("SP");
-          phDurFrames.push(silFrames);
-          phF0.push(0.0);
-        }
+      const currentFramesTotal = phDurFrames.reduce((a, b) => a + b, 0);
+      if (noteStartFr > currentFramesTotal) {
+        const silFrames = noteStartFr - currentFramesTotal;
+        phList.push("SP");
+        phDurFrames.push(silFrames);
+        phF0.push(0.0);
       }
 
       // Convert word to phonemes
       const lyric = note.lyric || "doh";
       const phonemes = this.lyricToPhonemes(lyric);
       
-      let noteFrames = Math.round(dur / frameSec);
-      if (noteFrames < 2) noteFrames = 2;
+      const actualStartFr = Math.max(phDurFrames.reduce((a, b) => a + b, 0), noteStartFr);
+      let noteFrames = Math.max(2, noteEndFr - actualStartFr);
 
       // Note frequency from pitch
       const pitch = note.pitch ?? note.midi ?? 60;
@@ -1392,15 +1476,33 @@ export class ClientSvsEngine {
         phDurFrames.push(noteFrames);
         phF0.push(f0Val);
       } else {
-        // Distribute phonemes: consonants get fixed short duration, vowel gets remainder
-        const consonantFrames = Math.min(Math.round(0.05 / frameSec), Math.floor(noteFrames / 2));
-        const vowelFrames = noteFrames - consonantFrames * (phonemes.length - 1);
-        const consDur = Math.max(1, consonantFrames);
-        const vowDur = Math.max(1, vowelFrames);
+        // Distribute phonemes based on SVS Timing Feel setting:
+        const timingFeel = params?.timing_feel ?? 50.0;
+        const equalVal = Math.floor(noteFrames / phonemes.length);
+        const minVal = 2;
+        let consDur = Math.round(minVal + (equalVal - minVal) * (timingFeel / 100.0));
+        if (consDur < minVal) consDur = minVal;
+        if (consDur > equalVal) consDur = equalVal;
+
+        const totalConsDur = consDur * (phonemes.length - 1);
+        let vowelDur = Math.max(1, noteFrames - totalConsDur);
+
+        // Consonant borrowing from preceding phoneme
+        if (phDurFrames.length > 0) {
+          const consDurSum = totalConsDur;
+          const targetBorrow = Math.round(consDurSum * (1.0 - timingFeel / 100.0));
+          const minPrecedingDur = 2;
+          const availableToBorrow = Math.max(0, phDurFrames[phDurFrames.length - 1] - minPrecedingDur);
+          const borrowDur = Math.min(targetBorrow, availableToBorrow);
+          if (borrowDur > 0) {
+            phDurFrames[phDurFrames.length - 1] -= borrowDur;
+            vowelDur += borrowDur;
+          }
+        }
 
         for (let pi = 0; pi < phonemes.length; pi++) {
           phList.push(phonemes[pi]);
-          phDurFrames.push(pi < phonemes.length - 1 ? consDur : vowDur);
+          phDurFrames.push(pi < phonemes.length - 1 ? consDur : vowelDur);
           phF0.push(f0Val);
         }
       }
@@ -1421,6 +1523,33 @@ export class ClientSvsEngine {
       }
     }
 
+    const f0Arr = new Float32Array(f0List);
+
+    // Apply Cosine Legato smoothing (Portamento) on voiced-to-voiced note transitions
+    const glideTimeMs = 70.0;
+    const glideFrames = Math.round((glideTimeMs / 1000.0) / frameSec);
+    const halfGlide = Math.floor(glideFrames / 2);
+
+    let frameIdx = 0;
+    for (let pi = 0; pi < phDurFrames.length; pi++) {
+      const nf = phDurFrames[pi];
+      const hz = phF0[pi];
+      if (pi > 0 && hz > 0.0 && phF0[pi - 1] > 0.0 && hz !== phF0[pi - 1]) {
+        const prevHz = phF0[pi - 1];
+        const startIdx = Math.max(0, frameIdx - halfGlide);
+        const endIdx = Math.min(f0Arr.length - 1, frameIdx + halfGlide);
+        if (startIdx < endIdx) {
+          const len = endIdx - startIdx + 1;
+          for (let k = startIdx; k <= endIdx; k++) {
+            const t = (k - startIdx) / (len - 1);
+            const factor = (1.0 - Math.cos(Math.PI * t)) / 2.0;
+            f0Arr[k] = prevHz + (hz - prevHz) * factor;
+          }
+        }
+      }
+      frameIdx += nf;
+    }
+
     const nFrames = f0List.length;
 
     // Convert phonemes to tokens
@@ -1439,7 +1568,7 @@ export class ClientSvsEngine {
     // Build ONNX Inputs
     const tokensTensor = new ort.Tensor('int64', BigInt64Array.from(tokens.map(BigInt)), [1, tokens.length]);
     const durationsTensor = new ort.Tensor('int64', BigInt64Array.from(phDurFrames.map(BigInt)), [1, phDurFrames.length]);
-    const f0Tensor = new ort.Tensor('float32', Float32Array.from(f0List), [1, nFrames]);
+    const f0Tensor = new ort.Tensor('float32', f0Arr, [1, nFrames]);
 
     const acousticInputs: Record<string, any> = {
       tokens: tokensTensor,

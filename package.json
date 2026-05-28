@@ -9,7 +9,7 @@
     "dev:vite": "vite",
     "dev:web": "vite",
     "dev:local": "concurrently --kill-others-on-fail -n \"vite,svs,omr\" -c \"cyan,magenta,yellow\" \"vite\" \"npm run dev:svs\" \"node scripts/omr-server.mjs\"",
-    "dev:svs": "bash -c 'cd vocalido_server && source .venv/bin/activate && python -m uvicorn main:app --host 0.0.0.0 --port 5001 --reload'",
+    "dev:svs": "bash -c 'cd vocalido_server && source .venv/bin/activate && python -m uvicorn main:app --host 0.0.0.0 --port 5001 --reload --reload-exclude \".venv/*\" --reload-exclude \"renders/*\"'",
     "omr": "node scripts/omr-server.mjs",
     "build": "vite build",
     "preview": "vite preview",

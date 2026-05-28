@@ -54,7 +54,8 @@ SOLFEGE_MAP = {
     "fa":  "f aa",   "fah": "f aa",
     "sol": "s ow l", "soh": "s ow",
     "la":  "l aa",   "lah": "l aa",
-    "ti":  "t iy",   "si":  "s iy",
+    "ti":  "t h iy", "si":  "s iy",
+    "tiy": "t h iy",
     # Chromatic SHARP side
     "di":  "d iy",   # C#  (all systems)
     "ri":  "r iy",   # D#
@@ -558,29 +559,40 @@ class DiffSingerEngine:
             else:
                 phonemes = self.lyric_to_phonemes_en(lyric)
 
-            gap = start - prev_end
-            if gap > 0.02:
-                ph_seq.append("SP")
-                gap_d = round(gap, 4)
-                ph_dur.append(gap_d)
-                ph_hz.append(0.0)
-                current_frame += max(1, round(gap_d / f0_timestep))
+            # Determine absolute timeline coordinates in frames
+            note_start_fr = int(round((start + initial_ap_sec) * frame_hz))
+            note_end_fr = int(round((start + dur + initial_ap_sec) * frame_hz))
+
+            # Insert silence gap if needed
+            if note_start_fr > current_fr:
+                gap_fr = note_start_fr - current_fr
+                if gap_fr > 0:
+                    ph_seq.append("SP")
+                    ph_dur_frames.append(gap_fr)
+                    ph_hz.append(0.0)
+                    current_fr += gap_fr
+                    last_vowel_abs_idx = len(ph_dur_frames) - 1
+
+            # Align note start to current_fr to prevent negative duration or overlapping
+            actual_start_fr = max(current_fr, note_start_fr)
+            dur_fr = max(2, note_end_fr - actual_start_fr)
 
             p_len = len(phonemes)
-            note_start_f = current_frame
+            note_start_f = actual_start_fr
+
             if p_len == 1:
                 ph_seq.extend(phonemes)
-                note_d = round(dur, 4)
-                ph_dur.append(note_d)
+                ph_dur_frames.append(dur_fr)
                 ph_hz.append(hz)
-                current_frame += max(1, round(note_d / f0_timestep))
+                current_fr += dur_fr
+                last_vowel_abs_idx = len(ph_dur_frames) - 1
             else:
-                if self.language == "zh":
-                    cons_dur = min(0.12, dur * 0.28 / max(1, p_len - 1))
-                else:
-                    cons_dur = min(0.10, dur * 0.28 / max(1, p_len - 1))
-                vowel_dur = max(dur - cons_dur * (p_len - 1), dur * 0.55)
-
+                timing_feel = float(params.get("timing_feel", 50.0)) if params else 50.0
+                
+                # Base consonant duration in frames (approx 15ms at 0 feel, up to 35ms at 100 feel)
+                base_cons_sec = 0.015 + 0.020 * (timing_feel / 100.0)
+                base_cons_fr = max(1, round(base_cons_sec * frame_hz))
+                
                 zh_vowels = {
                     "a", "ai", "an", "ang", "ao",
                     "e", "ei", "en", "eng", "er",
@@ -597,15 +609,57 @@ class DiffSingerEngine:
                      if p in vowel_set or (p and p[0] in "aeiouAEIOU")),
                     p_len - 1
                 )
+                
+                # We revert to Strict Piano Mode (No Borrowing from previous notes)
+                # Borrowing cuts off previous notes prematurely, ruining the rhythm of fast passages!
+                
+                # 1. Calculate ideal duration for each consonant
+                cons_fr_list = []
+                for i in range(p_len):
+                    if i == vowel_idx:
+                        cons_fr_list.append(0)
+                        continue
+                    p = phonemes[i]
+                    if p in ["s", "sh", "ch", "f", "h", "z", "v", "th", "dh"]:
+                        c_fr = max(2, int(base_cons_fr * 1.5)) # Fricatives need more time to be audible (~30-40ms)
+                    elif p in ["m", "n", "l", "r", "w", "y", "ng"]:
+                        c_fr = max(1, int(base_cons_fr * 1.2)) # Liquids/Nasals medium time (~20-30ms)
+                    else:
+                        c_fr = base_cons_fr # Plosives/Stops are fast (~15-20ms)
+                    cons_fr_list.append(c_fr)
+                
+                total_cons_fr = sum(cons_fr_list)
+                
+                # Vowel gets whatever is left from the note duration
+                # Ensure the vowel has at least 1 frame
+                if total_cons_fr >= dur_fr:
+                    # Scale down consonants if the note is too short
+                    scale = max(0.1, (dur_fr - 1) / total_cons_fr)
+                    cons_fr_list = [int(c * scale) for c in cons_fr_list]
+                    total_cons_fr = sum(cons_fr_list)
+                
+                vowel_fr = max(1, dur_fr - total_cons_fr)
+                
+                # Timing feel explicitly shifts the note onset slightly
+                # < 50 = early (rushed), > 50 = late (lazy)
+                # Max shift is 20ms (2 frames) to avoid breaking rhythm
+                shift_fr = int(round((timing_feel - 50.0) / 25.0)) # -2 to +2 frames
+                
                 for i, p in enumerate(phonemes):
-                    d = vowel_dur if i == vowel_idx else cons_dur
+                    d_fr = vowel_fr if i == vowel_idx else cons_fr_list[i]
+                    if d_fr < 1 and i != vowel_idx:
+                        d_fr = 1
                     ph_seq.append(p)
-                    d_val = round(d, 4)
-                    ph_dur.append(d_val)
+                    ph_dur_frames.append(d_fr)
                     ph_hz.append(hz)
-                    current_frame += max(1, round(d_val / f0_timestep))
+                    if i == vowel_idx:
+                        last_vowel_abs_idx = len(ph_dur_frames) - 1
+                
+                # Strict piano-like timing: absolute timeline advances exactly by dur_fr
+                # We do NOT steal from previous notes.
+                current_fr += dur_fr
             
-            note_end_f = current_frame
+            note_end_f = current_fr
             note_ranges.append((note_start_f, note_end_f, hz))
 
             prev_end = start + dur
@@ -613,63 +667,39 @@ class DiffSingerEngine:
         if not ph_seq:
             return None
 
-        # ── Pass 3: build f0_seq ALIGNED to ph_dur + smooth boundaries ────────
+        # Add a trailing silence to ensure the last note isn't cut off by ONNX padding or fades
+        tail_ap_sec = 0.2
+        tail_ap_fr = max(1, int(round(tail_ap_sec * frame_hz)))
+        ph_seq.append("SP")
+        ph_dur_frames.append(tail_ap_fr)
+        ph_hz.append(0.0)
+        current_fr += tail_ap_fr
+
+                # ── Pass 3: build f0_seq ALIGNED to ph_dur_frames + smooth boundaries ────────
         f0_seq = []
         ph_frames = []
-        for d, hz in zip(ph_dur, ph_hz):
-            n_frames = max(1, round(d / f0_timestep))
+        for n_frames, hz in zip(ph_dur_frames, ph_hz):
             f0_seq.extend([hz] * n_frames)
             ph_frames.append(n_frames)
 
-        PORTA_FRAMES = 4
+        # The user wants almost 0 pitch sliding (no gliss/bender)
+        PORTA_FRAMES = 0
         f0_arr = np.array(f0_seq, dtype=np.float32)
         frame_idx = 0
         for pi, (nf, hz) in enumerate(zip(ph_frames, ph_hz)):
             if pi > 0 and hz > 0.0 and ph_hz[pi-1] > 0.0 and hz != ph_hz[pi-1]:
                 prev_hz = ph_hz[pi-1]
                 ramp = min(PORTA_FRAMES, nf)
-                f0_arr[frame_idx:frame_idx+ramp] = np.linspace(prev_hz, hz, ramp)
+                if ramp > 0:
+                    f0_arr[frame_idx:frame_idx+ramp] = np.linspace(prev_hz, hz, ramp)
             frame_idx += nf
 
-        RAMP = 5
-        for i in range(1, len(f0_arr)):
-            prev, cur = f0_arr[i-1], f0_arr[i]
-            if prev == 0.0 and cur > 0.0:
-                end = min(i + RAMP, len(f0_arr))
-                f0_arr[i:end] = np.linspace(cur * 0.15, cur, end - i)
-            elif prev > 0.0 and cur == 0.0:
-                start = max(0, i - RAMP)
-                f0_arr[start:i] = np.linspace(prev, prev * 0.15, i - start)
+        # Removed the RAMP logic completely to eliminate the pitch bender from silence.
+        # RAMP = 0 effectively
 
         # ── Note-Level Continuous Vibrato with soft fade-in/out ───────────────
-        VIBRATO_HZ    = 5.5
-        VIBRATO_CENTS = 20
-        VIBRATO_DELAY = int(0.12 / f0_timestep)    # 120ms delay before vibrato begins
-        MIN_VIBE_FRAMES = int(0.35 / f0_timestep)  # Note must be at least 350ms to have vibrato
-
-        for (start_f, end_f, hz) in note_ranges:
-            nf = end_f - start_f
-            if hz > 0.0 and nf > MIN_VIBE_FRAMES:
-                onset = start_f + VIBRATO_DELAY
-                if onset < end_f:
-                    vib_len = end_f - onset
-                    t = np.arange(vib_len) * f0_timestep
-                    cents = VIBRATO_CENTS * np.sin(2 * np.pi * VIBRATO_HZ * t)
-                    
-                    # Fade in vibrato over 100ms
-                    fade_in_n = min(int(0.10 / f0_timestep), vib_len)
-                    vib_env = np.ones(vib_len)
-                    vib_env[:fade_in_n] = np.linspace(0.0, 1.0, fade_in_n)
-                    cents *= vib_env
-                    
-                    # Fade out vibrato over 50ms at the end of the note for smooth transition
-                    fade_out_n = min(int(0.05 / f0_timestep), vib_len)
-                    if fade_out_n > 0:
-                        cents[-fade_out_n:] *= np.linspace(1.0, 0.0, fade_out_n)
-                        
-                    ratio = 2.0 ** (cents / 1200.0)
-                    f0_arr[onset:end_f] *= ratio.astype(np.float32)
-
+        # VIBRATO IS DISABLED based on user request ("เสียงมันแกว่ง intonation ไม่นิ่ง")
+        
         f0_seq = f0_arr.tolist()
 
         ds_item = {

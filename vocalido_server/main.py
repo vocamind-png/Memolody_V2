@@ -784,12 +784,13 @@ def studio_preview(req: StudioPreviewReq):
             _raw_vc = f"{_raw_vc}poly"
         _safe_vc   = _re_cache.sub(r'[^a-zA-Z0-9]', '', _raw_vc)[:20]
         
+        _timing_feel = int(req.params.get('timing_feel', 50))
         _is_private = (not req.is_public) and bool(req.owner_id)
         if _is_private:
             _safe_owner = _re_cache.sub(r'[^a-zA-Z0-9_-]', '_', req.owner_id)[:40]
-            _cached_name = f"song_{_safe_owner}_{_safe_id}_{_safe_key}_{req.bpm_pct}_{_safe_lm}_{_safe_vc}.mp3"
+            _cached_name = f"song_{_safe_owner}_{_safe_id}_{_safe_key}_{req.bpm_pct}_{_safe_lm}_{_safe_vc}_tf{_timing_feel}.mp3"
         else:
-            _cached_name = f"song_{_safe_id}_{_safe_key}_{req.bpm_pct}_{_safe_lm}_{_safe_vc}.mp3"
+            _cached_name = f"song_{_safe_id}_{_safe_key}_{req.bpm_pct}_{_safe_lm}_{_safe_vc}_tf{_timing_feel}.mp3"
         _cached_path = os.path.join("renders", _cached_name)
         if os.path.isfile(_cached_path) and os.path.getsize(_cached_path) > 1000:
             print(f"[Cache] ✅ Found existing render on disk: {_cached_name} — skipping GPU synthesis")
@@ -953,6 +954,31 @@ def studio_preview(req: StudioPreviewReq):
             audio = synthesize_sample_based(v_notes, bpm=req.params.get('bpm', 120))
             engine_name = "simple_fallback"
 
+    # Apply post-processing DSP effects (reverb, warmth, brightness, vibrato, breathiness, speed, pitch_shift)
+    # to all engines except 'studio_sampler' (which already ran apply_timbre per-note)
+    if audio is not None and engine_name != "studio_sampler":
+        try:
+            from voice_studio import apply_timbre
+            dsp_params = req.params.copy() if req.params else {}
+            
+            # If it's a DiffSinger engine, formant_shift is already processed inside the acoustic model,
+            # so we set it to 0.0 for apply_timbre to prevent double-processing.
+            if engine_name.startswith("diffsinger_"):
+                dsp_params['formant_shift'] = 0.0
+            
+            # Read engine sample rate
+            engine_sr = SR
+            if engine_name.startswith("diffsinger_") and _target_engine:
+                engine_sr = getattr(_target_engine, 'sr', SR)
+            
+            print(f"[DSP Post-Process] 🎛️ Applying timbre effects to {engine_name} output at {engine_sr}Hz...")
+            audio = apply_timbre(audio, engine_sr, dsp_params)
+            
+            if stems_audio:
+                stems_audio = [apply_timbre(sa, engine_sr, dsp_params) for sa in stems_audio]
+        except Exception as dsp_err:
+            print(f"[DSP Post-Process] ⚠️ Failed: {dsp_err}")
+
     # ── Persist render to disk FIRST (fast) then return URL ──────────────────
     # Skip expensive base64 encoding — client uses saved_url for playback
     import re as _re2
@@ -967,12 +993,13 @@ def studio_preview(req: StudioPreviewReq):
             raw_voice = f"{raw_voice}poly"
         safe_voice = _re2.sub(r'[^a-zA-Z0-9]', '', raw_voice)[:20]
         
+        _timing_feel = int(req.params.get('timing_feel', 50))
         is_private = (not req.is_public) and bool(req.owner_id)
         if is_private:
             safe_owner = _re2.sub(r'[^a-zA-Z0-9_-]', '_', req.owner_id)[:40]
-            saved_name = f"song_{safe_owner}_{safe_id}_{safe_key}_{req.bpm_pct}_{safe_lyric_mode}_{safe_voice}.mp3"
+            saved_name = f"song_{safe_owner}_{safe_id}_{safe_key}_{req.bpm_pct}_{safe_lyric_mode}_{safe_voice}_tf{_timing_feel}.mp3"
         else:
-            saved_name = f"song_{safe_id}_{safe_key}_{req.bpm_pct}_{safe_lyric_mode}_{safe_voice}.mp3"
+            saved_name = f"song_{safe_id}_{safe_key}_{req.bpm_pct}_{safe_lyric_mode}_{safe_voice}_tf{_timing_feel}.mp3"
     else:
         saved_name = f"render_{int(_time.time()*1000)}.mp3"
     saved_path = os.path.join("renders", saved_name)

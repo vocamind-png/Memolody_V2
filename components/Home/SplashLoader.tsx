@@ -58,7 +58,7 @@ export const SplashLoader: React.FC<SplashLoaderProps> = ({ progress, statusText
           </div>
 
           {/* Treble Clef Icon at the start */}
-          <div className="absolute left-10 flex items-center justify-center pointer-events-none opacity-90" style={{ transform: 'translateY(-2px)' }}>
+          <div className="absolute left-10 flex items-center justify-center pointer-events-none opacity-90" style={{ transform: 'translateY(10px)' }}>
             <span className="text-[58px] font-serif text-cyan-400 select-none leading-none" style={{ filter: 'drop-shadow(0 0 2px rgba(6,182,212,0.5))' }}>𝄞</span>
           </div>
 
@@ -151,7 +151,23 @@ export const SplashLoader: React.FC<SplashLoaderProps> = ({ progress, statusText
           </div>
         </div>
 
-        <span className="text-[7px] text-zinc-600 font-bold uppercase tracking-widest mt-12 text-center max-w-[250px] leading-relaxed">
+        {/* Credits Section */}
+        <div className="flex flex-col items-center gap-1.5 mt-10 text-center animate-fade-in" style={{ animationDelay: '300ms' }}>
+          <div className="text-[8px] text-zinc-500 font-bold uppercase tracking-wider">
+            Founded & Funded by <span className="text-zinc-300 font-extrabold">Tanate Ua-Aphitorn</span>
+          </div>
+          <div className="text-[7.5px] text-zinc-500 font-semibold uppercase tracking-wide">
+            Designed & Built by <span className="text-zinc-300 font-extrabold">Paisan Chamnong</span>
+          </div>
+          <div className="text-[7px] text-zinc-600 font-bold uppercase tracking-widest mt-0.5">
+            in collaboration with <span className="text-cyan-400 font-extrabold drop-shadow-[0_0_4px_rgba(34,211,238,0.3)]">Google Antigravity</span>
+          </div>
+          <div className="text-[7px] text-zinc-600 font-bold uppercase tracking-widest mt-0.5">
+            AI Voice provided by <a href="https://lottev.moe/" target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:text-indigo-300 font-extrabold drop-shadow-[0_0_4px_rgba(129,140,248,0.3)] transition-colors">lottev.moe</a>
+          </div>
+        </div>
+
+        <span className="text-[6.5px] text-zinc-600 font-bold uppercase tracking-widest mt-10 text-center max-w-[250px] leading-relaxed opacity-75">
           Secured local offline database. All processing happens on your device.
         </span>
 

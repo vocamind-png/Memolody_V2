@@ -123,20 +123,6 @@ export class SoundBankEngine {
             const keys = Object.keys(files) as Array<keyof typeof files>;
             const resolvedUrls: Record<string, string> = {};
 
-            try {
-                await Promise.all(
-                    keys.map(async (key) => {
-                        resolvedUrls[key] = await getCachedSampleUrl(baseUrl, files[key]);
-                    })
-                );
-            } catch (err) {
-                console.warn("[SoundBankEngine] Preload failed, falling back to direct URLs", err);
-                keys.forEach(key => {
-                    resolvedUrls[key] = baseUrl + files[key];
-                });
-            }
-
-            console.log(`[SoundBankEngine] Creating Tone.Sampler for trackId=${trackId}...`);
             let sampler: any = null;
             let resolved = false;
 
@@ -167,43 +153,79 @@ export class SoundBankEngine {
                 }
             }, 8000);
 
-            sampler = new Tone.Sampler({
-                urls: resolvedUrls,
-                release: 1.2,
-                baseUrl: "",
-                onload: () => {
-                    if (resolved) return;
-                    resolved = true;
-                    clearTimeout(timeoutId);
-                    console.log(`[SoundBankEngine] Tone.Sampler loaded successfully for trackId=${trackId}`);
-                    const channel = new Tone.Channel(0, 0).connect(connectTarget);
-                    const meter = new Tone.Meter().connect(channel);
-                    sampler.connect(channel);
+            try {
+                await Promise.all(
+                    keys.map(async (key) => {
+                        resolvedUrls[key] = await getCachedSampleUrl(baseUrl, files[key]);
+                    })
+                );
+            } catch (err) {
+                if (resolved) return;
+                console.warn("[SoundBankEngine] Preload failed, falling back to direct URLs", err);
+                keys.forEach(key => {
+                    resolvedUrls[key] = baseUrl + files[key];
+                });
+            }
 
-                    trackSamplers.set(trackId, sampler);
-                    trackChannels.set(trackId, channel);
-                    trackMeters.set(trackId, meter);
-                    resolve();
-                },
-                onerror: (e) => {
-                    if (resolved) return;
-                    resolved = true;
-                    clearTimeout(timeoutId);
-                    console.error(`[SoundBankEngine] Sampler loading failed for trackId=${trackId}, falling back to basic Synth:`, e);
-                    const channel = new Tone.Channel(0, 0).connect(connectTarget);
-                    const meter = new Tone.Meter().connect(channel);
-                    const fallbackSynth = new Tone.PolySynth(Tone.Synth, {
-                        oscillator: { type: "triangle" },
-                        envelope: { attack: 0.02, decay: 0.3, sustain: 0.4, release: 1.0 }
-                    });
-                    fallbackSynth.connect(channel);
+            if (resolved) return;
 
-                    trackSamplers.set(trackId, fallbackSynth);
-                    trackChannels.set(trackId, channel);
-                    trackMeters.set(trackId, meter);
-                    resolve();
-                }
-            });
+            console.log(`[SoundBankEngine] Creating Tone.Sampler for trackId=${trackId}...`);
+            try {
+                sampler = new Tone.Sampler({
+                    urls: resolvedUrls,
+                    release: 1.2,
+                    baseUrl: "",
+                    onload: () => {
+                        if (resolved) return;
+                        resolved = true;
+                        clearTimeout(timeoutId);
+                        console.log(`[SoundBankEngine] Tone.Sampler loaded successfully for trackId=${trackId}`);
+                        const channel = new Tone.Channel(0, 0).connect(connectTarget);
+                        const meter = new Tone.Meter().connect(channel);
+                        sampler.connect(channel);
+
+                        trackSamplers.set(trackId, sampler);
+                        trackChannels.set(trackId, channel);
+                        trackMeters.set(trackId, meter);
+                        resolve();
+                    },
+                    onerror: (e) => {
+                        if (resolved) return;
+                        resolved = true;
+                        clearTimeout(timeoutId);
+                        console.error(`[SoundBankEngine] Sampler loading failed for trackId=${trackId}, falling back to basic Synth:`, e);
+                        const channel = new Tone.Channel(0, 0).connect(connectTarget);
+                        const meter = new Tone.Meter().connect(channel);
+                        const fallbackSynth = new Tone.PolySynth(Tone.Synth, {
+                            oscillator: { type: "triangle" },
+                            envelope: { attack: 0.02, decay: 0.3, sustain: 0.4, release: 1.0 }
+                        });
+                        fallbackSynth.connect(channel);
+
+                        trackSamplers.set(trackId, fallbackSynth);
+                        trackChannels.set(trackId, channel);
+                        trackMeters.set(trackId, meter);
+                        resolve();
+                    }
+                });
+            } catch (samplerCreateErr) {
+                if (resolved) return;
+                resolved = true;
+                clearTimeout(timeoutId);
+                console.error(`[SoundBankEngine] Failed to create Tone.Sampler for trackId=${trackId}:`, samplerCreateErr);
+                const channel = new Tone.Channel(0, 0).connect(connectTarget);
+                const meter = new Tone.Meter().connect(channel);
+                const fallbackSynth = new Tone.PolySynth(Tone.Synth, {
+                    oscillator: { type: "triangle" },
+                    envelope: { attack: 0.02, decay: 0.3, sustain: 0.4, release: 1.0 }
+                });
+                fallbackSynth.connect(channel);
+
+                trackSamplers.set(trackId, fallbackSynth);
+                trackChannels.set(trackId, channel);
+                trackMeters.set(trackId, meter);
+                resolve();
+            }
         });
     }
 }
