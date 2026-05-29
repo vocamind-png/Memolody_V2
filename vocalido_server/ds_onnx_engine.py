@@ -577,9 +577,9 @@ class DiffSingerONNXEngine:
             # If v_mean >= 100.0, it is already in Hz.
 
             # ----- HUMANIZED INTONATION BLEND -----
-            # Blend: 30% neural pitch (natural glides/intonation) + 70% MIDI ideal pitch (accuracy)
-            # This restores a human singing quality while keeping notes recognizable for ear training.
-            NEURAL_BLEND = 0.30   # ← ปรับได้: 0.0 = หุ่นยนต์ล้วน, 1.0 = Neural ล้วน
+            # Blend: 60% neural pitch (natural glides/intonation) + 40% MIDI ideal pitch
+            # Higher neural = more expressive, more human-like singing
+            NEURAL_BLEND = 0.60   # ← 0.0 = robot, 1.0 = full neural AI
             
             f0_hz_ideal = np.zeros_like(f0_midi_arr)
             voicing_mask = f0_midi_arr > 0.0
@@ -714,8 +714,8 @@ class DiffSingerONNXEngine:
         
         f0_arr = np.array(f0_list, dtype=np.float32)
         
-        # 1. Portamento (pitch glide between adjacent notes)
-        PORTA_FRAMES = int(0.08 / frame_sec)
+        # 1. Portamento (pitch glide between adjacent notes) — longer = more human
+        PORTA_FRAMES = int(0.14 / frame_sec)   # 0.14s glide (was 0.08)
         frame_idx = 0
         for pi, (nf, hz) in enumerate(zip(ph_dur_frames, ph_f0)):
             if pi > 0 and hz > 0.0 and ph_f0[pi-1] > 0.0 and hz != ph_f0[pi-1]:
@@ -725,21 +725,21 @@ class DiffSingerONNXEngine:
             frame_idx += nf
             
         # 2. Ramp-in and Ramp-out at boundaries
-        RAMP = int(0.05 / frame_sec)
+        RAMP = int(0.06 / frame_sec)
         for i in range(1, len(f0_arr)):
             prev, cur = f0_arr[i-1], f0_arr[i]
             if prev == 0.0 and cur > 0.0:
                 end = min(i + RAMP, len(f0_arr))
-                f0_arr[i:end] = np.linspace(cur * 0.15, cur, end - i)
+                f0_arr[i:end] = np.linspace(cur * 0.10, cur, end - i)
             elif prev > 0.0 and cur == 0.0:
                 start = max(0, i - RAMP)
-                f0_arr[start:i] = np.linspace(prev, prev * 0.15, i - start)
+                f0_arr[start:i] = np.linspace(prev, prev * 0.10, i - start)
                 
-        # 3. Vibrato (5.0 Hz vibrato with 28 cents amplitude — more human/warm)
-        VIBRATO_HZ = 5.0
-        VIBRATO_CENTS = 28
-        VIBRATO_DELAY = int(0.12 / frame_sec)
-        MIN_VIBE_FRAMES = int(0.35 / frame_sec)
+        # 3. Vibrato — 4.8 Hz / 36 cents = warm, natural, operatic
+        VIBRATO_HZ = 4.8
+        VIBRATO_CENTS = 36
+        VIBRATO_DELAY = int(0.10 / frame_sec)   # start vibrato sooner
+        MIN_VIBE_FRAMES = int(0.30 / frame_sec) # apply vibrato to shorter notes too
         
         for (start_f, end_f, hz) in note_ranges:
             nf = end_f - start_f
