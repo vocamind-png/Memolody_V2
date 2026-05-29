@@ -576,16 +576,25 @@ class DiffSingerONNXEngine:
                 pp_final = pp_hz
             # If v_mean >= 100.0, it is already in Hz.
 
-            # ----- FLAT INTONATION / STRICT ROBOT OVERRIDE -----
-            # By user request ("ก็ยังไม่ 100 % ปิดตัว blend ไปเลยได้ไหมครับ", "ห้ามสุ่ม blend เด็ดขาด"),
-            # we COMPLETELY BYPASS the neural pitch and use perfectly flat F0 generated directly from MIDI.
+            # ----- HUMANIZED INTONATION BLEND -----
+            # Blend: 30% neural pitch (natural glides/intonation) + 70% MIDI ideal pitch (accuracy)
+            # This restores a human singing quality while keeping notes recognizable for ear training.
+            NEURAL_BLEND = 0.30   # ← ปรับได้: 0.0 = หุ่นยนต์ล้วน, 1.0 = Neural ล้วน
+            
             f0_hz_ideal = np.zeros_like(f0_midi_arr)
             voicing_mask = f0_midi_arr > 0.0
             f0_hz_ideal[voicing_mask] = 440.0 * (2.0 ** ((f0_midi_arr[voicing_mask] - 69.0) / 12.0))
             
-            # Force exact perfect flat pitch without any glides or vibrato
-            pp_final[0] = f0_hz_ideal
-            # ---------------------------------------------------
+            # Mix: where both are voiced, blend neural into ideal
+            both_voiced = voicing_mask & (pp_final[0] > 0.0)
+            blended = f0_hz_ideal.copy()
+            blended[both_voiced] = (
+                (1.0 - NEURAL_BLEND) * f0_hz_ideal[both_voiced] +
+                NEURAL_BLEND * pp_final[0][both_voiced]
+            )
+            pp_final[0] = blended
+            # -----------------------------------------------
+
 
             # 6. Acoustic model
             no = pp_final.shape[1]
@@ -726,9 +735,9 @@ class DiffSingerONNXEngine:
                 start = max(0, i - RAMP)
                 f0_arr[start:i] = np.linspace(prev, prev * 0.15, i - start)
                 
-        # 3. Vibrato (5.5 Hz vibrato with 20 cents amplitude)
-        VIBRATO_HZ = 5.5
-        VIBRATO_CENTS = 20
+        # 3. Vibrato (5.0 Hz vibrato with 28 cents amplitude — more human/warm)
+        VIBRATO_HZ = 5.0
+        VIBRATO_CENTS = 28
         VIBRATO_DELAY = int(0.12 / frame_sec)
         MIN_VIBE_FRAMES = int(0.35 / frame_sec)
         
