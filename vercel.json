@@ -4,8 +4,8 @@
   "framework": "vite",
   "rewrites": [
     { "source": "/vocalido/voicebanks/:path*", "destination": "https://storage.googleapis.com/memolody-vault/voicebanks/:path*" },
-    { "source": "/vocalido/:path*", "destination": "http://35.247.141.53:5001/:path*" },
-    { "source": "/studio/:path*", "destination": "http://35.247.141.53:5001/studio/:path*" },
+    { "source": "/vocalido/:path*", "destination": "https://kuk28qldp9dx5t-5001.proxy.runpod.net/:path*" },
+    { "source": "/studio/:path*", "destination": "https://kuk28qldp9dx5t-5001.proxy.runpod.net/studio/:path*" },
     { "source": "/api/manifest", "destination": "https://storage.googleapis.com/memolody-vault/manifest.json" },
     { "source": "/api/runpod/:path*", "destination": "https://api.runpod.ai/v2/:path*" },
     { "source": "/(.*)", "destination": "/index.html" }
