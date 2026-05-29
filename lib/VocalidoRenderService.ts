@@ -598,20 +598,59 @@ class VocalidoRenderService {
         const tNotes = trackGroups[tid] || [];
         if (tNotes.length === 0) continue;
         
-        const sorted = [...tNotes].sort((a, b) => a.startTime - b.startTime);
-        const monoTracks: typeof notesToSynthesize[] = [];
-        for (const n of sorted) {
-          const nStart = n.startTime * beatSec;
-          let placed = false;
-          for (const mt of monoTracks) {
-            const lastNote = mt[mt.length - 1];
-            const lastEnd = (lastNote.startTime + lastNote.duration) * beatSec;
-            if (nStart >= lastEnd - 0.01) { mt.push(n); placed = true; break; }
+        // Sort by startTime asc, then pitch desc (highest first)
+        const sorted = [...tNotes].sort((a, b) => {
+          const timeDiff = a.startTime - b.startTime;
+          if (Math.abs(timeDiff) > 0.005) return timeDiff;
+          return (b.midi || b.pitch || 60) - (a.midi || a.pitch || 60);
+        });
+
+        // Group notes into "chord slots" — notes with the same startTime (within 5ms)
+        // Each slot is an array ordered by pitch descending (highest = slot 0)
+        const chordSlots: (typeof notesToSynthesize)[] = [];
+        let maxSlots = 0;
+        
+        // Pass 1: find max simultaneous notes = number of voice lines needed
+        let i = 0;
+        while (i < sorted.length) {
+          const refTime = sorted[i].startTime;
+          let j = i;
+          let chordSize = 0;
+          while (j < sorted.length && Math.abs(sorted[j].startTime - refTime) <= 0.005) {
+            chordSize++;
+            j++;
           }
-          if (!placed) { monoTracks.push([n]); }
+          if (chordSize > maxSlots) maxSlots = chordSize;
+          i = j;
         }
         
-        monoTracks.sort((a, b) => {
+        // Create voice tracks (one per slot)
+        const numTracks = Math.max(1, maxSlots);
+        const monoTracks: (typeof notesToSynthesize)[] = Array.from({ length: numTracks }, () => []);
+        
+        // Pass 2: assign each note to its slot (by pitch rank within the chord)
+        i = 0;
+        while (i < sorted.length) {
+          const refTime = sorted[i].startTime;
+          let j = i;
+          const chordNotes: typeof sorted = [];
+          while (j < sorted.length && Math.abs(sorted[j].startTime - refTime) <= 0.005) {
+            chordNotes.push(sorted[j]);
+            j++;
+          }
+          // Assign by pitch order: highest → track 0, next → track 1, etc.
+          chordNotes.sort((a, b) => (b.midi || b.pitch || 60) - (a.midi || a.pitch || 60));
+          chordNotes.forEach((note, slotIdx) => {
+            const trackIdx = Math.min(slotIdx, numTracks - 1);
+            monoTracks[trackIdx].push(note);
+          });
+          i = j;
+        }
+        
+        // Remove empty tracks
+        const filledTracks = monoTracks.filter(mt => mt.length > 0);
+        // Sort so highest-avg-pitch track is first (= Chord Top)
+        filledTracks.sort((a, b) => {
           const avgA = a.reduce((sum, n) => sum + (n.midi || n.pitch || 60), 0) / a.length;
           const avgB = b.reduce((sum, n) => sum + (n.midi || n.pitch || 60), 0) / b.length;
           return avgB - avgA; // Highest pitch first
@@ -619,7 +658,7 @@ class VocalidoRenderService {
         
         const isPrimary = tid === primaryVocalTrackId;
         
-        monoTracks.forEach((mt, idx) => {
+        filledTracks.forEach((mt, idx) => {
           let pan = 0;
           let label = '';
           if (isPrimary && idx === 0) {
@@ -629,14 +668,14 @@ class VocalidoRenderService {
             pan = idx % 2 === 1 ? -0.3 : 0.3;
             label = `Melody Harmony ${idx}`;
           } else {
-            // Chord/Bass tracks panning user request
-            if (monoTracks.length === 1) {
-              pan = 1.0; // Assume Bass R if only 1
+            // Chord/Bass tracks panning per user request
+            if (filledTracks.length === 1) {
+              pan = 1.0;
               label = 'Bass (R)';
-            } else if (monoTracks.length === 2) {
+            } else if (filledTracks.length === 2) {
               pan = idx === 0 ? -1.0 : 1.0;
               label = idx === 0 ? 'Chord Top (L)' : 'Bass (R)';
-            } else if (monoTracks.length === 3) {
+            } else if (filledTracks.length === 3) {
               if (idx === 0) { pan = -1.0; label = 'Chord Top (L)'; }
               else if (idx === 1) { pan = 0.5; label = 'Chord Mid (C+R)'; }
               else { pan = 1.0; label = 'Bass (R)'; }
@@ -754,6 +793,7 @@ class VocalidoRenderService {
             };
             
             try {
+              console.log(`[VocalidoRenderService] 📤 Sending voice ${vIdx + 1} (${vl.label}) → ${vlSongId}, ${vl.notes.length} notes`);
               const response = await svsFetch(targetUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -761,15 +801,17 @@ class VocalidoRenderService {
                 signal: controller.signal
               });
               
+              console.log(`[VocalidoRenderService] 📥 Voice ${vIdx + 1} HTTP ${response.status}`);
               if (!response.ok) {
                 const errText = await response.text();
-                console.warn(`[VocalidoRenderService] Voice ${vIdx + 1} (${vl.label}) failed: ${errText}`);
+                console.warn(`[VocalidoRenderService] ❌ Voice ${vIdx + 1} (${vl.label}) HTTP error: ${errText}`);
                 continue;
               }
               
               const data = await response.json();
+              console.log(`[VocalidoRenderService] 📦 Voice ${vIdx + 1} response: engine=${data.engine}, saved_url=${data.saved_url}, audio_b64=${data.audio_b64 ? 'YES' : 'null'}, error=${data.error || 'none'}`);
               if (data.error) {
-                console.warn(`[VocalidoRenderService] Voice ${vIdx + 1} (${vl.label}) error: ${data.error}`);
+                console.warn(`[VocalidoRenderService] ❌ Voice ${vIdx + 1} (${vl.label}) server error: ${data.error}`);
                 continue;
               }
               
@@ -779,23 +821,31 @@ class VocalidoRenderService {
                 const binary = atob(data.audio_b64);
                 const array = new Uint8Array(binary.length);
                 for (let i = 0; i < binary.length; i++) array[i] = binary.charCodeAt(i);
-                audioBlob = new Blob([array], { type: data.mime_type || 'audio/wav' });
+                audioBlob = new Blob([array], { type: data.mime_type || 'audio/mpeg' });
               } else if (data.audio_url || data.saved_url) {
                 const audioUrl = fixAudioUrl(data.saved_url || data.audio_url);
+                console.log(`[VocalidoRenderService] 🔗 Voice ${vIdx + 1} fetching audio: ${audioUrl}`);
                 const audioResp = await fetch(audioUrl, { signal: controller.signal });
+                console.log(`[VocalidoRenderService] 🔗 Voice ${vIdx + 1} audio HTTP ${audioResp.status}, type=${audioResp.headers.get('content-type')}`);
                 if (audioResp.ok) {
                   audioBlob = await audioResp.blob();
+                } else {
+                  console.warn(`[VocalidoRenderService] ❌ Voice ${vIdx + 1} audio fetch failed: HTTP ${audioResp.status}`);
                 }
+              } else {
+                console.warn(`[VocalidoRenderService] ❌ Voice ${vIdx + 1} no audio_b64 and no saved_url/audio_url in response`);
               }
               
               if (audioBlob) {
                 audioBlobs.push(audioBlob);
                 renderedPan.push(vl.pan);
-                console.log(`[VocalidoRenderService] ✅ Voice ${vIdx + 1} (${vl.label}) rendered (${(audioBlob.size / 1024).toFixed(0)} KB)`);
+                console.log(`[VocalidoRenderService] ✅ Voice ${vIdx + 1} (${vl.label}) blob ready: ${(audioBlob.size / 1024).toFixed(0)} KB, type=${audioBlob.type}`);
+              } else {
+                console.warn(`[VocalidoRenderService] ⚠️ Voice ${vIdx + 1} (${vl.label}) audioBlob is null — skipping`);
               }
             } catch (voiceErr: any) {
               if (voiceErr.name === 'AbortError') throw voiceErr;
-              console.warn(`[VocalidoRenderService] Voice ${vIdx + 1} (${vl.label}) failed:`, voiceErr);
+              console.warn(`[VocalidoRenderService] ❌ Voice ${vIdx + 1} (${vl.label}) exception:`, voiceErr);
             }
           }
           
@@ -807,17 +857,25 @@ class VocalidoRenderService {
           this.statusText = `Mixing ${audioBlobs.length} voice lines (Stereo)...`;
           this.notify();
           
-          const offlineCtx = new OfflineAudioContext(1, 1, 44100); // dummy to decode
+          // Use a standard AudioContext for reliable decoding (OfflineAudioContext with 1 sample is not suitable)
+          const decodeCtx = new AudioContext();
           const decodedBuffers: AudioBuffer[] = [];
-          for (const blob of audioBlobs) {
+          const decodedPans: number[] = [];
+          for (let bIdx = 0; bIdx < audioBlobs.length; bIdx++) {
+            const blob = audioBlobs[bIdx];
             try {
               const arrayBuffer = await blob.arrayBuffer();
-              const decoded = await offlineCtx.decodeAudioData(arrayBuffer.slice(0));
+              console.log(`[VocalidoRenderService] 🔊 Decoding voice ${bIdx + 1}: ${(blob.size/1024).toFixed(0)}KB, type=${blob.type}`);
+              const decoded = await decodeCtx.decodeAudioData(arrayBuffer);
               decodedBuffers.push(decoded);
+              decodedPans.push(renderedPan[bIdx]);
+              console.log(`[VocalidoRenderService] ✅ Decoded voice ${bIdx + 1}: ${decoded.length} samples @ ${decoded.sampleRate}Hz, ${decoded.numberOfChannels}ch`);
             } catch (decErr) {
-              console.warn('[VocalidoRenderService] Failed to decode voice audio:', decErr);
+              console.warn(`[VocalidoRenderService] ❌ Failed to decode voice ${bIdx + 1} audio:`, decErr);
             }
           }
+          // Close decode context to free resources
+          decodeCtx.close().catch(() => {});
           
           if (decodedBuffers.length === 0) {
             throw new Error('Failed to decode any voice audio');
@@ -835,7 +893,7 @@ class VocalidoRenderService {
           
           for (let vIdx = 0; vIdx < decodedBuffers.length; vIdx++) {
             const buf = decodedBuffers[vIdx];
-            const pan = renderedPan[vIdx] || 0;
+            const pan = decodedPans[vIdx] ?? 0;
             
             // Equal power panning: angle from 0 (Left) to PI/2 (Right)
             const angle = ((pan + 1) / 2) * (Math.PI / 2);
@@ -1152,9 +1210,12 @@ class VocalidoRenderService {
         localStorage.setItem(`active_render_key_${song.id}`, newEntryKey);
         this.activeRenderKey = newEntryKey;
 
-        const updatedTracks = tracks.map((t: any) => 
-          t.id === primaryTrackId ? { ...t, mode: 'vocal' } as TrackState : t
-        );
+        const updatedTracks = tracks.map((t: any) => {
+          if (t.id === primaryTrackId) return { ...t, mode: 'vocal' } as TrackState;
+          // Reset non-primary tracks to instrument to prevent MusicEngine from trying to manage empty audio elements
+          if (vocalTrackIds.includes(t.id)) return { ...t, mode: 'instrument' } as TrackState;
+          return t;
+        });
         localStorage.setItem(`tracks_state_${song.id}`, JSON.stringify(updatedTracks));
 
         try {

@@ -704,6 +704,7 @@ const PlayerPage: React.FC<{
                 const histStr = song?.id ? localStorage.getItem(`memo_render_history_${song.id}`) : null;
                 const hasExistingRender = histStr ? (JSON.parse(histStr) || []).length > 0 : false;
                 if (!hasExistingRender) {
+                  setModalSelectedTracks(tracks.map(t => t.id));
                   setShowRenderPrompt(true);
                 }
               }
@@ -739,6 +740,7 @@ const PlayerPage: React.FC<{
         const hasExistingRender = histStr ? (JSON.parse(histStr) || []).length > 0 : false;
         if (!hasExistingRender) {
           const timer = setTimeout(() => {
+            setModalSelectedTracks(tracks.map(t => t.id));
             setShowRenderPrompt(true);
           }, 1000);
           return () => clearTimeout(timer);
@@ -1904,16 +1906,23 @@ const PlayerPage: React.FC<{
     if (tracks.length === 0) { console.warn('[Vocalido] ⛔ Render blocked: no tracks'); return; }
 
     let renderTracks = tracks;
-    if (selectedTrackIds && selectedTrackIds.length > 0) {
-      renderTracks = tracks.map(t => ({
-        ...t,
-        mode: selectedTrackIds.includes(t.id) ? 'vocal' : 'instrument'
-      }));
-      setTracks(renderTracks);
-      
-      // Clear cached renders when track selection changes to force fresh render
-      // This prevents stale melody-only cache from being used when user selects all tracks
-      console.log('[PlayerPage] 🗑️ Clearing render cache due to track selection change');
+    // Always determine effective track IDs to render
+    const effectiveTrackIds = (selectedTrackIds && selectedTrackIds.length > 0)
+      ? selectedTrackIds
+      : tracks.map(t => t.id); // Default: ALL tracks become vocal
+
+    const prevVocalIds = tracks.filter(t => t.mode === 'vocal').map(t => t.id).sort().join(',');
+    const newVocalIds = [...effectiveTrackIds].sort().join(',');
+
+    renderTracks = tracks.map(t => ({
+      ...t,
+      mode: effectiveTrackIds.includes(t.id) ? 'vocal' : 'instrument'
+    })) as typeof tracks;
+    setTracks(renderTracks);
+
+    // Clear cache whenever vocal track set changes (prevents stale mono-render from being reused)
+    if (prevVocalIds !== newVocalIds) {
+      console.log(`[PlayerPage] 🗑️ Vocal tracks changed (${prevVocalIds} → ${newVocalIds}), clearing render cache`);
       try {
         localStorage.removeItem(`memo_render_history_${song?.id}`);
         setRenderHistory([]);
@@ -2280,7 +2289,7 @@ const PlayerPage: React.FC<{
         {renderHistory.length === 0 && activeCard === 'score' && (
           <div className="absolute left-1 top-1/2 -translate-y-1/2 z-[3000] flex flex-col items-center pointer-events-auto bg-[#0c0c0e]/95 p-1.5 rounded-lg border border-white/10 backdrop-blur-xl shadow-2xl w-[34px]">
             <button
-              onClick={() => setShowRenderPrompt(true)}
+              onClick={() => { setModalSelectedTracks(tracks.map(t => t.id)); setShowRenderPrompt(true); }}
               className="w-6 h-6 rounded-lg flex flex-col items-center justify-center border font-bold uppercase transition-all bg-zinc-900 border-zinc-800 text-[#00e5ff] hover:text-white hover:border-[#00e5ff] hover:shadow-[0_0_10px_rgba(0,229,255,0.4)] animate-pulse"
               title="Render AI Vocals"
             >
@@ -2917,7 +2926,7 @@ const PlayerPage: React.FC<{
               )}
 
               <button
-                onClick={() => { setShowRenderPrompt(false); triggerVocalSynthesis(false, tracks.length > 1 ? modalSelectedTracks : undefined); }}
+                onClick={() => { setShowRenderPrompt(false); triggerVocalSynthesis(false, modalSelectedTracks.length > 0 ? modalSelectedTracks : tracks.map(t => t.id)); }}
                 className="w-full py-3 px-4 bg-gradient-to-r from-cyan-400 to-indigo-500 text-black font-black text-xs uppercase tracking-widest rounded-xl hover:shadow-[0_0_20px_rgba(6,182,212,0.4)] active:scale-98 transition-all duration-200 mt-2"
               >
                 Render Now
