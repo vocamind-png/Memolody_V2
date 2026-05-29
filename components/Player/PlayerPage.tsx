@@ -2940,85 +2940,91 @@ const PlayerPage: React.FC<{
 
         {/* ── [VOCALIDO RENDER OVERLAY] ── */}
         {isRenderingVocal && (
-          <div className="absolute bottom-24 right-4 z-[5000] w-80 p-3.5 bg-zinc-950/90 border border-zinc-800 rounded-2xl shadow-[0_10px_40px_rgba(0,0,0,0.5)] backdrop-blur-xl flex items-center gap-3.5 animate-in slide-in-from-bottom-4 duration-300 pointer-events-auto">
-            {/* Left side: Circular Progress */}
-            <div className="relative w-14 h-14 flex-shrink-0 flex items-center justify-center">
-              <svg viewBox="0 0 100 100" className="absolute inset-0 w-full h-full -rotate-90">
-                <circle
-                  cx="50" cy="50" r="44"
-                  stroke="currentColor"
-                  strokeWidth="6"
-                  fill="transparent"
-                  className="text-white/10"
-                />
-                {!renderError && (
+          <div className="fixed inset-0 z-[5000] flex items-center justify-center pointer-events-none">
+            {/* Backdrop */}
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm pointer-events-auto" />
+            {/* Card */}
+            <div className="relative z-10 w-[340px] max-w-[90vw] p-5 bg-zinc-950/95 border border-zinc-700/80 rounded-3xl shadow-[0_20px_60px_rgba(0,0,0,0.7),0_0_0_1px_rgba(255,255,255,0.05)] backdrop-blur-2xl flex items-center gap-4 animate-in zoom-in-95 fade-in duration-300 pointer-events-auto">
+              {/* Left side: Circular Progress */}
+              <div className="relative w-16 h-16 flex-shrink-0 flex items-center justify-center">
+                <svg viewBox="0 0 100 100" className="absolute inset-0 w-full h-full -rotate-90">
                   <circle
                     cx="50" cy="50" r="44"
                     stroke="currentColor"
-                    strokeWidth="8"
-                    strokeDasharray="276.5"
-                    strokeDashoffset={276.5 - (276.5 * renderProgress) / 100}
-                    strokeLinecap="round"
+                    strokeWidth="6"
                     fill="transparent"
-                    className="text-cyan-400 transition-[stroke-dashoffset] duration-150 linear"
+                    className="text-white/10"
                   />
-                )}
-              </svg>
-              <span className="text-[11px] font-black text-white tabular-nums drop-shadow-md">
-                {renderError ? "⚠️" : `${Math.round(renderProgress)}%`}
-              </span>
-            </div>
-
-            {/* Right side: Info and actions */}
-            <div className="flex-1 min-w-0 flex flex-col justify-center">
-              <span className="text-[8px] font-black uppercase tracking-wider text-zinc-500">
-                AI Voice Synthesis
-              </span>
-              
-              <span className={`text-[11px] font-bold tracking-wide truncate mt-0.5 ${renderError ? 'text-rose-400' : 'text-cyan-400'}`}>
-                {renderError 
-                  ? "Synthesis Failed" 
-                  : (renderStatusText || (renderProgress > 95 ? "Finalizing Audio..." : "Rendering vocals..."))
-                }
-              </span>
-
-              <div className="text-[9px] text-zinc-400 font-medium tracking-wide mt-0.5 flex gap-1 truncate">
-                <span>{(activeVoiceName || 'Vocalido Soprano').toUpperCase()}</span>
-                <span>•</span>
-                <span>{(activeLyricMode || 'Standard').toUpperCase()}</span>
-                <span>•</span>
-                <span className="tabular-nums">{renderTimer}s</span>
+                  {!renderError && (
+                    <circle
+                      cx="50" cy="50" r="44"
+                      stroke="currentColor"
+                      strokeWidth="8"
+                      strokeDasharray="276.5"
+                      strokeDashoffset={276.5 - (276.5 * renderProgress) / 100}
+                      strokeLinecap="round"
+                      fill="transparent"
+                      className="text-cyan-400 transition-[stroke-dashoffset] duration-150 linear"
+                    />
+                  )}
+                </svg>
+                <span className="text-[13px] font-black text-white tabular-nums drop-shadow-md">
+                  {renderError ? "⚠️" : `${Math.round(renderProgress)}%`}
+                </span>
               </div>
 
-              {/* Actions row */}
-              <div className="flex gap-2.5 mt-2">
-                {renderError ? (
-                  <>
+              {/* Right side: Info and actions */}
+              <div className="flex-1 min-w-0 flex flex-col justify-center">
+                <span className="text-[9px] font-black uppercase tracking-widest text-zinc-500">
+                  AI Voice Synthesis
+                </span>
+                
+                <span className={`text-[13px] font-bold tracking-wide truncate mt-1 ${renderError ? 'text-rose-400' : 'text-cyan-300'}`}>
+                  {renderError 
+                    ? "Synthesis Failed" 
+                    : (renderStatusText || (renderProgress > 95 ? "Finalizing Audio..." : "Rendering vocals..."))
+                  }
+                </span>
+
+                <div className="text-[9px] text-zinc-500 font-medium tracking-wide mt-0.5 flex gap-1 truncate">
+                  <span>{(activeVoiceName || 'Vocalido Soprano').toUpperCase()}</span>
+                  <span>•</span>
+                  <span>{(activeLyricMode || 'Standard').toUpperCase()}</span>
+                  <span>•</span>
+                  <span className="tabular-nums text-zinc-400">{renderTimer}s</span>
+                </div>
+
+                {/* Actions row */}
+                <div className="flex gap-3 mt-3">
+                  {renderError ? (
+                    <>
+                      <button 
+                        onClick={() => triggerVocalSynthesis()}
+                        className="text-[10px] font-black text-cyan-400 hover:text-cyan-300 uppercase tracking-widest transition-all"
+                      >
+                        Try Again
+                      </button>
+                      <button 
+                        onClick={closeRenderOverlay} 
+                        className="text-[10px] font-black text-zinc-500 hover:text-zinc-400 uppercase tracking-widest transition-all"
+                      >
+                        Dismiss
+                      </button>
+                    </>
+                  ) : (
                     <button 
-                      onClick={() => triggerVocalSynthesis()}
-                      className="text-[9px] font-black text-cyan-400 hover:text-cyan-300 uppercase tracking-widest transition-all"
+                      onClick={cancelVocalSynthesis}
+                      className="text-[10px] font-black text-rose-400 hover:text-rose-300 uppercase tracking-widest transition-all"
                     >
-                      Try Again
+                      Cancel Synthesis
                     </button>
-                    <button 
-                      onClick={closeRenderOverlay} 
-                      className="text-[9px] font-black text-zinc-500 hover:text-zinc-400 uppercase tracking-widest transition-all"
-                    >
-                      Dismiss
-                    </button>
-                  </>
-                ) : (
-                  <button 
-                    onClick={cancelVocalSynthesis}
-                    className="text-[9px] font-black text-rose-400 hover:text-rose-300 uppercase tracking-widest transition-all"
-                  >
-                    Cancel Synthesis
-                  </button>
-                )}
+                  )}
+                </div>
               </div>
             </div>
           </div>
         )}
+
 
         {/* PerformanceScore: Handles Piano Roll */}
         {activeCard === 'pianoroll' && (
