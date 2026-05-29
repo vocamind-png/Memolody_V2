@@ -66,8 +66,10 @@ class DiffSingerONNXEngine:
         try:
             # Prioritize CUDA Execution Provider for GPU acceleration (RunPod)
             providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
-            self.sess_acoustic = ort.InferenceSession(self.acoustic_path, providers=providers)
-            self.sess_vocoder = ort.InferenceSession(self.vocoder_path, providers=providers)
+            sess_options = ort.SessionOptions()
+            sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
+            self.sess_acoustic = ort.InferenceSession(self.acoustic_path, sess_options=sess_options, providers=providers)
+            self.sess_vocoder = ort.InferenceSession(self.vocoder_path, sess_options=sess_options, providers=providers)
             
             # Look for other ONNX models (linguistic, dur, pitch)
             self.ling_path = None
@@ -90,9 +92,9 @@ class DiffSingerONNXEngine:
             self.sess_pitch = None
             
             if self.ling_path and self.dur_path and self.pitch_path:
-                self.sess_ling = ort.InferenceSession(self.ling_path, providers=providers)
-                self.sess_dur = ort.InferenceSession(self.dur_path, providers=providers)
-                self.sess_pitch = ort.InferenceSession(self.pitch_path, providers=providers)
+                self.sess_ling = ort.InferenceSession(self.ling_path, sess_options=sess_options, providers=providers)
+                self.sess_dur = ort.InferenceSession(self.dur_path, sess_options=sess_options, providers=providers)
+                self.sess_pitch = ort.InferenceSession(self.pitch_path, sess_options=sess_options, providers=providers)
                 self.has_pitch_model = True
                 print(f"[ONNXEngine] Neural Pitch/Duration Models Loaded successfully!")
         except Exception as e:
