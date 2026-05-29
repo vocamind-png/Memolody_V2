@@ -16,13 +16,17 @@ files = [
     "dsvocoder/aidolgan.onnx"
 ]
 
-# CRITICAL: The server scans 'english_voicebanks/' at the PROJECT ROOT (one level above vocalido_server/)
-# NOT 'vocalido_server/voicebanks/'. The model MUST be placed here to be discovered.
-project_root = os.path.dirname(os.path.dirname(__file__))
+# Use absolute path to avoid CWD issues when running from different directories
+this_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(this_dir)
+
+# CRITICAL: The server scans 'english_voicebanks/' at the PROJECT ROOT
+# (one level above vocalido_server/), NOT inside vocalido_server/.
 base_dir = os.path.join(project_root, "english_voicebanks", "Lotte_V_AI_dol")
 os.makedirs(base_dir, exist_ok=True)
 
 print(f"📥 Downloading Lotte V AI model to {base_dir}...")
+print(f"   (project root: {project_root})")
 
 for f in files:
     url = f"{bucket_url}/{f.replace(' ', '%20')}"
@@ -39,5 +43,13 @@ for f in files:
             print(f"❌ Failed to download {f}: HTTP {resp.status_code}")
     else:
         print(f"⏭️  Already exists: {f}")
+
+# Verify the key file exists
+acoustic_path = os.path.join(base_dir, "dsmain", "acoustic.onnx")
+if os.path.exists(acoustic_path):
+    size_mb = os.path.getsize(acoustic_path) / (1024*1024)
+    print(f"✅ Verified: acoustic.onnx exists ({size_mb:.1f} MB)")
+else:
+    print(f"❌ ERROR: acoustic.onnx NOT found at {acoustic_path}")
 
 print("✨ Done downloading Lotte V models.")
