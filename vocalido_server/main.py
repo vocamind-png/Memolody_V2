@@ -355,8 +355,8 @@ def set_model(payload: dict = Body(...)):
 def health():
     return {
         "engine": "Vocalido SVS v5 — Sample Pitch-Shift",
-        "voice_source": os.path.basename(VOICE_SOURCE_PATH),
-        "source_midi": VOICE_SOURCE_MIDI,
+        "voice_source": os.path.basename(VOICE_SOURCE_PATH) if VOICE_SOURCE_PATH else "None (Fallback Sine)",
+        "source_midi": getattr(sys.modules[__name__], 'VOICE_SOURCE_MIDI', 60),
         "status": "online"
     }
 
