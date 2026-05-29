@@ -355,11 +355,23 @@ def set_model(payload: dict = Body(...)):
 
 @app.get("/health")
 def health():
+    import sys as _sys_local
+    engines_loaded = list(_ds_engines.keys()) if _ds_engines else []
+    lazy_voices = list(_lazy_voice_paths.keys()) if _lazy_voice_paths else []
+    voicebanks_dir = english_voicebanks_dir
+    voicebanks_exists = os.path.exists(voicebanks_dir)
+    voicebanks_contents = os.listdir(voicebanks_dir) if voicebanks_exists else []
     return {
         "engine": "Vocalido SVS v5 — Sample Pitch-Shift",
         "voice_source": os.path.basename(VOICE_SOURCE_PATH) if VOICE_SOURCE_PATH else "None (Fallback Sine)",
-        "source_midi": getattr(sys.modules[__name__], 'VOICE_SOURCE_MIDI', 60),
-        "status": "online"
+        "source_midi": getattr(_sys_local.modules[__name__], 'VOICE_SOURCE_MIDI', 60),
+        "status": "online",
+        "ds_engine_ok": DS_ENGINE_OK,
+        "engines_loaded": engines_loaded,
+        "lazy_voices": lazy_voices,
+        "english_voicebanks_dir": voicebanks_dir,
+        "english_voicebanks_exists": voicebanks_exists,
+        "english_voicebanks_contents": voicebanks_contents,
     }
 
 @app.get("/credits/status")
