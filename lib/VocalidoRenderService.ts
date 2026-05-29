@@ -141,7 +141,7 @@ const getFetchUrl = (path: string) => {
   if (path.startsWith('blob:') || path.startsWith('data:') || path.startsWith('http://') || path.startsWith('https://')) {
     return path;
   }
-  const customBackend = getCustomBackendUrl();
+  const customBackend = getCustomBackendUrl() || 'https://kjgkb7eyrducft-5001.proxy.runpod.net';
   if (!customBackend) return path;
 
   let cleanPath = path;
