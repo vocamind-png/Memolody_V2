@@ -534,13 +534,19 @@ if os.path.exists(english_voicebanks_dir):
                 print(f"[DEBUG] 📂 Found {voice_name} model at: {ckpt}")
                 if ckpt.endswith('.onnx'):
                     # Load only the first ONNX voice eagerly (Lotte V), rest are lazy
-                    if not any(isinstance(e, __import__('ds_onnx_engine', fromlist=['DiffSingerONNXEngine']).DiffSingerONNXEngine) for e in _ds_engines.values()):
+                    onnx_already_loaded = any(
+                        hasattr(e, 'acoustic_path') for e in _ds_engines.values()
+                    )
+                    if not onnx_already_loaded:
                         try:
                             from ds_onnx_engine import DiffSingerONNXEngine
-                            engine = DiffSingerONNXEngine(os.path.dirname(ckpt), language='en')
+                            # CRITICAL: Pass voice_path (model root dir), NOT os.path.dirname(ckpt)
+                            # os.path.dirname(ckpt) = .../dsmain/ but engine needs the parent
+                            # that contains dsmain/, dsdur/, dspitch/, dsvocoder/
+                            engine = DiffSingerONNXEngine(voice_path, language='en')
                             if engine.is_ready:
                                 _ds_engines[voice_name.lower()] = engine
-                                print(f"✅ DiffSinger Engine ({voice_name}) loaded successfully!")
+                                print(f"✅ DiffSinger ONNX Engine ({voice_name}) loaded successfully!")
                                 DS_ENGINE_OK = True
                         except Exception as e:
                             print(f"❌ Failed to load {voice_name}: {e}")
@@ -880,7 +886,10 @@ def studio_preview(req: StudioPreviewReq):
             print(f"[LazyLoad] 🔄 Loading voice '{target_voice}' on demand...")
             try:
                 from ds_onnx_engine import DiffSingerONNXEngine
-                engine = DiffSingerONNXEngine(os.path.dirname(ckpt), language='en')
+                # For ONNX models, ckpt is .../dsmain/acoustic.onnx
+                # The engine needs the model root (parent of dsmain/)
+                model_root = os.path.dirname(os.path.dirname(ckpt))
+                engine = DiffSingerONNXEngine(model_root, language='en')
                 if engine.is_ready:
                     _ds_engines[target_voice] = engine
                     _target_engine = engine
