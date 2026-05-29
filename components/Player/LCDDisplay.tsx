@@ -80,7 +80,7 @@ export const KeyTransposeDisplay: React.FC<{ keySig: string; transpose: number; 
 
   if (isEditing) {
     return (
-      <div className="flex items-center justify-center w-full h-full bg-black/80 rounded-lg border border-amber-400/50 p-1">
+      <div className="flex items-center justify-center w-full h-full bg-black/80 rounded-sm border border-amber-400/50 p-1">
         <input 
           autoFocus type="number" value={tempValue} 
           onChange={(e) => setTempValue(e.target.value)}
@@ -126,7 +126,7 @@ export const BpmDisplay: React.FC<{ bpm: number; onBpmChange: (newBpm: number) =
 
   if (isEditing) {
     return (
-      <div className="flex items-center justify-center w-full h-full bg-black/80 rounded-lg border border-cyan-400/50 p-1">
+      <div className="flex items-center justify-center w-full h-full bg-black/80 rounded-sm border border-cyan-400/50 p-1">
         <input 
           autoFocus type="number" value={tempValue} 
           onChange={(e) => setTempValue(e.target.value)}
@@ -179,7 +179,7 @@ export const BarBeatPositionDisplay: React.FC<{ bar: number; beat: number; onSee
 
   if (isEditing) {
     return (
-      <div className="flex items-center justify-center w-full h-full bg-black/80 rounded-lg border border-amber-400/50 p-1">
+      <div className="flex items-center justify-center w-full h-full bg-black/80 rounded-sm border border-amber-400/50 p-1">
         <input 
           autoFocus type="number" value={editValue}
           onChange={(e) => setEditValue(e.target.value)}

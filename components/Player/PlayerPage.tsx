@@ -1925,6 +1925,7 @@ const PlayerPage: React.FC<{
       console.log(`[PlayerPage] 🗑️ Vocal tracks changed (${prevVocalIds} → ${newVocalIds}), clearing render cache`);
       try {
         localStorage.removeItem(`memo_render_history_${song?.id}`);
+        tracks.forEach(t => localStorage.removeItem(`memo_render_history_${song?.id}_${t.id}`));
         setRenderHistory([]);
       } catch (e) {}
     }
@@ -3279,11 +3280,11 @@ const PlayerPage: React.FC<{
  
               {/* CENTER GROUP: Narrow LCD Display */}
               <div className="flex-1 flex justify-center px-1">
-                <div className="w-[110px] min-[350px]:w-[125px] min-[380px]:w-[145px] sm:w-[190px] md:w-[220px] h-[36px] min-[360px]:h-[44px] bg-[#0c0c0e] rounded-full flex items-center border border-black shadow-inner overflow-hidden">
-                  <div className="flex-1 h-full border-r border-white/5 flex items-center justify-center">
+                <div className="w-[130px] min-[350px]:w-[148px] min-[380px]:w-[168px] sm:w-[215px] md:w-[250px] h-[34px] min-[360px]:h-[40px] bg-[#0c0c0e] rounded-md flex items-center border border-black shadow-inner overflow-hidden">
+                  <div className="flex-1 h-full border-r border-white/[0.03] flex items-center justify-center">
                     <KeyTransposeDisplay keySig={parsedData.metadata.key || localSong.key} transpose={transpose} onTransposeChange={setTranspose} />
                   </div>
-                  <div className="flex-1 h-full border-r border-white/5 flex items-center justify-center">
+                  <div className="flex-1 h-full border-r border-white/[0.03] flex items-center justify-center">
                     <BpmDisplay bpm={currentBpm} onBpmChange={(b) => { setCurrentBpm(b); musicEngine.setBpm(b); }} />
                   </div>
                   <div className="flex-1 h-full flex items-center justify-center">
@@ -3551,6 +3552,7 @@ const PlayerPage: React.FC<{
                     setRenderHistory([]); 
                     if (song?.id) { 
                       localStorage.removeItem(`memo_render_history_${song.id}`); 
+                      tracks.forEach(t => localStorage.removeItem(`memo_render_history_${song.id}_${t.id}`));
                       AudioBlobCache.deleteSongCache(song.id); 
                     }
                     if (activeRenderKey) {
