@@ -131,7 +131,8 @@ const SongRow = memo(({ item, onSongSelect, onToggleDelete, onPermanentDelete, i
 
   return (
     <div
-      className={`flex items-center gap-3 px-4 py-3 border-b border-white/[0.03] hover:bg-white/[0.02] cursor-pointer group active:bg-white/[0.05] relative transition-colors ${isSelected ? 'bg-cyan-500/5' : ''}`}
+      className={`flex items-center gap-3 px-4 py-3 border-b border-white/[0.03] active:bg-white/[0.05] relative transition-colors touch-manipulation select-none ${isSelected ? 'bg-cyan-500/5' : ''}`}
+      style={{ WebkitTapHighlightColor: 'transparent' }}
       onClick={() => {
         if (!isTrashMode) {
           onSongSelect(item.metadata, item.xmlData, 'listen');
@@ -149,24 +150,11 @@ const SongRow = memo(({ item, onSongSelect, onToggleDelete, onPermanentDelete, i
       )}
 
       <div 
-        className="w-10 h-10 rounded-xl shrink-0 overflow-hidden relative shadow-md group-hover:shadow-cyan-500/20 transition-shadow cursor-pointer"
-        onClick={(e) => {
-          e.stopPropagation();
-          onSongSelect(item.metadata, item.xmlData, 'listen');
-        }}
+        className="w-10 h-10 rounded-xl shrink-0 overflow-hidden relative shadow-md transition-shadow"
       >
         <AbstractCover seed={item.metadata.title || item.metadata.id} size={80} />
-        <div className="absolute inset-0 flex items-center justify-center bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity">
-          <Play size={12} className="text-white fill-current drop-shadow-lg" />
-        </div>
       </div>
-      <div 
-        className="flex-1 min-w-0 cursor-pointer"
-        onClick={(e) => {
-          e.stopPropagation();
-          onSongSelect(item.metadata, item.xmlData, 'listen');
-        }}
-      >
+      <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
           {item.metadata.isFavorite && <Heart size={10} className="text-rose-500 fill-rose-500 shrink-0" />}
           <p className="text-[11px] font-black text-white uppercase italic truncate group-hover:text-cyan-400 transition-colors duration-75">
@@ -199,17 +187,19 @@ const SongRow = memo(({ item, onSongSelect, onToggleDelete, onPermanentDelete, i
         <div className="flex items-center gap-1">
           <button
             onClick={(e) => { e.stopPropagation(); onToggleFavorite(item.metadata.id); }}
-            className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${item.metadata.isFavorite ? 'text-rose-500' : 'text-zinc-800 hover:text-rose-400 opacity-0 group-hover:opacity-100'}`}
+            className={`w-9 h-9 rounded-lg flex items-center justify-center transition-colors touch-manipulation ${item.metadata.isFavorite ? 'text-rose-500' : 'text-zinc-600 active:text-rose-400'}`}
+            style={{ WebkitTapHighlightColor: 'transparent' }}
           >
-            <Heart size={12} fill={item.metadata.isFavorite ? 'currentColor' : 'none'} />
+            <Heart size={13} fill={item.metadata.isFavorite ? 'currentColor' : 'none'} />
           </button>
           <button
             onClick={(e) => { e.stopPropagation(); setShowMenu(!showMenu); }}
-            className="w-7 h-7 rounded-lg flex items-center justify-center text-zinc-800 hover:text-white opacity-0 group-hover:opacity-100 transition-all"
+            className="w-9 h-9 rounded-lg flex items-center justify-center text-zinc-600 active:text-white transition-all touch-manipulation"
+            style={{ WebkitTapHighlightColor: 'transparent' }}
           >
-            <MoreVertical size={12} />
+            <MoreVertical size={13} />
           </button>
-          <ChevronRight size={14} className="text-zinc-800 group-hover:text-cyan-500 shrink-0" />
+          <ChevronRight size={14} className="text-zinc-700 shrink-0" />
         </div>
       )}
 
