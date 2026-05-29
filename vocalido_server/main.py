@@ -72,6 +72,8 @@ if os.path.exists(english_voicebanks_dir):
     app.mount("/studio/voicebanks", StaticFiles(directory=english_voicebanks_dir), name="studio_voicebanks")
     app.mount("/voicebanks", StaticFiles(directory=english_voicebanks_dir), name="voicebanks")
 # Mount built frontend assets at root paths so index.html references work
+os.makedirs(os.path.join(static_dir, "assets"), exist_ok=True)
+os.makedirs(os.path.join(static_dir, "images"), exist_ok=True)
 app.mount("/assets", StaticFiles(directory=os.path.join(static_dir, "assets")), name="assets")
 app.mount("/images", StaticFiles(directory=os.path.join(static_dir, "images")), name="images")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
