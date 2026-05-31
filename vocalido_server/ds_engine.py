@@ -343,6 +343,127 @@ def _lyric_to_phonemes_zh(lyric: str) -> List[str]:
     return ["a"]
 
 
+def parse_thai_to_arpabet(word: str) -> list:
+    word = word.strip()
+    if not word:
+        return []
+        
+    # Check if the word contains only Thai characters (Thai range: 0x0E00 to 0x0E7F)
+    is_thai = all(0x0E00 <= ord(c) <= 0x0E7F for c in word)
+    if not is_thai:
+        return []
+
+    # Pre-defined mapping dictionary for common Thai solfege/syllables
+    THAI_SYLLABLE_MAP = {
+        # Solfege
+        "โด": ["d", "ow"], "เร": ["r", "ey"], "มี": ["m", "iy"], "ฟา": ["f", "aa"],
+        "ซอล": ["s", "ao", "l"], "โซล": ["s", "ow", "l"], "ลา": ["l", "aa"], "ที": ["t", "iy"],
+        # Vowels (U)
+        "ทู": ["t", "uw"], "ลู": ["l", "uw"], "ซู": ["s", "uw"], "สู": ["s", "uw"],
+        "มู": ["m", "uw"], "รู": ["r", "uw"], "ดู": ["d", "uw"], "ตู": ["t", "uw"],
+        "บู": ["b", "uw"], "ปู": ["p", "uw"], "ฟู": ["f", "uw"], "กู": ["g", "uw"],
+        "คู": ["k", "uw"], "นู": ["n", "uw"], "ฮู": ["hh", "uw"], "อู": ["uw"],
+        # Vowels (AA)
+        "ดา": ["d", "aa"], "ตา": ["t", "aa"], "มา": ["m", "aa"], "นา": ["n", "aa"],
+        "ยา": ["y", "aa"], "วา": ["w", "aa"], "ฮา": ["hh", "aa"], "ซา": ["s", "aa"],
+        "สา": ["s", "aa"], "รา": ["r", "aa"], "กา": ["g", "aa"], "คา": ["k", "aa"],
+        "พา": ["p", "aa"], "บา": ["b", "aa"], "ปา": ["p", "aa"], "ทา": ["t", "aa"],
+        "อา": ["aa"],
+        # Vowels (IY)
+        "ดี": ["d", "iy"], "ตี": ["t", "iy"], "นี": ["n", "iy"], "ยี": ["y", "iy"],
+        "วี": ["w", "iy"], "ฮี": ["hh", "iy"], "ซี": ["s", "iy"], "สี": ["s", "iy"],
+        "รี": ["r", "iy"], "กี": ["g", "iy"], "คี": ["k", "iy"], "พี": ["p", "iy"],
+        "ฟี": ["f", "iy"], "บี": ["b", "iy"], "ปี": ["p", "iy"], "ที": ["t", "iy"],
+        "อี": ["iy"],
+        # Vowels (EY)
+        "เด": ["d", "ey"], "เต": ["t", "ey"], "เม": ["m", "ey"], "เน": ["n", "ey"],
+        "เย": ["y", "ey"], "เว": ["w", "ey"], "เฮ": ["hh", "ey"], "เซ": ["s", "ey"],
+        "เส": ["s", "ey"], "เร": ["r", "ey"], "เก": ["g", "ey"], "เค": ["k", "ey"],
+        "เพ": ["p", "ey"], "เบ": ["b", "ey"], "เป": ["p", "ey"], "เท": ["t", "ey"],
+        "เอ": ["ey"],
+        # Vowels (OW)
+        "โต": ["t", "ow"], "โม": ["m", "ow"], "โน": ["n", "ow"], "โย": ["y", "ow"],
+        "โว": ["w", "ow"], "โฮ": ["hh", "ow"], "โซ": ["s", "ow"], "โส": ["s", "ow"],
+        "โร": ["r", "ow"], "โก": ["g", "ow"], "โค": ["k", "ow"], "โพ": ["p", "ow"],
+        "โฟ": ["f", "ow"], "โบ": ["b", "ow"], "โป": ["p", "ow"], "โท": ["t", "ow"],
+        "โอ": ["ow"],
+        # Vowels (AO)
+        "ดอ": ["d", "ao"], "ตอ": ["t", "ao"], "มอ": ["m", "ao"], "นอ": ["n", "ao"],
+        "ยอ": ["y", "ao"], "วอ": ["w", "ao"], "ฮอ": ["hh", "ao"], "ซอ": ["s", "ao"],
+        "สอ": ["s", "ao"], "รอ": ["r", "ao"], "กอ": ["g", "ao"], "คอ": ["k", "ao"],
+        "พอ": ["p", "ao"], "บอ": ["b", "ao"], "ปอ": ["p", "ao"], "ทอ": ["t", "ao"],
+        "ออ": ["ao"],
+    }
+
+    if word in THAI_SYLLABLE_MAP:
+        return THAI_SYLLABLE_MAP[word]
+
+    # Rule-based fallback parser for arbitrary Thai syllables (consonant + vowel)
+    THAI_CONSONANTS = {
+        'ก': 'g', 'ข': 'k', 'ค': 'k', 'ฆ': 'k',
+        'จ': 'jh', 'ฉ': 'ch', 'ช': 'ch', 'ซ': 's', 'ฌ': 'ch',
+        'ญ': 'y', 'ฎ': 'd', 'ฏ': 't', 'ฐ': 't', 'ฑ': 't', 'ฒ': 't', 'ณ': 'n',
+        'ด': 'd', 'ต': 't', 'ถ': 't', 'ท': 't', 'ธ': 't',
+        'น': 'n', 'บ': 'b', 'ป': 'p', 'ผ': 'p', 'ฝ': 'f', 'พ': 'p', 'ฟ': 'f', 'ภ': 'p',
+        'ม': 'm', 'ย': 'y', 'ร': 'r', 'ล': 'l', 'ว': 'w', 'ศ': 's', 'ษ': 's', 'ส': 's',
+        'ห': 'hh', 'ฬ': 'l', 'อ': '', 'ฮ': 'hh'
+    }
+    
+    consonant = ''
+    vowel = 'aa'
+    
+    # Strip tone marks and other symbols
+    cleaned = ''.join(c for c in word if c not in ['่', '้', '๊', '๋', '็', '์'])
+    if not cleaned:
+        return []
+        
+    prefix_vowel = ''
+    if cleaned[0] in ['เ', 'แ', 'โ', 'ใ', 'ไ']:
+        prefix_vowel = cleaned[0]
+        cleaned = cleaned[1:]
+        
+    if len(cleaned) > 0 and cleaned[0] in THAI_CONSONANTS:
+        consonant = THAI_CONSONANTS[cleaned[0]]
+        cleaned = cleaned[1:]
+        
+    if prefix_vowel == 'เ':
+        if 'ีย' in cleaned:
+            vowel = 'iy aa'
+        elif 'ือ' in cleaned:
+            vowel = 'uw aa'
+        elif 'อ' in cleaned:
+            vowel = 'er'
+        else:
+            vowel = 'ey'
+    elif prefix_vowel == 'แ':
+        vowel = 'ae'
+    elif prefix_vowel == 'โ':
+        vowel = 'ow'
+    elif prefix_vowel in ['ใ', 'ไ']:
+        vowel = 'ay'
+    else:
+        if 'ู' in cleaned:
+            vowel = 'uw'
+        elif 'ุ' in cleaned:
+            vowel = 'uh'
+        elif 'ี' in cleaned:
+            vowel = 'iy'
+        elif 'ิ' in cleaned:
+            vowel = 'ih'
+        elif 'า' in cleaned:
+            vowel = 'aa'
+        elif 'อ' in cleaned:
+            vowel = 'ao'
+        elif 'ัว' in cleaned:
+            vowel = 'uw aa'
+            
+    res = []
+    if consonant:
+        res.append(consonant)
+    res.extend(vowel.split())
+    return res
+
+
 # ── Engine ───────────────────────────────────────────────────────────────────
 class DiffSingerEngine:
     def __init__(self, checkpoint_path, config_path=None, language='en'):
@@ -398,6 +519,12 @@ class DiffSingerEngine:
             traceback.print_exc()
 
     def lyric_to_phonemes_en(self, lyric: str) -> list[str]:
+        # Check for Thai syllable transliteration mapping first
+        thai_res = parse_thai_to_arpabet(lyric)
+        if thai_res:
+            print(f"[DiffSingerEngine] Thai syllable match for '{lyric}': {thai_res}")
+            return thai_res
+
         word = lyric.lower().strip()
         original_word = lyric
         import re
@@ -487,7 +614,7 @@ class DiffSingerEngine:
         stems_audio = []
         for i, track in enumerate(tracks):
             print(f"[DiffSingerEngine] 🎙️ Rendering Track {i+1}/{len(tracks)} ({len(track)} notes)...")
-            track_audio = self._synthesize_single_track(track, bpm)
+            track_audio = self._synthesize_single_track(track, bpm, params)
             if track_audio is not None:
                 stems_audio.append(track_audio.copy())
                 if mixed_audio is None:
@@ -516,7 +643,7 @@ class DiffSingerEngine:
         if return_stems: return None, []
         return None
 
-    def _synthesize_single_track(self, filtered, bpm):
+    def _synthesize_single_track(self, filtered, bpm, params=None):
         try:
             from utils.hparams import hparams
             hop_size = hparams.get("hop_size", 512)

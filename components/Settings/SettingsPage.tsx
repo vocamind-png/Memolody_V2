@@ -3,6 +3,7 @@ import * as Tone from 'tone';
 import { Settings2, Volume2, Cpu, Mic, Activity, Keyboard, MonitorSpeaker, Command, Monitor, Zap, Bot, Play, Sparkles, Lock, Key, Copy, Check } from 'lucide-react';
 import VocalidoTrainingCard from './VocalidoTrainingCard';
 import CreditsCard from './CreditsCard';
+import OpenSourceCreditsCard from './OpenSourceCreditsCard';
 import AudioEngineSettings from './AudioEngineSettings';
 import OMRSettingsCard from './OMRSettingsCard';
 import { encryptString } from '../../lib/NimoBrain';
@@ -497,8 +498,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, on
                             </h2>
 
                             <div className="flex flex-col gap-6">
-                {/* Audio AI Engine Settings */}
-                <AudioEngineSettings />
+                {/* Audio AI Engine Settings moved to PlayerPage Vocalido Setup Modal */}
                                 <div className={`p-6 rounded-[28px] border transition-all ${nimoEnabled ? 'bg-cyan-500/10 border-cyan-500/30' : 'bg-white/5 border-white/10'}`}>
                                     <div className="flex items-start justify-between gap-4">
                                         <div className="flex-1">
@@ -546,6 +546,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, on
                                 {/* ── Vocalido DiffSinger Training Status ── */}
                                 <VocalidoTrainingCard />
                 <CreditsCard />
+                <OpenSourceCreditsCard />
 
                                 <div className={`transition-all duration-300 ${!nimoEnabled ? 'opacity-50 pointer-events-none grayscale' : ''}`}>
                                     <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2 block">Voice Identity & Personality</label>

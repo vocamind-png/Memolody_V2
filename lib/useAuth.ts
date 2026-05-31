@@ -1,6 +1,6 @@
 
 import { useState, useEffect } from 'react';
-import { User, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut as firebaseSignOut } from 'firebase/auth';
+import type { User } from 'firebase/auth';
 import { auth, isFirebaseConfigured } from './firebase';
 
 export type UserRole = 'owner' | 'executive' | 'admin' | 'user' | 'guest';
@@ -34,12 +34,21 @@ export const useAuth = (): { authUser: AuthUser | null; role: UserRole; loading:
             return;
         }
 
-        const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-            setUser(currentUser);
-            setLoading(false);
+        let unsubscribe: (() => void) | undefined;
+        let isMounted = true;
+
+        import('firebase/auth').then(({ onAuthStateChanged }) => {
+            if (!isMounted) return;
+            unsubscribe = onAuthStateChanged(auth as any, (currentUser) => {
+                setUser(currentUser as User);
+                setLoading(false);
+            });
         });
 
-        return () => unsubscribe();
+        return () => {
+            isMounted = false;
+            if (unsubscribe) unsubscribe();
+        };
     }, []);
 
     let authUser: AuthUser | null = null;
@@ -79,17 +88,20 @@ export const hasAccess = (role: UserRole | undefined | null, requiredRole: UserR
 export const authActions = {
     signIn: async (email: string, pass: string) => {
         if (!auth) throw new Error('Firebase not configured');
-        const res = await signInWithEmailAndPassword(auth, email, pass);
+        const { signInWithEmailAndPassword } = await import('firebase/auth');
+        const res = await signInWithEmailAndPassword(auth as any, email, pass);
         return { user: res.user, error: null };
     },
     signUp: async (email: string, pass: string) => {
         if (!auth) throw new Error('Firebase not configured');
-        const res = await createUserWithEmailAndPassword(auth, email, pass);
+        const { createUserWithEmailAndPassword } = await import('firebase/auth');
+        const res = await createUserWithEmailAndPassword(auth as any, email, pass);
         return { user: res.user, error: null };
     },
     signOut: async () => {
         if (!auth) return;
-        await firebaseSignOut(auth);
+        const { signOut: firebaseSignOut } = await import('firebase/auth');
+        await firebaseSignOut(auth as any);
     }
 };
 

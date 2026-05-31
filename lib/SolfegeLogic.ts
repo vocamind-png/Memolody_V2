@@ -56,8 +56,12 @@ const SOLFEGE_FLAT_MAPS: Record<string, Record<number, string>> = {
 };
 
 const KEY_OFFSETS: Record<string, number> = {
+  // Major keys
   'C': 0, 'G': 7, 'D': 2, 'A': 9, 'E': 4, 'B': 11, 'F#': 6, 'C#': 1,
-  'F': 5, 'Bb': 10, 'Eb': 3, 'Ab': 8, 'Db': 1, 'Gb': 6, 'Cb': 11
+  'F': 5, 'Bb': 10, 'Eb': 3, 'Ab': 8, 'Db': 1, 'Gb': 6, 'Cb': 11,
+  // Relative minor keys (map to their relative major for Movable Doh)
+  'Am': 0, 'Em': 7, 'Bm': 2, 'F#m': 9, 'C#m': 4, 'G#m': 11, 'D#m': 6, 'A#m': 1,
+  'Dm': 5, 'Gm': 10, 'Cm': 3, 'Fm': 8, 'Bbm': 1, 'Ebm': 6, 'Abm': 11
 };
 
 export const getChromaticSolfege = (
@@ -66,7 +70,8 @@ export const getChromaticSolfege = (
   key: string,
   mode: string = 'Ju Solfege Movable Doh',
   durationRatio?: number,
-  fifths: number = 0
+  fifths: number = 0,
+  transposeSemitones: number = 0
 ): string => {
   if (mode === 'Close' || mode === 'Lyric') return '';
 
@@ -87,10 +92,13 @@ export const getChromaticSolfege = (
   
   // Decide Tonic based on Fixed vs Movable — matches 'Fixed Do', 'Fixed Doh', etc.
   const isFixed = mode.includes('Fixed');
-  const tonic = isFixed ? 0 : (KEY_OFFSETS[key] ?? 0);
+  // For Movable Do, the tonic shifts with the transpose. For Fixed Do, the tonic remains C (0).
+  const originalTonic = KEY_OFFSETS[key] ?? 0;
+  const tonic = isFixed ? 0 : (originalTonic + transposeSemitones + 120) % 12;
   
-  const abs = (noteBases[step.toUpperCase()] + (alter || 0) + 12) % 12;
-  const interval = (abs - tonic + 12) % 12;
+  // The absolute pitch shifts with the transpose
+  const abs = (noteBases[step.toUpperCase()] + (alter || 0) + transposeSemitones + 120) % 12;
+  const interval = (abs - tonic + 120) % 12;
 
   // 3. ปรับชื่อระบบตามโหมด
   let system = 'Ju';
@@ -101,11 +109,14 @@ export const getChromaticSolfege = (
   else if (mode === 'Kodaly') system = 'Kodaly';
 
   // Determine flat vs sharp naming:
-  // - If key signature has flats (fifths < 0) → use flat-side names for all notes
-  //   UNLESS the note itself has a sharp accidental (alter > 0)
-  // - If the note itself has a flat accidental (alter < 0) → always use flat names
-  // - Otherwise → use sharp-side names
-  const useFlat = (alter < 0) || (fifths < 0 && alter <= 0);
+  const pcToFifths: Record<number, number> = {
+    0: 0, 1: -5, 2: 2, 3: -3, 4: 4, 5: -1, 6: -6, 7: 1, 8: -4, 9: 3, 10: -2, 11: 5
+  };
+  const currentPc = (fifths * 7 + 120) % 12;
+  const targetPc = (currentPc + transposeSemitones + 120) % 12;
+  const targetFifths = pcToFifths[targetPc] !== undefined ? pcToFifths[targetPc] : fifths;
+
+  const useFlat = (alter < 0 && transposeSemitones === 0) || (targetFifths < 0 && alter <= 0);
   const map = (useFlat ? SOLFEGE_FLAT_MAPS[system] : SOLFEGE_MAPS[system]) || SOLFEGE_MAPS['Ju'];
   return map[interval] || step;
 };

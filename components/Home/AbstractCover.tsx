@@ -1,5 +1,5 @@
 
-import React, { useRef, useEffect, memo, useMemo } from 'react';
+import React, { useRef, useEffect, useState, memo, useMemo } from 'react';
 
 // Deterministic hash from string → number
 function hashStr(s: string): number {
@@ -48,122 +48,169 @@ interface AbstractCoverProps {
   size?: number;      // px (canvas resolution, CSS always fills parent)
   className?: string;
   style?: React.CSSProperties;
+  imageUrl?: string;
 }
 
-const AbstractCover: React.FC<AbstractCoverProps> = memo(({ seed, size = 200, className = '', style }) => {
+const AbstractCover: React.FC<AbstractCoverProps> = memo(({ seed, size = 200, className = '', style, imageUrl }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [isVisible, setIsVisible] = useState(false);
+  const [imageError, setImageError] = useState(false);
 
   const h = useMemo(() => hashStr(seed || 'untitled'), [seed]);
 
   useEffect(() => {
-    const cvs = canvasRef.current;
-    if (!cvs) return;
-    const ctx = cvs.getContext('2d');
-    if (!ctx) return;
+    if (imageUrl && !imageError) return; // Don't setup observer if we just show an image
+    
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setIsVisible(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: '100px' }
+    );
 
-    const w = size;
-    cvs.width = w;
-    cvs.height = w;
+    if (containerRef.current) {
+      observer.observe(containerRef.current);
+    }
 
-    const rand = seededRandom(h);
-    const palette = PALETTES[h % PALETTES.length];
+    return () => observer.disconnect();
+  }, [imageUrl, imageError]);
 
-    // Layer 1: Base gradient (diagonal with rotation based on seed)
-    const angle = rand() * Math.PI * 2;
-    const gx0 = w / 2 + Math.cos(angle) * w * 0.7;
-    const gy0 = w / 2 + Math.sin(angle) * w * 0.7;
-    const gx1 = w / 2 - Math.cos(angle) * w * 0.7;
-    const gy1 = w / 2 - Math.sin(angle) * w * 0.7;
-    const baseGrad = ctx.createLinearGradient(gx0, gy0, gx1, gy1);
-    baseGrad.addColorStop(0, palette[0]);
-    baseGrad.addColorStop(0.5, palette[1]);
-    baseGrad.addColorStop(1, palette[2]);
-    ctx.fillStyle = baseGrad;
-    ctx.fillRect(0, 0, w, w);
+  useEffect(() => {
+    if (!isVisible || (imageUrl && !imageError)) return;
 
-    // Layer 2: Radial blobs (2-4 circles)
-    const blobCount = 2 + Math.floor(rand() * 3);
-    for (let i = 0; i < blobCount; i++) {
-      const cx = rand() * w;
-      const cy = rand() * w;
-      const r = w * (0.2 + rand() * 0.5);
-      const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-      const col = palette[3 + Math.floor(rand() * (palette.length - 3))];
-      grad.addColorStop(0, col + '60');
-      grad.addColorStop(0.5, col + '20');
-      grad.addColorStop(1, 'transparent');
-      ctx.fillStyle = grad;
+    // Use requestAnimationFrame to avoid blocking the main thread during heavy rendering
+    const rafId = requestAnimationFrame(() => {
+      const cvs = canvasRef.current;
+      if (!cvs) return;
+      const ctx = cvs.getContext('2d', { alpha: false });
+      if (!ctx) return;
+
+      const w = size;
+      cvs.width = w;
+      cvs.height = w;
+
+      const rand = seededRandom(h);
+      const palette = PALETTES[h % PALETTES.length];
+
+      // Layer 1: Base gradient
+      const angle = rand() * Math.PI * 2;
+      const gx0 = w / 2 + Math.cos(angle) * w * 0.7;
+      const gy0 = w / 2 + Math.sin(angle) * w * 0.7;
+      const gx1 = w / 2 - Math.cos(angle) * w * 0.7;
+      const gy1 = w / 2 - Math.sin(angle) * w * 0.7;
+      const baseGrad = ctx.createLinearGradient(gx0, gy0, gx1, gy1);
+      baseGrad.addColorStop(0, palette[0]);
+      baseGrad.addColorStop(0.5, palette[1]);
+      baseGrad.addColorStop(1, palette[2]);
+      ctx.fillStyle = baseGrad;
       ctx.fillRect(0, 0, w, w);
-    }
 
-    // Layer 3: Organic flowing curves (like sound waves)
-    ctx.globalCompositeOperation = 'screen';
-    const waveCount = 2 + Math.floor(rand() * 3);
-    for (let wave = 0; wave < waveCount; wave++) {
-      ctx.beginPath();
-      const baseY = w * (0.2 + rand() * 0.6);
-      const amplitude = w * (0.05 + rand() * 0.15);
-      const freq = 2 + rand() * 4;
-      const phase = rand() * Math.PI * 2;
-
-      ctx.moveTo(0, baseY);
-      for (let x = 0; x <= w; x += 2) {
-        const y = baseY + Math.sin((x / w) * freq * Math.PI + phase) * amplitude
-          + Math.cos((x / w) * (freq + 1) * Math.PI + phase * 2) * amplitude * 0.3;
-        ctx.lineTo(x, y);
+      // Layer 2: Radial blobs
+      const blobCount = 2 + Math.floor(rand() * 3);
+      for (let i = 0; i < blobCount; i++) {
+        const cx = rand() * w;
+        const cy = rand() * w;
+        const r = w * (0.2 + rand() * 0.5);
+        const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+        const col = palette[3 + Math.floor(rand() * (palette.length - 3))];
+        grad.addColorStop(0, col + '60');
+        grad.addColorStop(0.5, col + '20');
+        grad.addColorStop(1, 'transparent');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, w, w);
       }
-      ctx.lineTo(w, w);
-      ctx.lineTo(0, w);
-      ctx.closePath();
 
-      const waveCol = palette[Math.floor(rand() * palette.length)];
-      const waveGrad = ctx.createLinearGradient(0, baseY - amplitude, 0, baseY + amplitude * 2);
-      waveGrad.addColorStop(0, waveCol + '40');
-      waveGrad.addColorStop(0.5, waveCol + '15');
-      waveGrad.addColorStop(1, 'transparent');
-      ctx.fillStyle = waveGrad;
-      ctx.fill();
-    }
+      // Layer 3: Organic flowing curves
+      ctx.globalCompositeOperation = 'screen';
+      const waveCount = 2 + Math.floor(rand() * 3);
+      for (let wave = 0; wave < waveCount; wave++) {
+        ctx.beginPath();
+        const baseY = w * (0.2 + rand() * 0.6);
+        const amplitude = w * (0.05 + rand() * 0.15);
+        const freq = 2 + rand() * 4;
+        const phase = rand() * Math.PI * 2;
 
-    // Layer 4: Small glitter/star dots
-    ctx.globalCompositeOperation = 'screen';
-    const dotCount = 6 + Math.floor(rand() * 15);
-    for (let i = 0; i < dotCount; i++) {
-      const dx = rand() * w;
-      const dy = rand() * w;
-      const dr = 0.5 + rand() * 2;
-      const col = palette[3 + Math.floor(rand() * (palette.length - 3))];
-      const dotGrad = ctx.createRadialGradient(dx, dy, 0, dx, dy, dr * 4);
-      dotGrad.addColorStop(0, col + 'cc');
-      dotGrad.addColorStop(0.5, col + '40');
-      dotGrad.addColorStop(1, 'transparent');
-      ctx.fillStyle = dotGrad;
-      ctx.fillRect(dx - dr * 4, dy - dr * 4, dr * 8, dr * 8);
-    }
+        ctx.moveTo(0, baseY);
+        for (let x = 0; x <= w; x += 2) {
+          const y = baseY + Math.sin((x / w) * freq * Math.PI + phase) * amplitude
+            + Math.cos((x / w) * (freq + 1) * Math.PI + phase * 2) * amplitude * 0.3;
+          ctx.lineTo(x, y);
+        }
+        ctx.lineTo(w, w);
+        ctx.lineTo(0, w);
+        ctx.closePath();
 
-    ctx.globalCompositeOperation = 'source-over';
+        const waveCol = palette[Math.floor(rand() * palette.length)];
+        const waveGrad = ctx.createLinearGradient(0, baseY - amplitude, 0, baseY + amplitude * 2);
+        waveGrad.addColorStop(0, waveCol + '40');
+        waveGrad.addColorStop(0.5, waveCol + '15');
+        waveGrad.addColorStop(1, 'transparent');
+        ctx.fillStyle = waveGrad;
+        ctx.fill();
+      }
 
-    // Layer 5: Soft vignette
-    const vig = ctx.createRadialGradient(w / 2, w / 2, w * 0.2, w / 2, w / 2, w * 0.8);
-    vig.addColorStop(0, 'transparent');
-    vig.addColorStop(1, 'rgba(0,0,0,0.45)');
-    ctx.fillStyle = vig;
-    ctx.fillRect(0, 0, w, w);
+      // Layer 4: Small glitter/star dots
+      ctx.globalCompositeOperation = 'screen';
+      const dotCount = 6 + Math.floor(rand() * 15);
+      for (let i = 0; i < dotCount; i++) {
+        const dx = rand() * w;
+        const dy = rand() * w;
+        const dr = 0.5 + rand() * 2;
+        const col = palette[3 + Math.floor(rand() * (palette.length - 3))];
+        const dotGrad = ctx.createRadialGradient(dx, dy, 0, dx, dy, dr * 4);
+        dotGrad.addColorStop(0, col + 'cc');
+        dotGrad.addColorStop(0.5, col + '40');
+        dotGrad.addColorStop(1, 'transparent');
+        ctx.fillStyle = dotGrad;
+        ctx.fillRect(dx - dr * 4, dy - dr * 4, dr * 8, dr * 8);
+      }
 
-  }, [h, size]);
+      ctx.globalCompositeOperation = 'source-over';
+
+      // Layer 5: Soft vignette
+      const vig = ctx.createRadialGradient(w / 2, w / 2, w * 0.2, w / 2, w / 2, w * 0.8);
+      vig.addColorStop(0, 'transparent');
+      vig.addColorStop(1, 'rgba(0,0,0,0.45)');
+      ctx.fillStyle = vig;
+      ctx.fillRect(0, 0, w, w);
+    });
+
+    return () => cancelAnimationFrame(rafId);
+  }, [h, size, isVisible, imageUrl, imageError]);
+
+  if (imageUrl && !imageError) {
+    return (
+      <img
+        src={imageUrl}
+        alt="Cover"
+        className={`block ${className}`}
+        style={{
+          width: '100%',
+          height: '100%',
+          objectFit: 'cover',
+          borderRadius: 'inherit',
+          ...style,
+        }}
+        onError={() => setImageError(true)}
+      />
+    );
+  }
 
   return (
-    <canvas
-      ref={canvasRef}
-      className={`block ${className}`}
-      style={{
-        width: '100%',
-        height: '100%',
-        objectFit: 'cover',
-        borderRadius: 'inherit',
-        ...style,
-      }}
-    />
+    <div ref={containerRef} className={`block ${className}`} style={{ width: '100%', height: '100%', borderRadius: 'inherit', ...style }}>
+      {isVisible ? (
+        <canvas
+          ref={canvasRef}
+          style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }}
+        />
+      ) : (
+        <div style={{ width: '100%', height: '100%', borderRadius: 'inherit', background: PALETTES[h % PALETTES.length][0] }} />
+      )}
+    </div>
   );
 });
 

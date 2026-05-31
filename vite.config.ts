@@ -14,7 +14,7 @@ export default defineConfig(({ mode }) => {
   // Vocalido traffic to localhost:5001 instead of the Google Cloud VM.
   const LOCAL_VOCALIDO = env.VITE_LOCAL_VOCALIDO === 'true';
   const VOCALIDO_TARGET = LOCAL_VOCALIDO
-    ? 'http://localhost:5001'
+    ? 'http://127.0.0.1:5001'
     : 'http://35.247.141.53:5001';
 
   if (!GEMINI_KEY) {
@@ -37,8 +37,8 @@ export default defineConfig(({ mode }) => {
         'Cross-Origin-Embedder-Policy': 'credentialless'
       },
       watch: {
-        // Ignore Python venv and node_modules to prevent spurious reloads
-        ignored: ['**/vocalido_server/.venv/**', '**/node_modules/**', '**/.git/**'],
+        // Ignore backend server directory and node_modules to prevent spurious reloads when generating audio
+        ignored: ['**/vocalido_server/**', '**/node_modules/**', '**/.git/**', '**/renders/**', '**/cache/**'],
       },
       proxy: {
         '/api/manifest': {
@@ -76,6 +76,49 @@ export default defineConfig(({ mode }) => {
           timeout: 180000,
         },
         // --- RUNPOD SERVERLESS PROXY (bypass CORS restrictions in local dev) ---
+        '/api/runpod': {
+          target: 'https://api.runpod.ai/v2',
+          changeOrigin: true,
+          secure: true,
+          rewrite: (path) => path.replace(/^\/api\/runpod/, '')
+        }
+      }
+    },
+    preview: {
+      port: 4173,
+      host: '0.0.0.0',
+      allowedHosts: true,
+      proxy: {
+        '/api/manifest': {
+          target: 'https://storage.googleapis.com/memolody-vault/manifest.json',
+          changeOrigin: true,
+          secure: false,
+          rewrite: (path) => path.replace(/^\/api\/manifest/, '')
+        },
+        '/vocalido': {
+          target: VOCALIDO_TARGET,
+          changeOrigin: true,
+          secure: false,
+          rewrite: (path) => path.replace(/^\/vocalido/, '')
+        },
+        '/studio': {
+          target: VOCALIDO_TARGET,
+          changeOrigin: true,
+          secure: false,
+        },
+        '/song_': {
+          target: VOCALIDO_TARGET,
+          changeOrigin: true,
+          secure: false,
+          rewrite: (path) => `/studio/audio${path}`
+        },
+        '/gemini-api': {
+          target: 'https://generativelanguage.googleapis.com',
+          changeOrigin: true,
+          secure: true,
+          rewrite: (path) => path.replace(/^\/gemini-api/, ''),
+          timeout: 180000,
+        },
         '/api/runpod': {
           target: 'https://api.runpod.ai/v2',
           changeOrigin: true,

@@ -62,6 +62,41 @@ const StudioPage: React.FC<StudioPageProps> = ({
   const scoreContainerRef = useRef<HTMLDivElement>(null);
   const scoreRef = useRef<ProScoreEditorRef>(null);
 
+  // Harmony Generator state
+  const [showHarmonyModal, setShowHarmonyModal] = useState(false);
+  const [harmonyKey, setHarmonyKey] = useState('C');
+  const [harmonyChords, setHarmonyChords] = useState('I IV V I');
+  const [harmonyDurations, setHarmonyDurations] = useState('1 1 1 1');
+
+  const executeHarmony = async () => {
+    setIsPreparing(true);
+    setPrepLabel('GENERATING SATB HARMONY...');
+    try {
+      const res = await fetch('http://localhost:8000/v1/generate_harmony', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          key: harmonyKey,
+          chord_progression: harmonyChords,
+          durations: harmonyDurations,
+          time_signature: parsedData?.timeSignature ? `${parsedData.timeSignature.beats}/${parsedData.timeSignature.beatType}` : '4/4'
+        })
+      });
+      const data = await res.json();
+      if (data.musicxml) {
+        onXmlChange(data.musicxml);
+        setShowHarmonyModal(false);
+      } else {
+        alert('Error generating harmony: ' + data.error);
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Failed to connect to AI server. Make sure the backend is running.');
+    } finally {
+      setIsPreparing(false);
+    }
+  };
+
   // Derive ScoreEditOverlay tool from engraver selection
   const { tool: activeTool, duration: activeDuration } = mapEngraverTool(engraverTool);
 
@@ -269,6 +304,13 @@ const StudioPage: React.FC<StudioPageProps> = ({
           </button>
 
           <button
+            onClick={() => setShowHarmonyModal(true)}
+            className="px-4 h-8 bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 rounded-xl text-[8px] font-black uppercase hover:bg-indigo-500 hover:text-white transition-all flex items-center gap-1"
+          >
+            <Bot size={12} /> AI HARMONY
+          </button>
+
+          <button
             onClick={() => setShowExportModal(true)}
             className="px-5 h-8 bg-white text-black rounded-xl text-[9px] font-black uppercase shadow-lg active:scale-95 transition-all"
           >
@@ -319,6 +361,42 @@ const StudioPage: React.FC<StudioPageProps> = ({
         canUndo={historyIndex > 0}
         canRedo={historyIndex < xmlHistory.length - 1}
       />
+
+      {/* ══ AI AutoHarmony Modal ════════════════════════════════════════ */}
+      {showHarmonyModal && (
+        <div className="fixed inset-0 bg-black/95 backdrop-blur-2xl z-[6000] flex items-center justify-center p-6 animate-in fade-in zoom-in duration-200">
+          <div className="w-full max-w-md bg-[#0c0c0e] border border-white/10 rounded-[32px] p-8 relative">
+            <button onClick={() => setShowHarmonyModal(false)} className="absolute top-6 right-6 text-zinc-500 hover:text-white">
+              <X size={24} />
+            </button>
+            <h3 className="text-xl font-black text-white uppercase italic mb-6 flex gap-3 items-center">
+              <Bot className="text-indigo-400" /> AI AUTO-HARMONY (SATB)
+            </h3>
+            
+            <div className="flex flex-col gap-4">
+              <div>
+                <label className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mb-1 block">Key</label>
+                <input type="text" value={harmonyKey} onChange={e => setHarmonyKey(e.target.value)} placeholder="C, G, Dm..." className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white text-sm outline-none focus:border-indigo-500/50" />
+              </div>
+              <div>
+                <label className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mb-1 block">Chord Progression (Roman Numerals)</label>
+                <input type="text" value={harmonyChords} onChange={e => setHarmonyChords(e.target.value)} placeholder="I IV V I" className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white text-sm outline-none focus:border-indigo-500/50" />
+              </div>
+              <div>
+                <label className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mb-1 block">Durations (Beats)</label>
+                <input type="text" value={harmonyDurations} onChange={e => setHarmonyDurations(e.target.value)} placeholder="1 1 1 1" className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white text-sm outline-none focus:border-indigo-500/50" />
+              </div>
+              
+              <button
+                onClick={executeHarmony}
+                className="w-full h-12 mt-4 bg-indigo-500 hover:bg-indigo-400 text-white font-black uppercase tracking-widest text-[11px] rounded-2xl transition-all"
+              >
+                GENERATE SATB VOICES
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ══ Export Modal ════════════════════════════════════════════════ */}
       {showExportModal && (

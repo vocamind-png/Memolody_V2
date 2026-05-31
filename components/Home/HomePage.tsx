@@ -1,15 +1,15 @@
-import React, { useMemo, useState, useEffect, useCallback, useRef, memo } from 'react';
+import React, { useMemo, useState, useEffect, useCallback, useRef, memo, lazy, Suspense } from 'react';
 import { Sparkles, Mic, MessageSquare, Waves, ChevronRight, Music2, Play, Search, X, Database, SortAsc, RefreshCcw, Loader2, Plus, RotateCcw, Trash2, ChevronDown, Heart, FolderPlus, Folder, Star, Music, MoreVertical, Store, Video, Target, Camera, Upload, Crop } from 'lucide-react';
 import { Song, ViewId, SongFolder } from '../../types';
 import { parseMusicXMLMetadata } from '../../lib/MusicXmlParser';
 import { songStorage } from '../../lib/SongStorage';
 import ScoreSelectionModal from './ScoreSelectionModal';
-import * as Tone from 'tone';
+
 
 
 
 import AbstractCover from './AbstractCover';
-import CameraCapture from './CameraCapture';
+const CameraCapture = lazy(() => import('./CameraCapture'));
 
 // ── Processing Overlay (shown during OMR) ─────────────────────────────────
 const ProcessingOverlay: React.FC<{ message: string; error?: string | null; onDismiss?: () => void }> = ({ message, error, onDismiss }) => {
@@ -331,6 +331,7 @@ const HomePage: React.FC<HomePageProps> = ({
   useEffect(() => {
     const resumeAudio = async () => {
       try {
+        const Tone = await import('tone');
         await Tone.start();
         console.log('🔊 Audio context resumed');
       } catch (e) {
@@ -607,6 +608,7 @@ const HomePage: React.FC<HomePageProps> = ({
       
       // Play C Major Arpeggio Success Sound
       try {
+        const Tone = await import('tone');
         await Tone.start();
         const synth = new Tone.PolySynth(Tone.Synth, {
           oscillator: { type: 'triangle' },

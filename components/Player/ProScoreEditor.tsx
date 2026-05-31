@@ -312,18 +312,26 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
     if (songMetadata?.title && songMetadata.title !== 'NEURAL PROJECT' && songMetadata.title !== 'Untitled') {
       return songMetadata.title;
     }
-    const rawParsed = musicEngine.parseMusicXml(xmlData || '');
-    const title = rawParsed.metadata.title;
-    return (title === 'NEURAL PROJECT' || !title) ? "UNNAMED MASTERPIECE" : title;
+    try {
+      const rawParsed = musicEngine.parseMusicXml(xmlData || '');
+      const title = rawParsed?.metadata?.title;
+      return (title === 'NEURAL PROJECT' || !title) ? "UNNAMED MASTERPIECE" : title;
+    } catch (e) {
+      return "UNNAMED MASTERPIECE";
+    }
   }, [songMetadata?.title, xmlData]);
 
   const displayArtist = useMemo(() => {
     if (songMetadata?.artist && songMetadata.artist !== 'MAESTRO' && songMetadata.artist !== 'Unknown') {
       return songMetadata.artist;
     }
-    const rawParsed = musicEngine.parseMusicXml(xmlData || '');
-    const artist = rawParsed.metadata.artist;
-    return (artist === 'MAESTRO' || !artist) ? "UNKNOWN MAESTRO" : artist;
+    try {
+      const rawParsed = musicEngine.parseMusicXml(xmlData || '');
+      const artist = rawParsed?.metadata?.artist;
+      return (artist === 'MAESTRO' || !artist) ? "UNKNOWN MAESTRO" : artist;
+    } catch (e) {
+      return "UNKNOWN MAESTRO";
+    }
   }, [songMetadata?.artist, xmlData]);
 
   useEffect(() => {
@@ -1036,7 +1044,7 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
         spacingStaff: vrvSpacingStaff,
         justifyVertically: false,
         lyricTopMinMargin: 2.0,
-        lyricSize: 2.7,
+        lyricSize: 3.0,
         stemWidth: stemThickness,
         barLineWidth: barlineThickness,
         staffLineWidth: stafflineThickness,
@@ -1126,7 +1134,7 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
       const pages: string[] = [];
       for (let i = 1; i <= totalPages; i++) {
         let svg = vrvToolkit.renderToSVG(i, {});
-        if (!isEditable) svg = scaleHarmText(svg, 65);
+        if (!isEditable) svg = scaleHarmText(svg, 72);
         pages.push(svg);
         // Show first page immediately, then yield between subsequent pages
         if (i === 1 || i % 2 === 0) {
@@ -1511,12 +1519,19 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
   return (
     <div className="w-full h-full flex flex-col overflow-hidden relative no-print items-center bg-[#050507]">
       <style>{`
-        .lyric text { font-family: ${lyricFont}, sans-serif !important; }
+        .lyric text { 
+            font-family: ${lyricFont}, sans-serif !important; 
+            font-weight: 800 !important; 
+            fill: #000000 !important;
+            -webkit-font-smoothing: antialiased !important;
+            text-rendering: geometricPrecision !important;
+        }
         /* Stardust glow on active nodes via tracking */
         .verovio-neural-svg svg { 
             width: 100%; 
             height: auto; 
             display: block; 
+            shape-rendering: geometricPrecision;
             ${isMobile ? '' : 'filter: drop-shadow(0 4px 12px rgba(0,0,0,0.5));'} 
             transition: filter 0.3s; 
         }
@@ -1528,6 +1543,8 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
             font-weight: 900 !important;
             opacity: 1 !important;
             display: block !important;
+            -webkit-font-smoothing: antialiased !important;
+            text-rendering: geometricPrecision !important;
         }
         /* ── Indigo Bar Laser — subtle magnifying glass lens ── */
         .bar-laser {

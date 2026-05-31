@@ -95,9 +95,9 @@ def synthesize_lyrics_phrase(notes: list, params: dict = None) -> np.ndarray:
                 pass
         return val if val is not None else default
 
-    # Calculate total duration
+    # Calculate total duration directly from seconds
     max_time = max((get_val(n, 'startTime', 0) + get_val(n, 'duration', 0.5)) for n in notes)
-    total_samples = int((max_time * beat_sec + 1.0) * SR)
+    total_samples = int((max_time + 1.0) * SR)
     output = np.zeros(total_samples, dtype=np.float32)
     
     # Group consecutive notes with lyrics into phrases for more natural TTS
@@ -106,15 +106,13 @@ def synthesize_lyrics_phrase(notes: list, params: dict = None) -> np.ndarray:
     
     for note in notes:
         midi = get_val(note, 'midi') or get_val(note, 'pitch') or 60
-        dur_beats = get_val(note, 'duration', 0.5)
-        start_beats = get_val(note, 'startTime', 0)
+        dur_sec = float(get_val(note, 'duration', 0.5))
+        start_sec = float(get_val(note, 'startTime', 0))
         lyric = get_val(note, 'lyric', '').strip()
         
         if not lyric or lyric in ('-', '~', '_', 'rest', ''):
             continue
-        
-        dur_sec = dur_beats * beat_sec
-        start_sec = start_beats * beat_sec
+            
         target_samples = int(dur_sec * SR)
         target_hz = _midi_to_hz(midi)
         

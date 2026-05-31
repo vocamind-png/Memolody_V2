@@ -125,7 +125,7 @@ const getCustomBackendUrl = () => {
     /^172\.(1[6-9]|2[0-9]|3[01])\./.test(hostname);
     
   if (isLocalIp) {
-    return `http://${hostname}:5001`;
+    return hostname === 'localhost' ? `http://127.0.0.1:5001` : `http://${hostname}:5001`;
   }
 
   const url = localStorage.getItem('memolody_custom_backend_url');
@@ -447,11 +447,12 @@ class VocalidoRenderService {
             songKey, 
             activeLyricMode,
             n.duration / ((parsedData.timeSignature as any)?.beats || 4),
-            songFifths 
+            songFifths,
+            transposeSemitones
           );
           
           if (activeLyricMode === 'Lyric') {
-            lyric = (n as any).lyric || 'ah';
+            lyric = n.solfege || 'ah';
           } else if (activeLyricMode === 'Close') {
             lyric = 'm';
           } else {
@@ -531,7 +532,8 @@ class VocalidoRenderService {
                hLyric === tLyric &&
                hTimingFeel === svsTimingFeel &&
                hTracks === vocalTrackIdsStr &&
-               (hEng === tEng || hVoice === tEng || hEng === tVoice || hVoice === tVoice);
+               (hEng === tEng || hVoice === tEng || hEng === tVoice || hVoice === tVoice) &&
+               h.version === 3;
       });
 
       const cachedKey = cached ? `${cached.bpmPercent}_${cached.songKey}_${cached.engineId || 'default'}_${cached.lyricMode || ''}_${cached.voiceName || 'Auto'}_tf${cached.timingFeel ?? 50}_tr${(cached as any).vocalTracks || 'P1'}` : null;
@@ -547,19 +549,24 @@ class VocalidoRenderService {
             : (fixed.includes('?t=') ? fixed.replace(/\?t=\d+/, `?t=${Date.now()}`) : `${fixed}?t=${Date.now()}`);
         });
 
+        const cachedVocalTracks = cached.vocalTracks ? cached.vocalTracks.split(',') : [primaryTrackId];
         // Set track mode to vocal so Play button works correctly
-        const updatedTracks = tracks.map((t: any) => 
-          t.id === primaryTrackId ? { ...t, mode: 'vocal' } as TrackState : t
-        );
+        const updatedTracks = tracks.map((t: any) => {
+          if (cachedVocalTracks.includes(t.id)) return { ...t, mode: 'vocal' } as TrackState;
+          return t;
+        });
         localStorage.setItem(`tracks_state_${song.id}`, JSON.stringify(updatedTracks));
 
-        // Load layer
-        await musicEngine.addVocalLayer(primaryTrackId, cacheBusted, stemsWithBust, renderBpm);
-
+        // Load song FIRST so initSampler creates proper track channels
+        // Then add vocal layer AFTER so it doesn't get overwritten by initSampler
         const livePlaying = wasPlaying || musicEngine.transportState === 'started';
         const livePos = savedPos;
 
         await musicEngine.loadSong(parsedData.notes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn);
+        
+        // Load layer AFTER loadSong
+        await musicEngine.addVocalLayer(primaryTrackId, cacheBusted, stemsWithBust, renderBpm);
+
         musicEngine.setTransportSeconds(livePos);
         if (livePlaying) {
           await musicEngine.start();
@@ -648,13 +655,18 @@ class VocalidoRenderService {
         }
         
         // Remove empty tracks
-        const filledTracks = monoTracks.filter(mt => mt.length > 0);
+        let filledTracks = monoTracks.filter(mt => mt.length > 0);
         // Sort so highest-avg-pitch track is first (= Chord Top)
         filledTracks.sort((a, b) => {
           const avgA = a.reduce((sum, n) => sum + (n.midi || n.pitch || 60), 0) / a.length;
           const avgB = b.reduce((sum, n) => sum + (n.midi || n.pitch || 60), 0) / b.length;
           return avgB - avgA; // Highest pitch first
         });
+        
+        const collapseChords = localStorage.getItem('vocalido_collapse_chords') !== 'false'; // Default to TRUE (Top note only)
+        if (collapseChords && filledTracks.length > 0) {
+           filledTracks = [filledTracks[0]];
+        }
         
         const isPrimary = tid === primaryVocalTrackId;
         
@@ -696,12 +708,45 @@ class VocalidoRenderService {
       // ─── End polyphony detection ───
 
       let result: any = null;
-      const synthParams = { singer: activeVoiceName, bpm: actualBpm, transpose: transposeSemitones, voice: trackEngineId, return_stems: true, collapse_chords: collapseChords, steps: svsSteps, timing_feel: svsTimingFeel };
-      
+
+      let svsPortamento = 120;
+      let svsVibratoStart = 100;
+      let svsVibratoDepth = 0;
+      let svsVibratoSpeed = 4.8;
+      let timingFeel = svsTimingFeel || 50;
+
+      try {
+        const studioState = localStorage.getItem('vocalido_studio_state');
+        if (studioState) {
+          const parsed = JSON.parse(studioState);
+          if (parsed.params) {
+            if (parsed.params.portamento !== undefined) svsPortamento = parsed.params.portamento;
+            if (parsed.params.vibrato_depth !== undefined) svsVibratoDepth = parsed.params.vibrato_depth;
+            if (parsed.params.vibrato_rate !== undefined) svsVibratoSpeed = parsed.params.vibrato_rate;
+            if (parsed.params.timing_feel !== undefined) timingFeel = parsed.params.timing_feel;
+          }
+        }
+      } catch (e) {}
+
+      const synthParams = { 
+        singer: activeVoiceName, 
+        bpm: actualBpm, 
+        transpose: 0, // Notes are already transposed prior to this, avoid double transpose 
+        voice: trackEngineId, 
+        return_stems: true, 
+        collapse_chords: collapseChords, 
+        steps: svsSteps, 
+        timing_feel: timingFeel,
+        portamento: svsPortamento,
+        vibrato_start: svsVibratoStart,
+        vibrato_depth: svsVibratoDepth,
+        vibrato_speed: svsVibratoSpeed
+      };
       let usedRunPod = false;
       let useDirectBlobUrl = false;
       let mainAudioBlob: Blob | null = null;
       let stemBlobs: Blob[] = [];
+      let polyStemUrls: string[] = [];
 
       if (svsEngine === 'browser-ai') {
         if (!selectedVoice?.model_files) {
@@ -741,27 +786,191 @@ class VocalidoRenderService {
           this.notify();
         });
 
-        this.statusText = `Generating vocals... (${notesToSynthesize.length} notes)`;
-        this.notify();
+        if (isPolyphonic && voiceLines.length > 1) {
+          console.log(`[VocalidoRenderService] [Browser-AI] 🎹 Polyphony detected: rendering ${voiceLines.length} voice lines on-device...`);
+          const audioBlobs: Blob[] = [];
+          const renderedPan: number[] = [];
+          
+          for (let vIdx = 0; vIdx < voiceLines.length; vIdx++) {
+            const vl = voiceLines[vIdx];
+            this.statusText = `Generating ${vl.label}... (${vl.notes.length} notes)`;
+            this.notify();
+            
+            try {
+              const wavBlob = await clientSvsEngine.synthesize(vl.notes, {
+                bpm: actualBpm,
+                formant_shift: 0,
+                speed: 1.0,
+                breathiness: 0,
+                vocal_mode: 'root',
+                steps: svsSteps,
+                timing_feel: svsTimingFeel,
+                portamento: svsPortamento,
+                vibrato_start: svsVibratoStart,
+                vibrato_depth: svsVibratoDepth,
+                vibrato_speed: svsVibratoSpeed,
+              });
+              audioBlobs.push(wavBlob);
+              renderedPan.push(vl.pan);
+              console.log(`[VocalidoRenderService] [Browser-AI] ✅ Voice ${vIdx + 1} (${vl.label}) blob ready: ${(wavBlob.size / 1024).toFixed(0)} KB`);
+            } catch (voiceErr) {
+              console.warn(`[VocalidoRenderService] [Browser-AI] ❌ Voice ${vIdx + 1} (${vl.label}) failed:`, voiceErr);
+            }
+          }
 
-        const wavBlob = await clientSvsEngine.synthesize(notesToSynthesize, {
-          bpm: actualBpm,
-          formant_shift: 0,
-          speed: 1.0,
-          breathiness: 0,
-          vocal_mode: 'root',
-          steps: svsSteps,
-          timing_feel: svsTimingFeel,
-        });
+          if (audioBlobs.length === 0) {
+            throw new Error('All voice lines failed to render');
+          }
 
-        const localBlobUrl = URL.createObjectURL(wavBlob);
-        result = {
-          audio_url: localBlobUrl,
-          engine: 'browser_ai_webgpu',
-          stems_b64: []
-        };
-        useDirectBlobUrl = true;
-        mainAudioBlob = wavBlob;
+          // Mix all voice audio blobs together using AudioContext
+          this.statusText = `Mixing ${audioBlobs.length} voice lines (Stereo)...`;
+          this.notify();
+
+          const decodeCtx = new AudioContext();
+          const decodedBuffers: AudioBuffer[] = [];
+          const decodedPans: number[] = [];
+          for (let bIdx = 0; bIdx < audioBlobs.length; bIdx++) {
+            const blob = audioBlobs[bIdx];
+            try {
+              const arrayBuffer = await blob.arrayBuffer();
+              const decoded = await decodeCtx.decodeAudioData(arrayBuffer);
+              decodedBuffers.push(decoded);
+              decodedPans.push(renderedPan[bIdx]);
+            } catch (decErr) {
+              console.warn(`[VocalidoRenderService] [Browser-AI] ❌ Failed to decode voice ${bIdx + 1} audio:`, decErr);
+            }
+          }
+          decodeCtx.close().catch(() => {});
+
+          if (decodedBuffers.length === 0) {
+            throw new Error('Failed to decode any voice audio');
+          }
+
+          // Mix: Stereo mix based on pan values
+          const sampleRate = decodedBuffers[0].sampleRate;
+          let maxLen = 0;
+          for (const buf of decodedBuffers) {
+            if (buf.length > maxLen) maxLen = buf.length;
+          }
+
+          const mixedL = new Float32Array(maxLen);
+          const mixedR = new Float32Array(maxLen);
+
+          for (let vIdx = 0; vIdx < decodedBuffers.length; vIdx++) {
+            const buf = decodedBuffers[vIdx];
+            const pan = decodedPans[vIdx] ?? 0;
+
+            const angle = ((pan + 1) / 2) * (Math.PI / 2);
+            const gainL = Math.cos(angle);
+            const gainR = Math.sin(angle);
+
+            if (buf.numberOfChannels === 1) {
+              const ch = buf.getChannelData(0);
+              for (let i = 0; i < ch.length; i++) {
+                mixedL[i] += ch[i] * gainL;
+                mixedR[i] += ch[i] * gainR;
+              }
+            } else if (buf.numberOfChannels >= 2) {
+              const chL = buf.getChannelData(0);
+              const chR = buf.getChannelData(1);
+              for (let i = 0; i < chL.length; i++) {
+                mixedL[i] += chL[i] * gainL;
+                mixedR[i] += chR[i] * gainR;
+              }
+            }
+          }
+
+          // Normalize Stereo Mix
+          let peak = 0;
+          for (let i = 0; i < maxLen; i++) {
+            const absL = Math.abs(mixedL[i]);
+            const absR = Math.abs(mixedR[i]);
+            if (absL > peak) peak = absL;
+            if (absR > peak) peak = absR;
+          }
+          if (peak > 0.001) {
+            for (let i = 0; i < maxLen; i++) {
+              mixedL[i] = (mixedL[i] / peak) * 0.92;
+              mixedR[i] = (mixedR[i] / peak) * 0.92;
+            }
+          }
+
+          // Encode to Stereo WAV blob
+          const wavHeader = new ArrayBuffer(44);
+          const view = new DataView(wavHeader);
+          const numSamples = maxLen;
+          const numChannels = 2;
+          const byteRate = sampleRate * numChannels * 2;
+          view.setUint32(0, 0x52494646, false); // "RIFF"
+          view.setUint32(4, 36 + numSamples * numChannels * 2, true);
+          view.setUint32(8, 0x57415645, false); // "WAVE"
+          view.setUint32(12, 0x666d7420, false); // "fmt "
+          view.setUint32(16, 16, true);
+          view.setUint16(20, 1, true); // PCM
+          view.setUint16(22, numChannels, true); // stereo
+          view.setUint32(24, sampleRate, true);
+          view.setUint32(28, byteRate, true);
+          view.setUint16(32, numChannels * 2, true);
+          view.setUint16(34, 16, true);
+          view.setUint32(36, 0x64617461, false); // "data"
+          view.setUint32(40, numSamples * numChannels * 2, true);
+
+          const pcm = new Int16Array(numSamples * numChannels);
+          for (let i = 0; i < numSamples; i++) {
+            let sL = Math.max(-1, Math.min(1, mixedL[i]));
+            let sR = Math.max(-1, Math.min(1, mixedR[i]));
+            pcm[i * 2] = sL < 0 ? sL * 0x8000 : sL * 0x7FFF;
+            pcm[i * 2 + 1] = sR < 0 ? sR * 0x8000 : sR * 0x7FFF;
+          }
+
+          const mixedBlob = new Blob([wavHeader, pcm.buffer], { type: 'audio/wav' });
+          const mixedUrl = URL.createObjectURL(mixedBlob);
+
+          const voiceStemUrls: string[] = [];
+          for (const blob of audioBlobs) {
+            voiceStemUrls.push(URL.createObjectURL(blob));
+            stemBlobs.push(blob);
+          }
+
+          polyStemUrls = voiceStemUrls;
+          result = {
+            audio_url: mixedUrl,
+            audio_b64: null,
+            saved_url: null,
+            engine: 'browser_ai_polyphony',
+            stems_b64: [],
+            mime_type: 'audio/wav'
+          };
+          useDirectBlobUrl = true;
+          mainAudioBlob = mixedBlob;
+
+        } else {
+          this.statusText = `Generating vocals... (${notesToSynthesize.length} notes)`;
+          this.notify();
+
+          const wavBlob = await clientSvsEngine.synthesize(notesToSynthesize, {
+            bpm: actualBpm,
+            formant_shift: 0,
+            speed: 1.0,
+            breathiness: 0,
+            vocal_mode: 'root',
+            steps: svsSteps,
+            timing_feel: svsTimingFeel,
+            portamento: svsPortamento,
+            vibrato_start: svsVibratoStart,
+            vibrato_depth: svsVibratoDepth,
+            vibrato_speed: svsVibratoSpeed,
+          });
+
+          const localBlobUrl = URL.createObjectURL(wavBlob);
+          result = {
+            audio_url: localBlobUrl,
+            engine: 'browser_ai_webgpu',
+            stems_b64: []
+          };
+          useDirectBlobUrl = true;
+          mainAudioBlob = wavBlob;
+        }
       } else {
         // server-side vocalido SVS engine
         if (isPolyphonic && voiceLines.length > 1) {
@@ -962,6 +1171,18 @@ class VocalidoRenderService {
           const mixedBlob = new Blob([wavHeader, pcm.buffer], { type: 'audio/wav' });
           const mixedUrl = URL.createObjectURL(mixedBlob);
           
+          console.log(`[VocalidoRenderService] 🎹 Polyphony mix complete: ${decodedBuffers.length} voices, ${(mixedBlob.size / 1024).toFixed(0)} KB (STEREO)`);
+          
+          // Create individual voice stem URLs for Solo/Mute functionality
+          const voiceStemUrls: string[] = [];
+          for (const blob of audioBlobs) {
+            voiceStemUrls.push(URL.createObjectURL(blob));
+            stemBlobs.push(blob);
+          }
+          console.log(`[VocalidoRenderService] 🎵 Created ${voiceStemUrls.length} stem URLs for Solo/Mute: ${voiceLines.map(vl => vl.label).join(', ')}`);
+          
+          // Store at outer scope so they're available when processing the result
+          polyStemUrls = voiceStemUrls;
           result = {
             audio_url: mixedUrl,
             audio_b64: null,
@@ -972,8 +1193,6 @@ class VocalidoRenderService {
           };
           useDirectBlobUrl = true;
           mainAudioBlob = mixedBlob;
-          
-          console.log(`[VocalidoRenderService] 🎹 Polyphony mix complete: ${decodedBuffers.length} voices, ${(mixedBlob.size / 1024).toFixed(0)} KB (STEREO)`);
         } else {
           // Single voice (no polyphony) — standard server request
           this.statusText = 'Sending synthesis request to server...';
@@ -1139,6 +1358,11 @@ class VocalidoRenderService {
             return URL.createObjectURL(blob);
           });
         }
+        // Use polyphonic voice stems if available (from multi-pass rendering)
+        if (polyStemUrls.length > 0 && stemUrls.length === 0) {
+          stemUrls = polyStemUrls;
+          console.log(`[VocalidoRenderService] 🎵 Using ${polyStemUrls.length} polyphonic voice stems for Solo/Mute`);
+        }
         
         const finalUrl = useDirectBlobUrl ? url : fixAudioUrl(result.saved_url || url);
         const finalStemUrls = useDirectBlobUrl ? stemUrls : (result.saved_stem_urls || stemUrls || []).map((sUrl: string) => fixAudioUrl(sUrl));
@@ -1161,7 +1385,7 @@ class VocalidoRenderService {
         const storedEngineId = collapseChords ? (trackEngineId || 'default') : `${trackEngineId || 'default'}poly`;
         const shortVoice = voiceNameForHist !== 'Auto' ? ` · ${voiceNameForHist.split(/[\s_]/)[0]}${collapseChords ? '' : ' (poly)'}` : '';
         const newLabel = result.label || `${songKey} ${bpmPct}%${shortVoice}`;
-        const newEntryKey = `${bpmPct}_${songKey}_${storedEngineId}_${activeLyricMode}_${storedVoiceName}_tf${svsTimingFeel}`;
+        const newEntryKey = `${bpmPct}_${songKey}_${storedEngineId}_${activeLyricMode}_${storedVoiceName}_tf${svsTimingFeel}_v2`;
         
         saveRenderToLocalCache(
           song.id,
@@ -1193,7 +1417,8 @@ class VocalidoRenderService {
         const newHistory = [{
           bpmPercent: bpmPct,
           songKey: songKey,
-          audioUrl: useDirectBlobUrl ? cacheBustedUrl : finalUrl,
+          transpose: transpose,
+          audioUrl: cacheBustedUrl,
           label: newLabel,
           filename: filenameFromUrl,
           lyricMode: activeLyricMode,
@@ -1203,7 +1428,8 @@ class VocalidoRenderService {
           renderedAt: new Date().toISOString(),
           isActiveBlob: useDirectBlobUrl,
           timingFeel: svsTimingFeel,
-          vocalTracks: vocalTrackIdsStr
+          vocalTracks: vocalTrackIdsStr,
+          version: 3
         }, ...filtered].slice(0, 12);
 
         localStorage.setItem(`memo_render_history_${song.id}`, JSON.stringify(newHistory));
@@ -1211,32 +1437,39 @@ class VocalidoRenderService {
         this.activeRenderKey = newEntryKey;
 
         const updatedTracks = tracks.map((t: any) => {
-          if (t.id === primaryTrackId) return { ...t, mode: 'vocal' } as TrackState;
-          // Reset non-primary tracks to instrument to prevent MusicEngine from trying to manage empty audio elements
-          if (vocalTrackIds.includes(t.id)) return { ...t, mode: 'instrument' } as TrackState;
+          // Set ALL rendered tracks to vocal mode so their piano synth is muted and UI updates
+          if (vocalTrackIds.includes(t.id)) return { ...t, mode: 'vocal' } as TrackState;
           return t;
         });
         localStorage.setItem(`tracks_state_${song.id}`, JSON.stringify(updatedTracks));
 
         try {
-          await musicEngine.addVocalLayer(primaryTrackId, cacheBustedUrl, stemsWithBust, actualBpm);
-          
-          if (useDirectBlobUrl && cacheBustedUrl.startsWith('blob:')) {
-            musicEngine.unlockVocalAudio(primaryTrackId);
-            const audioEl = musicEngine.vocalAudioElements.get(primaryTrackId);
-            if (audioEl) {
-              audioEl.src = cacheBustedUrl;
-              audioEl.load();
+          const activeSongId = localStorage.getItem('memo_selected_song_id');
+          if (activeSongId === song.id || !activeSongId) {
+            const livePlaying = wasPlaying || musicEngine.transportState === 'started';
+            const livePos = savedPos;
+
+            // loadSong FIRST — creates Part/Sampler channels
+            await musicEngine.loadSong(parsedData.notes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn);
+            
+            // addVocalLayer AFTER — so initSampler doesn't overwrite the vocal layer
+            await musicEngine.addVocalLayer(primaryTrackId, cacheBustedUrl, stemsWithBust, actualBpm);
+            
+            if (useDirectBlobUrl && cacheBustedUrl.startsWith('blob:')) {
+              musicEngine.unlockVocalAudio(primaryTrackId);
+              const audioEl = musicEngine.vocalAudioElements.get(primaryTrackId);
+              if (audioEl) {
+                audioEl.src = cacheBustedUrl;
+                audioEl.load();
+              }
             }
-          }
 
-          const livePlaying = wasPlaying || musicEngine.transportState === 'started';
-          const livePos = savedPos;
-
-          await musicEngine.loadSong(parsedData.notes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn);
-          musicEngine.setTransportSeconds(livePos);
-          if (livePlaying) {
-            await musicEngine.start();
+            musicEngine.setTransportSeconds(livePos);
+            if (livePlaying) {
+              await musicEngine.start();
+            }
+          } else {
+            console.log(`[VocalidoRenderService] 🎵 Render for ${song.id} finished, but user is currently on ${activeSongId}. Skipping musicEngine load.`);
           }
         } catch (loadErr) {
           console.error('[VocalidoRenderService] Error loading rendered audio into musicEngine:', loadErr);

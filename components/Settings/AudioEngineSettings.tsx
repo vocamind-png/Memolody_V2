@@ -93,42 +93,42 @@ const AudioEngineSettings: React.FC = () => {
   };
 
   return (
-    <div className="mt-8 p-4 bg-zinc-900/50 rounded-xl border border-zinc-700">
-      <h3 className="text-sm font-semibold uppercase tracking-wider text-zinc-400 mb-3">
-        Audio AI Engine
-      </h3>
-      <div className="grid grid-cols-1 gap-4">
-        <label className="block">
-          <span className="text-xs font-medium text-zinc-300">Select Engine</span>
-          <select
-            value={selectedModel}
-            onChange={handleChange}
-            className="mt-1 block w-full bg-zinc-800 border border-zinc-600 rounded-md text-zinc-200 focus:outline-none focus:ring-2 focus:ring-cyan-500"
-          >
-            {MODELS.map(m => (
-              <option key={m.value} value={m.value}>
-                {m.label} {deviceRam && deviceRam < m.minRam ? '(⚠️ may be slow)' : ''}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="flex items-center space-x-2">
+    <div className="flex flex-col gap-2 bg-white/5 border border-white/10 rounded-2xl p-4">
+      <span className="text-[9px] font-black text-zinc-300 uppercase tracking-widest flex items-center gap-1.5">
+        Audio AI Engine Model
+      </span>
+      <span className="text-[8px] text-zinc-500">
+        เลือกโมเดล AI สำหรับประมวลผลเสียง (Heavy = คุณภาพสูง, Light = เร็ว/ประหยัด RAM)
+      </span>
+      <div className="flex flex-col gap-2 mt-1">
+        <select
+          value={selectedModel}
+          onChange={handleChange}
+          className="w-full bg-[#0c0c0e] border border-white/10 focus:border-cyan-500 rounded-xl px-3 py-2 text-[10px] text-white focus:outline-none transition-all"
+        >
+          {MODELS.map(m => (
+            <option key={m.value} value={m.value}>
+              {m.label} {deviceRam && deviceRam < m.minRam ? '(⚠️ may be slow)' : ''}
+            </option>
+          ))}
+        </select>
+        <div className="flex items-center space-x-2 mt-1">
           <input
             id="auto-update"
             type="checkbox"
             checked={autoUpdate}
             onChange={toggleAutoUpdate}
-            className="w-4 h-4 text-cyan-600 bg-zinc-700 border-zinc-600 rounded focus:ring-cyan-500"
+            className="w-3 h-3 text-cyan-600 bg-black border-white/20 rounded focus:ring-cyan-500"
           />
-          <label htmlFor="auto-update" className="text-xs text-zinc-300">
-            Auto‑update AI model when a newer version is available
+          <label htmlFor="auto-update" className="text-[8px] text-zinc-400">
+            Auto-update AI model when a newer version is available
           </label>
         </div>
       </div>
 
       {showModal && (
         <Modal title="AI Engine Notice" onClose={() => setShowModal(false)}>
-          <pre className="whitespace-pre-wrap text-sm text-zinc-200">{modalMessage}</pre>
+          <pre className="whitespace-pre-wrap text-sm text-zinc-200 font-mono">{modalMessage}</pre>
         </Modal>
       )}
     </div>

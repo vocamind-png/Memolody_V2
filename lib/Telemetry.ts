@@ -1,6 +1,5 @@
 // lib/Telemetry.ts
 import { db, isFirebaseConfigured, auth } from './firebase';
-import { collection, addDoc, getDocs, query, orderBy, limit } from 'firebase/firestore';
 
 export type TelemetryEventType = 'app_open' | 'song_play' | 'vocalido_render' | 'session_end';
 
@@ -42,7 +41,8 @@ class TelemetryService {
 
     if (isFirebaseConfigured && db) {
       try {
-        await addDoc(collection(db, 'telemetry_events'), event);
+        const { collection, addDoc } = await import('firebase/firestore');
+        await addDoc(collection(db as any, 'telemetry_events'), event);
       } catch (e) {
         console.warn('Telemetry save failed (Firestore)', e);
       }
@@ -54,7 +54,8 @@ class TelemetryService {
     if (!isFirebaseConfigured || !db) return this.events;
     
     try {
-      const q = query(collection(db, 'telemetry_events'), orderBy('created_at', 'desc'), limit(1000));
+      const { collection, getDocs, query, orderBy, limit } = await import('firebase/firestore');
+      const q = query(collection(db as any, 'telemetry_events'), orderBy('created_at', 'desc'), limit(1000));
       const querySnapshot = await getDocs(q);
       const cloudEvents: TelemetryEvent[] = [];
       querySnapshot.forEach((doc) => {

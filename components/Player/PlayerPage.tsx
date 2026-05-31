@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspense } from 'react';
 import * as Tone from 'tone';
 import {
   Play, Pause, SlidersHorizontal,
@@ -14,11 +14,13 @@ import { KeyTransposeDisplay, BpmDisplay, BarBeatPositionDisplay } from './LCDDi
 import MixerPanel from './MixerPanel';
 import PerformanceScore from './PerformanceScore';
 import TrackView from './TrackView';
-import LoopMatrixModal, { LoopPreset } from './LoopMatrixModal';
+import type { LoopPreset } from './LoopMatrixModal';
+const LoopMatrixModal = lazy(() => import('./LoopMatrixModal'));
 import PluginBrowserModal from './PluginBrowserModal';
 import FXPluginModal from './FXPluginModal';
-import MemoPractice from './MemoPractice';
-import ChordPage from '../Chord/ChordPage';
+const MemoPractice = lazy(() => import('./MemoPractice'));
+const ChordPage = lazy(() => import('../Chord/ChordPage'));
+const AudioEngineSettings = lazy(() => import('../Settings/AudioEngineSettings'));
 import { musicEngine } from '../../lib/MusicEngine';
 import { getChromaticSolfege } from '../../lib/SolfegeLogic';
 import { Song, TrackState, EffectInstance, LyricMode, SongFolder } from '../../types';
@@ -379,6 +381,72 @@ const PlayerPage: React.FC<{
     } catch (e) {}
   };
 
+  const [svsPortamento, setSvsPortamento] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('vocalido_portamento');
+      if (saved) {
+        const val = parseInt(saved, 10);
+        if (!isNaN(val) && val >= 0 && val <= 300) return val;
+      }
+    } catch (e) {}
+    return 120; // Default 120ms
+  });
+
+  const handleSvsPortamentoChange = (val: number) => {
+    setSvsPortamento(val);
+    try { localStorage.setItem('vocalido_portamento', val.toString()); } catch (e) {}
+  };
+
+  const [zoomLevel, setZoomLevel] = useState(1.0);
+
+  const [svsVibratoStart, setSvsVibratoStart] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('vocalido_vibrato_start');
+      if (saved) {
+        const val = parseInt(saved, 10);
+        if (!isNaN(val) && val >= 0 && val <= 1000) return val;
+      }
+    } catch (e) {}
+    return 100; // Default 100ms delay
+  });
+
+  const handleSvsVibratoStartChange = (val: number) => {
+    setSvsVibratoStart(val);
+    try { localStorage.setItem('vocalido_vibrato_start', val.toString()); } catch (e) {}
+  };
+
+  const [svsVibratoDepth, setSvsVibratoDepth] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('vocalido_vibrato_depth');
+      if (saved) {
+        const val = parseInt(saved, 10);
+        if (!isNaN(val) && val >= 0 && val <= 100) return val;
+      }
+    } catch (e) {}
+    return 0; // Default 0 (Off)
+  });
+
+  const handleSvsVibratoDepthChange = (val: number) => {
+    setSvsVibratoDepth(val);
+    try { localStorage.setItem('vocalido_vibrato_depth', val.toString()); } catch (e) {}
+  };
+
+  const [svsVibratoSpeed, setSvsVibratoSpeed] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('vocalido_vibrato_speed');
+      if (saved) {
+        const val = parseFloat(saved);
+        if (!isNaN(val) && val >= 1.0 && val <= 8.0) return val;
+      }
+    } catch (e) {}
+    return 4.8; // Default 4.8 Hz
+  });
+
+  const handleSvsVibratoSpeedChange = (val: number) => {
+    setSvsVibratoSpeed(val);
+    try { localStorage.setItem('vocalido_vibrato_speed', val.toString()); } catch (e) {}
+  };
+
   // Keep the user's preferred SVS engine (migrates legacy states).
   useEffect(() => {
     try {
@@ -394,6 +462,7 @@ const PlayerPage: React.FC<{
   const [currentTime, setCurrentTime] = useState(0);
   const [currentBpm, setCurrentBpm] = useState(song?.bpm || 120);
   const [transpose, setTranspose] = useState(0);
+  const [renderedTranspose, setRenderedTranspose] = useState(0);
   const [showMixer, setShowMixer] = useState(false);
   const [showVolumeSlider, setShowVolumeSlider] = useState(false);
   const [showLoopMatrix, setShowLoopMatrix] = useState(false);
@@ -450,6 +519,7 @@ const PlayerPage: React.FC<{
       if (activeKey && !renderError) {
         try {
           setActiveRenderKey(activeKey);
+          setRenderedTranspose(transpose);
           
           const localHist = localStorage.getItem(`memo_render_history_${song?.id}`);
           if (localHist) {
@@ -671,7 +741,7 @@ const PlayerPage: React.FC<{
       try {
         setIsModelLoading(true);
         setHideLoadBanner(false); // Reset dismissal on model change
-        setModelLoadStatus('⚡ Checking local cache...');
+        setModelLoadStatus('⚡ Loading AI Engine...');
         setModelLoadProgress(0);
 
         const modelFiles = {
@@ -788,9 +858,13 @@ const PlayerPage: React.FC<{
   const [cacheClearedText, setCacheClearedText] = useState(false);
   const [showStemControls, setShowStemControls] = useState<boolean>(() => {
     try {
-      return localStorage.getItem('memo_show_stem_controls') === 'true';
+      const stored = localStorage.getItem('memo_show_stem_controls');
+      if (stored === 'false') {
+        localStorage.setItem('memo_show_stem_controls', 'true');
+      }
+      return true;
     } catch (e) {
-      return false;
+      return true;
     }
   });
   useEffect(() => {
@@ -1166,13 +1240,9 @@ const PlayerPage: React.FC<{
 
   // Save activeRenderKey to localStorage on change
   useEffect(() => {
-    if (song?.id) {
+    if (song?.id && activeRenderKey) {
       try {
-        if (activeRenderKey) {
-          localStorage.setItem(`active_render_key_${song.id}`, activeRenderKey);
-        } else {
-          localStorage.removeItem(`active_render_key_${song.id}`);
-        }
+        localStorage.setItem(`active_render_key_${song.id}`, activeRenderKey);
       } catch (e) {}
     }
   }, [activeRenderKey, song?.id]);
@@ -1373,6 +1443,10 @@ const PlayerPage: React.FC<{
 
       const origBpm = (parsedData?.metadata as any)?.bpm || song?.bpm || 120;
       const renderBpm = Math.round(((origBpm * cached.bpmPercent) / 100) * 10) / 10;
+      
+      const origKey = parsedData?.metadata?.key || song?.key || 'C';
+      const targetKey = cached.songKey || origKey;
+      const tVal = getTransposeDiff(origKey, targetKey);
 
       // Check if vocal layer is already loaded in musicEngine
       const hasVocalLoaded = musicEngine.hasVocalLayer(primaryTrackId);
@@ -1380,12 +1454,15 @@ const PlayerPage: React.FC<{
       if (hasVocalLoaded && musicEngine.isSongLoaded) {
         console.log('[PlayerPage] Vocal layer already loaded in MusicEngine. Skipping reload.');
         setActiveRenderKey(savedKey);
+        setTranspose(tVal);
+        setRenderedTranspose(tVal);
         if (cached.engineId) setActiveEngineId(cached.engineId);
         if (cached.voiceName && cached.voiceName !== 'Auto') {
           setStoredSinger(cached.voiceName);
         }
+        const vocalTracksArr = cached.vocalTracks ? cached.vocalTracks.split(',') : [primaryTrackId];
         const updatedTracks = tracks.map((t: any) => 
-          t.id === primaryTrackId ? { ...t, mode: 'vocal' } as TrackState : t
+          vocalTracksArr.includes(t.id) ? { ...t, mode: 'vocal' } as TrackState : t
         );
         setTracks(updatedTracks);
         return;
@@ -1398,6 +1475,8 @@ const PlayerPage: React.FC<{
           setAvailableStems(prev => ({ ...prev, [primaryTrackId]: musicEngine.getAvailableStems(primaryTrackId) }));
           setSoloedStems(prev => ({ ...prev, [primaryTrackId]: null }));
           setActiveRenderKey(savedKey);
+          setTranspose(tVal);
+          setRenderedTranspose(tVal);
           
           if (cached.engineId) setActiveEngineId(cached.engineId);
           if (cached.voiceName && cached.voiceName !== 'Auto') {
@@ -1405,12 +1484,13 @@ const PlayerPage: React.FC<{
           }
           
           // Re-load the song with vocal tracks enabled
+          const vocalTracksArr = cached.vocalTracks ? cached.vocalTracks.split(',') : [primaryTrackId];
           const updatedTracks = tracks.map((t: any) => 
-            t.id === primaryTrackId ? { ...t, mode: 'vocal' } as TrackState : t
+            vocalTracksArr.includes(t.id) ? { ...t, mode: 'vocal' } as TrackState : t
           );
           setTracks(updatedTracks);
           
-          return musicEngine.loadSong(parsedData.notes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn);
+          return musicEngine.loadSong(parsedData.notes, updatedTracks, tVal, parsedData.timeSignature, isMetronomeOn);
         })
         .catch(err => console.warn('[PlayerPage] Auto-restore render failed:', err))
         .finally(() => setIsAudioLoading(false));
@@ -1431,6 +1511,8 @@ const PlayerPage: React.FC<{
     if (!parsedData.notes.length) return;
     if (tracks.length === 0) return; // Wait for tracks to populate
     
+    // NOTE: We REMOVED 'transpose' from currentKey and dependencies here.
+    // Changing transpose will instantly pitch-shift via SoundTouchJS instead of forcing a re-render.
     const currentKey = `${song.id}_${activeLyricMode}_${activeEngineId}_${activeVoiceName}`;
     if (currentKey === lastRenderedKeyRef.current) return;
     
@@ -1439,7 +1521,7 @@ const PlayerPage: React.FC<{
     
     // Use a microtask to avoid stale closure issues
     autoRenderRef.current = true;
-  }, [vocalidoAutoRender, iframeLoaded, song?.id, musicXml, activeLyricMode, activeVoiceName, activeEngineId, parsedData.notes.length, tracks.length, tracksRep]);
+  }, [vocalidoAutoRender, iframeLoaded, song?.id, musicXml, activeLyricMode, activeVoiceName, activeEngineId, currentBpm, parsedData.notes.length, tracks.length, tracksRep]);
   
   // Separate effect to actually call the function (avoids stale closure)
   useEffect(() => {
@@ -1749,12 +1831,12 @@ const PlayerPage: React.FC<{
       // 2. Send the full note data for the "Sing from Score" feature
       const stepMap: Record<string, number> = { 'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11 };
       const notesForStudio = parsedData.notes.map(n => ({
-        pitch: (n.octave + 1) * 12 + (stepMap[n.step.toUpperCase()] || 0) + (n.alter || 0),
+        pitch: Math.max(24, Math.min(108, (n.octave + 1) * 12 + (stepMap[(n.step || 'C').toUpperCase()] || 0) + (n.alter || 0) + transpose)),
         duration: n.duration,
         startTime: n.startTime,
         lyric: n.solfege || 'La'
       }));
-      const notesMessage = { type: 'UPDATE_NOTES', notes: notesForStudio };
+      const notesMessage = { type: 'UPDATE_NOTES', notes: notesForStudio, bpm: currentBpm };
 
       // 3. Send the active voice engine ID
       const primaryTrackId = tracks.find(t => t.mode === 'vocal')?.id || tracks[0]?.id || 'P1';
@@ -1829,6 +1911,15 @@ const PlayerPage: React.FC<{
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transpose]);
 
+  // Sync vocal pitch shifter diff
+  useEffect(() => {
+    tracks.forEach(t => {
+      if (t.mode === 'vocal') {
+        musicEngine.setVocalTranspose(t.id, transpose - renderedTranspose);
+      }
+    });
+  }, [transpose, renderedTranspose, tracks]);
+
   const musicalTimeRef = useRef(0);
 
   const lastRenderTime = useRef(0);
@@ -1852,14 +1943,41 @@ const PlayerPage: React.FC<{
   // ── Keyboard Shortcuts ──
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.altKey && e.key.toLowerCase() === 'r') {
+      // Ignore if user is typing in an input field
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      if (e.code === 'Space') {
+        e.preventDefault();
+        handleTogglePlay();
+      } else if (e.code === 'Enter' || e.code === 'Return') {
+        e.preventDefault();
+        musicEngine.pause();
+        setIsPlaying(false);
+        musicEngine.setTransportSeconds(0);
+        setCurrentTime(0);
+      } else if (e.metaKey || e.ctrlKey) {
+        if (e.code === 'ArrowUp' || e.code === 'ArrowRight') {
+          e.preventDefault();
+          setZoomLevel(prev => Math.min(prev * 1.2, 5.0)); // Zoom In
+        } else if (e.code === 'ArrowDown' || e.code === 'ArrowLeft') {
+          e.preventDefault();
+          setZoomLevel(prev => Math.max(prev / 1.2, 0.2)); // Zoom Out
+        } else if (e.code === 'KeyS') {
+          e.preventDefault();
+          console.log("Save Project shortcut pressed");
+        } else if (e.code === 'KeyZ') {
+          e.preventDefault();
+          if (e.shiftKey) console.log("Redo shortcut pressed");
+          else console.log("Undo shortcut pressed");
+        }
+      } else if (e.altKey && e.code === 'KeyR') {
         e.preventDefault();
         triggerVocalSynthesis(true);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  });
+  }, [isPlaying, currentBpm, tracks, song]); // Added dependencies to capture latest state for handlePlayPause
 
   const cancelVocalSynthesis = () => {
     vocalidoRenderService.cancelRender();
@@ -1884,7 +2002,7 @@ const PlayerPage: React.FC<{
     }
   };
 
-  const triggerVocalSynthesis = async (forceRender: boolean = false, selectedTrackIds?: string[]) => {
+  const triggerVocalSynthesis = async (forceRender: boolean = false, selectedTrackIds?: string[], overrideLyricMode?: string) => {
     console.log('[PlayerPage] 🎤 triggerVocalSynthesis called:', { 
       isRenderingVocal, isModelLoading, hasMusicXml: !!musicXml, 
       noteCount: parsedData.notes.length, trackCount: tracks.length,
@@ -1954,7 +2072,7 @@ const PlayerPage: React.FC<{
         parsedData,
         tracks: capturedRenderTracks,
         transpose,
-        activeLyricMode,
+        activeLyricMode: overrideLyricMode || activeLyricMode,
         activeVoiceName,
         trackEngineId: capturedTrackEngineId,
         activeEngineId,
@@ -2063,7 +2181,7 @@ const PlayerPage: React.FC<{
             <div className="absolute left-0 mt-2 bg-[#0c0c0e]/95 backdrop-blur-3xl border border-white/10 p-4 rounded-3xl shadow-[0_20px_60px_rgba(0,0,0,0.9)] flex flex-col gap-3 w-[260px] max-h-[75vh] sm:max-h-[85vh] overflow-y-auto custom-scrollbar animate-in fade-in slide-in-from-top-4 origin-top-left z-[5000]">
               <div className="flex flex-col gap-1.5">
                 <span className="text-[8px] font-black text-white/40 uppercase tracking-widest pl-2 mb-1 flex items-center gap-1.5"><Library size={9} /> Visual Modes</span>
-                {(['score', 'pianoroll', 'trackview', 'memochord', 'practice'] as PlayerCardType[]).map(card => {
+                {(['score', 'pianoroll', 'trackview', 'memochord', 'practice', 'vocalido'] as PlayerCardType[]).map(card => {
                   const labels: Record<PlayerCardType, string> = {
                     'score': 'Score Sheet', 'pianoroll': 'Piano Roll', 'trackview': 'Trackview',
                     'memochord': 'Chord Ring', 'practice': 'Memo Practice', 'vocalido': 'Voice Studio'
@@ -2106,7 +2224,7 @@ const PlayerPage: React.FC<{
                               try { localStorage.setItem('memo_lyric_mode', mode); } catch {}
                               setIsNavMenuVisible(false);
                               lastRenderedKeyRef.current = '';
-                              setTimeout(() => triggerVocalSynthesis(), 150);
+                              setTimeout(() => triggerVocalSynthesis(true, undefined, mode), 150);
                             }}
                             className={`px-3 py-2 rounded-xl text-[8px] sm:text-[9px] font-black uppercase tracking-widest transition-all text-center flex items-center justify-center border
                               ${isActive ? 'bg-indigo-500 border-indigo-400 text-white shadow-lg' : 'bg-white/5 border-white/5 text-zinc-400 hover:text-white hover:bg-white/10'}`}
@@ -2775,7 +2893,8 @@ const PlayerPage: React.FC<{
             currentTime={musicEngine.transportMusicalTime}
             isPlaying={isPlaying}
             songMetadata={localSong}
-            zoom={1.0}
+            renderHistory={renderHistory}
+            zoom={zoomLevel}
             transpose={transpose}
             layoutMode={'paginated'}
             isLoupeEnabled={false}
@@ -3065,7 +3184,7 @@ const PlayerPage: React.FC<{
         {/* Chord Ring: Full ChordPage with diatonic ring visualization */}
         {activeCard === 'memochord' && (
           <div className="w-full h-full overflow-y-auto no-scrollbar pb-48">
-            <ChordPage song={song} musicXml={musicXml ?? null} />
+            <Suspense fallback={<div className="p-4 text-zinc-400">Loading chord page...</div>}><ChordPage song={song} musicXml={musicXml ?? null} /></Suspense>
           </div>
         )}
 
@@ -3349,6 +3468,9 @@ const PlayerPage: React.FC<{
 
             <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-4 custom-scrollbar">
 
+              {/* Audio AI Engine Settings integrated here */}
+              <Suspense fallback={<div className="p-4 text-zinc-400">Loading settings...</div>}><AudioEngineSettings /></Suspense>
+
               {/* Custom SVS Backend URL */}
               <div className="flex flex-col gap-1.5 bg-white/5 border border-white/10 rounded-2xl p-4">
                 <span className="text-[9px] font-black text-zinc-300 uppercase tracking-widest flex items-center gap-1.5">
@@ -3364,6 +3486,31 @@ const PlayerPage: React.FC<{
                   placeholder="https://your-tunnel.serveo.net"
                   className="mt-1 w-full bg-[#0c0c0e] border border-white/10 focus:border-cyan-500 rounded-xl px-3 py-2 text-[10px] text-white focus:outline-none transition-all placeholder:text-zinc-600"
                 />
+              </div>
+
+              {/* AI Voice Model Selection */}
+              <div className="flex flex-col gap-1.5 bg-white/5 border border-white/10 rounded-2xl p-4">
+                <span className="text-[9px] font-black text-zinc-300 uppercase tracking-widest flex items-center gap-1.5">
+                  <Mic2 size={10} className="text-cyan-400" /> AI Voice Model
+                </span>
+                <span className="text-[8px] text-zinc-500">
+                  เลือกโมเดลเสียงร้อง AI สำหรับเพลงนี้ (เช่น Lotte V, Canary, Tiger)
+                </span>
+                {voiceEngines.length === 0 ? (
+                  <span className="text-[9px] text-zinc-400 italic">กำลังโหลดโมเดลเสียง...</span>
+                ) : (
+                  <select
+                    value={activeEngineId}
+                    onChange={handleEngineChange}
+                    className="mt-1 w-full bg-[#0c0c0e] border border-white/10 focus:border-cyan-500 rounded-xl px-3 py-2 text-[10px] text-white focus:outline-none transition-all"
+                  >
+                    {voiceEngines.map((voice) => (
+                      <option key={voice.id} value={voice.id} className="bg-[#0c0c0e] text-white text-[10px]">
+                        {voice.name} ({voice.lang.toUpperCase()} - {voice.type})
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
 
               {/* SVS Rendering Mode */}
@@ -3461,53 +3608,7 @@ const PlayerPage: React.FC<{
                 </div>
               </div>
 
-              {/* SVS Timing Feel */}
-              <div className="flex flex-col gap-2 bg-white/5 border border-white/10 rounded-2xl p-4">
-                <div className="flex justify-between items-center">
-                  <span className="text-[9px] font-black text-zinc-300 uppercase tracking-widest flex items-center gap-1.5">
-                    SVS Timing Feel (จังหวะร้อง)
-                  </span>
-                  <span className="text-[9px] font-black text-[#00e5ff] shadow-[0_0_8px_rgba(0,229,255,0.2)]">
-                    {svsTimingFeel}%
-                  </span>
-                </div>
-                <span className="text-[8px] text-zinc-500 leading-normal">
-                  ปรับฟีลลิ่งจังหวะ: 0% ตรงจังหวะเป๊ะหุ่นยนต์ (Robot) &rarr; 50% สมดุลธรรมชาติ &rarr; 100% เลย์แบ็คเยื้องหลังสไตล์ธรรมชาติสมบูรณ์ (Human)
-                </span>
-                
-                <div className="flex items-center gap-3 mt-1.5">
-                  <span className="text-[7px] font-black text-zinc-500 uppercase tracking-widest">Robot</span>
-                  <div className="relative flex-1 h-1.5 bg-zinc-950 rounded-full overflow-hidden border border-white/5">
-                    <input
-                      type="range"
-                      min="0"
-                      max="100"
-                      step="1"
-                      value={svsTimingFeel}
-                      onChange={(e) => handleSvsTimingFeelChange(parseInt(e.target.value, 10))}
-                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20"
-                    />
-                    <div
-                      className="absolute h-full bg-gradient-to-r from-[#00e5ff] to-cyan-500 rounded-full shadow-[0_0_8px_rgba(0,229,255,0.4)] transition-all duration-75"
-                      style={{ width: `${svsTimingFeel}%` }}
-                    />
-                  </div>
-                  <span className="text-[7px] font-black text-zinc-500 uppercase tracking-widest">Human</span>
-                </div>
-              </div>
 
-              {/* SVS Legato / Portamento Status */}
-              <div className="flex flex-col gap-1.5 bg-white/5 border border-white/10 rounded-2xl p-4">
-                <span className="text-[9px] font-black text-zinc-300 uppercase tracking-widest flex items-center gap-1.5">
-                  Legato Curve (การเอื้อนเชื่อมโน้ต)
-                </span>
-                <span className="text-[8px] text-[#00e5ff] leading-none font-black tracking-widest shadow-[0_0_8px_rgba(0,229,255,0.2)]">
-                  AUTOMATIC / เปิดใช้งานตลอดเวลา
-                </span>
-                <span className="text-[8px] text-zinc-500 leading-normal">
-                  ประยุกต์ใช้ Cosine Legato Curve ขนาด 70ms อัตโนมัติระหว่างรอยต่อของโน้ตมีเสียง (voiced-to-voiced transitions) เพื่อเกลี่ยเสียงเอื้อนเชื่อมให้เป็นธรรมชาติไร้รอยต่อ
-                </span>
-              </div>
 
               {/* Jianpu info */}
               <div className="bg-white/5 border border-white/10 rounded-2xl p-4">

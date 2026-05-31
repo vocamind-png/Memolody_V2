@@ -8,6 +8,39 @@ interface SplashLoaderProps {
 
 export const SplashLoader: React.FC<SplashLoaderProps> = ({ progress, statusText = 'Loading Memolody V2...' }) => {
   const [dots, setDots] = useState('');
+  const [showRecovery, setShowRecovery] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setShowRecovery(true);
+    }, 12000);
+    return () => clearTimeout(t);
+  }, []);
+
+  const handleForceClear = async () => {
+    if (confirm("คุณต้องการล้างข้อมูลแอปทั้งหมด (รวมถึงเพลงที่อัปโหลดไว้) เพื่อรีเซ็ตระบบหรือไม่?")) {
+      try {
+        localStorage.clear();
+        sessionStorage.clear();
+        if ('indexedDB' in window) {
+          const databases = await window.indexedDB.databases();
+          databases.forEach(db => {
+            if (db.name) window.indexedDB.deleteDatabase(db.name);
+          });
+        }
+        if ('caches' in window) {
+          const keys = await caches.keys();
+          for (const key of keys) {
+            await caches.delete(key);
+          }
+        }
+        alert("ล้างข้อมูลสำเร็จแล้วค่ะ กำลังรีโหลดแอปใหม่...");
+        window.location.reload();
+      } catch (e) {
+        alert("เกิดข้อผิดพลาดในการล้างข้อมูล: " + String(e));
+      }
+    }
+  };
 
   // Subtle animated ellipsis for the status text
   useEffect(() => {
@@ -149,6 +182,8 @@ export const SplashLoader: React.FC<SplashLoaderProps> = ({ progress, statusText
             {/* Glossy light highlight effect inside progress bar */}
             <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(255,255,255,0.15),transparent)] rounded-full" />
           </div>
+
+          {/* Recovery UI Removed as requested */}
         </div>
 
         {/* Credits Section */}

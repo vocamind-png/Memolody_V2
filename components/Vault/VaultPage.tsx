@@ -27,7 +27,7 @@ const SongRow = memo(({ item, onSongSelect, onToggleDelete, onPermanentDelete, i
   return (
     <div
       className="flex items-center gap-3 px-4 py-3 border-b border-white/[0.03] hover:bg-white/[0.02] cursor-pointer group"
-      onClick={() => !isTrashMode && onSongSelect(item.metadata, item.xmlData, 'studio')}
+      onClick={() => !isTrashMode && onSongSelect(item.metadata, item.xmlData, 'listen')}
     >
       {/* Play icon */}
       <div className="w-8 h-8 rounded-lg bg-white/[0.03] flex items-center justify-center shrink-0 group-hover:bg-cyan-500/10">

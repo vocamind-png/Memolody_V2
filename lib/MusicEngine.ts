@@ -1,5 +1,6 @@
 
 import * as Tone from 'tone';
+import { PitchShifter } from 'soundtouchjs';
 import { TrackState, ParsedNote } from '../types';
 
 import { SoundBankEngine } from '../plugins/soundbank';
@@ -13,6 +14,10 @@ export class MusicEngine {
   private trackActiveStem: Map<string, number | null> = new Map();
   private trackVocalRenderBpm: Map<string, number> = new Map();
   private trackModes: Map<string, 'instrument' | 'vocal'> = new Map();
+  // Vocal pitch shifting states
+  public vocalPitchShifters: Map<string, PitchShifter[]> = new Map();
+  public vocalPitchStems: Map<string, PitchShifter[]> = new Map();
+  public vocalPitchShiftSemitones: Map<string, number> = new Map();
   public vocalAudioElements: Map<string, HTMLAudioElement> = new Map(); // For AI Vocal playback
   private vocalBlobUrls: Map<string, string> = new Map(); // Track pre-fetched local Blob URLs
   public tracks: TrackState[] = [];
@@ -636,6 +641,21 @@ export class MusicEngine {
             if (myGeneration === this._vocalGeneration) {
               mainPlayer = player;
               if (renderBpm) (mainPlayer as any).renderBpm = renderBpm;
+              // Initialize PitchShifter
+              if (!this.vocalPitchShifters.has(trackId)) this.vocalPitchShifters.set(trackId, []);
+              const rawCtx = Tone.getContext().rawContext;
+              const nativeCtx = (rawCtx as any)._nativeAudioContext || (rawCtx as any)._nativeContext || (rawCtx as any).nativeContext || rawCtx;
+              if (typeof nativeCtx.createScriptProcessor !== 'function') {
+                console.error('[MusicEngine] 🚨 NATIVE CONTEXT STILL MISSING createScriptProcessor!');
+              }
+              const shifter = new PitchShifter(nativeCtx, player.buffer.get(), 1024);
+              const dummy = nativeCtx.createBufferSource();
+              dummy.buffer = nativeCtx.createBuffer(1, 1, nativeCtx.sampleRate);
+              dummy.loop = true;
+              dummy.connect(shifter.node);
+              dummy.start();
+              (shifter as any)._dummySource = dummy;
+              this.vocalPitchShifters.get(trackId).push(shifter);
             } else {
               player.dispose();
             }
@@ -661,6 +681,21 @@ export class MusicEngine {
               if (myGeneration === this._vocalGeneration) {
                 loadedStems[index] = player;
                 if (renderBpm) (player as any).renderBpm = renderBpm;
+                // Initialize Stem PitchShifter
+                if (!this.vocalPitchStems.has(trackId)) this.vocalPitchStems.set(trackId, []);
+                const rawCtx = Tone.getContext().rawContext;
+              const nativeCtx = (rawCtx as any)._nativeAudioContext || (rawCtx as any)._nativeContext || (rawCtx as any).nativeContext || rawCtx;
+              if (typeof nativeCtx.createScriptProcessor !== 'function') {
+                console.error('[MusicEngine] 🚨 NATIVE CONTEXT STILL MISSING createScriptProcessor!');
+              }
+              const shifter = new PitchShifter(nativeCtx, player.buffer.get(), 1024);
+              const dummy2 = nativeCtx.createBufferSource();
+              dummy2.buffer = nativeCtx.createBuffer(1, 1, nativeCtx.sampleRate);
+              dummy2.loop = true;
+              dummy2.connect(shifter.node);
+              dummy2.start();
+              (shifter as any)._dummySource = dummy2;
+              this.vocalPitchStems.get(trackId)[index] = shifter;
               } else {
                 player.dispose();
               }
@@ -715,7 +750,22 @@ export class MusicEngine {
       });
       this.trackVocalStems.delete(trackId);
     }
+    
     this.trackActiveStem.set(trackId, null);
+
+    const shifters = this.vocalPitchShifters.get(trackId);
+    if (shifters) {
+      shifters.forEach(shifter => { try { shifter.disconnect(); } catch (e) {} });
+    }
+    const stemShifters = this.vocalPitchStems.get(trackId);
+    if (stemShifters) {
+      stemShifters.forEach(shifter => { try { shifter?.disconnect(); } catch (e) {} });
+    }
+    
+    // Clear arrays
+    this.vocalPitchShifters.delete(trackId);
+    this.vocalPitchStems.delete(trackId);
+
 
     // Revoke and clear blob URLs
     const oldUrl = this.vocalBlobUrls.get(trackId);
@@ -976,6 +1026,12 @@ export class MusicEngine {
     });
   }
 
+public setVocalTranspose(trackId: string, diffSemitones: number) {
+    this.vocalPitchShiftSemitones.set(trackId, diffSemitones);
+    console.log(`[MusicEngine] setVocalTranspose: ${trackId} diff=${diffSemitones}`);
+    this.updateVocalPlaybackState();
+  }
+
   public updateVocalPlaybackState(time?: number) {
     const transportState = Tone.Transport.state;
     const transportSeconds = Tone.Transport.seconds;
@@ -983,43 +1039,114 @@ export class MusicEngine {
     const songTime = transportSeconds - countIn;
     const triggerTime = time !== undefined ? time : Tone.now();
 
-    const allPlayers: Tone.GrainPlayer[] = [];
-    this.trackVocalLayers.forEach(players => allPlayers.push(...players));
-    this.trackVocalStems.forEach(players => allPlayers.push(...players.filter(Boolean)));
+    const currentBpm = Tone.Transport.bpm.value;
 
-    if (transportState === 'started') {
-      allPlayers.forEach(player => {
+    this.trackVocalLayers.forEach((players, trackId) => {
+      const shifters = this.vocalPitchShifters.get(trackId) || [];
+      const diffSemitones = this.vocalPitchShiftSemitones.get(trackId) || 0;
+
+      players.forEach((player, i) => {
         if (!player || !player.buffer || !player.buffer.loaded) return;
-        try { player.stop(triggerTime); } catch (e) {}
+        const shifter = shifters[i];
         
-        // Calculate ratio based on transport bpm vs player renderBpm
-        const currentBpm = Tone.Transport.bpm.value;
+        try { player.stop(triggerTime); } catch (e) {}
+        if (shifter) shifter.disconnect();
+
         const renderBpm = (player as any).renderBpm || currentBpm;
         const ratio = currentBpm / renderBpm;
-        
-        // Dynamically set player playbackRate
-        if (typeof player.playbackRate === 'number') {
-          player.playbackRate = ratio;
-        } else if (player.playbackRate && (player.playbackRate as any).value !== undefined) {
-          (player.playbackRate as any).value = ratio;
-        }
-
-        const offsetInAudio = Math.max(0, songTime * ratio);
         const duration = player.buffer.duration;
-        if (offsetInAudio < duration) {
-          if (songTime < 0) {
-            const delay = -songTime;
-            player.start(triggerTime + delay, 0);
-          } else {
-            player.start(triggerTime, offsetInAudio);
+        const offsetInAudio = Math.max(0, songTime * ratio);
+
+        if (offsetInAudio >= duration) return;
+
+        console.log(`[MusicEngine Debug] trackId=${trackId}, diffSemitones=${diffSemitones}, shifter_exists=${!!shifter}, isMuted=${player.mute}, offset=${offsetInAudio}`);
+        if (diffSemitones !== 0 && shifter) {
+          shifter.tempo = ratio;
+          shifter.pitchSemitones = diffSemitones;
+          shifter.percentagePlayed = offsetInAudio / duration;
+          if (transportState === 'started') {
+            const channel = this.trackChannels.get(trackId);
+            if (channel) {
+              try {
+                Tone.connect(shifter.node, channel);
+              } catch (e) {
+                console.warn('[MusicEngine] Tone.connect failed, falling back to native destination', e);
+                const rawCtx = Tone.getContext().rawContext;
+                const nativeCtx = (rawCtx as any)._nativeContext || (rawCtx as any).nativeContext || rawCtx;
+                shifter.node.connect(nativeCtx.destination);
+              }
+            }
+          }
+        } else {
+          if (typeof player.playbackRate === 'number') {
+            player.playbackRate = ratio;
+          } else if (player.playbackRate && (player.playbackRate as any).value !== undefined) {
+            (player.playbackRate as any).value = ratio;
+          }
+          if (transportState === 'started') {
+            if (songTime < 0) {
+              player.start(triggerTime + (-songTime), 0);
+            } else {
+              player.start(triggerTime, offsetInAudio);
+            }
           }
         }
       });
-    } else {
-      allPlayers.forEach(player => {
+    });
+
+    this.trackVocalStems.forEach((players, trackId) => {
+      const shifters = this.vocalPitchStems.get(trackId) || [];
+      const diffSemitones = this.vocalPitchShiftSemitones.get(trackId) || 0;
+
+      players.forEach((player, i) => {
+        if (!player) return;
+        if (!player.buffer || !player.buffer.loaded) return;
+        const shifter = shifters[i];
+        
         try { player.stop(triggerTime); } catch (e) {}
+        if (shifter) shifter.disconnect();
+
+        const renderBpm = (player as any).renderBpm || currentBpm;
+        const ratio = currentBpm / renderBpm;
+        const duration = player.buffer.duration;
+        const offsetInAudio = Math.max(0, songTime * ratio);
+
+        if (offsetInAudio >= duration) return;
+
+        console.log(`[MusicEngine Debug] trackId=${trackId}, diffSemitones=${diffSemitones}, shifter_exists=${!!shifter}, isMuted=${player.mute}, offset=${offsetInAudio}`);
+        if (diffSemitones !== 0 && shifter) {
+          shifter.tempo = ratio;
+          shifter.pitchSemitones = diffSemitones;
+          shifter.percentagePlayed = offsetInAudio / duration;
+          if (transportState === 'started') {
+            const channel = this.trackChannels.get(trackId);
+            if (channel) {
+              try {
+                Tone.connect(shifter.node, channel);
+              } catch (e) {
+                console.warn('[MusicEngine] Stem Tone.connect failed, falling back to native destination', e);
+                const rawCtx = Tone.getContext().rawContext;
+                const nativeCtx = (rawCtx as any)._nativeContext || (rawCtx as any).nativeContext || rawCtx;
+                shifter.node.connect(nativeCtx.destination);
+              }
+            }
+          }
+        } else {
+          if (typeof player.playbackRate === 'number') {
+            player.playbackRate = ratio;
+          } else if (player.playbackRate && (player.playbackRate as any).value !== undefined) {
+            (player.playbackRate as any).value = ratio;
+          }
+          if (transportState === 'started') {
+            if (songTime < 0) {
+              player.start(triggerTime + (-songTime), 0);
+            } else {
+              player.start(triggerTime, offsetInAudio);
+            }
+          }
+        }
       });
-    }
+    });
   }
 
   getTrackLevel(trackId: string): number {

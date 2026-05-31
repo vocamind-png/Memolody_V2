@@ -1,97 +1,200 @@
 import re
 
-with open('vocalido_server/ds_engine.py', 'r') as f:
+with open('lib/MusicEngine.ts', 'r') as f:
     content = f.read()
 
-# I will find the block starting with "lyric = str(n.get("lyric")"
-# and ending at "if not ph_seq:"
-# and replace it with the correct logic.
+# 1. Add import
+if "import { PitchShifter } from 'soundtouchjs';" not in content:
+    content = content.replace("import * as Tone from 'tone';", "import * as Tone from 'tone';\nimport { PitchShifter } from 'soundtouchjs';")
 
-correct_block = """            lyric = str(n.get("lyric") or ("a" if self.language == "zh" else "ah"))
-            if self.language == "zh":
-                phonemes = _lyric_to_phonemes_zh(lyric)
-            else:
-                phonemes = self.lyric_to_phonemes_en(lyric)
+# 2. Add class properties
+if "public vocalPitchShifters" not in content:
+    props = """
+  // Vocal pitch shifting states
+  public vocalPitchShifters: Map<string, PitchShifter[]> = new Map();
+  public vocalPitchStems: Map<string, PitchShifter[]> = new Map();
+  public vocalPitchShiftSemitones: Map<string, number> = new Map();
+"""
+    content = content.replace("public vocalAudioElements", props.strip() + "\n  public vocalAudioElements")
 
-            # Determine absolute timeline coordinates in frames
-            note_start_fr = int(round((start + initial_ap_sec) * frame_hz))
-            note_end_fr = int(round((start + dur + initial_ap_sec) * frame_hz))
+# 3. Add to addVocalLayer (main mix)
+if "new PitchShifter" not in content:
+    main_mix_replace = """
+            if (myGeneration === this._vocalGenerations.get(trackId)) {
+              mainPlayer = player;
+              if (renderBpm) (mainPlayer as any).renderBpm = renderBpm;
+              // Initialize PitchShifter
+              if (!this.vocalPitchShifters.has(trackId)) this.vocalPitchShifters.set(trackId, []);
+              const shifter = new PitchShifter(Tone.getContext().rawContext, player.buffer.get(), 1024);
+              const dummy = Tone.getContext().rawContext.createBufferSource();
+              dummy.buffer = Tone.getContext().rawContext.createBuffer(1, 1, Tone.getContext().rawContext.sampleRate);
+              dummy.loop = true;
+              dummy.connect(shifter.node);
+              dummy.start();
+              (shifter as any)._dummySource = dummy;
+              this.vocalPitchShifters.get(trackId)!.push(shifter);
+            } else {
+"""
+    content = re.sub(
+        r"if \(myGeneration === this\._vocalGenerations\.get\(trackId\)\) \{\s*mainPlayer = player;\s*if \(renderBpm\) \(mainPlayer as any\)\.renderBpm = renderBpm;\s*\} else \{",
+        main_mix_replace.strip(),
+        content
+    )
 
-            # Insert silence gap if needed
-            if note_start_fr > current_fr:
-                gap_fr = note_start_fr - current_fr
-                if gap_fr > 0:
-                    ph_seq.append("SP")
-                    ph_dur_frames.append(gap_fr)
-                    ph_hz.append(0.0)
-                    current_fr += gap_fr
-                    last_vowel_abs_idx = len(ph_dur_frames) - 1
+    stems_replace = """
+              if (myGeneration === this._vocalGenerations.get(trackId)) {
+                loadedStems[index] = player;
+                if (renderBpm) (player as any).renderBpm = renderBpm;
+                // Initialize Stem PitchShifter
+                if (!this.vocalPitchStems.has(trackId)) this.vocalPitchStems.set(trackId, []);
+                const shifter = new PitchShifter(Tone.getContext().rawContext, player.buffer.get(), 1024);
+                const dummy2 = Tone.getContext().rawContext.createBufferSource();
+                dummy2.buffer = Tone.getContext().rawContext.createBuffer(1, 1, Tone.getContext().rawContext.sampleRate);
+                dummy2.loop = true;
+                dummy2.connect(shifter.node);
+                dummy2.start();
+                (shifter as any)._dummySource = dummy2;
+                this.vocalPitchStems.get(trackId)![index] = shifter;
+              } else {
+"""
+    content = re.sub(
+        r"if \(myGeneration === this\._vocalGenerations\.get\(trackId\)\) \{\s*loadedStems\[index\] = player;\s*if \(renderBpm\) \(player as any\)\.renderBpm = renderBpm;\s*\} else \{",
+        stems_replace.strip(),
+        content
+    )
 
-            # Align note start to current_fr to prevent negative duration or overlapping
-            actual_start_fr = max(current_fr, note_start_fr)
-            dur_fr = max(2, note_end_fr - actual_start_fr)
+# 4. Add to clearVocalLayers
+if "vocalPitchShifters.delete" not in content:
+    clear_replace = """
+    this.trackActiveStem.set(trackId, null);
 
-            p_len = len(phonemes)
-            note_start_f = actual_start_fr
+    const shifters = this.vocalPitchShifters.get(trackId);
+    if (shifters) {
+      shifters.forEach(shifter => { try { shifter.disconnect(); } catch (e) {} });
+    }
+    const stemShifters = this.vocalPitchStems.get(trackId);
+    if (stemShifters) {
+      stemShifters.forEach(shifter => { try { shifter?.disconnect(); } catch (e) {} });
+    }
+    
+    // Clear arrays
+    this.vocalPitchShifters.delete(trackId);
+    this.vocalPitchStems.delete(trackId);
+"""
+    content = content.replace("this.trackActiveStem.set(trackId, null);", clear_replace)
 
-            if p_len == 1:
-                ph_seq.extend(phonemes)
-                ph_dur_frames.append(dur_fr)
-                ph_hz.append(hz)
-                current_fr += dur_fr
-                last_vowel_abs_idx = len(ph_dur_frames) - 1
-            else:
-                timing_feel = float(params.get("timing_feel", 50.0)) if params else 50.0
-                
-                # Calculate target consonant duration in seconds (does not scale with dur_fr)
-                target_cons_sec = 0.015 + 0.045 * (timing_feel / 100.0)
-                target_cons_fr = max(2, round(target_cons_sec * frame_hz))
-                
-                zh_vowels = {
-                    "a", "ai", "an", "ang", "ao",
-                    "e", "ei", "en", "eng", "er",
-                    "i", "i0", "ia", "ian", "iang", "iao", "ie",
-                    "in", "ing", "iong", "ir", "iu",
-                    "o", "ong", "ou",
-                    "u", "ua", "uai", "uan", "uang", "ui", "un", "uo",
-                    "v", "van", "ve", "vn",
-                }
-                en_vowels = {"ah","ow","iy","ey","aa","ao","er","uh","uw","ae"}
-                vowel_set = zh_vowels if self.language == "zh" else en_vowels
-                vowel_idx = next(
-                    (i for i, p in enumerate(phonemes)
-                     if p in vowel_set or (p and p[0] in "aeiouAEIOU")),
-                    p_len - 1
-                )
-                
-                # Consonant frame calculation (Strict Piano mode - no borrowing)
-                equal_fr = dur_fr // p_len
-                cons_fr = min(equal_fr, target_cons_fr)
-                cons_fr = max(2, cons_fr)
-                total_cons_fr = cons_fr * (p_len - 1)
-                vowel_fr = max(1, dur_fr - total_cons_fr)
+# 5. Add setVocalTranspose & updateVocalPlaybackState overrides
+if "public setVocalTranspose" not in content:
+    update_func = """
+  public setVocalTranspose(trackId: string, diffSemitones: number) {
+    this.vocalPitchShiftSemitones.set(trackId, diffSemitones);
+    console.log(`[MusicEngine] setVocalTranspose: ${trackId} diff=${diffSemitones}`);
+    this.updateVocalPlaybackState();
+  }
 
-                for i, p in enumerate(phonemes):
-                    d_fr = vowel_fr if i == vowel_idx else cons_fr
-                    ph_seq.append(p)
-                    ph_dur_frames.append(d_fr)
-                    ph_hz.append(hz)
-                    if i == vowel_idx:
-                        last_vowel_abs_idx = len(ph_dur_frames) - 1
-                
-                # Strict piano-like timing: note advances exactly by dur_fr
-                current_fr += dur_fr
-            
-            note_end_f = current_fr
-            note_ranges.append((note_start_f, note_end_f, hz))"""
+  public updateVocalPlaybackState(time?: number) {
+    const transportState = Tone.Transport.state;
+    const transportSeconds = Tone.Transport.seconds;
+    const countIn = this.countInDuration || 0;
+    const songTime = transportSeconds - countIn;
+    const triggerTime = time !== undefined ? time : Tone.now();
 
-# find start and end
-start_idx = content.find('lyric = str(n.get("lyric")')
-end_idx = content.find('if not ph_seq:', start_idx)
+    const currentBpm = Tone.Transport.bpm.value;
 
-new_content = content[:start_idx] + correct_block + "\n\n        " + content[end_idx:]
+    this.trackVocalLayers.forEach((players, trackId) => {
+      const shifters = this.vocalPitchShifters.get(trackId) || [];
+      const diffSemitones = this.vocalPitchShiftSemitones.get(trackId) || 0;
 
-with open('vocalido_server/ds_engine.py', 'w') as f:
-    f.write(new_content)
+      players.forEach((player, i) => {
+        if (!player || !player.buffer || !player.buffer.loaded) return;
+        const shifter = shifters[i];
+        
+        try { player.stop(triggerTime); } catch (e) {}
+        if (shifter) shifter.disconnect();
 
-print("FIXED ds_engine.py")
+        const renderBpm = (player as any).renderBpm || currentBpm;
+        const ratio = currentBpm / renderBpm;
+        const duration = player.buffer.duration;
+        const offsetInAudio = Math.max(0, songTime * ratio);
+
+        if (offsetInAudio >= duration) return;
+
+        if (diffSemitones !== 0 && shifter) {
+          shifter.tempo = ratio;
+          shifter.pitchSemitones = diffSemitones;
+          shifter.percentagePlayed = offsetInAudio / duration;
+          if (transportState === 'started') {
+            const channel = this.trackChannels.get(trackId);
+            if (channel) Tone.connect(shifter.node, channel);
+          }
+        } else {
+          if (typeof player.playbackRate === 'number') {
+            player.playbackRate = ratio;
+          } else if (player.playbackRate && (player.playbackRate as any).value !== undefined) {
+            (player.playbackRate as any).value = ratio;
+          }
+          if (transportState === 'started') {
+            if (songTime < 0) {
+              player.start(triggerTime + (-songTime), 0);
+            } else {
+              player.start(triggerTime, offsetInAudio);
+            }
+          }
+        }
+      });
+    });
+
+    this.trackVocalStems.forEach((players, trackId) => {
+      const shifters = this.vocalPitchStems.get(trackId) || [];
+      const diffSemitones = this.vocalPitchShiftSemitones.get(trackId) || 0;
+
+      players.forEach((player, i) => {
+        if (!player) return;
+        if (!player.buffer || !player.buffer.loaded) return;
+        const shifter = shifters[i];
+        
+        try { player.stop(triggerTime); } catch (e) {}
+        if (shifter) shifter.disconnect();
+
+        const renderBpm = (player as any).renderBpm || currentBpm;
+        const ratio = currentBpm / renderBpm;
+        const duration = player.buffer.duration;
+        const offsetInAudio = Math.max(0, songTime * ratio);
+
+        if (offsetInAudio >= duration) return;
+
+        if (diffSemitones !== 0 && shifter) {
+          shifter.tempo = ratio;
+          shifter.pitchSemitones = diffSemitones;
+          shifter.percentagePlayed = offsetInAudio / duration;
+          if (transportState === 'started') {
+            const channel = this.trackChannels.get(trackId);
+            if (channel) Tone.connect(shifter.node, channel);
+          }
+        } else {
+          if (typeof player.playbackRate === 'number') {
+            player.playbackRate = ratio;
+          } else if (player.playbackRate && (player.playbackRate as any).value !== undefined) {
+            (player.playbackRate as any).value = ratio;
+          }
+          if (transportState === 'started') {
+            if (songTime < 0) {
+              player.start(triggerTime + (-songTime), 0);
+            } else {
+              player.start(triggerTime, offsetInAudio);
+            }
+          }
+        }
+      });
+    });
+  }
+"""
+    content = re.sub(
+        r"  public updateVocalPlaybackState\(time\?: number\) \{[\s\S]*?getTrackLevel\(trackId: string\)",
+        update_func.strip() + "\n\n  getTrackLevel(trackId: string)",
+        content
+    )
+
+with open('lib/MusicEngine.ts', 'w') as f:
+    f.write(content)
+

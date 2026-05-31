@@ -240,9 +240,38 @@ def synthesize_sample_based(notes, bpm=120.0):
             continue
         
         # Loop the sample if short, trim if long — much faster than time_stretch
+        # Apply crossfading at loop boundaries to prevent harsh clicks and phase distortion
         if len(shifted) > 0:
-            reps = (target_samples // len(shifted)) + 1
-            looped = np.tile(shifted, reps)[:target_samples]
+            if target_samples <= len(shifted):
+                looped = shifted[:target_samples].copy()
+            else:
+                looped = np.zeros(target_samples, dtype=np.float32)
+                pos = 0
+                fade_len = min(int(0.02 * SR), len(shifted) // 10) # 20ms fade
+                fade_in_curve = np.linspace(0.0, 1.0, fade_len)
+                fade_out_curve = np.linspace(1.0, 0.0, fade_len)
+                
+                while pos < target_samples:
+                    chunk = shifted.copy()
+                    chunk_len = len(chunk)
+                    
+                    # Apply crossfade at loop boundary
+                    if pos > 0 and pos + chunk_len <= target_samples and fade_len > 0:
+                        # Fade in the current chunk start
+                        chunk[:fade_len] = chunk[:fade_len] * fade_in_curve
+                        # Mix with faded out tail of previous data
+                        overlap = looped[pos - fade_len : pos]
+                        overlap_fade = overlap * fade_out_curve
+                        looped[pos - fade_len : pos] = overlap_fade + chunk[:fade_len]
+                        
+                        # Copy the rest
+                        copy_len = min(chunk_len - fade_len, target_samples - pos)
+                        looped[pos : pos + copy_len] = chunk[fade_len : fade_len + copy_len]
+                        pos += copy_len
+                    else:
+                        copy_len = min(chunk_len, target_samples - pos)
+                        looped[pos : pos + copy_len] = chunk[:copy_len]
+                        pos += copy_len
         else:
             looped = np.zeros(target_samples, dtype=np.float32)
         
@@ -269,10 +298,10 @@ def synthesize_sample_based(notes, bpm=120.0):
             if available > 0:
                 output[start_idx:] += looped[:available]
     
-    # Normalize
+    # Normalize with safe headroom to prevent clipping/distortion
     peak = np.max(np.abs(output))
     if peak > 0:
-        output = (output / peak * 0.85).astype(np.float32)
+        output = (output / peak * 0.70).astype(np.float32)
     
     return output
 
@@ -330,6 +359,34 @@ async def synthesize(request: SynthesisRequest):
     except Exception as e:
         import traceback; traceback.print_exc()
         raise
+
+class HarmonyRequest(BaseModel):
+    key: str = "C"
+    chord_progression: str = "I IV V I"
+    durations: str = "1 1 1 1"
+    time_signature: str = "4/4"
+
+@app.post("/v1/generate_harmony")
+async def generate_harmony(request: HarmonyRequest):
+    print(f"[Harmony] 🎵 Generating SATB for: {request.key}: {request.chord_progression}")
+    try:
+        from harmony_engine import generateChorale
+        from fractions import Fraction
+        
+        dur_list = [Fraction(x) for x in request.durations.split()]
+        key_chords = f"{request.key}: {request.chord_progression}"
+        score = generateChorale(key_chords, dur_list, request.time_signature)
+        
+        # Save to MusicXML string
+        xml_path = score.write("musicxml")
+        with open(xml_path, "r", encoding="utf-8") as f:
+            xml_data = f.read()
+            
+        return JSONResponse({"status": "ok", "musicxml": xml_data})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 # ----------------------------------------------------------------------
@@ -677,14 +734,27 @@ def parse_phrase(phrase):
     notes = []
     for tok in phrase.strip().split():
         t = tok.lower()
+        duration = 0.75
+        if ':' in t:
+            parts = t.split(':')
+            t = parts[0]
+            try:
+                duration = float(parts[1])
+            except:
+                pass
+            
         if t in SOL_MAP:
-            notes.append({'midi': SOL_MAP[t], 'duration': 0.75})
+            notes.append({'midi': SOL_MAP[t], 'duration': duration, 'lyric': t})
         else:
-            m = re.match(r'^([A-Ga-g])([#sb]?)(\d)$', tok)
+            m = re.match(r'^([A-Ga-g])([#sb]?)(\d)$', t)
             if m:
                 nm={'C':0,'D':2,'E':4,'F':5,'G':7,'A':9,'B':11}
                 n=nm.get(m.group(1).upper(),0)+{'#':1,'s':1,'b':-1}.get(m.group(2),0)
-                notes.append({'midi':(int(m.group(3))+1)*12+n,'duration':0.75})
+                notes.append({'midi':(int(m.group(3))+1)*12+n,'duration':duration, 'lyric': 'la'})
+            else:
+                # Retain original case for lyrics (e.g. "Ah")
+                lyric = tok.split(':')[0] if ':' in tok else tok
+                notes.append({'midi': 60, 'duration': duration, 'lyric': lyric})
     return notes
 
 def collapse_to_monophonic(notes: list) -> list:
@@ -693,7 +763,7 @@ def collapse_to_monophonic(notes: list) -> list:
     
     # Sort notes by startTime (ascending), then by pitch/midi (descending)
     def get_pitch(n):
-        return float(n.get("midi") or n.get("pitch") or 60)
+        return float(n.get("midi") or n.get("midi") or 60)
     
     def get_start(n):
         return float(n.get("startTime", 0.0))
@@ -796,7 +866,7 @@ def studio_preview(req: StudioPreviewReq):
     # return it immediately without spending GPU time on re-rendering.
     import re as _re_cache
     if req.song_id:
-        _safe_id   = _re_cache.sub(r'[^a-zA-Z0-9_-]', '_', req.song_id)[:40]
+        _safe_id   = _re_cache.sub(r'[^a-zA-Z0-9_-]', '_', req.song_id)[:60]
         _safe_key  = _re_cache.sub(r'[^a-zA-Z0-9]', '', req.song_key or 'C')[:4]
         _safe_lm   = _re_cache.sub(r'[^a-zA-Z0-9]', '', req.lyric_mode or 'default')[:30]
         _raw_vc    = req.params.get('voice', 'default') or 'default'
@@ -806,11 +876,18 @@ def studio_preview(req: StudioPreviewReq):
         
         _timing_feel = int(req.params.get('timing_feel', 50))
         _is_private = (not req.is_public) and bool(req.owner_id)
+        
+        # Create a hash of notes to ensure changes to transpose or solfege bust the cache
+        import hashlib
+        import json
+        _notes_str = json.dumps(notes, sort_keys=True).encode('utf-8')
+        _notes_hash = hashlib.md5(_notes_str).hexdigest()[:8]
+        
         if _is_private:
             _safe_owner = _re_cache.sub(r'[^a-zA-Z0-9_-]', '_', req.owner_id)[:40]
-            _cached_name = f"song_{_safe_owner}_{_safe_id}_{_safe_key}_{req.bpm_pct}_{_safe_lm}_{_safe_vc}_tf{_timing_feel}.mp3"
+            _cached_name = f"song_{_safe_owner}_{_safe_id}_{_safe_key}_{req.bpm_pct}_{_safe_lm}_{_safe_vc}_tf{_timing_feel}_{_notes_hash}_v3.mp3"
         else:
-            _cached_name = f"song_{_safe_id}_{_safe_key}_{req.bpm_pct}_{_safe_lm}_{_safe_vc}_tf{_timing_feel}.mp3"
+            _cached_name = f"song_{_safe_id}_{_safe_key}_{req.bpm_pct}_{_safe_lm}_{_safe_vc}_tf{_timing_feel}_{_notes_hash}_v3.mp3"
         _cached_path = os.path.join("renders", _cached_name)
         if os.path.isfile(_cached_path) and os.path.getsize(_cached_path) > 1000:
             print(f"[Cache] ✅ Found existing render on disk: {_cached_name} — skipping GPU synthesis")
@@ -914,10 +991,13 @@ def studio_preview(req: StudioPreviewReq):
             
         if audio is None and _target_engine and _target_engine.is_ready:
             print(f"[DiffSinger] 🎤 English Neural Synthesis ({target_voice}): {len(notes)} notes...")
+            print(f"[DEBUG] First 10 MIDI notes received: {[n.get("midi") for n in notes[:10]]}")
+            print(f"[DEBUG] First 10 lyrics received: {[n.get("lyric") for n in notes[:10]]}")
             try:
                 return_stems = str(req.params.get("return_stems", "false")).lower() == "true"
                 res = _target_engine.synthesize_phrase(notes, req.params)
                 if return_stems and isinstance(res, tuple):
+                    print(f"[DEBUG] Full note payload keys for first note: {list(notes[0].keys()) if notes else []}")
                     audio, stems_audio = res
                 else:
                     audio = res
@@ -1008,7 +1088,7 @@ def studio_preview(req: StudioPreviewReq):
     import time as _time
     os.makedirs("renders", exist_ok=True)
     if req.song_id:
-        safe_id  = _re2.sub(r'[^a-zA-Z0-9_-]', '_', req.song_id)[:40]
+        safe_id  = _re2.sub(r'[^a-zA-Z0-9_-]', '_', req.song_id)[:60]
         safe_key = _re2.sub(r'[^a-zA-Z0-9]', '', req.song_key or 'C')[:4]
         safe_lyric_mode = _re2.sub(r'[^a-zA-Z0-9]', '', req.lyric_mode or 'default')[:30]
         raw_voice = req.params.get('voice', 'default') or 'default'
@@ -1315,14 +1395,15 @@ def studio_preview_note(req: StudioNoteReq):
     
     # Check if target_voice maps to one of our loaded or lazy-loadable DiffSinger engines
     _target_engine = None
-    if requested_voice != "default" or 'lotte_v_ai_dol' in _ds_engines:
-        target_id = requested_voice
-        if target_id == 'default' and 'lotte_v_ai_dol' in _ds_engines:
-            target_id = 'lotte_v_ai_dol'
-            
-        if target_id in _ds_engines:
-            _target_engine = _ds_engines[target_id]
-        elif target_id in _lazy_voice_paths:
+    target_id = requested_voice
+    
+    # Resolve 'default' to 'lotte_v_ai_dol'
+    if target_id == 'default' or target_id == '':
+        target_id = 'lotte_v_ai_dol'
+        
+    if target_id in _ds_engines:
+        _target_engine = _ds_engines[target_id]
+    elif target_id in _lazy_voice_paths:
             # Lazy load the voice on note preview
             ckpt, cfg = _lazy_voice_paths[target_id]
             print(f"[LazyLoad-Note] 🔄 Loading voice '{target_id}' on demand...")
@@ -1339,7 +1420,7 @@ def studio_preview_note(req: StudioNoteReq):
                 
     if _target_engine:
         # Synthesize using DiffSinger ONNX engine (it takes a phrase notes list)
-        notes = [{'midi': req.midi, 'duration': req.duration, 'startTime': 0.0, 'lyric': 'doh'}]
+        notes = [{'midi': req.midi, 'duration': req.duration, 'startTime': 0.0, 'lyric': 'ah'}]
         try:
             audio = _target_engine.synthesize_phrase(notes, req.params)
             if audio is not None:

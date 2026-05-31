@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { Home, User, Music2, Play, Zap, RefreshCcw, Star, Shield, Sparkles, Mic2, Settings } from 'lucide-react';
 // Lazy load Nimo - only loads JS bundle when user first clicks NIMO
 const FloatingNimo = lazy(() => import('./components/Nimo/FloatingNimo').then(m => ({ default: m.FloatingNimo })));
-import JSZip from 'jszip';
+
 // Lazy — Tone.js (283KB) only loads when user opens a song
 let _musicEngine: typeof import('./lib/MusicEngine')['musicEngine'] | null = null;
 const getMusicEngine = async () => {
@@ -26,8 +26,8 @@ import { nimoBrain } from './lib/NimoBrain';
 
 // ── Lazy-load ALL heavy page components ──
 const HomePage = lazy(() => import('./components/Home/HomePage'));
-const VaultPage = lazy(() => import('./components/Vault/VaultPage'));
 const PlayerPage = lazy(() => import('./components/Player/PlayerPage'));
+const VaultPage = lazy(() => import('./components/Vault/VaultPage'));
 const StudioPage = lazy(() => import('./components/Studio/StudioPage'));
 const ProfilePage = lazy(() => import('./components/Profile/ProfilePage').then(m => ({ default: m.ProfilePage })));
 const SettingsPage = lazy(() => import('./components/Settings/SettingsPage'));
@@ -38,20 +38,28 @@ const AdminPage = lazy(() => import('./components/Admin/AdminPage'));
 const PricingPage = lazy(() => import('./components/Subscription/PricingPage'));
 
 // ── Error Boundary for lazy-loaded pages ──
-interface EBState { hasError: boolean }
+interface EBState { hasError: boolean; error?: Error }
 interface EBProps { children: React.ReactNode }
 class PageErrorBoundary extends React.Component<EBProps, EBState> {
   constructor(props: EBProps) {
     super(props);
     (this as any).state = { hasError: false };
   }
-  static getDerivedStateFromError(): EBState { return { hasError: true }; }
-  componentDidCatch(err: Error) { console.error('[EB] lazy fail:', err); }
+  static getDerivedStateFromError(error: Error): EBState { return { hasError: true, error }; }
+  componentDidCatch(err: Error, errorInfo: any) { 
+    console.error('[EB] lazy fail:', err, errorInfo); 
+  }
   render(): React.ReactNode {
     if (((this as any).state as EBState).hasError) {
+      const err = ((this as any).state as any).error;
       return (
-        <div className="flex-1 flex flex-col items-center justify-center gap-4">
+        <div className="flex-1 flex flex-col items-center justify-center gap-4 p-8">
           <p className="text-zinc-600 text-[9px] uppercase tracking-widest">Page failed — tap to reload</p>
+          <div className="p-4 bg-red-500/10 border border-red-500/30 text-red-400 font-mono text-xs w-full max-w-2xl overflow-auto rounded-xl">
+            {err ? err.toString() : 'Unknown Error'}
+            <br/><br/>
+            {err && err.stack ? err.stack.split('\\n').map((line: string, i: number) => <div key={i}>{line}</div>) : null}
+          </div>
           <button onClick={() => window.location.reload()}
             className="px-4 py-2 bg-cyan-500 text-black text-[9px] font-black uppercase rounded-xl">
             Reload
@@ -283,17 +291,21 @@ const App: React.FC = () => {
           setInitStatus('Syncing Songs Library from Cloud');
           setInitProgress(80);
           try {
-            // Run sync synchronously during boot if library is empty to avoid blank Home page
-            const syncResult = await CloudSyncService.syncWithGlobalCloud((percent) => {
-              // Map import progress (0-100) to the initialization progress (80-95)
+            // Run sync with a strict 3-second timeout during boot
+            const syncPromise = CloudSyncService.syncWithGlobalCloud((percent) => {
               setInitProgress(80 + (percent * 0.15));
             });
-            if (syncResult.total >= 0) {
+            // Allow up to 30 seconds for the initial massive sync to complete before falling back to background
+            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Boot sync timeout')), 30000));
+            
+            const syncResult: any = await Promise.race([syncPromise, timeoutPromise]);
+            if (syncResult && syncResult.total >= 0) {
               songs = await songStorage.getAllSongs();
             }
           } catch (syncErr) {
-            console.warn('[App] Initial cloud sync failed:', syncErr);
-            setInitStatus('Sync Failed - Opening Offline');
+            console.warn('[App] Initial cloud sync failed or timed out:', syncErr);
+            setInitStatus('Sync in background');
+            setTimeout(() => triggerSync(), 1000); // Trigger in background
           }
         }
         setInitProgress(95);
@@ -318,11 +330,13 @@ const App: React.FC = () => {
             setSelectedLayoutBundle(initialSong.layoutBundle || null);
             console.log(`[App] 🎵 Restored/Selected song: "${initialSong.metadata.title}"`);
           }
+        } else {
+          setCurrentView('home');
         }
 
         setInitProgress(100);
         setInitStatus('Workspace Ready');
-        setTimeout(() => setIsInitializing(false), 800);
+        setTimeout(() => setIsInitializing(false), 50);
 
         // Background sync runs after 5s to grab updates if we already have songs, otherwise we just synced
         if (songs.length > 0) {
@@ -465,12 +479,16 @@ const App: React.FC = () => {
       if (finalXml && finalXml.startsWith('http')) {
         try {
           const url = finalXml;
-          const isMxl = url.endsWith('.mxl');
+          const urlWithoutQuery = url.split('?')[0];
+          const isMxl = urlWithoutQuery.endsWith('.mxl');
           const resp = await fetch(url);
           if (resp.ok) {
             if (isMxl) {
               const blob = await resp.blob();
-              const zip = await JSZip.loadAsync(blob);
+              const JSZipModule = await import('jszip');
+              const JSZip: any = JSZipModule.default || JSZipModule;
+              const jszipInstance = new JSZip();
+              const zip = await jszipInstance.loadAsync(blob);
               let xmlContent = '';
               for (const [name, file] of Object.entries(zip.files)) {
                 if (name.endsWith('.xml') && !name.startsWith('META-INF')) {
@@ -485,10 +503,30 @@ const App: React.FC = () => {
             if (owned && finalXml) {
               await songStorage.saveSong(owned.metadata, finalXml);
             }
+          } else {
+            throw new Error(`HTTP Error ${resp.status}`);
           }
-        } catch (e) {
+        } catch (e: any) {
           console.warn('[Neural] Fetch error:', e);
+          const errorMsg = `❌ ไม่สามารถดาวน์โหลดไฟล์เพลงได้: ${e.message || String(e)}`;
+          alert(errorMsg);
+          console.error(errorMsg);
+          const div = document.createElement('div');
+          div.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:red;color:white;padding:20px;z-index:999999;border-radius:10px;font-size:20px;';
+          div.innerHTML = `${errorMsg}<br><button onclick="this.parentElement.remove()" style="margin-top:10px;padding:5px 10px;color:black;">ปิด</button>`;
+          document.body.appendChild(div);
+          return; // Abort selection to prevent crashing PlayerPage
         }
+      }
+
+      if (!finalXml || finalXml.startsWith('http')) {
+        const errorMsg = "❌ ไม่พบข้อมูล XML สำหรับเพลงนี้ (โหลดไม่สำเร็จ หรือไม่มีไฟล์ XML ใน Zip)";
+        alert(errorMsg);
+        const div = document.createElement('div');
+        div.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:red;color:white;padding:20px;z-index:999999;border-radius:10px;font-size:20px;';
+        div.innerHTML = `${errorMsg}<br><button onclick="this.parentElement.remove()" style="margin-top:10px;padding:5px 10px;color:black;">ปิด</button>`;
+        document.body.appendChild(div);
+        return;
       }
 
       setSelectedSong(song);

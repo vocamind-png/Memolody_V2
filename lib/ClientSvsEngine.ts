@@ -127,6 +127,11 @@ export interface ClientSvsParams {
   brightness?: number; // EQ -1..1
   reverb?: number; // 0..1
   timing_feel?: number; // 0..100 (0 = quantized, 100 = lazy/jazz)
+  portamento?: number; // Glide time in ms (default 120.0)
+  vibrato_start?: number; // Delay before vibrato starts in ms (default 100)
+  vibrato_depth?: number; // Depth of vibrato in cents (0 = off)
+  vibrato_speed?: number; // Speed of vibrato in Hz (default 4.8)
+  vibrato_sync?: boolean; // Sync vibrato speed to BPM (default false)
 }
 
 export interface NoteData {
@@ -1330,8 +1335,54 @@ export class ClientSvsEngine {
       }
     }
 
-    // Apply Cosine Legato smoothing on voiced-to-voiced note transitions
-    const glideTimeMs = 70.0;
+    // Apply custom Vibrato to F0
+    const vibDepthCents = params?.vibrato_depth ?? 0;
+    if (vibDepthCents > 0.1) {
+      const vibHz = params?.vibrato_speed ?? 4.8;
+      const vibDelayMs = params?.vibrato_start ?? 100.0;
+      
+      const frameSec = 1.0 / frameHz;
+      const vibDelayFrames = Math.floor((vibDelayMs / 1000.0) / frameSec);
+      
+      let frameIdx = 0;
+      let phIdx = 0;
+      for (let i = 0; i < wordDiv.length; i++) {
+        const wdivV = wordDiv[i];
+        let durF = 0;
+        for (let k = 0; k < wdivV; k++) {
+          if (phIdx + k < phDur.length) {
+            durF += phDur[phIdx + k];
+          }
+        }
+        
+        if (durF > vibDelayFrames) {
+          const vibLen = durF - vibDelayFrames;
+          const fadeInN = Math.min(Math.floor(0.10 / frameSec), vibLen);
+          
+          for (let k = 0; k < vibLen; k++) {
+            const t = k * frameSec;
+            let centsLfo = vibDepthCents * Math.sin(2 * Math.PI * vibHz * t);
+            
+            if (k < fadeInN && fadeInN > 0) {
+              centsLfo *= (k / fadeInN);
+            }
+            
+            const ratio = Math.pow(2.0, centsLfo / 1200.0);
+            
+            const idx = frameIdx + vibDelayFrames + k;
+            if (idx < ppFinal.length && ppFinal[idx] > 0) {
+              ppFinal[idx] *= ratio;
+            }
+          }
+        }
+        
+        frameIdx += durF;
+        phIdx += wdivV;
+      }
+    }
+
+    // Apply Cosine Legato smoothing (Portamento) on voiced-to-voiced note transitions
+    const glideTimeMs = params?.portamento ?? 120.0;
     const glideFrames = Math.round((glideTimeMs / 1000.0) * frameHz);
     const halfGlide = Math.floor(glideFrames / 2);
 
@@ -1526,7 +1577,7 @@ export class ClientSvsEngine {
     const f0Arr = new Float32Array(f0List);
 
     // Apply Cosine Legato smoothing (Portamento) on voiced-to-voiced note transitions
-    const glideTimeMs = 70.0;
+    const glideTimeMs = params?.portamento ?? 120.0;
     const glideFrames = Math.round((glideTimeMs / 1000.0) / frameSec);
     const halfGlide = Math.floor(glideFrames / 2);
 
@@ -1548,6 +1599,36 @@ export class ClientSvsEngine {
         }
       }
       frameIdx += nf;
+    }
+
+    // Apply custom Vibrato to F0
+    const vibDepthCents = params?.vibrato_depth ?? 0;
+    if (vibDepthCents > 0.1) {
+      const vibHz = params?.vibrato_speed ?? 4.8;
+      const vibDelayMs = params?.vibrato_start ?? 100.0;
+      const vibDelayFrames = Math.floor((vibDelayMs / 1000.0) / frameSec);
+      
+      let f_idx = 0;
+      for (let pi = 0; pi < phDurFrames.length; pi++) {
+        const nf = phDurFrames[pi];
+        if (phF0[pi] > 0.0 && nf > vibDelayFrames) {
+          const vibLen = nf - vibDelayFrames;
+          const fadeInN = Math.min(Math.floor(0.10 / frameSec), vibLen);
+          for (let k = 0; k < vibLen; k++) {
+            const t = k * frameSec;
+            let centsLfo = vibDepthCents * Math.sin(2 * Math.PI * vibHz * t);
+            if (k < fadeInN && fadeInN > 0) {
+              centsLfo *= (k / fadeInN);
+            }
+            const ratio = Math.pow(2.0, centsLfo / 1200.0);
+            const idx = f_idx + vibDelayFrames + k;
+            if (idx < f0Arr.length && f0Arr[idx] > 0) {
+              f0Arr[idx] *= ratio;
+            }
+          }
+        }
+        f_idx += nf;
+      }
     }
 
     const nFrames = f0List.length;

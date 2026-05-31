@@ -125,12 +125,12 @@ def apply_timbre(audio, sr, params):
     if abs(pitch) > 0.05:
         audio = librosa.effects.pitch_shift(audio, sr=sr, n_steps=pitch)
 
-    # 4. Vibrato (LFO on pitch)
-    vib_rate = float(params.get('vibrato_rate', 0.0))
-    vib_depth = float(params.get('vibrato_depth', 0.0))
-    if vib_rate > 0.1 and vib_depth > 0.001:
+    # 4. Vibrato (LFO)
+    vibrato_rate = float(params.get('vibrato_speed', params.get('vibrato_rate', 0.0)))
+    vibrato_depth = float(params.get('vibrato_depth', 0.0))
+    if vibrato_rate > 0.1 and vibrato_depth > 0.01:
         t = np.arange(len(audio)) / sr
-        lfo = np.sin(2 * np.pi * vib_rate * t) * vib_depth
+        lfo = np.sin(2 * np.pi * vibrato_rate * t) * vibrato_depth
         # Apply as time-varying pitch shift (approximation)
         audio = _apply_vibrato(audio, sr, lfo)
 

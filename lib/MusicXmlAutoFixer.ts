@@ -1046,6 +1046,9 @@ export function autoFixMusicXml(
   // 12. Fix accidental visibility (♯/♭ signs)
   totalFixes += fixAccidentalVisibility(xmlDoc, fixLog);
 
+  // 13. Fix missing alters by key signature
+  totalFixes += fixMissingAltersByKeySignature(xmlDoc, fixLog);
+
   console.log(`[AutoFixer] Applied ${totalFixes} fixes`);
   fixLog.forEach(log => console.log(`  → ${log}`));
 
@@ -1099,5 +1102,94 @@ function fixAccidentalVisibility(xmlDoc: Document, fixLog: string[]): number {
   if (fixCount > 0) {
     fixLog.push(`เพิ่มป้ายสัญลักษณ์ Accidental (♯/♭) ให้ชัดเจน ${fixCount} จุด`);
   }
+  return fixCount;
+}
+
+// ─── Fix: Missing Alters By Key Signature ─────────────────────────────────
+
+function fixMissingAltersByKeySignature(xmlDoc: Document, fixLog: string[]): number {
+  let fixCount = 0;
+  const parts = xmlDoc.querySelectorAll('part');
+  
+  const SHARP_ORDER = ['F', 'C', 'G', 'D', 'A', 'E', 'B'];
+  const FLAT_ORDER = ['B', 'E', 'A', 'D', 'G', 'C', 'F'];
+
+  const globalFifthsNode = xmlDoc.querySelector('fifths');
+  const globalFifths = globalFifthsNode ? parseInt(globalFifthsNode.textContent || '0') : 0;
+
+  parts.forEach(part => {
+    let currentFifths = globalFifths;
+    
+    part.querySelectorAll('measure').forEach(measure => {
+      // Update key signature
+      const fifthsNode = measure.querySelector('key fifths');
+      if (fifthsNode) {
+        currentFifths = parseInt(fifthsNode.textContent || '0');
+      }
+
+      // If no sharps or flats, skip alter enforcement
+      if (currentFifths === 0) return;
+
+      measure.querySelectorAll('note').forEach(note => {
+        const pitch = note.querySelector('pitch');
+        if (!pitch) return;
+        
+        const stepNode = pitch.querySelector('step');
+        if (!stepNode) return;
+        const step = stepNode.textContent || '';
+        
+        
+        const alterNode = pitch.querySelector('alter');
+        const accidentalNode = note.querySelector('accidental');
+        
+        // If there is an accidental but no alter, inject the alter based on the accidental
+        if (!alterNode && accidentalNode) {
+          const accText = accidentalNode.textContent?.toLowerCase() || '';
+          let accAlter = 0;
+          if (accText === 'sharp') accAlter = 1;
+          else if (accText === 'flat') accAlter = -1;
+          else if (accText === 'double-sharp') accAlter = 2;
+          else if (accText === 'flat-flat') accAlter = -2;
+          
+          if (accAlter !== 0 || accText === 'natural') {
+            const newAlter = xmlDoc.createElement('alter');
+            newAlter.textContent = accAlter.toString();
+            pitch.insertBefore(newAlter, stepNode.nextSibling);
+            fixCount++;
+          }
+          return; // Skip key signature inference since explicit accidental is present
+        }
+
+        // If there's an explicit alter, don't overwrite it
+        if (alterNode) return;
+
+        // Determine expected alter from key signature
+        let expectedAlter = 0;
+        if (currentFifths > 0) {
+          for (let i = 0; i < currentFifths && i < 7; i++) {
+            if (SHARP_ORDER[i] === step) expectedAlter = 1;
+          }
+        } else if (currentFifths < 0) {
+          const numFlats = Math.abs(currentFifths);
+          for (let i = 0; i < numFlats && i < 7; i++) {
+            if (FLAT_ORDER[i] === step) expectedAlter = -1;
+          }
+        }
+
+        if (expectedAlter !== 0) {
+          const newAlter = xmlDoc.createElement('alter');
+          newAlter.textContent = expectedAlter.toString();
+          // Insert alter after step (and before octave if present)
+          pitch.insertBefore(newAlter, stepNode.nextSibling);
+          fixCount++;
+        }
+      });
+    });
+  });
+
+  if (fixCount > 0) {
+    fixLog.push(`เติมค่า alter (♯/♭) ให้โน้ตที่ขาดหายไปตาม Key Signature จำนวน ${fixCount} จุด`);
+  }
+
   return fixCount;
 }

@@ -277,6 +277,15 @@ ${appStateStr}
 ภาพหน้าจอปัจจุบัน (ถ้ามี):
 (หากผู้ใช้งานแนบรูปภาพหน้าจอ หรือคุณสั่งถ่ายภาพหน้าจอ ภาพจะส่งเข้ามาในระบบเพื่อให้คุณวิเคราะห์หน้าตา UI หรือความผิดปกติบนหน้าจอได้)
 
+ข้อมูลความรู้เกี่ยวกับฟังก์ชันปรับแต่งเสียงของ Vocalido (Timbre Designer):
+1. Speed: ยืดหรือหดความยาวของไฟล์เสียงทั้งหมด
+2. SVS Timing Feel: ปรับตำแหน่งเวลาในการออกเสียงพยัญชนะ (0 = หุ่นยนต์ตรงจังหวะเป๊ะ, 50 = มนุษย์ทั่วไป, 100 = ร้องคร่อมจังหวะ/เลย์แบ็ค)
+3. Pitch Shift: ปรับระดับเสียงคีย์เพลงให้สูงขึ้นหรือต่ำลง (เหมือนเปลี่ยนคีย์เพลง ทำให้เสียงเหมือนชิปมังค์เมื่อปรับสูง)
+4. Formant: เปลี่ยนคาแรคเตอร์เสียง (เช่น แปลงเสียงผู้ชายเป็นผู้หญิง) โดยไม่เปลี่ยนคีย์เพลง (เปลี่ยนขนาดช่องคอจำลอง)
+5. Portamento (Glide): การลากโน้ต/ดัดเสียง ให้เสียงสไลด์หากันอย่างนุ่มนวลระหว่าง 2 โน้ต
+6. Warmth / Brightness: ปรับ EQ (Warmth เพิ่มความหนา, Brightness เพิ่มความสว่างใส)
+(หมายเหตุ: ไม่มีปุ่มไหนที่ทำงานซ้ำซ้อนกันในทางเทคนิคหรือคณิตศาสตร์)
+
 ฟีเจอร์และคำสั่งที่คุณควบคุมได้ผ่านทาง actions (ห้ามใช้คำสั่งที่ไม่มีในรายการนี้):
 1. 'navigate_to_page': เปลี่ยนหน้าเพจ (params: { view: 'home' | 'player' | 'forge' | 'settings' | 'profile' })
 2. 'play_song': ค้นหาและเล่นเพลงจากคลังเพลง (params: { songTitle: string })
@@ -304,6 +313,15 @@ You also have vision capabilities and can view screenshots of the app to diagnos
 
 Current Application State:
 ${appStateStr}
+
+Knowledge Base - Vocalido Timbre Designer Parameters:
+1. Speed: Time-stretches the entire audio.
+2. SVS Timing Feel: Adjusts consonant borrowing and phoneme timing (0 = robotic, 50 = natural human, 100 = lazy/jazz).
+3. Pitch Shift: Shifts fundamental frequency (chipmunk effect when high).
+4. Formant: Shifts spectral envelope without changing musical key (changes vocal tract size, male to female).
+5. Portamento (Glide): Smooth pitch curve interpolation between two notes.
+6. Warmth / Brightness: EQ adjustments (Warmth boosts low-mids, Brightness boosts high frequencies).
+(Note: None of these parameters are technically redundant mathematically.)
 
 Supported Actions:
 1. 'navigate_to_page': Change page view (params: { view: 'home' | 'player' | 'forge' | 'settings' | 'profile' })

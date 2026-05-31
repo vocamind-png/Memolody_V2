@@ -619,6 +619,18 @@
                 <span>Human</span>
               </div>
             </div>
+            <div class="slider-group">
+              <div class="slider-header">
+                <div class="slider-label">〰️ Portamento</div>
+                <div class="slider-val" id="valPortamento">120ms</div>
+              </div>
+              <input type="range" id="slPortamento" min="0" max="300" step="10" value="120"
+                oninput="updateSlider('Portamento', this.value, 'ms')" onchange="schedulePreview()">
+              <div style="display: flex; justify-content: space-between; margin-top: 4px; font-size: 9px; color: var(--text3); font-weight: bold; text-transform: uppercase; letter-spacing: 0.05em;">
+                <span>Fast</span>
+                <span>Slow Glide</span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -642,8 +654,15 @@
         placeholder="Do Re Mi Fa Sol La Ti Do  (or type your melody)"
         value="Do Re Mi Fa Sol La Ti Do">
 
-      <div style="font-size:11px;color:var(--text3);margin-bottom:8px">
-        Solfège: Do Re Mi Fa Sol La Ti &nbsp;|&nbsp; Or: C4 D4 E4 F4 G4 A4 B4 C5
+      <div style="font-size:11px;color:var(--text3);margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">
+        <span>Solfège: Do Re Mi Fa Sol La Ti &nbsp;|&nbsp; Or: C4 D4 E4 F4 G4 A4 B4 C5</span>
+      </div>
+      <div class="note-range" style="margin-bottom: 12px; gap: 6px;">
+        <span style="font-size:10px;color:var(--text3);display:flex;align-items:center;margin-right:4px;">Quick Test:</span>
+        <span class="note-pill" onclick="document.getElementById('phraseInput').value='Ah:2.5'; previewPhrase()">Long Ah</span>
+        <span class="note-pill" onclick="document.getElementById('phraseInput').value='La:2.5'; previewPhrase()">Long La</span>
+        <span class="note-pill" onclick="document.getElementById('phraseInput').value='Fa:2.5'; previewPhrase()">Long Fa</span>
+        <span class="note-pill" onclick="document.getElementById('phraseInput').value='Do Re Mi Fa Sol La Ti Do'; previewPhrase()">Scale</span>
       </div>
 
       <div class="btn-row" style="margin-bottom: 8px;">
@@ -725,13 +744,12 @@ function getFetchUrl(path) {
   return `${customBackend}${cleanPath}`;
 }
 
-// ── State ──
 const state = {
   params: {
     pitch_shift: 0, formant_shift: 0,
     breathiness: 0, vibrato_rate: 0, vibrato_depth: 0,
     reverb: 0, warmth: 0, brightness: 0, speed: 1.0,
-    timing_feel: 50
+    timing_feel: 50, portamento: 120
   },
   singerName: 'Luna',
   singerColor: '#7c6df5',
@@ -752,23 +770,86 @@ const emojis = ['🎤','🎵','🎶','🎼','🎹','🌟','💫','🦋','🌙','
 
 // ── Presets ──
 const PRESETS = [
-  {name:'Soprano',emoji:'👩',desc:'High & bright',params:{pitch_shift:3,formant_shift:2,brightness:30,warmth:-10}},
-  {name:'Alto',emoji:'🎭',desc:'Rich & warm',params:{pitch_shift:-2,formant_shift:-1,warmth:30,brightness:-10}},
-  {name:'Tenor',emoji:'🎤',desc:'Male tenor',params:{pitch_shift:-4,formant_shift:-3,warmth:20}},
-  {name:'Child',emoji:'🧒',desc:'Young voice',params:{pitch_shift:5,formant_shift:4,breathiness:15,speed:1.1}},
-  {name:'Anime',emoji:'✨',desc:'High & breathy',params:{pitch_shift:6,formant_shift:3,breathiness:25,brightness:40}},
-  {name:'Dark',emoji:'🌑',desc:'Deep & mysterious',params:{pitch_shift:-5,formant_shift:-4,warmth:50,reverb:40}},
-  {name:'Celestial',emoji:'🌟',desc:'Etheral reverb',params:{reverb:70,brightness:30,vibrato_rate:3,vibrato_depth:0.2}},
-  {name:'Robot',emoji:'🤖',desc:'Mechanical',params:{pitch_shift:0,breathiness:0,vibrato_rate:0,speed:0.95,timing_feel:0}},
+  {name:'Default',emoji:'⚪',desc:'Neutral voice',params:{pitch_shift:0,formant_shift:0,brightness:0,warmth:0,portamento:120}},
+  {name:'Soprano',emoji:'👩',desc:'High & bright',params:{pitch_shift:3,formant_shift:2,brightness:30,warmth:-10,portamento:100}},
+  {name:'Alto',emoji:'🎭',desc:'Rich & warm',params:{pitch_shift:-2,formant_shift:-1,warmth:30,brightness:-10,portamento:140}},
+  {name:'Tenor',emoji:'🎤',desc:'Male tenor',params:{pitch_shift:-4,formant_shift:-3,warmth:20,portamento:120}},
+  {name:'Child',emoji:'🧒',desc:'Young voice',params:{pitch_shift:5,formant_shift:4,breathiness:15,speed:1.1,portamento:80}},
+  {name:'Anime',emoji:'✨',desc:'High & breathy',params:{pitch_shift:6,formant_shift:3,breathiness:25,brightness:40,portamento:120}},
+  {name:'Dark',emoji:'🌑',desc:'Deep & mysterious',params:{pitch_shift:-5,formant_shift:-4,warmth:50,reverb:40,portamento:180}},
+  {name:'Celestial',emoji:'🌟',desc:'Etheral reverb',params:{reverb:70,brightness:30,vibrato_rate:3,vibrato_depth:0.2,portamento:200}},
+  {name:'Robot',emoji:'🤖',desc:'Mechanical',params:{pitch_shift:0,breathiness:0,vibrato_rate:0,speed:0.95,timing_feel:0,portamento:0}},
 ];
 
 // ── Init ──
+// Save state to local storage to survive Vite hot reloads
+function saveStateToLocal() {
+  try {
+    localStorage.setItem('vocalido_studio_state', JSON.stringify({
+      params: state.params,
+      voiceSelect: document.getElementById('voiceSelect')?.value
+    }));
+  } catch (e) {}
+}
+
+// Intercept param changes
+const originalUpdateParamSummary = updateParamSummary;
+updateParamSummary = function() {
+  originalUpdateParamSummary();
+  saveStateToLocal();
+};
+
 document.addEventListener('DOMContentLoaded', () => {
   buildPiano();
   loadLibraryInfo();
   fetchVoices();
+  
+  // Try to restore previous state
+  try {
+    const saved = localStorage.getItem('vocalido_studio_state');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (parsed.params) {
+        state.params = parsed.params;
+      }
+      if (parsed.voiceSelect) {
+         const vs = document.getElementById('voiceSelect');
+         if (vs) vs.value = parsed.voiceSelect;
+      }
+    }
+  } catch(e) {}
+  
   updateParamSummary();
   document.getElementById('singerName').oninput = e => { state.singerName = e.target.value; };
+
+  // Init logic
+  const sliderMap = {
+    pitch_shift: 'slPitch', formant_shift: 'slFormant',
+    breathiness: 'slBreath', vibrato_rate: 'slVibRate',
+    vibrato_depth: 'slVibDepth', reverb: 'slReverb',
+    warmth: 'slWarmth', brightness: 'slBrightness',
+    speed: 'slSpeed', timing_feel: 'slTimingFeel', portamento: 'slPortamento'
+  };
+
+  try {
+    const saved = localStorage.getItem('vocalido_studio_state');
+    if (saved && JSON.parse(saved).params) {
+      // If we restored state, just update the sliders to match the restored state
+      Object.entries(sliderMap).forEach(([param, slId]) => {
+        const sl = document.getElementById(slId);
+        if (sl && state.params[param] !== undefined) {
+          if (slId === 'slSpeed') sl.value = state.params[param] * 100;
+          else if (slId === 'slBreath' || slId === 'slReverb' || slId === 'slTimingFeel') sl.value = state.params[param];
+          else sl.value = state.params[param];
+        }
+      });
+      syncAllSliderLabels();
+    } else {
+      // loadSelectedVoice(); // init with first factory preset if no saved state
+    }
+  } catch (e) {
+    // loadSelectedVoice();
+  }
 });
 
 function applyPreset(name) {
@@ -792,7 +873,7 @@ function applyPreset(name) {
     breathiness: 'slBreath', vibrato_rate: 'slVibRate',
     vibrato_depth: 'slVibDepth', reverb: 'slReverb',
     warmth: 'slWarmth', brightness: 'slBrightness',
-    speed: 'slSpeed', timing_feel: 'slTimingFeel'
+    speed: 'slSpeed', timing_feel: 'slTimingFeel', portamento: 'slPortamento'
   };
   Object.entries(sliderMap).forEach(([param, slId]) => {
     const sl = document.getElementById(slId);
@@ -822,6 +903,7 @@ function syncAllSliderLabels() {
   document.getElementById('valBrightness').textContent = state.params.brightness;
   document.getElementById('valSpeed').textContent = state.params.speed.toFixed(2) + '×';
   document.getElementById('valTimingFeel').textContent = Math.round(state.params.timing_feel) + '%';
+  document.getElementById('valPortamento').textContent = Math.round(state.params.portamento || 120) + 'ms';
 }
 
 function updateSlider(name, val, unit) {
@@ -832,7 +914,7 @@ function updateSlider(name, val, unit) {
     Breath:'breathiness', VibRate:'vibrato_rate',
     VibDepth:'vibrato_depth', Reverb:'reverb',
     Warmth:'warmth', Brightness:'brightness',
-    Speed:'speed', TimingFeel:'timing_feel'
+    Speed:'speed', TimingFeel:'timing_feel', Portamento:'portamento'
   };
   const key = paramMap[name];
   if (key === 'speed') state.params[key] = v / 100;
@@ -845,7 +927,7 @@ function resetTimbre(preview = true) {
   state.params = {
     pitch_shift:0, formant_shift:0, breathiness:0,
     vibrato_rate:0, vibrato_depth:0, reverb:0,
-    warmth:0, brightness:0, speed:1.0, timing_feel:50
+    warmth:0, brightness:0, speed:1.0, timing_feel:50, portamento: 120
   };
   ['slPitch','slFormant','slWarmth','slBrightness'].forEach(id => {
     const sl = document.getElementById(id); if(sl) sl.value = 0;
@@ -855,6 +937,7 @@ function resetTimbre(preview = true) {
   });
   document.getElementById('slSpeed').value = 100;
   document.getElementById('slTimingFeel').value = 50;
+  document.getElementById('slPortamento').value = 120;
   syncAllSliderLabels();
   updateParamSummary();
   if (preview) schedulePreview();
@@ -1321,6 +1404,12 @@ window.addEventListener('message', (event) => {
 
   if (event.data.type === 'UPDATE_NOTES') {
     state.scoreNotes = event.data.notes || [];
+    if (event.data.bpm) {
+      state.bpm = event.data.bpm;
+      state.params.bpm = event.data.bpm;
+      const bpmInput = document.getElementById('bpmInput');
+      if (bpmInput) bpmInput.value = state.bpm;
+    }
     const btn = document.getElementById('singScoreBtn');
     const status = document.getElementById('scoreStatus');
     if (state.scoreNotes.length > 0) {
