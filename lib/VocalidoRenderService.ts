@@ -206,10 +206,9 @@ const getVoiceModelUrl = (path: string) => {
     const isLocal = hostname === 'localhost' || hostname === '127.0.0.1' || hostname.endsWith('.local');
     const hasCustom = !!getCustomBackendUrl();
     
-    // On localhost: use the local SVS server's static file serving directly
-    // (models are served via FastAPI at /vocalido/voicebanks/...)
+    // On localhost: use relative path so Vite dev server proxies it to the correct backend (Cloud VM or Local VM based on .env)
     if (isLocal && path.startsWith('/vocalido/voicebanks/')) {
-      return getFetchUrl(path);
+      return path;
     }
     
     // On production (non-local): return relative path as-is for Vercel/Netlify proxy
