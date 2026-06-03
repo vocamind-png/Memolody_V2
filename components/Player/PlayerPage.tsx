@@ -592,10 +592,11 @@ const PlayerPage: React.FC<{
 
     let logQueue: { type: string; message: string }[] = [];
     let isSending = false;
+    let hasServerFailed = false;
     let flushTimeout: NodeJS.Timeout | null = null;
 
     const flushLogs = () => {
-      if (isSending || logQueue.length === 0) return;
+      if (isSending || logQueue.length === 0 || hasServerFailed) return;
       isSending = true;
       const batchToSend = [...logQueue];
       logQueue = [];
@@ -606,11 +607,11 @@ const PlayerPage: React.FC<{
         body: JSON.stringify({ logs: batchToSend })
       })
       .catch(err => {
-        originalError("[Logger] Failed to send client logs:", err);
+        hasServerFailed = true; // Stop trying to send logs if the server is offline
       })
       .finally(() => {
         isSending = false;
-        if (logQueue.length > 0) {
+        if (logQueue.length > 0 && !hasServerFailed) {
           flushTimeout = setTimeout(flushLogs, 500);
         }
       });
