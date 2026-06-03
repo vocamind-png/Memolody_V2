@@ -1587,6 +1587,43 @@ _vocalido_router.add_api_route("/training/set-engine", set_engine,          meth
 app.include_router(_vocalido_router)
 print("[Routes] ✅ /vocalido/* prefix routes registered")
 
+# ── Gemini Agentic AI Endpoints ────────────────────────────────────────────────
+@app.post("/api/arrange")
+async def arrange_music(request: Request):
+    try:
+        from gemini_engine import generate_arrangement
+        data = await request.json()
+        result = generate_arrangement(
+            prompt=data.get("prompt", ""),
+            style=data.get("style", "Pop"),
+            key=data.get("key", "C"),
+            bpm=int(data.get("bpm", 120)),
+            num_sections=len(data.get("sections", [1]))
+        )
+        if "error" in result:
+            return JSONResponse({"success": False, "message": result["error"]}, status_code=500)
+        return JSONResponse({"success": True, "message": "Arrangement generated", "data": result})
+    except Exception as e:
+        return JSONResponse({"success": False, "message": str(e)}, status_code=500)
+
+@app.post("/api/lyrics")
+async def write_lyrics(request: Request):
+    try:
+        from gemini_engine import generate_lyrics
+        data = await request.json()
+        result = generate_lyrics(
+            prompt=data.get("prompt", ""),
+            melody_xml=data.get("melodyXml", "")
+        )
+        if "error" in result:
+            return JSONResponse({"success": False, "message": result["error"]}, status_code=500)
+        return JSONResponse({"success": True, "message": "Lyrics generated", "data": result})
+    except Exception as e:
+        return JSONResponse({"success": False, "message": str(e)}, status_code=500)
+
+_vocalido_router.add_api_route("/api/arrange", arrange_music, methods=["POST"])
+_vocalido_router.add_api_route("/api/lyrics", write_lyrics, methods=["POST"])
+
 if __name__ == "__main__":
     print("=" * 55)
     print("🎤 Vocalido SVS v5.0 — AI Acoustic Model Engine")

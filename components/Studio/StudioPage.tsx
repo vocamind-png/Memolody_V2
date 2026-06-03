@@ -1,19 +1,23 @@
 
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import {
-  ArrowLeft, X, PlusCircle, Settings2,
+  ArrowLeft, X, PlusCircle, Settings2, Play, Square, Pause,
   Cpu, Bot, FileText, FileCode, Download,
-  Music, Layers, RotateCcw, RotateCw
+  Music, Layers, RotateCcw, RotateCw, Headphones, SlidersHorizontal, VolumeX, Volume2, SkipBack, Bell, Zap, Sparkles
 } from 'lucide-react';
 import { Song, TrackState } from '../../types';
 import ProScoreEditor, { ProScoreEditorRef } from '../Player/ProScoreEditor';
+import PerformanceScore from '../Player/PerformanceScore';
+import { KeyTransposeDisplay, BpmDisplay, BarBeatPositionDisplay } from '../Player/LCDDisplay';
 import ScoreEditOverlay, { EditTool, NoteType } from './ScoreEditOverlay';
 import EngraverCommandCenter from './EngraverCommandCenter';
 import { musicEngine } from '../../lib/MusicEngine';
 import { MidiWriter } from '../../lib/MidiWriter';
 import { PluginManager } from '../../plugins/core/manager';
 import { songStorage } from '../../lib/SongStorage';
-import { parseMusicXMLMetadata } from '../../lib/MusicXmlParser';
+import { parseMusicXMLMetadata, injectSolfegeToXml } from '../../lib/MusicXmlParser';
+import ArrangerPage from '../Arranger/ArrangerPage';
+import { AudioConverter } from '../../lib/AudioConverter';
 
 interface StudioPageProps {
   selectedSong: Song | null;
@@ -45,15 +49,64 @@ const StudioPage: React.FC<StudioPageProps> = ({
   const [currentProject, setCurrentProject] = useState<Song | null>(initialSong);
   const [xmlHistory, setXmlHistory] = useState<string[]>(initialXml ? [initialXml] : []);
   const [historyIndex, setHistoryIndex] = useState(0);
+  
+  // Lifted state from ArrangerPage
+  const [arrangerVisualType, setArrangerVisualType] = useState<'score' | 'pianoroll'>('pianoroll');
+
   const currentXml = xmlHistory[historyIndex];
 
   const [isPreparing, setIsPreparing] = useState(false);
-  const [prepLabel, setPrepLabel] = useState('');
+  const [prepLabel, setPrepLabel] = useState('PREPARING ENVIRONMENT...');
+  const [isPlaying, setIsPlaying] = useState(false);
   const [showProjectBrowser, setShowProjectBrowser] = useState(!initialSong);
   const [showExportModal, setShowExportModal] = useState(false);
   const [showPluginSettings, setShowPluginSettings] = useState(false);
   const [activePluginId, setActivePluginId] = useState<string>('vocalido-svs');
   const [plugins] = useState(PluginManager.getInstance().listPlugins());
+  const [studioMode, setStudioMode] = useState<'arranger' | 'editor' | 'pianoroll'>('editor');
+  const [pianorollTrackId, setPianorollTrackId] = useState<string | null>(null);
+
+  // Sync props to state if they change (e.g. when navigating from Player)
+  useEffect(() => {
+    if (initialSong) {
+      setCurrentProject(initialSong);
+      setShowProjectBrowser(false);
+    }
+  }, [initialSong]);
+
+  useEffect(() => {
+    if (initialXml) {
+      setXmlHistory([initialXml]);
+      setHistoryIndex(0);
+    }
+  }, [initialXml]);
+
+  // ── Transport & Audio State ──
+  const [masterVolume, setMasterVolume] = useState(0.8);
+  const [showVolumeSlider, setShowVolumeSlider] = useState(false);
+  const volumeDragStartYRef = useRef<number | null>(null);
+  const volumeDragStartVolRef = useRef(0.8);
+  const volumePopupRef = useRef<HTMLDivElement>(null);
+  const volumeFillRef = useRef<HTMLDivElement>(null);
+  const volumeTextRef = useRef<HTMLSpanElement>(null);
+
+  const [currentBpm, setCurrentBpm] = useState(120);
+  const [transpose, setTranspose] = useState(0);
+
+  const barTextRef = useRef<HTMLSpanElement>(null);
+  const beatTextRef = useRef<HTMLSpanElement>(null);
+  const timeTextRef = useRef<HTMLSpanElement>(null);
+  const scrubberFillRef = useRef<HTMLDivElement>(null);
+  const scrubberThumbRef = useRef<HTMLDivElement>(null);
+
+  const [isMetronomeOn, setIsMetronomeOn] = useState(false);
+
+
+  const formatTime = (s: number) => {
+    const min = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return `${min}:${sec.toString().padStart(2, '0')}`;
+  };
 
   // ── Engraver state ───────────────────────────────────────────────────
   const [engraverVisible, setEngraverVisible] = useState(true);
@@ -61,6 +114,7 @@ const StudioPage: React.FC<StudioPageProps> = ({
   const [svgPagesCount, setSvgPagesCount] = useState(0);
   const scoreContainerRef = useRef<HTMLDivElement>(null);
   const scoreRef = useRef<ProScoreEditorRef>(null);
+  const musicalTimeRef = useRef(0);
 
   // Harmony Generator state
   const [showHarmonyModal, setShowHarmonyModal] = useState(false);
@@ -72,7 +126,7 @@ const StudioPage: React.FC<StudioPageProps> = ({
     setIsPreparing(true);
     setPrepLabel('GENERATING SATB HARMONY...');
     try {
-      const res = await fetch('http://localhost:8000/v1/generate_harmony', {
+      const res = await fetch('/vocalido/v1/generate_harmony', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -102,6 +156,12 @@ const StudioPage: React.FC<StudioPageProps> = ({
 
   const parsedData = useMemo(() => musicEngine.parseMusicXml(currentXml || ''), [currentXml]);
 
+  const totalDurationSeconds = useMemo(() => {
+    if (!parsedData?.notes || parsedData.notes.length === 0) return 180;
+    const lastBeat = parsedData.notes.reduce((max, n) => Math.max(max, (n.startTime || 0) + (n.duration || 0)), 0);
+    return (lastBeat * 60) / (currentBpm || 120) + 2; // +2s tail
+  }, [parsedData, currentBpm]);
+
   useEffect(() => {
     if (parsedData.metadata) {
       setCurrentProject(prev => ({
@@ -114,6 +174,42 @@ const StudioPage: React.FC<StudioPageProps> = ({
       } as any));
     }
   }, [parsedData]);
+
+  // Sync animation frame for transport time
+  useEffect(() => {
+    if (!isPlaying) return;
+    let rafId: number;
+    const updateTime = () => {
+      const beatsPerMeasure = parsedData?.timeSignature?.beats || 4;
+      const writtenBar = musicEngine.currentMeasure;
+      const calcBar = writtenBar ? parseInt(writtenBar) || 1 : Math.floor(musicEngine.transportMusicalTime / beatsPerMeasure) + 1;
+      const calcBeat = Math.floor(musicEngine.transportMusicalTime % beatsPerMeasure) + 1;
+      
+      if (barTextRef.current) barTextRef.current.innerText = calcBar.toString();
+      if (beatTextRef.current) beatTextRef.current.innerText = calcBeat.toString();
+      if (timeTextRef.current) timeTextRef.current.innerText = formatTime(musicEngine.transportSeconds);
+      
+      const seconds = musicEngine.transportSeconds;
+      if (totalDurationSeconds > 0) {
+        const pct = Math.min(100, Math.max(0, (seconds / totalDurationSeconds) * 100));
+        if (scrubberFillRef.current) scrubberFillRef.current.style.width = `${pct}%`;
+        if (scrubberThumbRef.current) scrubberThumbRef.current.style.left = `calc(${pct}% - 6px)`;
+      }
+
+      musicalTimeRef.current = musicEngine.transportMusicalTime;
+      rafId = requestAnimationFrame(updateTime);
+    };
+    rafId = requestAnimationFrame(updateTime);
+    return () => cancelAnimationFrame(rafId);
+  }, [isPlaying, parsedData, currentBpm]);
+
+  // Ensure song is loaded into the engine
+  useEffect(() => {
+    if (parsedData?.notes && tracks.length > 0) {
+      musicEngine.loadSong(parsedData.notes, tracks, transpose, parsedData.timeSignature || { beats: 4 }, isMetronomeOn).catch(e => console.warn('Failed to load song into engine:', e));
+    }
+  }, [parsedData, tracks, transpose, isMetronomeOn]);
+
 
   const onXmlChange = useCallback((newXml: string, _label?: string) => {
     setXmlHistory(prev => [...prev.slice(0, historyIndex + 1), newXml]);
@@ -132,7 +228,7 @@ const StudioPage: React.FC<StudioPageProps> = ({
     const a = document.createElement('a'); a.href = url; a.download = name; a.click(); URL.revokeObjectURL(url);
   };
 
-  const executeExport = async (format: 'pdf' | 'png' | 'jpeg' | 'midi' | 'xml' | 'nimo') => {
+  const executeExport = async (format: 'pdf' | 'png' | 'jpeg' | 'midi' | 'xml' | 'nimo' | 'wav' | 'mp3') => {
     setShowExportModal(false);
     setIsPreparing(true);
     setPrepLabel(`EXPORTING ${format.toUpperCase()}...`);
@@ -145,18 +241,50 @@ const StudioPage: React.FC<StudioPageProps> = ({
         case 'midi': tLink(URL.createObjectURL(MidiWriter.generateMidiBlob(parsedData.notes, currentProject?.bpm || 120)), `${fn}.mid`); break;
         case 'xml':  if (currentXml) tLink(URL.createObjectURL(new Blob([currentXml])), `${fn}.musicxml`); break;
         case 'nimo': tLink(URL.createObjectURL(new Blob([JSON.stringify({ protocol:'NIMO-PROJECT', metadata: currentProject, rawXml: currentXml, tracks }, null, 2)])), `${fn}.nimo`); break;
+        case 'wav': 
+        case 'mp3':
+          if (!musicEngine.isSongLoaded) break;
+          setPrepLabel('RECORDING MIXDOWN (PLEASE WAIT)...');
+          musicEngine.pause();
+          musicEngine.setTransportSeconds(0);
+          await musicEngine.startMasterRecording();
+          musicEngine.start();
+          
+          const maxDur = parsedData.notes.reduce((max, n) => Math.max(max, n.time + n.duration), 0) + 2; // +2s tail
+          
+          await new Promise<void>(resolve => {
+            setTimeout(async () => {
+              musicEngine.pause();
+              musicEngine.setTransportSeconds(0);
+              setPrepLabel('CONVERTING AUDIO...');
+              const url = await musicEngine.stopMasterRecording();
+              if (url) {
+                // Fetch the webm blob
+                const webmBlob = await fetch(url).then(r => r.blob());
+                if (format === 'wav') {
+                  const wavBlob = await AudioConverter.webmToWav(webmBlob);
+                  tLink(URL.createObjectURL(wavBlob), `${fn}_MIXDOWN.wav`);
+                } else if (format === 'mp3') {
+                  const mp3Blob = await AudioConverter.webmToMp3(webmBlob);
+                  tLink(URL.createObjectURL(mp3Blob), `${fn}_MIXDOWN.mp3`);
+                }
+              }
+              resolve();
+            }, maxDur * 1000);
+          });
+          break;
       }
     } finally { setIsPreparing(false); }
   };
 
   if (showProjectBrowser) {
     return (
-      <div className="h-dvh flex flex-col bg-[#050507] p-8">
+      <div className="h-full w-full flex flex-col bg-[#050507] p-8">
         <h1 className="text-3xl font-black text-white italic mb-10 tracking-widest">STUDIO MATRIX</h1>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 overflow-y-auto">
           <div
             onClick={() => setShowProjectBrowser(false)}
-            className="aspect-square bg-white/[0.03] border-2 border-dashed border-white/5 rounded-[40px] flex flex-col items-center justify-center gap-4 cursor-pointer hover:bg-white/[0.05] transition-all active:scale-95"
+            className="aspect-video bg-white/[0.03] border-2 border-dashed border-white/5 rounded-[24px] flex flex-col items-center justify-center gap-4 cursor-pointer hover:bg-white/[0.05] transition-all active:scale-95"
           >
             <PlusCircle size={32} className="text-cyan-400" />
             <span className="text-white font-black uppercase text-[9px] tracking-[0.3em]">New Project</span>
@@ -176,15 +304,11 @@ const StudioPage: React.FC<StudioPageProps> = ({
                 setIsPreparing(true);
                 setPrepLabel(`IMPORTING ${files.length} STREAMS...`);
                 
-                const { FileConverter } = await import('../../lib/FileConverter');
                 let successCount = 0;
                 
                 for (const file of files) {
                   try {
-                    const res = await FileConverter.convertFile(file);
-                    if (!res.success || !res.midiData) continue;
-                    const midiFile = new File([res.midiData], res.fileName, { type: 'audio/midi' });
-                    const { metadata, xmlData, layoutBundle } = await parseMusicXMLMetadata(midiFile);
+                    const { metadata, xmlData, layoutBundle } = await parseMusicXMLMetadata(file);
                     metadata.origin = 'load';
                     await songStorage.saveSong(metadata, xmlData, layoutBundle);
                     successCount++;
@@ -203,7 +327,7 @@ const StudioPage: React.FC<StudioPageProps> = ({
               };
               input.click();
             }}
-            className="aspect-square bg-amber-500/5 border-2 border-dashed border-amber-500/20 rounded-[40px] flex flex-col items-center justify-center gap-4 cursor-pointer hover:bg-amber-500/10 transition-all active:scale-95"
+            className="aspect-video bg-amber-500/5 border-2 border-dashed border-amber-500/20 rounded-[24px] flex flex-col items-center justify-center gap-4 cursor-pointer hover:bg-amber-500/10 transition-all active:scale-95"
           >
             <Download size={32} className="text-amber-500" />
             <span className="text-amber-500 font-black uppercase text-[9px] tracking-[0.3em]">Import & Convert (.EMK)</span>
@@ -214,25 +338,85 @@ const StudioPage: React.FC<StudioPageProps> = ({
   }
 
   return (
-    <div className="h-dvh flex flex-col bg-[#050507] overflow-hidden relative">
+    <div className="h-full w-full flex flex-col bg-[#050507] overflow-hidden relative">
 
       {/* ══ Top Header ══════════════════════════════════════════════════ */}
-      <header className="h-14 bg-[#0c0c0e] border-b border-white/5 flex items-center justify-between px-4 z-[3000] shrink-0">
-        <div className="flex items-center gap-3 min-w-0">
-          <button onClick={onExit} className="p-2 text-zinc-400 hover:text-white transition-colors">
-            <ArrowLeft size={18} />
+      <header className="h-14 bg-[#0c0c0e] border-b border-white/5 flex items-center justify-between px-4 z-[3000] shrink-0 gap-4 overflow-x-auto">
+        <div className="flex items-center gap-3 shrink-0">
+          <button 
+            onClick={onExit} 
+            className="w-9 h-9 bg-white/5 border border-white/10 rounded-full flex items-center justify-center text-zinc-300 hover:text-white hover:bg-white/10 hover:scale-105 transition-all group"
+            title="Exit Studio"
+          >
+            <ArrowLeft size={16} className="group-hover:-translate-x-0.5 transition-transform" />
           </button>
-          <div className="min-w-0">
-            <h2 className="text-[11px] font-black text-white uppercase italic truncate pr-4 leading-none">
+          <div className="min-w-0 flex flex-col justify-center">
+            <h2 className="text-[11px] font-black text-white uppercase italic truncate max-w-[150px] leading-none">
               {currentProject?.title || 'UNTITLED MATRIX'}
             </h2>
-            <p className="text-[7px] font-bold text-cyan-500 uppercase tracking-widest truncate">
+            <p className="text-[7px] font-bold text-cyan-500 uppercase tracking-widest truncate mt-1">
               {currentProject?.artist || 'MAESTRO'} · {parsedData.timeSignature?.beats || 4}/{parsedData.timeSignature?.beatType || 4}
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        {/* ── Center Controls (Mode) ── */}
+        <div className="flex items-center gap-4 shrink-0 mx-auto">
+          <div className="flex bg-[#111] p-1 rounded-2xl border border-white/10 shrink-0">
+            <button 
+              onClick={() => setStudioMode('arranger')} 
+              className={`relative px-4 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all group ${
+                studioMode === 'arranger' 
+                ? 'text-white shadow-[0_0_30px_rgba(34,211,238,0.6)] scale-105 z-10' 
+                : 'text-zinc-300 hover:text-white'
+              }`}
+            >
+              {/* === INACTIVE "ALIVE" STATE === */}
+              {studioMode !== 'arranger' && (
+                <div className="absolute inset-0 rounded-xl overflow-hidden pointer-events-none">
+                  {/* Slow moving energy gradient inside */}
+                  <div className="absolute -inset-[100%] bg-gradient-to-r from-transparent via-cyan-500/20 to-transparent animate-[spin_4s_linear_infinite] opacity-50" />
+                  {/* Faint border glow */}
+                  <div className="absolute inset-[1px] bg-[#111] rounded-[10px] z-0" />
+                  <div className="absolute inset-0 border border-cyan-500/30 rounded-xl z-0" />
+                </div>
+              )}
+
+              {/* === ACTIVE AURA & ENERGY STATE === */}
+              {studioMode === 'arranger' && (
+                <>
+                  {/* Outer glowing aura */}
+                  <div className="absolute -inset-3 bg-gradient-to-r from-cyan-400 to-indigo-500 opacity-40 blur-lg animate-pulse pointer-events-none rounded-2xl" />
+                  
+                  {/* Inner clipping container for the spinning border */}
+                  <div className="absolute inset-0 rounded-xl overflow-hidden pointer-events-none shadow-[inset_0_0_20px_rgba(0,229,255,0.5)]">
+                    <div className="absolute inset-0 bg-black/60" />
+                    <div className="absolute -inset-[100%] bg-[conic-gradient(from_0deg,transparent_0_320deg,rgba(0,229,255,1)_360deg)] animate-[spin_1.5s_linear_infinite]" />
+                    <div className="absolute inset-[1.5px] rounded-[10.5px] bg-gradient-to-r from-indigo-600/90 to-cyan-500/90 z-0" />
+                    <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-30 mix-blend-overlay z-0" />
+                  </div>
+                </>
+              )}
+
+              <span className="relative z-10 flex items-center gap-1.5 drop-shadow-md">
+                {studioMode === 'arranger' ? (
+                  <Zap size={10} className="text-yellow-300 fill-yellow-300 animate-bounce" />
+                ) : (
+                  <Zap size={10} className="text-cyan-400/60 animate-pulse" />
+                )}
+                AI ARRANGER
+              </span>
+            </button>
+            <button 
+              onClick={() => setStudioMode('editor')} 
+              className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${studioMode === 'editor' ? 'bg-indigo-500 text-white shadow-[0_0_10px_rgba(99,102,241,0.3)]' : 'text-zinc-500 hover:text-white hover:bg-white/5'}`}
+            >
+              EDIT
+            </button>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0 mr-6">
           {/* Plugin chip */}
           <div className="flex items-center gap-1 bg-white/5 px-2 py-1 rounded-xl border border-white/5">
             <select
@@ -264,20 +448,12 @@ const StudioPage: React.FC<StudioPageProps> = ({
                 setIsPreparing(true);
                 setPrepLabel(`IMPORTING ${files.length} STREAMS...`);
                 
-                const { FileConverter } = await import('../../lib/FileConverter');
                 let successCount = 0;
                 
                 for (const file of files) {
                   try {
-                    // 1. Convert if EMK
-                    const res = await FileConverter.convertFile(file);
-                    if (!res.success || !res.midiData) continue;
-
-                    // 2. Wrap as File if it was a Blob from converter
-                    const midiFile = new File([res.midiData], res.fileName, { type: 'audio/midi' });
-
-                    // 3. Parse Metadata (converts MIDI to XML internally)
-                    const { metadata, xmlData, layoutBundle } = await parseMusicXMLMetadata(midiFile);
+                    // Parse Metadata (handles EMK, MIDI, XML, MXL internally via extractXmlString)
+                    const { metadata, xmlData, layoutBundle } = await parseMusicXMLMetadata(file);
                     
                     // 4. Save to Database
                     metadata.origin = 'load'; // Mark as user-imported
@@ -298,69 +474,293 @@ const StudioPage: React.FC<StudioPageProps> = ({
               };
               input.click();
             }}
-            className="px-4 h-8 bg-amber-500/10 border border-amber-500/20 text-amber-500 rounded-xl text-[8px] font-black uppercase hover:bg-amber-500 hover:text-black transition-all"
+            className="px-3 h-8 bg-amber-500/10 border border-amber-500/20 text-amber-500 rounded-xl text-[8px] font-black uppercase hover:bg-amber-500 hover:text-black transition-all"
           >
-            IMPORT CONVERTER
-          </button>
-
-          <button
-            onClick={() => setShowHarmonyModal(true)}
-            className="px-4 h-8 bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 rounded-xl text-[8px] font-black uppercase hover:bg-indigo-500 hover:text-white transition-all flex items-center gap-1"
-          >
-            <Bot size={12} /> AI HARMONY
+            IMPORT
           </button>
 
           <button
             onClick={() => setShowExportModal(true)}
-            className="px-5 h-8 bg-white text-black rounded-xl text-[9px] font-black uppercase shadow-lg active:scale-95 transition-all"
+            className="px-3 h-8 bg-white text-black rounded-xl text-[9px] font-black uppercase shadow-lg active:scale-95 transition-all"
           >
             EXPORT
           </button>
         </div>
       </header>
 
-      {/* ══ Score Area (full bleed) ══════════════════════════════════════ */}
-      <div className="flex-1 relative overflow-hidden">
-        <div ref={scoreContainerRef} className="absolute inset-0">
-          <ProScoreEditor
-            ref={scoreRef}
-            xmlData={currentXml}
-            currentTime={0}
-            isPlaying={false}
-            layoutMode="paginated"
-            isLoupeEnabled={false}
-            songMetadata={currentProject}
-            zoom={1.0}
-            isEditable={true}
-            onXmlChange={onXmlChange}
-            onPageCountChange={setSvgPagesCount}
-            layoutBundle={layoutBundle}
+      {/* ══ Studio View Area ═════════════════════════════════════════════ */}
+      <div className="flex-1 relative overflow-hidden bg-[#0a0a0c]">
+        {studioMode === 'arranger' ? (
+          <ArrangerPage 
+            song={currentProject} 
+            musicXml={currentXml} 
+            tracks={tracks} 
+            setTracks={setTracks} 
+            hideHeader={true}
+            visualType={arrangerVisualType}
+            onTrackDoubleClick={(trackId, targetMode) => {
+              setPianorollTrackId(trackId);
+              setStudioMode(targetMode || 'pianoroll');
+            }}
           />
-        </div>
+        ) : studioMode === 'pianoroll' ? (
+          <div className="absolute inset-0 z-10 overflow-hidden bg-[#0a0a0c]">
+            <PerformanceScore
+              notes={parsedData?.notes?.filter(n => n.trackId === pianorollTrackId) || []}
+              tracks={tracks}
+              musicalTimeRef={musicalTimeRef}
+              onSeek={(time) => musicEngine.setTransportSeconds(time)}
+              onTogglePlay={() => {
+                if (musicEngine.transportState === 'started') musicEngine.pause();
+                else musicEngine.start();
+              }}
+              bpm={currentBpm}
+              isPlaying={isPlaying}
+              songKey={currentProject?.key || 'C'}
+              beatsPerMeasure={parsedData?.timeSignature?.beats || 4}
+            />
+            {/* Back button */}
+            <button 
+              onClick={() => setStudioMode('arranger')}
+              className="absolute top-4 left-4 z-[5000] px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-black uppercase tracking-widest backdrop-blur-md shadow-lg border border-white/10 transition-all active:scale-95 flex items-center gap-2"
+            >
+              ← Back to Arranger
+            </button>
+          </div>
+        ) : (
+          <>
+            <div ref={scoreContainerRef} className="absolute inset-0 z-0">
+              <ProScoreEditor
+                ref={scoreRef}
+                xmlData={currentXml}
+                lyricMode={localStorage.getItem('memo_lyric_mode') || 'Ju Solfege Movable Doh'}
+                onXmlChange={(newXml) => {
+                  const solfegeXml = injectSolfegeToXml(newXml, localStorage.getItem('memo_lyric_mode') || 'Ju Solfege Movable Doh');
+                  onXmlChange(solfegeXml);
+                }}
+                currentTime={0}
+                isPlaying={isPlaying}
+                layoutMode="paginated"
+                isLoupeEnabled={false}
+                songMetadata={currentProject}
+                zoom={1.0}
+                isEditable={true}
+                onPageCountChange={setSvgPagesCount}
+                layoutBundle={layoutBundle}
+              />
+            </div>
 
-        {/* Score Edit Overlay */}
-        <ScoreEditOverlay
-          containerRef={scoreContainerRef}
-          xmlData={currentXml}
-          isEditable={true}
-          activeTool={activeTool}
-          activeDuration={activeDuration || 'quarter'}
-          onXmlChange={onXmlChange}
-          svgPagesCount={svgPagesCount}
-        />
+            <ScoreEditOverlay
+              containerRef={scoreContainerRef}
+              xmlData={currentXml}
+              isEditable={true}
+              activeTool={activeTool}
+              activeDuration={activeDuration || 'quarter'}
+              onXmlChange={onXmlChange}
+              svgPagesCount={svgPagesCount}
+            />
+          </>
+        )}
       </div>
 
       {/* ══ Maestro Engraver — floating draggable panel ══════════════════ */}
-      <EngraverCommandCenter
-        activeTool={engraverTool}
-        onToolSelect={setEngraverTool}
-        isVisible={engraverVisible}
-        onToggleVisibility={() => setEngraverVisible(v => !v)}
-        onUndo={handleUndo}
-        onRedo={handleRedo}
-        canUndo={historyIndex > 0}
-        canRedo={historyIndex < xmlHistory.length - 1}
-      />
+      {studioMode === 'editor' && (
+        <EngraverCommandCenter
+          activeTool={engraverTool}
+          onToolSelect={setEngraverTool}
+          isVisible={engraverVisible}
+          onToggleVisibility={() => setEngraverVisible(v => !v)}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+          canUndo={historyIndex > 0}
+          canRedo={historyIndex < xmlHistory.length - 1}
+        />
+      )}
+
+      {/* ── Footer Transport Controls ── */}
+      <footer className="shrink-0 bg-[#0A0A0C]/95 backdrop-blur-xl border-t border-white/5 flex flex-col items-center sm:px-4 py-2 gap-2 relative z-[30] pointer-events-auto w-full">
+        {/* Scrubber (Slide Bar) */}
+        <div className="w-full max-w-[500px] bg-[#0c0c0e]/90 backdrop-blur-2xl px-3 h-8 rounded-full border border-white/10 shadow-[0_10px_30px_rgba(0,0,0,0.8)] flex items-center gap-3">
+          <span ref={timeTextRef} className="text-[9px] font-black text-cyan-400 lcd-font tabular-nums w-9 text-right">0:00</span>
+          <div 
+            className="flex-1 relative h-[2px] flex items-center cursor-pointer group overflow-hidden" 
+            onClick={(e) => { 
+              const rect = e.currentTarget.getBoundingClientRect(); 
+              musicEngine.setTransportSeconds(((e.clientX - rect.left) / rect.width) * totalDurationSeconds); 
+              
+              const seconds = ((e.clientX - rect.left) / rect.width) * totalDurationSeconds;
+              if (timeTextRef.current) timeTextRef.current.innerText = formatTime(seconds);
+              const pct = Math.min(100, Math.max(0, (seconds / totalDurationSeconds) * 100));
+              if (scrubberFillRef.current) scrubberFillRef.current.style.width = `${pct}%`;
+              if (scrubberThumbRef.current) scrubberThumbRef.current.style.left = `calc(${pct}% - 6px)`;
+            }}
+          >
+            <div className="w-full h-full bg-white/20 rounded-full" />
+            <div ref={scrubberFillRef} className="absolute h-full bg-cyan-400 left-0 transition-all shadow-[0_0_8px_#00e5ff]" style={{ width: '0%' }} />
+            <div ref={scrubberThumbRef} className="absolute w-3 h-3 bg-white rounded-full shadow-[0_0_10px_#fff] transition-all" style={{ left: '-6px' }} />
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[9px] font-black text-zinc-300 lcd-font tabular-nums w-9 text-left">{formatTime(totalDurationSeconds)}</span>
+            <div className="h-3 w-px bg-white/20 mx-1" />
+            <button
+              onClick={() => {
+                const next = !isMetronomeOn;
+                setIsMetronomeOn(next);
+                musicEngine.toggleMetronome(next);
+              }}
+              className={`p-1 transition-all ${isMetronomeOn ? 'text-cyan-400 drop-shadow-[0_0_10px_rgba(0,229,255,0.8)]' : 'text-white/80 hover:text-white'}`}
+            >
+              <Bell size={13} fill={isMetronomeOn ? "currentColor" : "none"} />
+            </button>
+          </div>
+        </div>
+
+        {/* Main Transport */}
+        <div className="w-full max-w-[calc(100vw-8px)] md:max-w-[640px] bg-white shadow-[0_20px_60px_rgba(0,0,0,0.9)] rounded-full h-[54px] min-[360px]:h-[64px] flex items-center justify-between px-1.5 min-[360px]:px-2.5 sm:px-3 md:px-4 pointer-events-auto relative">
+          
+          {/* LEFT GROUP: Mixer Toggle, Volume & SCR vertically stacked */}
+          <div className="flex items-center gap-1.5 min-[360px]:gap-2 border-r border-zinc-100 pr-1.5 min-[360px]:pr-2.5 md:pr-3.5">
+            <button
+              onClick={() => {}} // Disabled or No-op for now in Arrange view
+              className="w-8 h-8 min-[380px]:w-9 h-9 sm:w-10 sm:h-10 md:w-11 md:h-11 rounded-full flex items-center justify-center transition-all text-zinc-300 cursor-not-allowed"
+              title="Mixer (Not available in Arrange Mode)"
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5 min-[380px]:w-4 min-[380px]:h-4 sm:w-[18px] sm:h-[18px]" />
+            </button>
+
+            {/* Vertical stack for Volume and SCR */}
+            <div className="flex flex-col gap-0.5 items-center justify-center">
+              {/* Volume Trigger */}
+              <div className="relative" ref={volumePopupRef}>
+                <button
+                  onClick={() => setShowVolumeSlider(!showVolumeSlider)}
+                  className={`w-6 h-6 min-[360px]:w-7 h-7 rounded-full flex items-center justify-center transition-all border ${
+                    showVolumeSlider
+                      ? 'border-cyan-400 bg-cyan-50 text-cyan-600 shadow-[0_0_10px_rgba(0,229,255,0.4)]'
+                      : 'border-transparent text-zinc-400 hover:text-cyan-500 hover:bg-zinc-50'
+                  }`}
+                  title="Volume Control"
+                >
+                  {masterVolume === 0 ? (
+                    <VolumeX className="w-2.5 h-2.5 min-[360px]:w-3 h-3" />
+                  ) : (
+                    <Volume2 className={`w-2.5 h-2.5 min-[360px]:w-3 h-3 ${showVolumeSlider ? 'text-cyan-600' : 'text-zinc-400 hover:text-cyan-500'}`} />
+                  )}
+                </button>
+              
+              {showVolumeSlider && (
+                <div
+                  className="absolute bottom-[48px] left-[-10px] w-12 h-48 bg-[#0c0c0e]/95 backdrop-blur-2xl rounded-[24px] shadow-[0_20px_50px_rgba(0,0,0,0.8)] border border-white/10 p-2.5 flex flex-col items-center animate-in slide-in-from-bottom-3 duration-300 z-[9999] select-none touch-none"
+                  onPointerDown={(e) => {
+                    volumeDragStartYRef.current = e.clientY;
+                    volumeDragStartVolRef.current = masterVolume;
+                    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+                    e.stopPropagation();
+                  }}
+                  onPointerMove={(e) => {
+                    if (volumeDragStartYRef.current === null) return;
+                    const deltaY = volumeDragStartYRef.current - e.clientY;
+                    const newVol = Math.max(0, Math.min(1, volumeDragStartVolRef.current + deltaY / 100));
+                    musicEngine.setMasterVolume(newVol);
+                    if (volumeFillRef.current) {
+                      volumeFillRef.current.style.height = `${newVol * 100}%`;
+                    }
+                    if (volumeTextRef.current) {
+                      volumeTextRef.current.innerText = Math.round(newVol * 100).toString();
+                    }
+                  }}
+                  onPointerUp={(e) => { 
+                    if (volumeDragStartYRef.current !== null) {
+                      const deltaY = volumeDragStartYRef.current - e.clientY;
+                      const newVol = Math.max(0, Math.min(1, volumeDragStartVolRef.current + deltaY / 100));
+                      setMasterVolume(newVol);
+                    }
+                    volumeDragStartYRef.current = null; 
+                  }}
+                  onPointerCancel={() => { volumeDragStartYRef.current = null; }}
+                >
+                  <div className="flex-1 w-2 bg-black rounded-full relative overflow-hidden border border-white/5 shadow-inner cursor-ns-resize">
+                    <div
+                      ref={volumeFillRef}
+                      className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-cyan-600 via-cyan-400 to-white shadow-[0_0_10px_rgba(0,229,255,0.6)]"
+                      style={{ height: `${masterVolume * 100}%` }}
+                    />
+                  </div>
+                  <div className="mt-2 bg-black/80 px-1 py-0.5 rounded-lg border border-cyan-500/30 flex items-center justify-center min-w-[24px]">
+                    <span ref={volumeTextRef} className="text-[10px] font-black text-cyan-400 tracking-tighter leading-none">{Math.round(masterVolume * 100)}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+              {/* SCR (Score toggle) */}
+              <button
+                onClick={() => setArrangerVisualType(arrangerVisualType === 'score' ? 'pianoroll' : 'score')}
+                className={`w-6 h-6 min-[360px]:w-7 h-7 border rounded-full flex flex-col items-center justify-center group active:scale-95 transition-all ${
+                  arrangerVisualType === 'score' ? 'bg-[#fbfbfb] border-zinc-100 text-zinc-400' : 'bg-cyan-50 border-cyan-100 text-cyan-500'
+                }`}
+                title="Toggle Score View"
+              >
+                <Music className={`w-2.5 h-2.5 min-[360px]:w-3 h-3 ${arrangerVisualType === 'score' ? 'text-zinc-400 group-hover:text-zinc-600' : 'text-cyan-500'}`} />
+              </button>
+            </div>
+          </div>
+
+          {/* CENTER GROUP: Narrow LCD Display */}
+          <div className="flex-1 flex justify-center px-1">
+            <div className="bg-[#0c0c0e] rounded overflow-hidden flex flex-row items-center justify-center font-mono text-[#00e5ff] w-full max-w-[280px] sm:max-w-[340px] md:max-w-[420px] h-[34px] min-[360px]:h-[38px] sm:h-[42px] md:h-[46px] border border-white/5 shadow-inner relative">
+              <div className="flex-1 h-full border-r border-white/[0.03] flex items-center justify-center">
+                <KeyTransposeDisplay keySig={parsedData.metadata.key || currentProject?.key || 'C'} transpose={transpose} onTransposeChange={setTranspose} />
+              </div>
+              <div className="flex-1 h-full border-r border-white/[0.03] flex items-center justify-center">
+                <BpmDisplay bpm={currentBpm} onBpmChange={(b) => { setCurrentBpm(b); musicEngine.setBpm(b); }} />
+              </div>
+              <div className="flex-1 h-full flex items-center justify-center">
+                <BarBeatPositionDisplay barRef={barTextRef} beatRef={beatTextRef} onSeek={(bar) => {
+                  const beatsPerMeasure = parsedData?.timeSignature?.beats || 4;
+                  if (barTextRef.current) barTextRef.current.innerText = bar.toString();
+                  musicEngine.setTransportSeconds((bar - 1) * beatsPerMeasure * (60 / currentBpm));
+                }} />
+              </div>
+            </div>
+          </div>
+
+          {/* RIGHT GROUP: Back and Play/Pause Controls */}
+          <div className="flex items-center gap-1.5 min-[360px]:gap-2 pl-1 min-[360px]:pl-1.5 pr-1.5 min-[360px]:pr-2.5">
+            <button onClick={() => { 
+                musicEngine.pause();
+                musicEngine.setTransportSeconds(0);
+                setIsPlaying(false);
+                if (barTextRef.current) barTextRef.current.innerText = "1";
+                if (beatTextRef.current) beatTextRef.current.innerText = "1";
+              }} className="p-1.5 md:p-2 text-zinc-400 hover:text-white transition-colors group">
+              <SkipBack className="w-3.5 h-3.5 min-[360px]:w-4 min-[360px]:h-4 sm:w-[19px] sm:h-[19px]" fill="currentColor" />
+            </button>
+
+            <div className="relative">
+              <div className={`absolute inset-0 bg-[#00e5ff]/20 blur-md rounded-full transition-opacity ${isPlaying ? 'opacity-100' : 'opacity-0'}`} />
+              <button
+                onClick={async () => {
+                  if (isPlaying) {
+                    musicEngine.pause();
+                    setIsPlaying(false);
+                  } else {
+                    await musicEngine.start();
+                    setIsPlaying(true);
+                  }
+                }}
+                className="relative w-10 h-10 min-[360px]:w-11 h-11 sm:w-12 sm:h-12 md:w-[54px] md:h-[54px] rounded-full flex items-center justify-center text-white transition-all active:scale-95 bg-[#00e5ff] hover:bg-[#00c8e0] shadow-[0_4px_25px_rgba(0,229,255,0.5)]"
+              >
+                {isPlaying ? (
+                  <Pause className="w-4 h-4 sm:w-[24px] sm:h-[24px]" fill="white" />
+                ) : (
+                  <Play className="w-4 h-4 sm:w-[24px] sm:h-[24px] ml-0.5 sm:ml-1" fill="white" />
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      </footer>
 
       {/* ══ AI AutoHarmony Modal ════════════════════════════════════════ */}
       {showHarmonyModal && (
@@ -415,6 +815,8 @@ const StudioPage: React.FC<StudioPageProps> = ({
                 { f: 'midi', n: 'Performance (MID)', c: 'text-amber-400',  I: Music     },
                 { f: 'xml',  n: 'MusicXML',          c: 'text-indigo-400', I: FileCode  },
                 { f: 'nimo', n: 'NIMO Project',      c: 'text-cyan-400',   I: Bot       },
+                { f: 'wav',  n: 'Audio (WAV)',       c: 'text-fuchsia-400',I: Headphones},
+                { f: 'mp3',  n: 'Audio (MP3)',       c: 'text-emerald-400',I: Headphones},
               ].map(opt => (
                 <button key={opt.f} onClick={() => executeExport(opt.f as any)}
                   className="bg-white/5 border border-white/5 p-4 rounded-3xl flex flex-col items-start gap-2 hover:bg-white/10 active:scale-95 transition-all">

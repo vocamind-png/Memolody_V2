@@ -41,6 +41,7 @@ interface SvgNoteElement {
   containerElement: SVGElement | null;
   x: number;
   y: number;
+  voiceIdx: number;
 }
 
 interface ProScoreEditorProps {
@@ -90,6 +91,8 @@ interface ProScoreEditorProps {
     typography?: any;
   } | null;
   isVisible?: boolean;
+  soloedStems?: Record<string, number | null>;
+  trackControlsOverlay?: React.ReactNode;
 }
 
 export interface ProScoreEditorRef {
@@ -281,6 +284,8 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
   lyricMode = 'Ju Solfege Movable Doh',
   layoutBundle = null,
   isVisible = true,
+  soloedStems = {},
+  trackControlsOverlay,
 }, ref) => {
   // Detection for Mobile Devices (Centralized)
   const isMobile = useMemo(() => /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent), []);
@@ -461,6 +466,7 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
     //         fall back to sequential slot matching otherwise.
     // ================================================================
     let noteMap: SvgNoteElement[] = [];
+    const loadedNotes = musicEngine.lastLoadedNotes || [];
 
     // Fallback: build xmlChords sorted by time
     let xmlChords: { startTime: number, duration: number }[] = [];
@@ -480,8 +486,39 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
     domNotesList.forEach(g => {
       const id = g.id;
       const use = g.querySelector('use') as SVGElement;
-      const solfegeEl = g.querySelector('.lyric text') as SVGElement;
+      
+      // Verovio wraps notes and lyrics in <g class="syllable">, and the text is in <g class="syl"><text>
+      const syllableGroup = g.closest('.syllable');
+      let solfegeEl = (syllableGroup?.querySelector('.syl text, .syl tspan') || g.querySelector('.lyric text, .syl text, .syl tspan')) as SVGElement;
+      
       const rect = (use || g).getBoundingClientRect();
+
+      // Geometric Fallback: if not found via grouping, find the closest text element in the same measure
+      if (!solfegeEl) {
+        const measure = g.closest('.measure');
+        if (measure) {
+          const noteX = rect.x + (rect.width / 2);
+          const textNodes = Array.from(measure.querySelectorAll('text, tspan')) as SVGElement[];
+          let bestDist = Infinity;
+          for (const node of textNodes) {
+             const nodeRect = node.getBoundingClientRect();
+             const nodeCenterX = nodeRect.x + (nodeRect.width / 2);
+             const dist = Math.abs(nodeCenterX - noteX);
+             // Verify it is somewhat horizontally aligned with the note (within 30px)
+             if (dist < 30) {
+                if (dist < bestDist) {
+                   bestDist = dist;
+                   solfegeEl = node;
+                }
+             }
+          }
+        }
+      }
+      
+      // If we found a tspan, escalate to the parent text so the whole word colors
+      if (solfegeEl && solfegeEl.tagName.toLowerCase() === 'tspan') {
+         solfegeEl = solfegeEl.closest('text') || solfegeEl;
+      }
 
       let startTime: number;
       let duration: number;
@@ -496,17 +533,55 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
         slotIndex++;
       }
 
+      const staffEl = g.closest('.staff');
+      const staffNum = staffEl ? staffEl.getAttribute('n') || '1' : '1';
+      let trackId = `P1-S${staffNum}`; // Good default guess
+      
+      let voiceIdx = 0;
+      if (loadedNotes.length > 0) {
+        const pname = g.getAttribute('pname');
+        const octStr = g.getAttribute('oct');
+        if (pname && octStr) {
+          const step = pname.toUpperCase();
+          const oct = parseInt(octStr);
+          // Try to match exact note, preferring one that matches the expected staff suffix
+          let matchedNotes = loadedNotes.filter(n => 
+            Math.abs(n.startTime - startTime) < 0.05 && 
+            n.step === step && 
+            n.octave === oct
+          );
+          
+          let matchedNote = matchedNotes.find(n => n.trackId.endsWith(`-S${staffNum}`)) || matchedNotes[0];
+
+          if (matchedNote) {
+            trackId = matchedNote.trackId;
+            const trackNotes = loadedNotes.filter(n => n.trackId === trackId);
+            const uniqueVoices = Array.from(new Set(trackNotes.map(n => n.voice || 1))).sort((a,b) => a - b);
+            
+            if (matchedNote.voice) {
+              voiceIdx = uniqueVoices.indexOf(matchedNote.voice);
+              if (voiceIdx === -1) voiceIdx = 0;
+            }
+            // console.log(`[ProScoreEditor] Mapped SVG note: pitch=${step}${oct}, staffNum=${staffNum} -> trackId=${trackId}, voice=${matchedNote.voice}, voiceIdx=${voiceIdx}`);
+          }
+        }
+      } else {
+        const layerEl = g.closest('.layer');
+        voiceIdx = layerEl ? Math.max(0, parseInt(layerEl.getAttribute('n') || '1') - 1) : 0;
+      }
+
       noteMap.push({
         id,
         startTime,
         duration,
-        trackId: 'P1',
+        trackId,
         noteheadElement: use || g,
         solfegeElement: solfegeEl,
         containerElement: g,
         measureId: g.closest('.measure')?.id || '',
         x: rect.left + rect.width / 2,
         y: rect.top + rect.height / 2,
+        voiceIdx,
       } as any);
     });
 
@@ -971,17 +1046,11 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
         finalXml = injectSolfegeToXml(finalXml, lyricMode as any);
       }
 
-      // ── Chord symbols: skip in edit mode (not needed and slows down) ──────
-      if (!isEditable) {
-        if (/<harmony/i.test(finalXml)) {
-          finalXml = finalXml
-            .replace(/(<harmony[^>]*)\s+print-frame=["']?no["']?/gi, '$1')
-            .replace(/(<harmony[^>]*)\s+print-object=["']?no["']?/gi, '$1');
-        } else {
-          // yield to browser before heavy O(n²) chord detection
-          await new Promise<void>(r => setTimeout(r, 0));
-          // finalXml = detectAndInjectChords(finalXml); // Disable auto-chord injection to preserve exact original score
-        }
+      // ── Chord symbols: Process in all modes per user request ──────
+      if (/<harmony/i.test(finalXml)) {
+        finalXml = finalXml
+          .replace(/(<harmony[^>]*)\s+print-frame=["']?no["']?/gi, '$1')
+          .replace(/(<harmony[^>]*)\s+print-object=["']?no["']?/gi, '$1');
       }
 
       // ── CRITICAL: Strip any remaining xmlns attributes ──
@@ -1438,14 +1507,14 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
         if (children) {
           for (let i = 0; i < children.length; i++) {
             if (i > 0) doc.addPage();
-            const canvas = await html2canvas(children[i] as HTMLElement, { scale: 2, useCORS: true });
+            const canvas = await html2canvas(children[i] as HTMLElement, { scale: 5, useCORS: true });
             doc.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG', 0, 0, doc.internal.pageSize.getWidth(), doc.internal.pageSize.getHeight());
           }
         }
       } else {
         for (let i = 0; i < pageEls.length; i++) {
           if (i > 0) doc.addPage();
-          const canvas = await html2canvas(pageEls[i] as HTMLElement, { scale: 2, useCORS: true });
+          const canvas = await html2canvas(pageEls[i] as HTMLElement, { scale: 5, useCORS: true });
           doc.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG', 0, 0, doc.internal.pageSize.getWidth(), doc.internal.pageSize.getHeight());
         }
       }
@@ -1463,7 +1532,7 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
     if (!containerRef.current) return;
     const pageEl = containerRef.current.querySelector('.page-container') as HTMLElement;
     if (pageEl) {
-      const canvas = await html2canvas(pageEl, { scale: 2, useCORS: true });
+      const canvas = await html2canvas(pageEl, { scale: 5, useCORS: true });
       const link = document.createElement('a');
       link.download = `${displayTitle.replace(/\s+/g, '_')}.${format}`;
       link.href = canvas.toDataURL(`image/${format}`, 0.95);
@@ -1499,6 +1568,48 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
   const handleTouchEnd = () => {
     initialDistanceRef.current = null;
   };
+
+  // Colorize lyrics based on soloedStems
+  useEffect(() => {
+    if (!svgNoteMapRef.current || svgNoteMapRef.current.length === 0) return;
+    svgNoteMapRef.current.forEach(note => {
+      if (!note.solfegeElement) return;
+      const isSoloed = soloedStems?.[note.trackId] === note.voiceIdx;
+      const hasAnySolo = soloedStems?.[note.trackId] !== undefined && soloedStems?.[note.trackId] !== null;
+      
+      if (hasAnySolo) {
+        // console.log(`[ProScoreEditor] Lyric Color Check: note trackId=${note.trackId}, voiceIdx=${note.voiceIdx}, isSoloed=${isSoloed}`);
+        const applyStyle = (el: SVGElement, color: string, opacity: string, weight: string) => {
+          el.style.setProperty('fill', color, 'important');
+          el.style.setProperty('opacity', opacity, 'important');
+          el.style.setProperty('font-weight', weight, 'important');
+          el.querySelectorAll('tspan').forEach(tspan => {
+            (tspan as SVGElement).style.setProperty('fill', color, 'important');
+            (tspan as SVGElement).style.setProperty('opacity', opacity, 'important');
+            (tspan as SVGElement).style.setProperty('font-weight', weight, 'important');
+          });
+        };
+
+        if (isSoloed) {
+          applyStyle(note.solfegeElement, '#f59e0b', '1', '900');
+        } else {
+          applyStyle(note.solfegeElement, '#a1a1aa', '0.2', 'normal');
+        }
+      } else {
+        const removeStyle = (el: SVGElement) => {
+          el.style.removeProperty('fill');
+          el.style.removeProperty('opacity');
+          el.style.removeProperty('font-weight');
+          el.querySelectorAll('tspan').forEach(tspan => {
+            (tspan as SVGElement).style.removeProperty('fill');
+            (tspan as SVGElement).style.removeProperty('opacity');
+            (tspan as SVGElement).style.removeProperty('font-weight');
+          });
+        };
+        removeStyle(note.solfegeElement);
+      }
+    });
+  }, [soloedStems, mappedCount]);
 
   if (!xmlData && !loadingStep) {
     return (
@@ -1536,13 +1647,17 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
             transition: filter 0.3s; 
         }
         .xml-overlay-container { position: relative; width: 100%; height: auto; }
-        g.harm { overflow: visible; }
-        /* Force chord symbols (harmony) text to be black, bold, and fully visible on white sheet background */
+        g.harm, g.harmony { 
+            overflow: visible; 
+            transform: scale(1.25);
+            transform-box: fill-box;
+            transform-origin: left bottom;
+        }
+        /* Force chord symbols (harmony) text to be black, normal weight, and fully visible on white sheet background */
         g.harm text, g.harm tspan, g.harmony text, g.harmony tspan {
             fill: #000000 !important;
-            font-weight: 900 !important;
+            font-weight: normal !important;
             opacity: 1 !important;
-            display: block !important;
             -webkit-font-smoothing: antialiased !important;
             text-rendering: geometricPrecision !important;
         }
@@ -1623,6 +1738,9 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
               }}
             >
               <div className="absolute inset-0 z-50 pointer-events-none">
+                {/* Track Controls Overlay on first page */}
+                {i === 0 && trackControlsOverlay}
+
                 {/* Indigo Laser */}
                 <div id={`bar-laser-${i}`} className="bar-laser" style={{ display: 'none' }} />
 

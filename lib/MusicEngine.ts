@@ -25,6 +25,8 @@ export class MusicEngine {
   private masterBus: Tone.Gain | null = null;
   private masterGain: Tone.Gain | null = null;
   private masterMeter: Tone.Meter | null = null;
+  public masterRecorder: Tone.Recorder | null = null;
+  public masterRecordingUrl: string | null = null;
 
   private metronomeLoop: Tone.Loop | null = null;
   private clickMetronomeEnabled = false;
@@ -154,6 +156,27 @@ export class MusicEngine {
   }
 
   toggleMetronome(enabled: boolean) { this.clickMetronomeEnabled = enabled; }
+
+  async startMasterRecording() {
+    if (!this.masterBus) return;
+    if (!this.masterRecorder) {
+      this.masterRecorder = new Tone.Recorder();
+      this.masterBus.connect(this.masterRecorder);
+    }
+    try { await this.masterRecorder.start(); } catch (e) {}
+  }
+
+  async stopMasterRecording(): Promise<string> {
+    if (!this.masterRecorder) return '';
+    try {
+      const recording = await this.masterRecorder.stop();
+      const url = URL.createObjectURL(recording);
+      this.masterRecordingUrl = url;
+      return url;
+    } catch (e) {
+      return '';
+    }
+  }
 
   /**
    * [NEURAL XML ANALYZER]
@@ -420,6 +443,8 @@ export class MusicEngine {
             trackClefs[`${partId}-S${staffNum}`] = sign;
           });
 
+          let prevNoteStartTime = currentTime;
+
           Array.from(measure.children).forEach((child) => {
             if (child.tagName === "backup") {
               const duration = (parseInt(child.querySelector("duration")?.textContent || "0") / divisions);
@@ -428,12 +453,15 @@ export class MusicEngine {
               const duration = (parseInt(child.querySelector("duration")?.textContent || "0") / divisions);
               currentTime = Math.round((currentTime + duration) * 100000) / 100000;
             } else if (child.tagName === "note") {
-              const isRest = child.querySelector("rest");
-              const isChord = child.querySelector("chord");
-              const rawDuration = (parseInt(child.querySelector("duration")?.textContent || "0") / divisions);
+              const isRest = child.querySelector("rest") !== null;
+              const isChord = child.querySelector("chord") !== null;
+              const isGrace = child.querySelector("grace") !== null;
+              const rawDuration = isGrace ? 0 : (parseInt(child.querySelector("duration")?.textContent || "0") / divisions);
               const duration = Math.round((isNaN(rawDuration) ? 0.5 : rawDuration) * 100000) / 100000;
               const staff = parseInt(child.querySelector("staff")?.textContent || "1");
               const voice = parseInt(child.querySelector("voice")?.textContent || "1");
+
+              const startTimeVal = isChord ? prevNoteStartTime : currentTime;
 
               const currentTrackId = `${partId}-S${staff}`;
               if (!partNames[currentTrackId]) {
@@ -487,14 +515,16 @@ export class MusicEngine {
                   solfegeVal = lyricTextNode.textContent?.trim() || "";
                 }
 
-                const startTimeVal = isChord ? (currentTime - duration) : currentTime;
                 notes.push({
                   trackId: currentTrackId, step, octave: safeOctave, alter: safeAlter, duration: duration,
                   startTime: Math.round(startTimeVal * 100000) / 100000,
                   solfege: solfegeVal, staff: isNaN(staff) ? 1 : staff, voice: isNaN(voice) ? 1 : voice, measure: measureNum
                 });
               }
-              if (!isChord) currentTime = Math.round((currentTime + duration) * 100000) / 100000;
+              if (!isChord) {
+                currentTime = Math.round((currentTime + duration) * 100000) / 100000;
+              }
+              prevNoteStartTime = startTimeVal;
             }
           });
 
@@ -636,7 +666,6 @@ export class MusicEngine {
       loadPromises.push(new Promise<void>((resolve) => {
         const player = new Tone.GrainPlayer({
           url: audioUrl,
-          autostart: false,
           onload: () => {
             if (myGeneration === this._vocalGeneration) {
               mainPlayer = player;
@@ -660,10 +689,6 @@ export class MusicEngine {
               player.dispose();
             }
             resolve();
-          },
-          onerror: (err) => {
-            console.error(`[MusicEngine] ❌ Main mix Tone.GrainPlayer load error for ${trackId}:`, err);
-            resolve(); // Resolve to prevent blocking the user
           }
         }).connect(channel);
       }));
@@ -676,7 +701,6 @@ export class MusicEngine {
         loadPromises.push(new Promise<void>((resolve) => {
           const player = new Tone.GrainPlayer({
             url: url,
-            autostart: false,
             onload: () => {
               if (myGeneration === this._vocalGeneration) {
                 loadedStems[index] = player;
@@ -699,10 +723,6 @@ export class MusicEngine {
               } else {
                 player.dispose();
               }
-              resolve();
-            },
-            onerror: (err) => {
-              console.error(`[MusicEngine] ❌ Stem ${index} Tone.GrainPlayer load error for ${trackId}:`, err);
               resolve();
             }
           }).connect(channel);
@@ -785,22 +805,39 @@ export class MusicEngine {
 
   public soloStem(trackId: string, stemIndex: number | null) {
     this.trackActiveStem.set(trackId, stemIndex);
-    const layers = this.trackVocalLayers.get(trackId);
-    const stems = this.trackVocalStems.get(trackId);
+
+    // 1. Check if ANY stem is soloed globally across all tracks
+    let isAnySoloedGlobally = false;
+    this.trackActiveStem.forEach((idx) => {
+      if (idx !== null) isAnySoloedGlobally = true;
+    });
+
+    // 2. Mute ALL main mixes globally if anything is soloed
+    this.trackVocalLayers.forEach((layers, tId) => {
+      layers.forEach(p => {
+        if (p) p.volume.value = isAnySoloedGlobally ? -100 : 0;
+      });
+    });
     
-    if (stemIndex === null) {
-      // Un-solo: mute stems, unmute main mix
-      if (layers) layers.forEach(p => p.volume.value = 0);
-      if (stems) stems.forEach(p => { if (p) p.volume.value = -100; });
-    } else {
-      // Solo a stem: mute main mix and other stems, unmute active stem
-      if (layers) layers.forEach(p => p.volume.value = -100);
+    this.vocalAudioElements.forEach((audio, tId) => {
+      if (audio) {
+        audio.volume = isAnySoloedGlobally ? 0 : 1;
+      }
+    });
+
+    // 3. Handle stems for ALL tracks based on their individual activeStem
+    this.trackVocalStems.forEach((stems, tId) => {
+      const activeIdx = this.trackActiveStem.get(tId) ?? null;
       if (stems) {
         stems.forEach((p, i) => {
-          if (p) p.volume.value = (i === stemIndex) ? 0 : -100;
+          if (p) {
+            // If this track has a soloed stem, play only that stem. 
+            // If this track is not soloed (activeIdx === null), keep all its stems muted!
+            p.volume.value = (activeIdx !== null && i === activeIdx) ? 0 : -100;
+          }
         });
       }
-    }
+    });
   }
   
   public getAvailableStems(trackId: string): number {
@@ -886,16 +923,8 @@ export class MusicEngine {
       try { sampler.disconnect(); sampler.dispose(); } catch (e) { }
       this.trackSamplers.delete(trackId);
     }
-    const channel = this.trackChannels.get(trackId);
-    if (channel) {
-      try { channel.disconnect(); channel.dispose(); } catch (e) { }
-      this.trackChannels.delete(trackId);
-    }
-    const meter = this.trackMeters.get(trackId);
-    if (meter) {
-      try { meter.disconnect(); meter.dispose(); } catch (e) { }
-      this.trackMeters.delete(trackId);
-    }
+    // We intentionally DO NOT dispose trackChannels or trackMeters here, 
+    // because Tone.GrainPlayer (Vocal AI Stems) might still be connected to them!
   }
 
   /**
@@ -1248,25 +1277,38 @@ public setVocalTranspose(trackId: string, diffSemitones: number) {
         freq: this.calculateNoteFrequency(n, transpose),
         noteId: (n as any).id || '',          // DOM note ID from svgNoteMap
         unrolledTime: n.startTime,            // Unrolled position in beats
-        measure: n.measure || ''              // Measure number string (e.g. "5")
+        measure: n.measure || '',             // Measure number string (e.g. "5")
+        voice: n.voice || 1
       };
     });
 
     this.currentPart = new Tone.Part((time, event) => {
+      // Always track which note is currently active for laser sync (even in vocal mode)
+      this.currentNoteId = event.noteId || '';
+      this.currentNoteTime = event.unrolledTime;
+      this.currentMeasure = event.measure || '';
+
       // Play the sampler only if the track mode is NOT 'vocal' (strict separation)
       const isVocalMode = this.trackModes.get(event.trackId) === 'vocal';
       
       if (!isVocalMode) {
+        const activeStem = this.trackActiveStem.get(event.trackId) ?? null;
+        if (activeStem !== null) {
+          // Find unique voices for this track to map activeStem to MusicXML voice
+          const trackNotes = this.lastLoadedNotes.filter(n => n.trackId === event.trackId);
+          const uniqueVoices = Array.from(new Set(trackNotes.map(n => n.voice || 1))).sort((a, b) => a - b);
+          const allowedVoice = uniqueVoices[activeStem];
+          if (event.voice !== allowedVoice) {
+            // console.log(`[MusicEngine] Muting MIDI note: trackId=${event.trackId}, voice=${event.voice}, allowed=${allowedVoice}, activeStem=${activeStem}`);
+            return; // Mute this MIDI note because it belongs to an un-soloed voice
+          }
+        }
+
         const sampler = this.trackSamplers.get(event.trackId);
         if (sampler) {
           sampler.triggerAttackRelease(event.freq, event.duration, time, 0.75);
         }
       }
-
-      // Always track which note is currently active for laser sync (even in vocal mode)
-      this.currentNoteId = event.noteId || '';
-      this.currentNoteTime = event.unrolledTime;
-      this.currentMeasure = event.measure || '';
     }, events).start(0);
 
     // Cache the hash

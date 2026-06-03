@@ -162,7 +162,8 @@ const VaultPage: React.FC<VaultPageProps> = ({
     setShowImportConsole(false);
     try {
       for (let i = 0; i < files.length; i++) {
-        const { metadata, xmlData } = await parseMusicXMLMetadata(files[i]);
+        // We pass true as the 2nd argument to enable AI Cover Generation for newly imported files
+        const { metadata, xmlData } = await parseMusicXMLMetadata(files[i], true);
         metadata.origin = 'load';
         await songStorage.saveSong(metadata, xmlData);
       }
@@ -246,7 +247,7 @@ const VaultPage: React.FC<VaultPageProps> = ({
             value={searchInput}
             onChange={e => setSearchInput(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && doSearch()}
-            className="w-full h-9 bg-white/[0.02] border border-white/5 rounded-lg pl-9 pr-8 text-xs text-white outline-none focus:border-cyan-500/30 placeholder:text-zinc-800"
+            className="w-full h-11 bg-white/[0.02] border border-white/5 rounded-lg pl-10 pr-8 text-base text-white outline-none focus:border-cyan-500/30 placeholder:text-zinc-600"
           />
           {searchInput && (
             <button onClick={() => { setSearchInput(''); setSearchQuery(''); onSearchClear?.(); }}

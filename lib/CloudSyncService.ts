@@ -17,7 +17,7 @@ export class CloudSyncService {
       console.log("[Neural Link] Initiating High-Priority Fetch...");
 
       const cacheBuster = `v=${Date.now()}`;
-      const baseUrl = '/api/manifest';
+      const baseUrl = (import.meta as any).env?.DEV ? '/api/manifest' : this.GLOBAL_MANIFEST_URL;
       const fetchUrl = `${baseUrl}?${cacheBuster}`;
 
 
@@ -70,7 +70,7 @@ export class CloudSyncService {
 
   public static async checkUpdateAvailability(): Promise<boolean> {
     try {
-      const baseUrl = '/api/manifest';
+      const baseUrl = (import.meta as any).env?.DEV ? '/api/manifest' : this.GLOBAL_MANIFEST_URL;
       const response = await fetch(`${baseUrl}?t=${Date.now()}`, {
         method: 'GET',
         mode: 'cors'
@@ -83,7 +83,7 @@ export class CloudSyncService {
 
   public static async getCloudStats(): Promise<{ total: number }> {
     try {
-      const baseUrl = '/api/manifest';
+      const baseUrl = (import.meta as any).env?.DEV ? '/api/manifest' : this.GLOBAL_MANIFEST_URL;
       const response = await fetch(`${baseUrl}?t=${Date.now()}`, {
         mode: 'cors'
       });

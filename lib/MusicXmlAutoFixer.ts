@@ -986,6 +986,20 @@ function fixTimeSignature(xmlDoc: Document, fixLog: string[]): number {
 
 // ─── Main Auto-Fixer ──────────────────────────────────────────────────────
 
+// ─── Fix: Hide All Harmonies (Chords) from Original XML ──────────────
+function hideAllHarmonies(xmlDoc: Document, fixLog: string[]): number {
+  let fixCount = 0;
+  const harmonies = xmlDoc.querySelectorAll('harmony');
+  harmonies.forEach((harm) => {
+    harm.setAttribute('print-object', 'no');
+    fixCount++;
+  });
+  if (fixCount > 0) {
+    fixLog.push(`ซ่อนคอร์ด (harmony) ต้นฉบับทั้งหมดในกระดาษโน้ต เพื่อเก็บไว้ให้ AI Arranger เลือกใช้ (${fixCount} จุด)`);
+  }
+  return fixCount;
+}
+
 /**
  * Attempt automatic fixes on a MusicXML string based on validation errors.
  * Returns the corrected XML and a log of changes.
@@ -1035,6 +1049,9 @@ export function autoFixMusicXml(
 
   // 9. Infer missing note types from duration (MUST be before beaming)
   totalFixes += fixMissingNoteTypes(xmlDoc, fixLog);
+
+  // 9.5 Hide all chords (harmony) from the visual score, but keep data for AI Arranger
+  totalFixes += hideAllHarmonies(xmlDoc, fixLog);
 
   // 10. Auto-beam eighth/16th notes according to correct time signature rules
   // DISABLED: Malformed beams cause OSMD to silently fail to render.

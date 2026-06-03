@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 
-const useValueDrag = (initialValue: number, step: number, onChange: (val: number) => void) => {
+const useValueDrag = (initialValue: number | (() => number), step: number, onChange: (val: number) => void) => {
   const [isDragging, setIsDragging] = useState(false);
   const startY = useRef(0);
   const startVal = useRef(0);
@@ -9,7 +9,7 @@ const useValueDrag = (initialValue: number, step: number, onChange: (val: number
   const handleStart = (e: React.MouseEvent | React.TouchEvent) => {
     setIsDragging(true);
     startY.current = 'touches' in e ? e.touches[0].clientY : e.clientY;
-    startVal.current = initialValue;
+    startVal.current = typeof initialValue === 'function' ? initialValue() : initialValue;
     
     const onMove = (me: MouseEvent | TouchEvent) => {
       const currentY = 'touches' in me ? me.touches[0].clientY : (me as MouseEvent).clientY;
@@ -166,10 +166,11 @@ export const TimeSigDisplay: React.FC<{ beats?: number; beatType?: number }> = (
   );
 };
 
-export const BarBeatPositionDisplay: React.FC<{ bar: number; beat: number; onSeek?: (bar: number) => void }> = ({ bar, beat, onSeek }) => {
+export const BarBeatPositionDisplay: React.FC<{ barRef: React.RefObject<HTMLSpanElement>; beatRef: React.RefObject<HTMLSpanElement>; onSeek?: (bar: number) => void }> = ({ barRef, beatRef, onSeek }) => {
   const [isEditing, setIsEditing] = useState(false);
-  const [editValue, setEditValue] = useState(bar.toString());
-  const { isDragging, handleStart } = useValueDrag(bar, 1, (val) => onSeek?.(Math.max(1, val)));
+  const [editValue, setEditValue] = useState("1");
+  const getBar = () => parseInt(barRef.current?.innerText || '1') || 1;
+  const { isDragging, handleStart } = useValueDrag(getBar, 1, (val) => onSeek?.(Math.max(1, val)));
 
   const handleEditSubmit = () => {
     const val = parseInt(editValue);
@@ -196,17 +197,17 @@ export const BarBeatPositionDisplay: React.FC<{ bar: number; beat: number; onSee
       className={`flex flex-col items-center select-none cursor-ns-resize h-full justify-center transition-all w-full px-1 ${isDragging ? 'bg-white/5' : 'hover:bg-white/[0.02]'}`}
       onMouseDown={handleStart}
       onTouchStart={handleStart}
-      onDoubleClick={() => { setIsEditing(true); setEditValue(bar.toString()); }}
+      onDoubleClick={() => { setIsEditing(true); setEditValue(getBar().toString()); }}
     >
       <div className="flex items-baseline gap-1 sm:gap-2 leading-none">
-        <span className="text-[13px] min-[360px]:text-[16px] sm:text-[22px] font-black italic text-[#ffab00] lcd-font tracking-tighter">
-            {bar}
+        <span ref={barRef} className="text-[13px] min-[360px]:text-[16px] sm:text-[22px] font-black italic text-[#ffab00] lcd-font tracking-tighter">
+            1
         </span>
         <span className="text-[10px] min-[360px]:text-[13px] sm:text-[17px] font-black text-white/40 mx-0.5">
             :
         </span>
-        <span className="text-[13px] min-[360px]:text-[16px] sm:text-[22px] font-black italic text-[#ffab00] lcd-font tracking-tighter">
-            {beat}
+        <span ref={beatRef} className="text-[13px] min-[360px]:text-[16px] sm:text-[22px] font-black italic text-[#ffab00] lcd-font tracking-tighter">
+            1
         </span>
       </div>
       <span className="text-[5px] min-[360px]:text-[6px] sm:text-[7.5px] font-black text-zinc-600 uppercase tracking-widest mt-0.5">Bar:Beat</span>

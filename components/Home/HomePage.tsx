@@ -150,7 +150,7 @@ const SongRow = memo(({ item, onSongSelect, onToggleDelete, onPermanentDelete, i
       )}
 
       <div 
-        className="w-10 h-10 rounded-xl shrink-0 overflow-hidden relative shadow-md transition-shadow"
+        className="w-16 h-9 rounded-xl shrink-0 overflow-hidden relative shadow-md transition-shadow"
       >
         <AbstractCover seed={item.metadata.title || item.metadata.id} size={80} />
       </div>
@@ -363,7 +363,7 @@ const HomePage: React.FC<HomePageProps> = ({
   const [processingMsg, setProcessingMsg] = useState('');
   const [processingError, setProcessingError] = useState<string | null>(null);
   // After import/capture — ask user: Edit or NIMO?
-  const [pendingImport, setPendingImport] = useState<{ metadata: Song; xmlData: string } | null>(null);
+  const [pendingImport, setPendingImport] = useState<{ metadata: Song; xmlData: string; layoutBundle?: any } | null>(null);
   const [pendingSelectionFile, setPendingSelectionFile] = useState<File | null>(null);
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
@@ -410,7 +410,7 @@ const HomePage: React.FC<HomePageProps> = ({
     setIsProcessing(true);
     setProcessingMsg('🤖 Gemini AI กำลังอ่านโน้ตจากภาพ...');
     try {
-      const { metadata, xmlData, layoutBundle } = await parseMusicXMLMetadata(file);
+      const { metadata, xmlData, layoutBundle } = await parseMusicXMLMetadata(file, true);
       metadata.origin = 'load';
       await songStorage.saveSong(metadata, xmlData, layoutBundle);
       await onLocalRefresh();
@@ -461,6 +461,30 @@ const HomePage: React.FC<HomePageProps> = ({
     if (activeFolder === folderId) setActiveFolder(null);
   }, [activeFolder]);
 
+  // Extract dynamic genre folders (Virtual Folders)
+  const genreFolders = useMemo(() => {
+    const genreMap = new Map<string, string>(); // normalized -> original
+    userLibrary.forEach(i => {
+      const g = i.metadata.genre || i.metadata.category;
+      if (g) {
+        const normalized = g.trim().toUpperCase();
+        if (!genreMap.has(normalized)) {
+          genreMap.set(normalized, g);
+        }
+      }
+    });
+
+    return Array.from(genreMap.keys()).sort().map((normalizedGenre, idx) => ({
+      id: `virtual_genre_${normalizedGenre}`,
+      name: normalizedGenre,
+      color: FOLDER_COLORS[idx % FOLDER_COLORS.length],
+      isVirtual: true,
+      genreName: normalizedGenre
+    }));
+  }, [userLibrary]);
+
+  const allFolders = useMemo(() => [...folders, ...genreFolders], [folders, genreFolders]);
+
   // Counts
   const totalCount = useMemo(() => userLibrary.filter(i => !i.metadata.isDeleted).length, [userLibrary]);
   const homeCount = useMemo(() => userLibrary.filter(item => !item.metadata.isDeleted && (item.metadata.origin !== 'load' || item.metadata.isPublic)).length, [userLibrary]);
@@ -489,7 +513,15 @@ const HomePage: React.FC<HomePageProps> = ({
 
     // Apply folder filter
     if (activeFolder) {
-      list = list.filter(i => i.metadata.folderId === activeFolder);
+      if (activeFolder.startsWith('virtual_genre_')) {
+        const genreName = activeFolder.replace('virtual_genre_', '');
+        list = list.filter(i => {
+          const g = i.metadata.genre || i.metadata.category;
+          return g && g.trim().toUpperCase() === genreName;
+        });
+      } else {
+        list = list.filter(i => i.metadata.folderId === activeFolder);
+      }
     }
 
     if (searchQuery) {
@@ -579,6 +611,20 @@ const HomePage: React.FC<HomePageProps> = ({
       let lastMetadata: any = null;
       let lastXml = '';
 
+      if (fileList.length === 1) {
+        const f = fileList[0];
+        console.log(`[Import] Processing file: ${f.name}`);
+        const { metadata, xmlData, layoutBundle } = await parseMusicXMLMetadata(f, true, (msg) => setProcessingMsg(msg), startPage, endPage);
+        
+        if (originalFileName && (metadata.title === 'NEURAL MASTERPIECE' || metadata.title.includes('UNTITLED'))) {
+          metadata.title = originalFileName.replace(/\.[^/.]+$/, '').replace(/_/g, ' ') + ' (Selection)';
+        }
+        metadata.origin = 'load';
+        setPendingImport({ metadata, xmlData, layoutBundle });
+        setIsProcessing(false);
+        return;
+      }
+
       for (let i = 0; i < fileList.length; i++) {
         const f = fileList[i];
         console.log(`[Import] Processing file ${i+1}/${fileList.length}: ${f.name} (${f.type}, ${f.size} bytes)`);
@@ -587,7 +633,7 @@ const HomePage: React.FC<HomePageProps> = ({
         setProcessingMsg('🤖 Pass 1: Gemini กำลังอ่านโน้ต...');
 
         console.log('[Import] Calling parseMusicXMLMetadata...');
-        const { metadata, xmlData, layoutBundle } = await parseMusicXMLMetadata(f, false, (msg) => setProcessingMsg(msg), startPage, endPage);
+        const { metadata, xmlData, layoutBundle } = await parseMusicXMLMetadata(f, true, (msg) => setProcessingMsg(msg), startPage, endPage);
         console.log('[Import] ✅ parseMusicXMLMetadata returned:', metadata.title, '| xmlData length:', xmlData.length);
 
         setProcessingMsg('💾 กำลังบันทึกลง My Songs...');
@@ -648,6 +694,43 @@ const HomePage: React.FC<HomePageProps> = ({
     }
   };
 
+  const handleSavePendingImport = async () => {
+    if (!pendingImport) return;
+    setIsProcessing(true);
+    setProcessingMsg('💾 กำลังบันทึกลง My Songs...');
+    try {
+      await songStorage.saveSong(pendingImport.metadata, pendingImport.xmlData, pendingImport.layoutBundle);
+      
+      // Play C Major Arpeggio Success Sound
+      try {
+        const Tone = await import('tone');
+        await Tone.start();
+        const synth = new Tone.PolySynth(Tone.Synth, {
+          oscillator: { type: 'triangle' },
+          envelope: { attack: 0.05, decay: 0.2, sustain: 0.4, release: 2 }
+        }).toDestination();
+        synth.volume.value = -12;
+        const now = Tone.now();
+        synth.triggerAttackRelease("C4", "8n", now);
+        synth.triggerAttackRelease("E4", "8n", now + 0.15);
+        synth.triggerAttackRelease("G4", "8n", now + 0.3);
+        synth.triggerAttackRelease("C5", "2n", now + 0.45);
+      } catch (e) {
+        console.log('Audio play failed', e);
+      }
+
+      await onLocalRefresh();
+      onRefresh();
+      onSongSelect(pendingImport.metadata, pendingImport.xmlData, 'listen');
+    } catch (e) {
+      console.error(e);
+      alert('Failed to save song');
+    } finally {
+      setIsProcessing(false);
+      setPendingImport(null);
+    }
+  };
+
 
   const TABS: { id: FilterTab, label: string, count: number, color: string }[] = [
     { id: 'home', label: 'Home', count: homeCount, color: 'text-cyan-400' },
@@ -660,7 +743,7 @@ const HomePage: React.FC<HomePageProps> = ({
     <div className="h-full flex flex-col bg-[#0A0A0B] overflow-hidden select-none">
 
       {/* ── HEADER / SEARCH & RECENT (STATIC TOP) ── */}
-      <div className="shrink-0 p-6 space-y-6 bg-gradient-to-b from-white/[0.02] to-transparent border-b border-white/5">
+      <div className="shrink-0 px-6 pt-6 pb-2 space-y-5 bg-gradient-to-b from-white/[0.02] to-transparent border-b border-white/5">
 
         {/* Brand/Hero */}
         <div className="flex flex-col items-center gap-1.5">
@@ -687,7 +770,7 @@ const HomePage: React.FC<HomePageProps> = ({
             value={searchInput}
             onChange={e => setSearchInput(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && setSearchQuery(searchInput)}
-            className="w-full h-12 bg-white/[0.03] border border-white/5 rounded-2xl pl-12 pr-10 text-[10px] font-black text-white outline-none focus:border-cyan-500/30 placeholder:text-zinc-800 transition-all uppercase"
+            className="w-full h-12 bg-white/[0.03] border border-white/5 rounded-2xl pl-12 pr-10 text-xs font-black text-white outline-none focus:border-cyan-500/30 placeholder:text-zinc-800 transition-all uppercase"
           />
           {searchInput && (
           <div className="absolute right-12 top-1/2 -translate-y-1/2 flex items-center gap-2">
@@ -795,25 +878,25 @@ const HomePage: React.FC<HomePageProps> = ({
 
       {/* Recent Matrix (Horizontal Scroll) */}
         {recentSongs.length > 0 && (
-          <div className="space-y-3">
+          <div className="space-y-2">
             <div className="flex items-center justify-between px-1">
               <span className="text-[8px] font-black text-zinc-600 uppercase tracking-widest italic">Recent</span>
               <span className="text-[8px] font-mono text-zinc-700">{totalCount} songs</span>
             </div>
-            <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2 px-1">
+            <div className="flex gap-2 overflow-x-auto no-scrollbar px-1">
               {recentSongs.map(item => (
                 <div key={item.metadata.id} onClick={() => onSongSelect(item.metadata, item.xmlData, 'listen')}
-                  className="shrink-0 w-24 aspect-square rounded-2xl overflow-hidden relative group/card hover:scale-[1.03] active:scale-95 transition-all shadow-lg hover:shadow-xl hover:shadow-cyan-500/10 border border-white/10">
-                  <AbstractCover seed={item.metadata.title || item.metadata.id} size={192} />
+                  className="shrink-0 w-[calc(20%-6.4px)] aspect-video rounded-xl overflow-hidden relative group/card hover:scale-[1.03] active:scale-95 transition-all shadow-md hover:shadow-lg hover:shadow-cyan-500/10 border border-white/10">
+                  <AbstractCover seed={item.metadata.title || item.metadata.id} size={200} />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
-                  <div className="absolute inset-0 flex flex-col justify-between p-3">
+                  <div className="absolute inset-0 flex flex-col justify-between p-2">
                     <div className="flex items-center justify-between">
-                      <div className="w-8 h-8 rounded-lg bg-black/30 backdrop-blur-sm flex items-center justify-center text-white/80 group-hover/card:text-cyan-400 group-hover/card:bg-cyan-500/20 transition-colors">
+                      <div className="w-6 h-6 rounded-md bg-black/30 backdrop-blur-sm flex items-center justify-center text-white/80 group-hover/card:text-cyan-400 group-hover/card:bg-cyan-500/20 transition-colors">
                         <Play size={12} fill="currentColor" />
                       </div>
                       {item.metadata.isFavorite && <Heart size={10} className="text-rose-500 fill-rose-500" />}
                     </div>
-                    <p className="text-[9px] font-black text-white uppercase italic truncate drop-shadow-lg">{item.metadata.title}</p>
+                    <p className="text-[10px] font-black text-white uppercase italic truncate drop-shadow-lg leading-tight">{item.metadata.title}</p>
                   </div>
                 </div>
               ))}
@@ -851,30 +934,28 @@ const HomePage: React.FC<HomePageProps> = ({
             <button onClick={() => setShowNewFolder(true)} className="w-7 h-7 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 hover:bg-indigo-500/20 transition-colors" title="New Folder">
               <FolderPlus size={12} />
             </button>
-            {/* Temporarily disabled import button
             <button onClick={() => setShowImport(true)} className="w-7 h-7 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 hover:bg-cyan-500/20 transition-colors" title="Import">
               <Plus size={14} strokeWidth={3} />
             </button>
-            */}
           </div>
         </div>
 
-        {/* Folder Pills (horizontal scroll) */}
-        {folders.length > 0 && activeTab !== 'trash' && (
-          <div className="flex items-center gap-2 px-4 py-2 border-b border-white/[0.03] overflow-x-auto no-scrollbar">
+        {/* Folder Pills (wrapped and scrollable) */}
+        {allFolders.length > 0 && activeTab !== 'trash' && (
+          <div className="flex flex-wrap items-center gap-2 px-4 py-2 border-b border-white/[0.03] max-h-32 overflow-y-auto custom-scrollbar">
             <button
               onClick={() => setActiveFolder(null)}
-              className={`shrink-0 flex items-center gap-1.5 px-3 py-1 rounded-full text-[8px] font-bold uppercase tracking-wider transition-colors
-                ${!activeFolder ? 'bg-white/10 text-white' : 'bg-white/[0.03] text-zinc-600 hover:text-zinc-400'}`}
+              className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider transition-colors
+                ${!activeFolder ? 'bg-white/10 text-white' : 'bg-white/[0.03] text-zinc-500 hover:text-zinc-300'}`}
             >
               All
             </button>
-            {folders.map(f => (
-              <button
+            {allFolders.map((f: any) => (
+              <div
                 key={f.id}
                 onClick={() => setActiveFolder(activeFolder === f.id ? null : f.id)}
-                className={`shrink-0 flex items-center gap-1.5 px-3 py-1 rounded-full text-[8px] font-bold uppercase tracking-wider transition-colors group/pill
-                  ${activeFolder === f.id ? 'bg-white/10 text-white' : 'bg-white/[0.03] text-zinc-600 hover:text-zinc-400'}`}
+                className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer
+                  ${activeFolder === f.id ? 'bg-white/10 text-white border-white/20' : 'bg-white/[0.03] border-white/[0.02] text-zinc-400 hover:text-white'} border group/pill`}
               >
                 <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: f.color }} />
                 {f.name}
@@ -882,7 +963,7 @@ const HomePage: React.FC<HomePageProps> = ({
                   className="ml-1 text-zinc-800 hover:text-rose-400 opacity-0 group-hover/pill:opacity-100 transition-opacity">
                   <X size={8} />
                 </button>
-              </button>
+              </div>
             ))}
           </div>
         )}
@@ -996,6 +1077,70 @@ const HomePage: React.FC<HomePageProps> = ({
               Select Files
             </button>
             <input ref={fileInputRef} type="file" multiple className="hidden" accept=".xml,.musicxml,.mxl,.mid,.midi,.pdf,.png,.jpg,.jpeg,.webp,.heic,.heif" onChange={handleImport} />
+          </div>
+        </div>
+      )}
+
+      {/* ── Pending Import Metadata Modal ── */}
+      {pendingImport && (
+        <div className="fixed inset-0 z-[20000] bg-black/95 flex items-center justify-center p-6">
+          <div className="w-full max-w-sm bg-[#111] border border-white/10 rounded-[32px] p-8 flex flex-col gap-6 relative">
+            <button onClick={() => setPendingImport(null)} className="absolute top-6 right-6 text-zinc-600 hover:text-white"><X size={20} /></button>
+            <div className="text-center mt-2">
+              <h2 className="text-xl font-black text-white italic tracking-tighter uppercase mb-1">Song Details</h2>
+              <p className="text-[9px] font-bold text-zinc-600 uppercase tracking-widest">Customize before saving</p>
+            </div>
+            
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-[8px] font-black text-zinc-500 uppercase tracking-widest ml-1">Title</label>
+                <input
+                  type="text"
+                  value={pendingImport.metadata.title}
+                  onChange={e => setPendingImport({...pendingImport, metadata: {...pendingImport.metadata, title: e.target.value}})}
+                  className="w-full bg-white/[0.05] border border-white/10 rounded-xl px-4 py-3 text-xs font-bold text-white outline-none focus:border-cyan-500/50"
+                  placeholder="Song Title"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[8px] font-black text-zinc-500 uppercase tracking-widest ml-1">Artist / Composer</label>
+                <input
+                  type="text"
+                  value={pendingImport.metadata.artist || ''}
+                  onChange={e => setPendingImport({...pendingImport, metadata: {...pendingImport.metadata, artist: e.target.value}})}
+                  className="w-full bg-white/[0.05] border border-white/10 rounded-xl px-4 py-3 text-xs font-bold text-white outline-none focus:border-cyan-500/50"
+                  placeholder="Artist"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-[8px] font-black text-zinc-500 uppercase tracking-widest ml-1">Genre</label>
+                  <input
+                    type="text"
+                    value={pendingImport.metadata.genre || ''}
+                    onChange={e => setPendingImport({...pendingImport, metadata: {...pendingImport.metadata, genre: e.target.value}})}
+                    className="w-full bg-white/[0.05] border border-white/10 rounded-xl px-4 py-3 text-xs font-bold text-white outline-none focus:border-cyan-500/50"
+                    placeholder="Pop, Rock..."
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[8px] font-black text-zinc-500 uppercase tracking-widest ml-1">Year</label>
+                  <input
+                    type="text"
+                    value={pendingImport.metadata.year || ''}
+                    onChange={e => setPendingImport({...pendingImport, metadata: {...pendingImport.metadata, year: e.target.value}})}
+                    className="w-full bg-white/[0.05] border border-white/10 rounded-xl px-4 py-3 text-xs font-bold text-white outline-none focus:border-cyan-500/50"
+                    placeholder="2024"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <button onClick={handleSavePendingImport}
+              className="w-full h-12 bg-cyan-500 text-black rounded-2xl font-black uppercase tracking-widest text-xs active:scale-95 transition-transform mt-2 flex items-center justify-center gap-2">
+              <Database size={14} />
+              Save to My Songs
+            </button>
           </div>
         </div>
       )}

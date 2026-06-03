@@ -17,6 +17,7 @@ const getMusicEngine = async () => {
 import { initPlugins } from './lib/plugin-init';
 import { telemetry } from './lib/Telemetry';
 import { songStorage } from './lib/SongStorage';
+import { DEMO_SONGS } from './data/demo_songs';
 import { SplashLoader } from './components/Home/SplashLoader';
 import { CloudSyncService } from './lib/CloudSyncService';
 import { Song, TrackState, LyricMode } from './types';
@@ -103,8 +104,7 @@ const INITIAL_LOOP_PRESETS: LoopPreset[] = [
 const NAV_ITEMS: { id: ViewId; icon: any; label: string; minRole?: string; isNimo?: boolean }[] = [
   { id: 'home', icon: Home, label: 'HOME' },
   { id: 'player', icon: Play, label: 'PLAYER' },
-  { id: 'forge', icon: Music2, label: 'EDIT' },
-  { id: 'subscription', icon: Star, label: 'PLAN' },
+  { id: 'forge', icon: Music2, label: 'STUDIO' },
   { id: 'nimo', icon: Sparkles, label: 'NIMO', isNimo: true },
   { id: 'profile', icon: User, label: 'ME' },
   { id: 'settings', icon: Settings, label: 'SETTINGS' },
@@ -151,6 +151,9 @@ const App: React.FC = () => {
     if (saved === null) return true; // Default ON
     return saved === 'true';
   });
+  const [vocalidoRenderCardStyle, setVocalidoRenderCardStyle] = useState<'compact' | 'large'>(() => {
+    return (localStorage.getItem('vocalido_render_card_style') as 'compact' | 'large') || 'compact';
+  });
   const [nimoEnabled, setNimoEnabled] = useState(() => localStorage.getItem('nimo_enabled') !== 'false');
   const [nimoVoice, setNimoVoice] = useState<'teen_girl' | 'adult_woman' | 'teen_boy' | 'adult_man'>(() => (localStorage.getItem('nimo_voice') as any) || 'teen_girl');
 
@@ -183,7 +186,7 @@ const App: React.FC = () => {
         setInitProgress(35);
 
         // 🚨 AUTO-CLEAR CACHE ON NEW BUILD/REINSTALL
-        const APP_VERSION = '2.3.1-build-20260525-0230';
+        const APP_VERSION = '2.4.0-build-20260603-0857';
         const savedVersion = localStorage.getItem('memo_app_version');
         if (savedVersion !== APP_VERSION) {
           setInitStatus('Wiping Old Cache');
@@ -265,45 +268,33 @@ const App: React.FC = () => {
         await initPlugins(); // Initialize the Plugin System (including Vocalido)
         setInitProgress(65);
 
-        // Clean up legacy hardcoded demo song if present
-        setInitStatus('Optimizing Storage');
-        await songStorage.permanentDeleteSong('demo-vocal-01');
-        
-        // Scan and clean up any legacy hardcoded demo songs containing "Vocalido" or "Vocaludo" in their title
+        // Initialize Demo Songs if they are missing
+        setInitStatus('Loading Demo Songs');
         let songs = await songStorage.getAllSongs();
-        let databaseCleaned = false;
-        for (const s of songs) {
-          const titleLower = (s.metadata.title || '').toLowerCase();
-          const idStr = String(s.metadata.id);
-          if (titleLower.includes('vocalido') || titleLower.includes('vocaludo') || idStr === 'demo-vocal-01') {
-            console.log(`[App] 🧹 Deleting legacy demo song: "${s.metadata.title}" (id: ${idStr})`);
-            await songStorage.permanentDeleteSong(idStr);
-            databaseCleaned = true;
-          }
+        
+        console.log('🌱 Force Seeding Vocalido Demo data...');
+        for (const demo of DEMO_SONGS) {
+          demo.metadata.isDeleted = false; // Ensure it's not in trash
+          await songStorage.saveSong(demo.metadata as any, demo.xmlData, (demo as any).layoutBundle || null);
         }
-        if (databaseCleaned) {
-          songs = await songStorage.getAllSongs();
-        }
+        songs = await songStorage.getAllSongs();
+
         setInitProgress(75);
 
         setInitStatus('Loading Songs Library');
-        if (songs.length === 0) {
+        if (songs.length <= DEMO_SONGS.length) {
           setInitStatus('Syncing Songs Library from Cloud');
           setInitProgress(80);
           try {
-            // Run sync with a strict 3-second timeout during boot
-            const syncPromise = CloudSyncService.syncWithGlobalCloud((percent) => {
+            // Let the initial massive sync complete before falling back to background
+            const syncResult = await CloudSyncService.syncWithGlobalCloud((percent) => {
               setInitProgress(80 + (percent * 0.15));
             });
-            // Allow up to 30 seconds for the initial massive sync to complete before falling back to background
-            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Boot sync timeout')), 30000));
-            
-            const syncResult: any = await Promise.race([syncPromise, timeoutPromise]);
             if (syncResult && syncResult.total >= 0) {
               songs = await songStorage.getAllSongs();
             }
           } catch (syncErr) {
-            console.warn('[App] Initial cloud sync failed or timed out:', syncErr);
+            console.warn('[App] Initial cloud sync failed:', syncErr);
             setInitStatus('Sync in background');
             setTimeout(() => triggerSync(), 1000); // Trigger in background
           }
@@ -511,23 +502,11 @@ const App: React.FC = () => {
           const errorMsg = `❌ ไม่สามารถดาวน์โหลดไฟล์เพลงได้: ${e.message || String(e)}`;
           alert(errorMsg);
           console.error(errorMsg);
-          const div = document.createElement('div');
-          div.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:red;color:white;padding:20px;z-index:999999;border-radius:10px;font-size:20px;';
-          div.innerHTML = `${errorMsg}<br><button onclick="this.parentElement.remove()" style="margin-top:10px;padding:5px 10px;color:black;">ปิด</button>`;
-          document.body.appendChild(div);
           return; // Abort selection to prevent crashing PlayerPage
         }
       }
 
-      if (!finalXml || finalXml.startsWith('http')) {
-        const errorMsg = "❌ ไม่พบข้อมูล XML สำหรับเพลงนี้ (โหลดไม่สำเร็จ หรือไม่มีไฟล์ XML ใน Zip)";
-        alert(errorMsg);
-        const div = document.createElement('div');
-        div.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:red;color:white;padding:20px;z-index:999999;border-radius:10px;font-size:20px;';
-        div.innerHTML = `${errorMsg}<br><button onclick="this.parentElement.remove()" style="margin-top:10px;padding:5px 10px;color:black;">ปิด</button>`;
-        document.body.appendChild(div);
-        return;
-      }
+
 
       setSelectedSong(song);
       setUploadedMusicXml(finalXml);
@@ -565,18 +544,19 @@ const App: React.FC = () => {
         const clef = parsed.trackClefs?.[id];
         const low = name.toLowerCase();
         
-        // Auto-logic: 
+        // Auto-logic for vocal tracks:
         // 1. If only one track total, it's vocal.
-        // 2. Otherwise, the first Treble Clef (G) track found is vocal.
-        // 3. All others are instruments.
+        // 2. Check if part name matches typical vocal names (SATB, voice, vocal, etc.)
+        // 3. Fallback: first Treble Clef (G) track, or first track if no clefs.
         let isVocal = false;
         if (trackIds.length === 1) {
+          isVocal = true;
+        } else if (/soprano|alto|tenor|bass|voice|vocal|choir|lead|harmony|melody|singer/.test(low)) {
           isVocal = true;
         } else if (!vocalTrackSelected && clef === 'G') {
           isVocal = true;
           vocalTrackSelected = true;
         } else if (!vocalTrackSelected && index === 0 && !clef) {
-          // Fallback for cases where clef detection might fail on first track
           isVocal = true;
           vocalTrackSelected = true;
         }
@@ -626,9 +606,11 @@ const App: React.FC = () => {
     })));
   }, [currentView, selectedSong, preferredLanguage, userInstrument, userSongs]);
 
-  // Start remote polling
+  // Start remote polling (disabled by default to prevent console errors when backend is offline)
   useEffect(() => {
-    nimoBrain.startRemotePolling();
+    if (localStorage.getItem('nimo_remote_enabled') === 'true') {
+      nimoBrain.startRemotePolling();
+    }
   }, []);
 
   // Register central NimoBrain actions
@@ -709,13 +691,13 @@ const App: React.FC = () => {
           currentUserId={authUser?.id}
         />;
       case 'player':
-        return <PlayerPage song={selectedSong} musicXml={uploadedMusicXml} layoutBundle={selectedLayoutBundle} tracks={tracks} setTracks={setTracks} viewMode={playerViewMode} setViewMode={setPlayerViewMode} loopPresets={loopPresets} setLoopPresets={setLoopPresets} performanceMode={performanceMode} vocalidoAutoRender={vocalidoAutoRender} autoPlay={autoPlayOnLoad} onAutoPlayConsumed={() => setAutoPlayOnLoad(false)} onSongUpdate={handleSongUpdate} onNavigate={(view) => setCurrentView(view)} />;
+        return <PlayerPage song={selectedSong} musicXml={uploadedMusicXml} layoutBundle={selectedLayoutBundle} tracks={tracks} setTracks={setTracks} viewMode={playerViewMode} setViewMode={setPlayerViewMode} loopPresets={loopPresets} setLoopPresets={setLoopPresets} performanceMode={performanceMode} vocalidoAutoRender={vocalidoAutoRender} renderCardStyle={vocalidoRenderCardStyle} autoPlay={autoPlayOnLoad} onAutoPlayConsumed={() => setAutoPlayOnLoad(false)} onSongUpdate={handleSongUpdate} onNavigate={(view) => setCurrentView(view)} />;
       case 'forge':
         return <StudioPage selectedSong={selectedSong} xmlData={uploadedMusicXml} layoutBundle={selectedLayoutBundle} tracks={tracks} setTracks={setTracks} onPublish={triggerSync} onExit={() => navigateTo('home')} />;
       case 'profile':
-        return <ProfilePage onEnterForge={() => navigateTo('forge')} userLibrary={userSongs} onSongSelect={handleSongSelect} onTriggerSync={triggerSync} isSyncing={isSyncing} onRefresh={triggerSync} preferredLanguage={preferredLanguage} setPreferredLanguage={handleLanguageChange} userCountry={userCountry} setUserCountry={handleCountryChange} userInstrument={userInstrument} setUserInstrument={handleInstrumentChange} />;
+        return <ProfilePage onEnterForge={() => navigateTo('forge')} userLibrary={userSongs} onSongSelect={handleSongSelect} onTriggerSync={triggerSync} isSyncing={isSyncing} onRefresh={triggerSync} preferredLanguage={preferredLanguage} setPreferredLanguage={handleLanguageChange} userCountry={userCountry} setUserCountry={handleCountryChange} userInstrument={userInstrument} setUserInstrument={handleInstrumentChange} onViewPlan={() => navigateTo('subscription')} />;
       case 'settings':
-        return <SettingsPage performanceMode={performanceMode} onTogglePerformanceMode={handleTogglePerformanceMode} nimoEnabled={nimoEnabled} onToggleNimoEnabled={(val) => { setNimoEnabled(val); localStorage.setItem('nimo_enabled', String(val)); }} nimoVoice={nimoVoice} onChangeNimoVoice={(val) => { setNimoVoice(val); localStorage.setItem('nimo_voice', val); }} vocalidoAutoRender={vocalidoAutoRender} onToggleVocalidoAutoRender={(val) => { setVocalidoAutoRender(val); localStorage.setItem('vocalido_auto_render', String(val)); }} />;
+        return <SettingsPage performanceMode={performanceMode} onTogglePerformanceMode={handleTogglePerformanceMode} nimoEnabled={nimoEnabled} onToggleNimoEnabled={(val) => { setNimoEnabled(val); localStorage.setItem('nimo_enabled', String(val)); }} nimoVoice={nimoVoice} onChangeNimoVoice={(val) => { setNimoVoice(val); localStorage.setItem('nimo_voice', val); }} vocalidoAutoRender={vocalidoAutoRender} onToggleVocalidoAutoRender={(val) => { setVocalidoAutoRender(val); localStorage.setItem('vocalido_auto_render', String(val)); }} renderCardStyle={vocalidoRenderCardStyle} onSelectRenderCardStyle={(val) => { setVocalidoRenderCardStyle(val); localStorage.setItem('vocalido_render_card_style', val); }} />
       case 'distribution':
         return <DistributionPage userLibrary={userSongs} onRefresh={triggerSync} onBack={() => navigateTo('home')} />;
       case 'nimo':
@@ -767,7 +749,7 @@ const App: React.FC = () => {
       <header className="h-12 flex items-center justify-between px-4 bg-[#0A0A0B] border-b border-white/5 shrink-0 z-[10000]">
         <div className="flex items-center gap-2">
           <Zap size={14} className="text-cyan-400" />
-          <span className="text-[10px] font-black tracking-[0.15em] text-zinc-400">MEMOLODY <span className="text-cyan-400">V2.3.1</span></span>
+          <span className="text-[10px] font-black tracking-[0.15em] text-zinc-400">MEMOLODY <span className="text-cyan-400">V2.4</span></span>
         </div>
         <nav className="flex items-center gap-0.5 sm:gap-1 shrink-0">
           {NAV_ITEMS
@@ -776,7 +758,7 @@ const App: React.FC = () => {
             <button
               key={item.id}
               id={`nav-${item.id}`}
-              onClick={() => navigateTo(item.id)}
+              onClick={() => navigateTo(item.id, item.isNimo)}
               className={`flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded-md text-[8px] font-black uppercase tracking-wider transition-colors duration-75 ${
                 item.isNimo
                   ? currentView === item.id ? 'bg-cyan-500 text-black' : 'text-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/10 border border-cyan-500/20'

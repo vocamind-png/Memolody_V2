@@ -18,9 +18,11 @@ interface SettingsPageProps {
     onChangeNimoVoice: (voice: 'teen_girl' | 'adult_woman' | 'teen_boy' | 'adult_man') => void;
     vocalidoAutoRender: boolean;
     onToggleVocalidoAutoRender: (enabled: boolean) => void;
+    renderCardStyle?: 'compact' | 'large';
+    onSelectRenderCardStyle?: (style: 'compact' | 'large') => void;
 }
 
-const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, onTogglePerformanceMode, nimoEnabled, onToggleNimoEnabled, nimoVoice, onChangeNimoVoice, vocalidoAutoRender, onToggleVocalidoAutoRender }) => {
+const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, onTogglePerformanceMode, nimoEnabled, onToggleNimoEnabled, nimoVoice, onChangeNimoVoice, vocalidoAutoRender, onToggleVocalidoAutoRender, renderCardStyle = 'compact', onSelectRenderCardStyle }) => {
     const [activeTab, setActiveTab] = useState<'audio' | 'midi' | 'shortcuts' | 'visual' | 'ai'>('audio');
 
     // Audio Settings State
@@ -541,6 +543,18 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, on
                                             <div className={`w-5 h-5 bg-white rounded-full shadow-lg transform transition-transform ${vocalidoAutoRender ? 'translate-x-7' : 'translate-x-0'}`} />
                                         </button>
                                     </div>
+                                </div>
+
+                                <div className={`transition-all duration-300 ${!nimoEnabled ? 'opacity-50 pointer-events-none grayscale' : ''}`}>
+                                    <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2 block">Vocalido Render Card Style</label>
+                                    <select
+                                        value={renderCardStyle}
+                                        onChange={e => onSelectRenderCardStyle?.(e.target.value as any)}
+                                        className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-sm text-zinc-300 focus:outline-none focus:border-cyan-500/50 transition-all appearance-none"
+                                    >
+                                        <option value="compact">แบบกะทัดรัด (Compact Floating Card)</option>
+                                        <option value="large">แบบดั้งเดิม (Large Classic Modal)</option>
+                                    </select>
                                 </div>
 
                                 {/* ── Vocalido DiffSinger Training Status ── */}

@@ -35,5 +35,8 @@ pydub>=0.25.1
 # For Apple Silicon (M1/M2/M3) use: pip install torch torchvision torchaudio
 # For CPU-only (Intel/AMD): pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 # Uncomment one of the lines below or install manually:
-# torch>=2.1.0
 # torchaudio>=2.1.0
+
+# LLM integration (Agentic AI & Lyrics)
+google-genai>=1.0.0
+python-dotenv>=1.0.0

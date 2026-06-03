@@ -431,8 +431,7 @@ const TrackView: React.FC<TrackViewProps> = ({ song, musicXml, tracks, setTracks
                         <Circle size={10} fill={track.isArmed ? "currentColor" : "none"} />
                       </button>
                       <div className="flex flex-col min-w-0">
-                        <h4 className="text-[10px] font-black text-white uppercase italic truncate leading-none mb-0.5">{track.name || 'STEMME'}</h4>
-                        <span className="text-[6px] text-zinc-600 font-bold uppercase tracking-widest">{track.id}</span>
+                        <h4 className="text-[8px] font-bold text-white uppercase truncate leading-none">{track.name || 'STEMME'}</h4>
                       </div>
                     </div>
                     <div className="shrink-0 h-4 flex items-center"><LEDMeter trackId={track.id} /></div>

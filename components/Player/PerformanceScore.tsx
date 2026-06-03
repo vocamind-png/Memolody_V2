@@ -19,10 +19,11 @@ interface PerformanceScoreProps {
   isPlaying?: boolean;
   songKey?: string;
   beatsPerMeasure?: number;
+  soloedStems?: Record<string, number | null>;
 }
 
 const PerformanceScore: React.FC<PerformanceScoreProps> = ({
-  notes = [], tracks = [], musicalTimeRef, onSeek, onTogglePlay, bpm = 120, zoomX = 160, zoomY = 24, isPlaying = false, songKey = 'C', beatsPerMeasure = 4
+  notes = [], tracks = [], musicalTimeRef, onSeek, onTogglePlay, bpm = 120, zoomX = 160, zoomY = 24, isPlaying = false, songKey = 'C', beatsPerMeasure = 4, soloedStems = {}
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -108,10 +109,14 @@ const PerformanceScore: React.FC<PerformanceScoreProps> = ({
         const clampedTime = Math.min(ct, lne + 2);
         const playbackTrackX = clampedTime * ppb;
 
-        // Scroll — direct assignment, lightweight
-        const target = Math.max(0, playbackTrackX);
-        const max = Math.max(0, el.scrollWidth - el.clientWidth);
-        el.scrollLeft = Math.min(target, max);
+        // Auto-scroll ONLY when playing
+        if (isPlayingRef.current) {
+          // Keep playhead around the left 20% of the screen if possible
+          const target = Math.max(0, playbackTrackX - el.clientWidth * 0.2);
+          const max = Math.max(0, el.scrollWidth - el.clientWidth);
+          // Only auto-scroll if the playhead is moving out of view or if we want to lock it
+          el.scrollLeft = Math.min(target, max);
+        }
 
         // Build DOM cache once (invalidated when zoom/notes/tracks change)
         if (!cacheBuilt.current) {
@@ -154,6 +159,8 @@ const PerformanceScore: React.FC<PerformanceScoreProps> = ({
             n.wasActive = isActive;
             n.el.style.opacity = isActive ? '1' : '0.7';
             n.el.style.boxShadow = isActive ? `0 0 10px ${n.color}` : 'none';
+            if (isActive) n.el.classList.add('note-active');
+            else n.el.classList.remove('note-active');
           }
         }
 
@@ -198,8 +205,11 @@ const PerformanceScore: React.FC<PerformanceScoreProps> = ({
         return (n.octave + 1) * 12 + STEP_SEMI[si] + (n.alter || 0);
       });
       const mn = Math.min(...midis), mx = Math.max(...midis);
-      const eMin = Math.max(0, mn - 6), eMax = Math.min(127, mx + 6);
       const td = tracks.find(t => t.id === tid);
+      
+      // Standard 88-key piano range (A0=21 to C8=108)
+      const eMin = 21, eMax = 108;
+      
       return {
         id: tid,
         lyricMode: td?.lyricMode || 'Movable Do',
@@ -208,23 +218,36 @@ const PerformanceScore: React.FC<PerformanceScoreProps> = ({
         notes: tn.map(n => {
           const si = STEP_INDEX.indexOf(n.step.toUpperCase());
           const midi = (n.octave + 1) * 12 + STEP_SEMI[si] + (n.alter || 0);
-          return { ...n, y: (eMax - midi) * noteHeight, x: n.startTime * pixelsPerBeat, midi };
+          // Clamp notes outside 88-keys to avoid breaking layout (rare)
+          const clampedMidi = Math.max(eMin, Math.min(eMax, midi));
+          return { ...n, y: (eMax - clampedMidi) * noteHeight, x: n.startTime * pixelsPerBeat, midi: clampedMidi };
         })
       };
     }).filter(Boolean);
   }, [notes, noteHeight, pixelsPerBeat, tracks]);
 
-  // CSS grid pattern
-  const gridBg = useMemo(() => `
-    repeating-linear-gradient(90deg, rgba(99,102,241,0.22) 0px, rgba(99,102,241,0.22) 1.5px, transparent 1.5px, transparent ${measureWidth}px),
-    repeating-linear-gradient(90deg, rgba(255,255,255,0.04) 0px, rgba(255,255,255,0.04) 0.5px, transparent 0.5px, transparent ${pixelsPerBeat}px),
-    repeating-linear-gradient(180deg, rgba(255,255,255,0.03) 0px, rgba(255,255,255,0.03) 0.5px, transparent 0.5px, transparent ${noteHeight}px)
-  `, [pixelsPerBeat, measureWidth, noteHeight]);
-
   const rulerBars = useMemo(() => {
     const count = Math.ceil(contentWidth / measureWidth);
     return Array.from({ length: count }, (_, i) => i);
   }, [contentWidth, measureWidth]);
+
+  // Auto-scroll vertically on first load
+  const hasScrolledRef = useRef(false);
+  useEffect(() => {
+    if (!hasScrolledRef.current && scrollRef.current && trackLayouts.length > 0) {
+      const firstLane = trackLayouts[0];
+      let targetMidi = 60; // Default C4
+      if (firstLane && firstLane.notes.length > 0) {
+        // Find the highest pitch (max MIDI = lowest Y) to ensure notes are visible
+        targetMidi = Math.max(...firstLane.notes.map((n: any) => n.midi));
+      }
+      const eMax = 108;
+      const targetY = (eMax - targetMidi) * noteHeight;
+      // Center it roughly in the viewport
+      scrollRef.current.scrollTop = Math.max(0, targetY - (scrollRef.current.clientHeight / 3));
+      hasScrolledRef.current = true;
+    }
+  }, [trackLayouts, noteHeight]);
 
   return (
     <div ref={containerRef} className="w-full h-full bg-[#050507] overflow-hidden relative select-none">
@@ -321,6 +344,31 @@ const PerformanceScore: React.FC<PerformanceScoreProps> = ({
           pointer-events:none;display:none;z-index:200;
           mix-blend-mode: screen;
         }
+
+        .lyric-text { color: rgba(0,0,0,0.7); }
+        .note-active .lyric-text { color: white; text-shadow: 0 0 5px white; }
+
+        /* Custom DAW-style Scrollbar */
+        .custom-scroll::-webkit-scrollbar {
+          width: 14px;
+          height: 14px;
+        }
+        .custom-scroll::-webkit-scrollbar-track {
+          background: #0a0a0c;
+          border-left: 1px solid rgba(255,255,255,0.05);
+          border-top: 1px solid rgba(255,255,255,0.05);
+        }
+        .custom-scroll::-webkit-scrollbar-thumb {
+          background: rgba(255,255,255,0.15);
+          border-radius: 7px;
+          border: 3px solid #0a0a0c;
+        }
+        .custom-scroll::-webkit-scrollbar-thumb:hover {
+          background: rgba(255,255,255,0.3);
+        }
+        .custom-scroll::-webkit-scrollbar-corner {
+          background: #0a0a0c;
+        }
       `}</style>
 
       {/* ZOOM — floating, separate from ruler */}
@@ -337,7 +385,7 @@ const PerformanceScore: React.FC<PerformanceScoreProps> = ({
       </div>
 
       {/* Single scroll container */}
-      <div ref={scrollRef} className="w-full h-full overflow-auto no-scrollbar" style={{ willChange: 'scroll-position' }}>
+      <div ref={scrollRef} className="custom-scroll w-full h-full overflow-auto" style={{ willChange: 'scroll-position' }}>
         <div className="relative" style={{ width: contentWidth, minHeight: '100%' }}>
 
           {/* RULER — sticky top */}
@@ -365,14 +413,15 @@ const PerformanceScore: React.FC<PerformanceScoreProps> = ({
                   const octave = Math.floor(midi / 12) - 1;
                   const noteName = SEMI_TONE_NAMES[midi % 12];
                   return (
-                    <div key={midi} data-midi={midi} className="relative flex items-center bg-zinc-100 border-b border-zinc-300" style={{ height: noteHeight }}>
+                    <div key={midi} data-midi={midi} className="relative flex items-center bg-zinc-100" style={{ height: noteHeight }}>
                       {isBlack ? (
                         <>
                           <div className="absolute inset-y-0 right-0 w-[40%] bg-gradient-to-r from-zinc-100 to-white" />
+                          <div className="absolute right-0 w-[40%] border-t border-zinc-400 z-10" style={{ top: '50%' }} />
                           <div className="pk-b"><span>{noteName}</span></div>
                         </>
                       ) : (
-                        <div className="pk-w w-full h-full">
+                        <div className={`pk-w w-full h-full ${(noteName === 'C' || noteName === 'F') ? 'border-b border-zinc-400' : ''}`}>
                           <span className={noteName === 'C' ? 'font-black text-black' : ''}>{noteName === 'C' ? `C${octave}` : noteName}</span>
                         </div>
                       )}
@@ -393,41 +442,83 @@ const PerformanceScore: React.FC<PerformanceScoreProps> = ({
                 })}
               </div>
               {/* TIMELINE */}
-              <div className="flex-1 relative overflow-hidden" style={{ background: '#050507', backgroundImage: gridBg, backgroundSize: 'auto' }}>
-                {lane.notes.map((n: any, j: number) => {
-                  const color = n.trackId.includes('S2') ? '#ffab00' : '#00e5ff';
-                  const showLyric = lane.lyricMode !== 'Closed' && lane.lyricMode !== 'Words';
-                  const solfegeText = showLyric ? getChromaticSolfege(n.step, n.alter || 0, songKey, lane.lyricMode as any) : '';
-                  return (
-                    <div key={j}
-                      data-ns={n.startTime} data-nd={n.duration} data-nc={color} data-nm={n.midi}
-                      className="absolute rounded-sm flex items-center"
-                      style={{
-                        left: n.x, top: n.y + 1,
-                        width: Math.max(6, n.duration * pixelsPerBeat - 1),
-                        height: noteHeight - 2,
-                        backgroundColor: color,
-                        opacity: 0.7,
-                      }}>
-                      {showLyric && noteHeight >= 14 && (
-                        <span className="text-[8px] font-bold text-black/70 pl-1 whitespace-nowrap pointer-events-none">{solfegeText}</span>
-                      )}
-                    </div>
-                  );
-                })}
+              <div className="flex-1 relative overflow-hidden" style={{ background: '#050507' }}>
+                {/* Horizontal Pitch Grid (DAW Style) */}
+                <div className="absolute inset-0 pointer-events-none z-[1]">
+                  {Array.from({ length: Math.ceil(lane.laneHeight / noteHeight) }).map((_, i) => {
+                    const midi = lane.startMidi - i;
+                    const isBlack = SEMI_TONE_NAMES[midi % 12].includes('#');
+                    return (
+                      <div 
+                        key={`hgrid-${midi}`}
+                        className={`absolute w-full border-b border-white/[0.05] ${isBlack ? 'bg-white/[0.02]' : ''}`}
+                        style={{ top: i * noteHeight, height: noteHeight }}
+                      />
+                    );
+                  })}
+                </div>
+
+                {/* Notes */}
+                <div className="absolute inset-0 z-[10]">
+                  {lane.notes.map((n: any, j: number) => {
+                    const voiceIdx = (n.voice || 1) - 1;
+                    const isSoloed = soloedStems?.[n.trackId] === voiceIdx;
+                    let color = n.trackId.includes('S2') ? '#ffab00' : '#00e5ff';
+                    
+                    if (soloedStems && soloedStems[n.trackId] !== undefined && soloedStems[n.trackId] !== null) {
+                      if (isSoloed) {
+                        color = '#f59e0b'; // Amber 500 when soloed
+                      } else {
+                        color = '#52525b'; // Zinc 500 (dimmed) when not soloed
+                      }
+                    } else {
+                       const voiceColors = ['#00e5ff', '#ffab00', '#f43f5e', '#a855f7'];
+                       color = voiceColors[voiceIdx % voiceColors.length];
+                    }
+
+                    const showLyric = lane.lyricMode !== 'Closed' && lane.lyricMode !== 'Words';
+                    const solfegeText = showLyric ? getChromaticSolfege(n.step, n.alter || 0, songKey, lane.lyricMode as any) : '';
+                    return (
+                      <div key={j}
+                        data-ns={n.startTime} data-nd={n.duration} data-nc={color} data-nm={n.midi}
+                        className="absolute rounded-sm flex items-center transition-colors"
+                        style={{
+                          left: n.x, top: n.y + 1,
+                          width: Math.max(6, n.duration * pixelsPerBeat - 1),
+                          height: noteHeight - 2,
+                          backgroundColor: color,
+                          opacity: 0.7,
+                        }}>
+                        {showLyric && noteHeight >= 14 && (
+                          <span className="lyric-text text-[8px] font-bold pl-1 whitespace-nowrap pointer-events-none transition-colors">{solfegeText}</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                {/* Measure Bar Lines & Beat Lines */}
+                <div className="absolute inset-0 pointer-events-none z-[5]">
+                  {rulerBars.map(i => (
+                    <React.Fragment key={`bar-group-${i}`}>
+                      <div 
+                        className="absolute top-0 bottom-0 w-[1px] bg-indigo-500/60"
+                        style={{ left: i * measureWidth }}
+                      />
+                      {Array.from({ length: beatsPerMeasure - 1 }).map((_, bIdx) => (
+                        <div 
+                          key={`beat-${i}-${bIdx}`} 
+                          className="absolute top-0 bottom-0 w-[1px] bg-white/10"
+                          style={{ left: i * measureWidth + (bIdx + 1) * pixelsPerBeat }}
+                        />
+                      ))}
+                    </React.Fragment>
+                  ))}
+                </div>
               </div>
             </div>
           ))}
 
-          {/* PLAYHEAD (Indigo Line) */}
-          <div
-            id="perf-playhead"
-            className="absolute top-0 bottom-0 pointer-events-none z-[3000] border-l-2 border-indigo-500 shadow-[0_0_15px_#6366f1,0_0_5px_#6366f1] transition-transform duration-75"
-            style={{ width: '2px', left: pianoWidth, willChange: 'transform' }}
-          >
-            <div className="absolute -left-1.5 top-0 w-3 h-3 rounded-full bg-indigo-400 shadow-[0_0_10px_#818cf8]" />
-            <div className="absolute -left-1.5 bottom-0 w-3 h-3 rounded-full bg-indigo-400 shadow-[0_0_10px_#818cf8]" />
-          </div>
+
 
         </div>
       </div>

@@ -1,6 +1,5 @@
-// import { initializeApp, getApps, getApp } from 'firebase/app';
-// import { getAuth } from 'firebase/auth';
-// import { getFirestore } from 'firebase/firestore';
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getStorage } from 'firebase/storage';
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -11,8 +10,10 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
-// Temporarily disabled Firebase per user request
-export const isFirebaseConfigured = false;
+export const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+export const storage = getStorage(app);
 
+// Auth and DB are disabled per user request
+export const isFirebaseConfigured = true;
 export const auth = null;
 export const db = null;

@@ -238,7 +238,24 @@ export const parseMusicXMLMetadata = async (
   };
 
   if (generateCover) {
-    const neuralCover = await CoverGenerator.generateCover(metadata);
+    // Extract up to 50 words of lyrics for the cover generator
+    let lyricsText = "";
+    const lyricNodes = xmlDoc.querySelectorAll("lyric text");
+    if (lyricNodes.length > 0) {
+      const words: string[] = [];
+      for (let i = 0; i < Math.min(lyricNodes.length, 50); i++) {
+        const text = lyricNodes[i].textContent?.trim();
+        if (text && !["Doh", "Re", "Mi", "Fa", "Sol", "La", "Ti"].includes(text)) {
+          words.push(text);
+        }
+      }
+      lyricsText = words.join(" ").replace(/\s+/g, ' ').trim();
+    }
+    if (lyricsText.length > 15) {
+      metadata.hasStory = true;
+    }
+    
+    const neuralCover = await CoverGenerator.generateCover(metadata, lyricsText);
     if (neuralCover) metadata.coverUrl = neuralCover;
   }
 
@@ -360,25 +377,61 @@ export const injectSolfegeToXml = (xmlString: string, mode: string): string => {
         const currentKey = isFixedMode ? 'C' : (FIFTHS_TO_KEY[currentFifths] || 'C');
         const allNotes = Array.from(measure.querySelectorAll("note"));
 
-        // ── Collect notes into chord groups ──
-        // Each group = [primaryNote, ...chordNotes] sharing the same beat
-        const chordGroups: Element[][] = [];
-        for (const note of allNotes) {
-          const isChord = note.querySelector("chord") !== null;
-          if (!isChord) {
-            chordGroups.push([note]);
-          } else if (chordGroups.length > 0) {
-            chordGroups[chordGroups.length - 1].push(note);
+        // ── Collect notes into chord groups by actual onset time ──
+        // This prevents lyrics from overlapping when multiple voices play at the same time.
+        let currentTime = 0;
+        let prevNoteStartTime = 0;
+        const timeGroups: Record<number, Element[]> = {};
+
+        Array.from(measure.children).forEach(child => {
+          if (child.tagName === "note") {
+            const isChord = child.querySelector("chord") !== null;
+            const isGrace = child.querySelector("grace") !== null;
+            // Grace notes technically don't consume time in MusicXML
+            const duration = isGrace ? 0 : parseInt(child.querySelector("duration")?.textContent || "0");
+            
+            const startTime = isChord ? prevNoteStartTime : currentTime;
+            
+            if (!timeGroups[startTime]) {
+              timeGroups[startTime] = [];
+            }
+            timeGroups[startTime].push(child);
+            
+            if (!isChord) {
+              currentTime += duration;
+            }
+            prevNoteStartTime = startTime;
+            
+          } else if (child.tagName === "backup") {
+            const duration = parseInt(child.querySelector("duration")?.textContent || "0");
+            currentTime -= duration;
+          } else if (child.tagName === "forward") {
+            const duration = parseInt(child.querySelector("duration")?.textContent || "0");
+            currentTime += duration;
           }
-        }
+        });
+
+        const chordGroups = Object.values(timeGroups);
 
         const stepToSemitone: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
 
         // ── Process each chord group ──
         for (const group of chordGroups) {
-          // Remove any pre-existing lyrics from ALL notes in this group
+          // Remove any pre-existing lyrics from ALL notes in this group EXCEPT custom ones
+          let groupHasCustomLyric = false;
           for (const note of group) {
-            note.querySelectorAll("lyric").forEach(l => l.remove());
+            const lyrics = Array.from(note.querySelectorAll("lyric"));
+            for (const l of lyrics) {
+              if (l.getAttribute("name") === "custom") {
+                groupHasCustomLyric = true;
+              } else {
+                l.remove();
+              }
+            }
+          }
+
+          if (groupHasCustomLyric) {
+            continue; // Skip injecting solfege if any note in the chord has a custom lyric
           }
 
           // Collect pitched note info with MIDI value for sorting

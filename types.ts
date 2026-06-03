@@ -58,6 +58,7 @@ export interface Song {
   commentCount?: number;
   isLiked?: boolean;
   genre?: string;
+  hasStory?: boolean;
   era?: string;
   composer?: string;
   year?: string;

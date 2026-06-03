@@ -198,11 +198,14 @@ export class NimoBrainRegistry {
     this.pollingActive = true;
     console.log("[NimoBrain] Starting remote control queue polling on /vocalido/api/remote/commands...");
 
+    let failCount = 0;
+
     const poll = async () => {
       if (!this.pollingActive) return;
       try {
         const res = await fetch('/vocalido/api/remote/commands');
         if (res.ok) {
+          failCount = 0;
           const data = await res.json();
           const commands = data.commands || [];
           const newCommands = commands.filter((c: any) => !this.processedCommandIds.has(c.id));
@@ -233,11 +236,17 @@ export class NimoBrainRegistry {
               });
             }
           }
+        } else {
+          failCount++;
         }
       } catch (err) {
         // Silent connection warnings to prevent console spam
+        failCount++;
       }
-      setTimeout(poll, 1500);
+      
+      // Exponential backoff if server is down (max 30 seconds)
+      const nextDelay = failCount === 0 ? 1500 : Math.min(1500 * Math.pow(1.5, failCount), 30000);
+      setTimeout(poll, nextDelay);
     };
 
     poll();

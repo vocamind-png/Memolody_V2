@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
     ShieldCheck, RefreshCcw, Clock, Globe,
     LogOut, User as UserIcon, Camera, ImagePlus, Check,
-    CloudLightning, Music, Cpu
+    CloudLightning, Music, Cpu, Star
 } from 'lucide-react';
 import { songStorage, NeuralStats } from '../../lib/SongStorage';
 import { Song } from '../../types';
@@ -32,11 +32,12 @@ interface ProfilePageProps {
     setUserCountry: (country: string) => void;
     userInstrument: string;
     setUserInstrument: (inst: string) => void;
+    onViewPlan?: () => void;
 }
 
 export const ProfilePage: React.FC<ProfilePageProps> = ({
     onEnterForge, userLibrary = [], onSongSelect, onTriggerSync, isSyncing, onRefresh,
-    preferredLanguage, setPreferredLanguage, userCountry, setUserCountry, userInstrument, setUserInstrument
+    preferredLanguage, setPreferredLanguage, userCountry, setUserCountry, userInstrument, setUserInstrument, onViewPlan
 }) => {
     const [user, setUser] = useState<any>(null);
     const [stats, setStats] = useState<NeuralStats | null>(null);
@@ -238,13 +239,22 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
                         <p className="text-[8px] font-bold text-zinc-500 uppercase tracking-[0.3em]">
                             {user.email}
                         </p>
-                        <div className="flex items-center justify-center gap-2 mt-1">
-                            <span className="px-2 py-0.5 rounded-full text-[7px] font-black uppercase tracking-widest bg-cyan-500/10 border border-cyan-500/20 text-cyan-400">
-                                FREE TIER
-                            </span>
-                            <span className="px-2 py-0.5 rounded-full text-[7px] font-black uppercase tracking-widest bg-white/5 border border-white/10 text-zinc-500">
-                                {userLibrary.length} Songs
-                            </span>
+                        <div className="flex flex-col items-center justify-center gap-2 mt-2">
+                            <div className="flex gap-2">
+                                <span className="px-2 py-0.5 rounded-full text-[7px] font-black uppercase tracking-widest bg-cyan-500/10 border border-cyan-500/20 text-cyan-400">
+                                    FREE TIER
+                                </span>
+                                <span className="px-2 py-0.5 rounded-full text-[7px] font-black uppercase tracking-widest bg-white/5 border border-white/10 text-zinc-500">
+                                    {userLibrary.length} Songs
+                                </span>
+                            </div>
+                            <button 
+                                onClick={onViewPlan}
+                                className="mt-1 px-4 py-1.5 rounded-full text-[8px] font-black uppercase tracking-widest bg-amber-500/10 border border-amber-500/20 text-amber-500 hover:bg-amber-500 hover:text-black transition-colors"
+                            >
+                                <Star size={10} className="inline mr-1 mb-0.5"/>
+                                Upgrade Plan
+                            </button>
                         </div>
                     </div>
                 </div>

@@ -591,6 +591,7 @@ class VocalidoRenderService {
         notes: typeof notesToSynthesize;
         pan: number; // -1.0 to 1.0
         label: string;
+        trackId: string;
       }
       const voiceLines: VoiceLine[] = [];
       
@@ -605,6 +606,7 @@ class VocalidoRenderService {
         const tNotes = trackGroups[tid] || [];
         if (tNotes.length === 0) continue;
         
+        // ─── Robust Polyphony Splitting (Greedy Interval Scheduling) ───
         // Sort by startTime asc, then pitch desc (highest first)
         const sorted = [...tNotes].sort((a, b) => {
           const timeDiff = a.startTime - b.startTime;
@@ -612,56 +614,29 @@ class VocalidoRenderService {
           return (b.midi || b.pitch || 60) - (a.midi || a.pitch || 60);
         });
 
-        // Group notes into "chord slots" — notes with the same startTime (within 5ms)
-        // Each slot is an array ordered by pitch descending (highest = slot 0)
-        const chordSlots: (typeof notesToSynthesize)[] = [];
-        let maxSlots = 0;
-        
-        // Pass 1: find max simultaneous notes = number of voice lines needed
-        let i = 0;
-        while (i < sorted.length) {
-          const refTime = sorted[i].startTime;
-          let j = i;
-          let chordSize = 0;
-          while (j < sorted.length && Math.abs(sorted[j].startTime - refTime) <= 0.005) {
-            chordSize++;
-            j++;
+        const monoTracks: (typeof notesToSynthesize)[] = [];
+
+        for (const note of sorted) {
+          let placed = false;
+          // Try to place the note in an existing track, prioritizing Track 0 (highest voice)
+          for (let k = 0; k < monoTracks.length; k++) {
+            const track = monoTracks[k];
+            const lastNote = track[track.length - 1];
+            // If the note starts after or exactly when the last note ends (with 5ms tolerance)
+            if (note.startTime >= lastNote.startTime + lastNote.duration - 0.005) {
+              track.push(note);
+              placed = true;
+              break;
+            }
           }
-          if (chordSize > maxSlots) maxSlots = chordSize;
-          i = j;
-        }
-        
-        // Create voice tracks (one per slot)
-        const numTracks = Math.max(1, maxSlots);
-        const monoTracks: (typeof notesToSynthesize)[] = Array.from({ length: numTracks }, () => []);
-        
-        // Pass 2: assign each note to its slot (by pitch rank within the chord)
-        i = 0;
-        while (i < sorted.length) {
-          const refTime = sorted[i].startTime;
-          let j = i;
-          const chordNotes: typeof sorted = [];
-          while (j < sorted.length && Math.abs(sorted[j].startTime - refTime) <= 0.005) {
-            chordNotes.push(sorted[j]);
-            j++;
+          // If it overlaps with all existing tracks, create a new voice track
+          if (!placed) {
+            monoTracks.push([note]);
           }
-          // Assign by pitch order: highest → track 0, next → track 1, etc.
-          chordNotes.sort((a, b) => (b.midi || b.pitch || 60) - (a.midi || a.pitch || 60));
-          chordNotes.forEach((note, slotIdx) => {
-            const trackIdx = Math.min(slotIdx, numTracks - 1);
-            monoTracks[trackIdx].push(note);
-          });
-          i = j;
         }
-        
-        // Remove empty tracks
+
+        // Remove any accidentally empty tracks (shouldn't happen, but safe)
         let filledTracks = monoTracks.filter(mt => mt.length > 0);
-        // Sort so highest-avg-pitch track is first (= Chord Top)
-        filledTracks.sort((a, b) => {
-          const avgA = a.reduce((sum, n) => sum + (n.midi || n.pitch || 60), 0) / a.length;
-          const avgB = b.reduce((sum, n) => sum + (n.midi || n.pitch || 60), 0) / b.length;
-          return avgB - avgA; // Highest pitch first
-        });
         
         const collapseChords = localStorage.getItem('vocalido_collapse_chords') !== 'false'; // Default to TRUE (Top note only)
         if (collapseChords && filledTracks.length > 0) {
@@ -698,7 +673,7 @@ class VocalidoRenderService {
               label = labels[Math.min(idx, 3)];
             }
           }
-          voiceLines.push({ notes: mt, pan, label });
+          voiceLines.push({ notes: mt, pan, label, trackId: tid });
         });
       }
       
@@ -1375,6 +1350,16 @@ class VocalidoRenderService {
           return sUrl.includes('?t=') ? sUrl.replace(/\?t=\d+/, `?t=${Date.now()}`) : `${sUrl}?t=${Date.now()}`;
         });
         
+        const stemsByTrack: Record<string, string[]> = {};
+        let sIdx = 0;
+        for (const vl of voiceLines) {
+          if (!stemsByTrack[vl.trackId]) stemsByTrack[vl.trackId] = [];
+          if (sIdx < stemsWithBust.length) {
+            stemsByTrack[vl.trackId].push(stemsWithBust[sIdx]);
+          }
+          sIdx++;
+        }
+        
         this.progress = 100;
         this.notify();
         cleanup();
@@ -1429,6 +1414,7 @@ class VocalidoRenderService {
           isActiveBlob: useDirectBlobUrl,
           timingFeel: svsTimingFeel,
           vocalTracks: vocalTrackIdsStr,
+          stemsByTrack: stemsByTrack,
           version: 3
         }, ...filtered].slice(0, 12);
 
@@ -1453,7 +1439,11 @@ class VocalidoRenderService {
             await musicEngine.loadSong(parsedData.notes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn);
             
             // addVocalLayer AFTER — so initSampler doesn't overwrite the vocal layer
-            await musicEngine.addVocalLayer(primaryTrackId, cacheBustedUrl, stemsWithBust, actualBpm);
+            for (const tid of vocalTrackIds) {
+              const trackAudioUrl = (tid === primaryTrackId) ? cacheBustedUrl : "";
+              const trackStems = stemsByTrack[tid] || [];
+              await musicEngine.addVocalLayer(tid, trackAudioUrl, trackStems, actualBpm);
+            }
             
             if (useDirectBlobUrl && cacheBustedUrl.startsWith('blob:')) {
               musicEngine.unlockVocalAudio(primaryTrackId);

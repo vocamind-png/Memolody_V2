@@ -25,6 +25,7 @@ interface SelectedNote {
   voiceNum: number;
   staff: number;
   xmlIndex: number;  // index in doc.querySelectorAll('note')
+  lyric: string;
 }
 
 // ── Music helpers ────────────────────────────────────────────────────
@@ -75,6 +76,48 @@ function deleteNoteFromDoc(doc: Document, noteIdx: number) {
   noteEl?.parentNode?.removeChild(noteEl);
 }
 
+function applyLyricToDoc(doc: Document, noteIdx: number, text: string) {
+  const noteEl = Array.from(doc.querySelectorAll('note'))[noteIdx];
+  if (!noteEl) return;
+  let lyricEl = noteEl.querySelector('lyric');
+  if (!text) {
+    if (lyricEl) lyricEl.parentNode?.removeChild(lyricEl);
+    return;
+  }
+  if (!lyricEl) { lyricEl = doc.createElement('lyric'); noteEl.appendChild(lyricEl); }
+  lyricEl.setAttribute('name', 'custom');
+  
+  let syllabicEl = lyricEl.querySelector('syllabic') as Element | null;
+  if (!syllabicEl) { syllabicEl = doc.createElement('syllabic') as Element; lyricEl.appendChild(syllabicEl); }
+  syllabicEl.textContent = 'single';
+
+  let textEl = lyricEl.querySelector('text') as Element | null;
+  if (!textEl) { textEl = doc.createElement('text') as Element; lyricEl.appendChild(textEl); }
+  textEl.textContent = text;
+}
+
+function appendNoteToDoc(doc: Document, step: string, octave: number) {
+  const measures = doc.querySelectorAll('measure');
+  if (measures.length === 0) return;
+  // For simplicity, append to the very last measure
+  const targetMeasure = measures[measures.length - 1];
+  
+  const note = doc.createElement('note');
+  const pitch = doc.createElement('pitch');
+  const stepEl = doc.createElement('step'); stepEl.textContent = step;
+  const octEl = doc.createElement('octave'); octEl.textContent = String(octave);
+  pitch.appendChild(stepEl); pitch.appendChild(octEl);
+  
+  const dur = doc.createElement('duration'); dur.textContent = '1';
+  const type = doc.createElement('type'); type.textContent = 'quarter';
+  
+  note.appendChild(pitch);
+  note.appendChild(dur);
+  note.appendChild(type);
+  
+  targetMeasure.appendChild(note);
+}
+
 function parsePitch(xmlStr: string, noteIdx: number) {
   try {
     const doc = new DOMParser().parseFromString(xmlStr, 'text/xml');
@@ -89,7 +132,8 @@ function parsePitch(xmlStr: string, noteIdx: number) {
     const measureNum = parseInt(noteEl.closest('measure')?.getAttribute('number') || '0');
     const voiceNum = parseInt(noteEl.querySelector('voice')?.textContent || '1');
     const staff = parseInt(noteEl.querySelector('staff')?.textContent || '1');
-    return { step, octave, alter, durationType, dots, isRest, measureNum, voiceNum, staff };
+    const lyric = noteEl.querySelector('lyric > text')?.textContent || '';
+    return { step, octave, alter, durationType, dots, isRest, measureNum, voiceNum, staff, lyric };
   } catch { return null; }
 }
 
@@ -251,11 +295,25 @@ const ScoreEditOverlay: React.FC<ScoreEditOverlayProps> = ({
     setSelected(null);
   }, [selected, xmlData, onXmlChange, containerRef]);
 
+  const changeLyric = useCallback((text: string) => {
+    if (!selected || !xmlData) return;
+    const doc = new DOMParser().parseFromString(xmlData, 'text/xml');
+    applyLyricToDoc(doc, selected.xmlIndex, text);
+    onXmlChange(new XMLSerializer().serializeToString(doc), `Lyric → ${text}`);
+    setSelected(s => s ? { ...s, lyric: text } : null);
+  }, [selected, xmlData, onXmlChange]);
+
   // ── Mouse handlers ─────────────────────────────────────────────────
   const onOverlayMouseDown = useCallback((e: React.MouseEvent) => {
     if (!isEditable || !xmlData) return;
     const hit = hitTest(e.clientX, e.clientY);
     if (!hit) {
+      if (activeTool === 'pencil') {
+        const doc = new DOMParser().parseFromString(xmlData, 'text/xml');
+        appendNoteToDoc(doc, 'C', 4);
+        onXmlChange(new XMLSerializer().serializeToString(doc), 'Draw note');
+        return;
+      }
       // Empty space -> scroll/drag
       const scrollContainer = containerRef.current?.querySelector('.memolody-scrollbar') as HTMLElement | null;
       if (scrollContainer) {
@@ -369,6 +427,12 @@ const ScoreEditOverlay: React.FC<ScoreEditOverlayProps> = ({
     const touch = e.touches[0];
     const hit = hitTest(touch.clientX, touch.clientY);
     if (!hit) {
+      if (activeTool === 'pencil') {
+        const doc = new DOMParser().parseFromString(xmlData, 'text/xml');
+        appendNoteToDoc(doc, 'C', 4);
+        onXmlChange(new XMLSerializer().serializeToString(doc), 'Draw note');
+        return;
+      }
       // Empty space -> scroll/drag
       const scrollContainer = containerRef.current?.querySelector('.memolody-scrollbar') as HTMLElement | null;
       if (scrollContainer) {
@@ -609,6 +673,26 @@ const ScoreEditOverlay: React.FC<ScoreEditOverlayProps> = ({
                 <Trash2 size={12}/>
               </button>
             </div>
+
+            {/* Lyric Row */}
+            {!selected.isRest && (
+              <div className="px-2 pb-2">
+                <input 
+                  type="text" 
+                  value={selected.lyric} 
+                  onChange={(e) => setSelected(s => s ? { ...s, lyric: e.target.value } : null)}
+                  onBlur={(e) => changeLyric(e.target.value)}
+                  onKeyDown={(e) => {
+                    e.stopPropagation(); // prevent global shortcuts
+                    if (e.key === 'Enter') {
+                      e.currentTarget.blur();
+                    }
+                  }}
+                  placeholder="Lyric syllable (e.g. la)"
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-[10px] font-bold text-center text-white outline-none focus:border-cyan-500/50 focus:bg-white/10"
+                />
+              </div>
+            )}
 
             {/* Hint row */}
             <div className="px-3 pb-2 text-[7px] text-zinc-700 text-center">

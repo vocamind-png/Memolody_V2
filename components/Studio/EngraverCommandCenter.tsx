@@ -231,7 +231,7 @@ const PalettePanel: React.FC<PaletteProps> = ({
                     ? <LucideIcon size={20} strokeWidth={isActive ? 2.5 : 2}/>
                     : (tool.content || <NotationIcon type={tool.icon!} active={isActive} size={20}/>)}
                 </div>
-                <span className={`text-[6px] font-black uppercase tracking-tighter leading-none ${isActive ? '' : 'text-zinc-600'}`}>
+                <span className={`text-[8px] font-bold uppercase tracking-tight leading-none ${isActive ? 'text-white' : 'text-zinc-300'}`}>
                   {tool.label}
                 </span>
               </button>
