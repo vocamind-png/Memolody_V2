@@ -1739,6 +1739,8 @@ const PlayerPage: React.FC<{
         console.warn("Could not fetch voice engines, using defaults", err);
         if (active) {
           setIsServerOnline(false);
+          setSvsEngine('browser-ai'); // Automatically fallback to Browser AI if server is unreachable
+          
           // Fallback: hardcode default Lotte V voice when server unreachable
           setVoiceEngines([{ 
             id: 'lotte_v_ai_dol', 
