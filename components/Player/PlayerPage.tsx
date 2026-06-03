@@ -2351,59 +2351,7 @@ const PlayerPage: React.FC<{
         className={`flex-1 flex flex-row relative w-full overflow-hidden ${isResizing ? 'select-none pointer-events-none' : ''}`}
       >
 
-        {/* ── LEFT SIDEBAR: ORIGINAL IMAGE COMPARISON (SPLIT VIEW) ── */}
-        {song?.coverUrl && activeCard === 'score' && (
-          <div 
-            className={`relative flex flex-col bg-[#0c0c0e] transition-[width] duration-0 ease-in-out z-[1000]`}
-            style={{ width: !isOriginalViewHidden ? `${sidebarWidth}%` : '0px' }}
-          >
-            {/* Toggle Button (Eye) - Floats outside when hidden */}
-            <button
-              onClick={() => setIsOriginalViewHidden(!isOriginalViewHidden)}
-              className={`absolute top-4 ${!isOriginalViewHidden ? 'right-4' : '-right-12 bg-white/10 backdrop-blur-md rounded-r-xl border border-l-0 border-white/20 px-2 py-2 pointer-events-auto'} z-[5000] text-zinc-400 hover:text-white transition-all`}
-              title={!isOriginalViewHidden ? "Hide Original View" : "Show Original View"}
-            >
-              {!isOriginalViewHidden ? <EyeOff size={20} /> : <Eye size={20} />}
-            </button>
-
-            {!isOriginalViewHidden && (
-              <div className="flex flex-col w-full h-full p-4 overflow-y-auto pointer-events-auto custom-scrollbar">
-                <div className="flex items-center gap-2 mb-4 shrink-0">
-                  <span className="text-[10px] font-black text-[#00e5ff] uppercase tracking-widest bg-[#00e5ff]/10 px-2 py-1 rounded">Original Sheet</span>
-                </div>
-                
-                {/* Thumbnails / Full Image View */}
-                <div className="w-full flex-1 rounded-xl overflow-hidden border border-white/20 bg-[#121216] shadow-2xl relative">
-                  <div className="absolute inset-0 overflow-y-auto custom-scrollbar">
-                    {song.coverUrl.startsWith('pdf:') ? (
-                      <iframe 
-                        src={song.coverUrl.replace('pdf:', '')} 
-                        className="w-full h-full border-0 bg-zinc-900" 
-                        title="Original PDF"
-                      />
-                    ) : (
-                      <img 
-                        src={song.coverUrl} 
-                        alt="Original Sheet Music" 
-                        className="w-full h-auto object-contain cursor-crosshair min-h-full" 
-                      />
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ── DRAGGABLE DIVIDER ── */}
-        {song?.coverUrl && activeCard === 'score' && !isOriginalViewHidden && (
-          <div
-            onMouseDown={() => setIsResizing(true)}
-            className="w-1.5 bg-black hover:bg-[#00e5ff] flex items-center justify-center cursor-col-resize z-[2000] transition-colors pointer-events-auto"
-          >
-            <div className="w-px h-8 bg-white/30" />
-          </div>
-        )}
+        {/* ── LEFT SIDEBAR: ORIGINAL IMAGE COMPARISON REMOVED PER USER REQUEST ── */}
 
         {/* ── MAIN CONTENT AREA (RIGHT SIDE IN SPLIT VIEW) ── */}
         <div className="flex-1 flex flex-col relative overflow-hidden pointer-events-auto pb-[54px]">
