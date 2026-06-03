@@ -209,6 +209,8 @@ export class ClientSvsEngine {
 
     if (url.startsWith('https://storage.googleapis.com/memolody-vault/voicebanks/')) {
       fallbackUrl = url.replace('https://storage.googleapis.com/memolody-vault/voicebanks/', '/vocalido/voicebanks/');
+    } else if (url.startsWith('/vocalido/voicebanks/')) {
+      fallbackUrl = url.replace('/vocalido/voicebanks/', 'https://storage.googleapis.com/memolody-vault/voicebanks/');
     }
 
     while (totalBytes === 0 || receivedBytes < totalBytes) {
@@ -306,9 +308,12 @@ export class ClientSvsEngine {
           throw new Error(`Failed to download ${url} after multiple attempts. Last error: ${err.message || err}`);
         }
 
-        // Switch to Vercel relative proxy URL if GCS direct URL has failed 4 times
-        if (retries === 4 && currentUrl !== fallbackUrl) {
-          console.warn(`[ClientSvsEngine] Switching to fallback proxy URL: ${fallbackUrl}`);
+        // Fast-fail to fallback URL if server returns a 50x error (like 500 Internal Server Error, 502 Bad Gateway)
+        const isServerError = err.message && err.message.includes('HTTP 50');
+        
+        // Switch to fallback URL if retries hit 4, OR if we got a server error
+        if ((retries === 4 || isServerError) && currentUrl !== fallbackUrl) {
+          console.warn(`[ClientSvsEngine] Switching to fallback URL: ${fallbackUrl}`);
           currentUrl = fallbackUrl;
           receivedBytes = 0;
           chunks.length = 0;
