@@ -272,21 +272,16 @@ const App: React.FC = () => {
         setInitStatus('Loading Demo Songs');
         let songs = await songStorage.getAllSongs();
         
-        console.log('🌱 Force Seeding Vocalido Demo data...');
-        for (const demo of DEMO_SONGS) {
-          demo.metadata.isDeleted = false; // Ensure it's not in trash
-          await songStorage.saveSong(demo.metadata as any, demo.xmlData, (demo as any).layoutBundle || null);
-        }
-        songs = await songStorage.getAllSongs();
+        // Initialization complete
 
         setInitProgress(75);
 
         setInitStatus('Loading Songs Library');
-        if (songs.length <= DEMO_SONGS.length) {
+        await songStorage.permanentDeleteSong('demo-vocal-01'); // User specifically requested deletion
+        if (songs.length < 50) { // If there are fewer than 50 songs, assume they need a sync from GCS
           setInitStatus('Syncing Songs Library from Cloud');
           setInitProgress(80);
           try {
-            // Let the initial massive sync complete before falling back to background
             const syncResult = await CloudSyncService.syncWithGlobalCloud((percent) => {
               setInitProgress(80 + (percent * 0.15));
             });
@@ -296,10 +291,9 @@ const App: React.FC = () => {
           } catch (syncErr) {
             console.warn('[App] Initial cloud sync failed:', syncErr);
             setInitStatus('Sync in background');
-            setTimeout(() => triggerSync(), 1000); // Trigger in background
+            setTimeout(() => triggerSync(), 1000); 
           }
         }
-        setInitProgress(95);
 
         // Note: Seeding demo songs is disabled per user request to keep library clean.
 
@@ -356,9 +350,11 @@ const App: React.FC = () => {
         const updatedSongs = await songStorage.getAllSongs();
         userSongsRef.current = updatedSongs;
         setUserSongs(updatedSongs);
+        alert(`Successfully synced ${syncResult.total} songs from GCS!`);
       }
     } catch (e: any) {
       console.warn("Sync interrupted:", e.message);
+      alert("Sync failed: " + e.message);
     } finally {
       isSyncingRef.current = false;
       setIsSyncing(false);
@@ -466,9 +462,16 @@ const App: React.FC = () => {
       let finalXml = xml;
       const owned = userSongsRef.current.find(s => String(s.metadata.id) === String(song.id)); // use ref — stable
       if (!finalXml) finalXml = owned?.xmlData || '';
+      
+      // FALLBACK: If XML is empty or corrupted, and this is a cloud song (has long ID), reconstruct the URL
+      if ((!finalXml || !finalXml.includes('<score-partwise')) && !finalXml.startsWith('http') && String(song.id).length > 20) {
+         console.warn("[Neural] XML data is missing or corrupted. Attempting cloud recovery...");
+         finalXml = `https://storage.googleapis.com/memolody-vault/pdmx-vault/${song.id}.mxl`;
+      }
 
       if (finalXml && finalXml.startsWith('http')) {
         try {
+          console.log("[Neural] Fetching remote score:", finalXml);
           const url = finalXml;
           const urlWithoutQuery = url.split('?')[0];
           const isMxl = urlWithoutQuery.endsWith('.mxl');
@@ -480,12 +483,18 @@ const App: React.FC = () => {
               const JSZip: any = JSZipModule.default || JSZipModule;
               const jszipInstance = new JSZip();
               const zip = await jszipInstance.loadAsync(blob);
+              console.log("[Neural] MXL zip loaded. Files:", Object.keys(zip.files));
               let xmlContent = '';
               for (const [name, file] of Object.entries(zip.files)) {
                 if (name.endsWith('.xml') && !name.startsWith('META-INF')) {
+                  console.log(`[Neural] Extracting XML from: ${name}`);
                   xmlContent = await (file as any).async('string');
+                  console.log(`[Neural] Extracted XML length: ${xmlContent.length}`);
                   break;
                 }
+              }
+              if (!xmlContent) {
+                 console.error("[Neural] CRITICAL: No XML found in MXL or extraction failed!");
               }
               finalXml = xmlContent || '';
             } else {

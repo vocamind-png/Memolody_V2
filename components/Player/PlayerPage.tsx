@@ -30,7 +30,6 @@ import { useAuth } from '../../lib/useAuth';
 import { clientSvsEngine } from '../../lib/ClientSvsEngine';
 import { AudioBlobCache } from '../../lib/AudioBlobCache';
 import { vocalidoRenderService } from '../../lib/VocalidoRenderService';
-import { CoverGenerator } from '../../lib/CoverGenerator';
 
 export type PlayerCardType = 'score' | 'pianoroll' | 'trackview' | 'memochord' | 'practice' | 'vocalido';
 
@@ -287,12 +286,11 @@ const PlayerPage: React.FC<{
   loopPresets: LoopPreset[]; setLoopPresets: any;
   performanceMode?: boolean;
   vocalidoAutoRender?: boolean;
-  renderCardStyle?: 'compact' | 'large';
   autoPlay?: boolean;           // ← auto-start playback after OMR import
   onAutoPlayConsumed?: () => void; // ← clears the flag in App.tsx
   onSongUpdate?: (updatedSong: Song) => void;
   onNavigate?: (view: any) => void;
-}> = ({ song, musicXml, layoutBundle, tracks, setTracks, viewMode = 'score', setViewMode, loopPresets, setLoopPresets, performanceMode, vocalidoAutoRender, renderCardStyle = 'compact', autoPlay, onAutoPlayConsumed, onSongUpdate, onNavigate }) => {
+}> = ({ song, musicXml, layoutBundle, tracks, setTracks, viewMode = 'score', setViewMode, loopPresets, setLoopPresets, performanceMode, vocalidoAutoRender, autoPlay, onAutoPlayConsumed, onSongUpdate, onNavigate }) => {
   const { authUser } = useAuth();
   const isFree = (() => {
     const storedTier = typeof window !== 'undefined' ? localStorage.getItem('mock_membership_tier') : null;
@@ -301,64 +299,6 @@ const PlayerPage: React.FC<{
     return authUser.membershipTier === 'free';
   })();
   const [isPlaying, setIsPlaying] = useState(false);
-  
-  const [forceActiveLyricMode, setForceActiveLyricMode] = useState<LyricMode | null>(null);
-
-  // Local state for On-Demand Cover Generation
-  const [liveCoverUrl, setLiveCoverUrl] = useState(song?.coverUrl);
-  const [liveHasStory, setLiveHasStory] = useState(song?.hasStory);
-
-  useEffect(() => {
-    setLiveCoverUrl(song?.coverUrl);
-    setLiveHasStory(song?.hasStory);
-  }, [song?.coverUrl, song?.hasStory]);
-
-  // On-Demand AI Cover Generator Trigger
-  useEffect(() => {
-    if (!song) return;
-    
-    // If it's missing, empty, or using the old default Unsplash placeholder, generate a real AI cover now
-    if (!song.coverUrl || song.coverUrl.trim() === '' || song.coverUrl.includes('images.unsplash.com')) {
-      const generateLiveCover = async () => {
-        try {
-          console.log("Triggering On-Demand AI Cover for existing song:", song.title);
-          
-          let lyricsText = "";
-          if (musicXml) {
-            const parser = new DOMParser();
-            const xmlDoc = parser.parseFromString(musicXml, "text/xml");
-            const lyricNodes = xmlDoc.querySelectorAll("lyric text");
-            if (lyricNodes.length > 0) {
-              const words: string[] = [];
-              for (let i = 0; i < Math.min(lyricNodes.length, 50); i++) {
-                const text = lyricNodes[i].textContent?.trim();
-                if (text && !["Doh", "Re", "Mi", "Fa", "Sol", "La", "Ti"].includes(text)) {
-                  words.push(text);
-                }
-              }
-              lyricsText = words.join(" ").replace(/\s+/g, ' ').trim();
-            }
-          }
-          
-          const hasStory = lyricsText.length > 15;
-          const newCoverUrl = await CoverGenerator.generateCover(song, lyricsText);
-          
-          if (newCoverUrl && !newCoverUrl.includes('images.unsplash.com')) {
-            const updatedSong = { ...song, coverUrl: newCoverUrl, hasStory };
-            await songStorage.saveSong(updatedSong); // Save to database permanently
-            
-            // Update UI immediately
-            setLiveCoverUrl(newCoverUrl);
-            setLiveHasStory(hasStory);
-          }
-        } catch (e) {
-          console.error("On-Demand AI Cover generation failed:", e);
-        }
-      };
-      
-      generateLiveCover();
-    }
-  }, [song?.id, musicXml]);
   
   // Favorites & Folder state
   const [isFavorite, setIsFavorite] = useState(song?.isFavorite || false);
@@ -833,7 +773,7 @@ const PlayerPage: React.FC<{
                 // Only prompt for songs that have never been rendered before
                 const histStr = song?.id ? localStorage.getItem(`memo_render_history_${song.id}`) : null;
                 const hasExistingRender = histStr ? (JSON.parse(histStr) || []).length > 0 : false;
-                if (!hasExistingRender && vocalidoAutoRender) {
+                if (!hasExistingRender) {
                   setModalSelectedTracks(tracks.map(t => t.id));
                   setShowRenderPrompt(true);
                 }
@@ -868,7 +808,7 @@ const PlayerPage: React.FC<{
         hasPromptedRenderRef.current = true;
         const histStr = localStorage.getItem(`memo_render_history_${song.id}`);
         const hasExistingRender = histStr ? (JSON.parse(histStr) || []).length > 0 : false;
-        if (!hasExistingRender && vocalidoAutoRender) {
+        if (!hasExistingRender) {
           const timer = setTimeout(() => {
             setModalSelectedTracks(tracks.map(t => t.id));
             setShowRenderPrompt(true);
@@ -877,7 +817,7 @@ const PlayerPage: React.FC<{
         }
       }
     }
-  }, [svsEngine, isServerOnline, song?.id, vocalidoAutoRender]);
+  }, [svsEngine, isServerOnline, song?.id]);
 
   // Stem Solo/Mute State for polyphonic choral lines
   const [soloedStems, setSoloedStems] = useState<Record<string, number | null>>({});
@@ -1114,7 +1054,7 @@ const PlayerPage: React.FC<{
   // Auto-hide/show original view based on song type
   useEffect(() => {
     if (song?.coverUrl) {
-      if (song.coverUrl.startsWith('blob:') || song.coverUrl.startsWith('pdf:')) {
+      if (song.coverUrl.startsWith('blob:') || song.coverUrl.startsWith('pdf:') || song.coverUrl.startsWith('data:')) {
         setIsOriginalViewHidden(false);
         setSidebarWidth(50);
       } else {
@@ -1209,109 +1149,28 @@ const PlayerPage: React.FC<{
     }
   };
 
-  const [staffPositions, setStaffPositions] = useState<{x: number, y: number}[]>([]);
-  
-  // Calculate mapping of visual staves to tracks to handle multi-staff parts (like Piano/Harp)
-  const staffToTrackMap = useMemo(() => {
-    const map: number[] = [];
-    if (!musicXml || !tracks || tracks.length === 0) return map;
-    try {
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(musicXml, "text/xml");
-      const parts = Array.from(doc.querySelectorAll("part"));
-      parts.forEach((part, trackIndex) => {
-        const stavesNode = part.querySelector("measure attributes staves");
-        const count = stavesNode ? parseInt(stavesNode.textContent || "1") : 1;
-        for (let k = 0; k < count; k++) {
-          map.push(trackIndex);
-        }
-      });
-    } catch(e) {}
-    return map;
-  }, [musicXml, tracks.length]);
-
-  const [staffDebugStr, setStaffDebugStr] = useState<string>("V3_Init...");
-  const renderCountRef = useRef(0);
-  renderCountRef.current += 1;
-
   // Detect actual .staff Y positions from Verovio SVG → align mic buttons
   useEffect(() => {
+    const container = scoreAreaRef.current;
+    if (!container) return;
     const measure = () => {
-      try {
-        const container = scoreAreaRef.current;
-        if (!container) {
-          setStaffDebugStr('Waiting for scoreAreaRef...');
-          return;
-        }
-        
-        const svgContainers = container.querySelectorAll('.verovio-neural-svg');
-        if (svgContainers.length === 0) {
-          setStaffDebugStr('No .verovio-neural-svg found in container');
-          return;
-        }
-        
-        const firstSvg = svgContainers[0];
-        const staves = Array.from(firstSvg.querySelectorAll('.staff, g.staff, [class~="staff"]')) as SVGElement[];
-        
-        if (staves.length === 0) {
-          // Try falling back to raw g tags and checking attributes manually
-          const allG = Array.from(firstSvg.querySelectorAll('g')) as Element[];
-          const manualStaves = allG.filter((g) => g.getAttribute('class')?.includes('staff'));
-          setStaffDebugStr(`Found SVG. qSA(.staff): 0. Manual <g> check: ${manualStaves.length}`);
-          if (manualStaves.length === 0) return;
-        } else {
-          setStaffDebugStr(`Found SVG. staves: ${staves.length}`);
-        }
-        
-        // Use whichever array actually found them
-        const validStaves = staves.length > 0 ? staves : (Array.from(firstSvg.querySelectorAll('g')) as Element[]).filter((g) => g.getAttribute('class')?.includes('staff')) as SVGElement[];
-        if (validStaves.length === 0) return;
-        
-        const pageRect = container.getBoundingClientRect();
-        
-        // Group by unique Y to get exactly one position per track
-        const seen = new Set<number>();
-        const pos: {x: number, y: number}[] = [];
-        
-        for (const s of validStaves) {
-          // Use the first path (which is the top staff line) for exact Y coordinates
-          const staffLine = s.querySelector('path');
-          const sRect = (staffLine || s).getBoundingClientRect();
-          
-          // Round to nearest 5px to group properly against SVG scaling artifacts
-          const groupedY = Math.round((sRect.top - pageRect.top) / 5) * 5;
-          const exactY = sRect.top - pageRect.top;
-          const exactX = Math.max(0, sRect.left - pageRect.left);
-          
-          if (!seen.has(groupedY)) { 
-            seen.add(groupedY); 
-            pos.push({ x: exactX, y: exactY }); 
-          }
-          
-          // Break once we've found all tracks for the first system
-          if (pos.length === tracks.length) break;
-        }
-        
-        if (pos.length > 0) {
-          setStaffPositions(pos);
-          setStaffDebugStr(`Success! Found ${pos.length} unique Y positions from ${validStaves.length} staves.`);
-          return pos;
-        }
-      } catch (err: any) {
-        setStaffDebugStr(`CRASH: ${err.message}`);
-        alert(`CRASH: ${err.message}`);
+      const staves = Array.from(container.querySelectorAll('svg .staff, svg g.staff')) as SVGElement[];
+      if (staves.length === 0) return;
+      const containerTop = container.getBoundingClientRect().top;
+      // Group by unique Y (one per part per system — take first system only)
+      const seen = new Set<number>();
+      const ys: number[] = [];
+      for (const s of staves) {
+        const y = Math.round(s.getBoundingClientRect().top - containerTop);
+        if (!seen.has(y)) { seen.add(y); ys.push(y); }
+        if (ys.length >= tracks.length) break;
       }
-      return null;
+      if (ys.length > 0) setStaffYPositions(ys);
     };
-    
-    // Attach to window for manual debugging just in case
-    (window as any).__forceMeasure = measure;
-    
-    // Use interval to poll continuously in case Verovio is slow or activeCard display delays paint
-    const interval = setInterval(measure, 1000);
-    setTimeout(measure, 100); // Also run immediately
-    
-    return () => clearInterval(interval);
+    const observer = new MutationObserver(() => setTimeout(measure, 100));
+    observer.observe(container, { childList: true, subtree: true });
+    measure();
+    return () => observer.disconnect();
   }, [tracks.length, activeCard, musicXml]);
 
   // Mouse event handlers for resizing
@@ -1362,12 +1221,11 @@ const PlayerPage: React.FC<{
   }, [tracks]);
 
   const activeLyricMode = useMemo(() => {
-    if (forceActiveLyricMode) return forceActiveLyricMode;
     const saved = (() => {
       try { return localStorage.getItem('memo_lyric_mode') || 'British Fixed Doh'; } catch { return 'British Fixed Doh'; }
     })();
     return vocalTrack?.lyricMode || (saved as LyricMode);
-  }, [vocalTrack, forceActiveLyricMode]);
+  }, [vocalTrack]);
 
   const activeVoiceName = useMemo(() => {
     const trackEngineId = vocalTrack?.engineId || activeEngineId;
@@ -1502,41 +1360,21 @@ const PlayerPage: React.FC<{
         }
 
         console.log('[PlayerPage] 🎹 Auto-assigning track roles based on parsed notes');
+        // Restore last-used lyric mode from localStorage
         const savedLyricMode = (() => { try { return localStorage.getItem('memo_lyric_mode') || ''; } catch { return ''; } })();
-        let vocalTrackSelected = false;
-        const newTracks = partIds.map((id, index) => {
-          const name = parsedData.partNames[id] || `Track ${index + 1}`;
-          const low = name.toLowerCase();
-          const clef = parsedData.clefs[id] || '';
-
-          // Auto-logic for vocal tracks:
-          let isVocal = false;
-          if (partIds.length === 1) {
-            isVocal = true;
-          } else if (/soprano|alto|tenor|bass|voice|vocal|choir|lead|harmony|melody|singer/.test(low)) {
-            isVocal = true;
-          } else if (!vocalTrackSelected && clef === 'G') {
-            isVocal = true;
-            vocalTrackSelected = true;
-          } else if (!vocalTrackSelected && index === 0 && !clef) {
-            isVocal = true;
-            vocalTrackSelected = true;
-          }
-
-          return {
-            id,
-            name,
-            volume: 1.0,
-            pan: 0,
-            isMuted: false,
-            isSolo: false,
-            mode: isVocal ? 'vocal' : 'instrument',
-            instrument: isVocal ? (activeVoiceName || 'Alto Female') : 'Piano',
+        const newTracks = partIds.map((id, index) => ({
+          id,
+          name: parsedData.partNames[id] || `Track ${index + 1}`,
+          volume: 1.0,
+          pan: 0,
+          isMuted: false,
+          isSolo: false,
+          mode: index === 0 ? 'vocal' : 'instrument',
+          instrument: index === 0 ? (activeVoiceName || 'Alto Female') : 'Piano',
           lyricMode: (savedLyricMode || activeLyricMode || 'British Fixed Doh') as LyricMode,
           engineId: activeEngineId,
           effects: Array(6).fill(null)
-        };
-        });
+        }));
         setTracks(newTracks);
       }
     }
@@ -1630,33 +1468,12 @@ const PlayerPage: React.FC<{
         return;
       }
 
-      // Re-load the song with vocal tracks enabled
-      const vocalTracksArr = cached.vocalTracks ? cached.vocalTracks.split(',') : [primaryTrackId];
-      const updatedTracks = tracks.map((t: any) => 
-        vocalTracksArr.includes(t.id) ? { ...t, mode: 'vocal' } as TrackState : t
-      );
-      
-      const stemsByTrack = cached.stemsByTrack || {};
-      
       // Load vocal layer in background
       setIsAudioLoading(true);
-      
-      const loadPromises = vocalTracksArr.map((tid: string) => {
-        const trackAudioUrl = (tid === primaryTrackId) ? fixedUrl : "";
-        // Legacy fallback: if stemsByTrack doesn't exist, dump everything into primaryTrackId
-        const trackStems = cached.stemsByTrack 
-          ? (stemsByTrack[tid] || []) 
-          : (tid === primaryTrackId ? stemsWithBust : []);
-          
-        return musicEngine.addVocalLayer(tid, trackAudioUrl, trackStems, renderBpm)
-          .then(() => {
-            setAvailableStems(prev => ({ ...prev, [tid]: musicEngine.getAvailableStems(tid) }));
-            setSoloedStems(prev => ({ ...prev, [tid]: null }));
-          });
-      });
-
-      Promise.all(loadPromises)
+      musicEngine.addVocalLayer(primaryTrackId, fixedUrl, stemsWithBust)
         .then(() => {
+          setAvailableStems(prev => ({ ...prev, [primaryTrackId]: musicEngine.getAvailableStems(primaryTrackId) }));
+          setSoloedStems(prev => ({ ...prev, [primaryTrackId]: null }));
           setActiveRenderKey(savedKey);
           setTranspose(tVal);
           setRenderedTranspose(tVal);
@@ -1666,6 +1483,11 @@ const PlayerPage: React.FC<{
             setStoredSinger(cached.voiceName);
           }
           
+          // Re-load the song with vocal tracks enabled
+          const vocalTracksArr = cached.vocalTracks ? cached.vocalTracks.split(',') : [primaryTrackId];
+          const updatedTracks = tracks.map((t: any) => 
+            vocalTracksArr.includes(t.id) ? { ...t, mode: 'vocal' } as TrackState : t
+          );
           setTracks(updatedTracks);
           
           return musicEngine.loadSong(parsedData.notes, updatedTracks, tVal, parsedData.timeSignature, isMetronomeOn);
@@ -1760,19 +1582,6 @@ const PlayerPage: React.FC<{
     handleToggleFavoriteRef.current = handleToggleFavorite;
     isMetronomeOnRef.current = isMetronomeOn;
   });
-  // Global keyboard shortcuts
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Ignore if typing in an input or textarea
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      if (e.code === 'Space') {
-        e.preventDefault();
-        handleTogglePlayRef.current();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
 
   // Register Player-specific NimoBrain actions once on mount
   useEffect(() => {
@@ -1897,9 +1706,11 @@ const PlayerPage: React.FC<{
           
           // Auto-select SVS rendering mode: prioritize server-side vocalido when local server is online
           const savedSvsEngine = localStorage.getItem('vocalido_svs_engine');
-          if (!savedSvsEngine || savedSvsEngine === 'browser-ai') {
+          if (!savedSvsEngine) {
             setSvsEngine('vocalido');
             localStorage.setItem('vocalido_svs_engine', 'vocalido');
+          } else {
+            setSvsEngine(savedSvsEngine as 'vocalido' | 'browser-ai');
           }
 
           // Auto-select lotte_v_ai_dol or first non-default voice as default if not already set or if set to 'default'
@@ -2354,76 +2165,6 @@ const PlayerPage: React.FC<{
 
   return (
     <div className="flex flex-col h-full w-full bg-[#050507] relative overflow-hidden unselectable">
-      <style>{`
-        @keyframes kenburns {
-          0% { transform: scale(1) translate(0, 0); }
-          50% { transform: scale(1.05) translate(-1%, -1%); }
-          100% { transform: scale(1.1) translate(1%, 1%); }
-          @keyframes kenburns-intense {
-            0% { transform: scale(1.0) translate(0, 0) rotate(0deg); filter: brightness(1) contrast(1.2); }
-            50% { transform: scale(1.15) translate(-2%, -2%) rotate(0.5deg); filter: brightness(1.2) contrast(1.3); }
-            100% { transform: scale(1.25) translate(2%, 2%) rotate(-0.5deg); filter: brightness(1.1) contrast(1.2); }
-          }
-          @keyframes float-dust {
-            0% { transform: translateY(100vh) translateX(0) scale(1); opacity: 0; }
-            20% { opacity: 0.8; }
-            80% { opacity: 0.8; }
-            100% { transform: translateY(-20vh) translateX(20vw) scale(1.5); opacity: 0; }
-          }
-          @keyframes light-rays {
-            0% { transform: rotate(15deg) translateX(-50%); opacity: 0.1; }
-            50% { transform: rotate(25deg) translateX(0%); opacity: 0.4; }
-            100% { transform: rotate(15deg) translateX(50%); opacity: 0.1; }
-          }
-        }
-      `}</style>
-      {/* ── CINEMATIC ANIMATED COVER BACKGROUND (VIDEO LOOP EFFECT) ── */}
-      {liveCoverUrl && !liveCoverUrl.startsWith('pdf:') && (
-        <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none">
-          <div 
-            className="absolute inset-[-10%] w-[120%] h-[120%] bg-cover bg-center opacity-40 mix-blend-screen"
-            style={{ 
-              backgroundImage: `url(${liveCoverUrl})`,
-              animation: liveHasStory ? 'kenburns-intense 25s infinite alternate ease-in-out' : 'kenburns 35s infinite alternate ease-in-out',
-              filter: liveHasStory ? 'blur(10px) brightness(0.7)' : 'blur(20px) brightness(0.6)'
-            }} 
-          />
-          {/* VFX Overlay for Songs with Story (Simulated Video Clip) */}
-          {liveHasStory && (
-            <>
-              {/* Dynamic Light Rays */}
-              <div 
-                className="absolute inset-0 opacity-40 mix-blend-overlay"
-                style={{
-                  background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.2) 40%, rgba(255,255,255,0.4) 50%, rgba(255,255,255,0.2) 60%, transparent 100%)',
-                  width: '200%',
-                  animation: 'light-rays 15s infinite alternate ease-in-out'
-                }}
-              />
-              {/* Floating Dust Particles */}
-              {Array.from({ length: 30 }).map((_, i) => (
-                <div
-                  key={`dust-${i}`}
-                  className="absolute bg-white rounded-full mix-blend-screen"
-                  style={{
-                    width: `${Math.random() * 4 + 1}px`,
-                    height: `${Math.random() * 4 + 1}px`,
-                    left: `${Math.random() * 100}%`,
-                    top: `${Math.random() * 100}%`,
-                    animation: `float-dust ${Math.random() * 10 + 10}s infinite linear`,
-                    animationDelay: `-${Math.random() * 15}s`,
-                    opacity: 0,
-                    filter: 'blur(1px)'
-                  }}
-                />
-              ))}
-              {/* Cinematic Vignette */}
-              <div className="absolute inset-0 shadow-[inset_0_0_150px_rgba(0,0,0,0.9)]" />
-            </>
-          )}
-        </div>
-      )}
-
       {/* ── TOP CONTROL BAR ROW ── */}
       <div className="flex items-center justify-between px-3 sm:px-4 py-0.5 border-b border-white/5 bg-[#08080a] shrink-0 z-[4000] relative">
         {/* Left: Player Options Menu */}
@@ -2476,13 +2217,12 @@ const PlayerPage: React.FC<{
                     <span className="text-[7px] font-black text-zinc-600 uppercase tracking-widest pl-2 mb-0.5">{grp.group}</span>
                     <div className="grid grid-cols-2 gap-1">
                       {grp.items.map(mode => {
-                        const isActive = activeLyricMode === mode;
+                        const isActive = tracks.length > 0 && tracks[0].lyricMode === mode;
                         return (
                           <button
                             key={mode}
                             onClick={() => {
                               setTracks((prevTracks: any) => prevTracks.map((t: any) => ({ ...t, lyricMode: mode as LyricMode })));
-                              setForceActiveLyricMode(mode as LyricMode);
                               try { localStorage.setItem('memo_lyric_mode', mode); } catch {}
                               setIsNavMenuVisible(false);
                               lastRenderedKeyRef.current = '';
@@ -2504,7 +2244,7 @@ const PlayerPage: React.FC<{
         </div>
 
         {/* Right: PREMIUM CLOUD DROPDOWN SVS CONTROL */}
-        <div className="flex items-center bg-[#111115]/95 backdrop-blur-3xl border border-cyan-500/30 rounded-full pl-3 pr-2 py-1 shadow-[0_0_20px_rgba(0,229,255,0.15)] gap-3 hover:border-cyan-400/50 hover:shadow-[0_0_25px_rgba(0,229,255,0.3)] transition-all cursor-pointer group z-50">
+        <div className="flex items-center bg-[#0c0c0e]/85 backdrop-blur-2xl border border-white/10 rounded-full pl-2 pr-1.5 py-0.5 shadow-2xl gap-2 hover:border-white/30 transition-all cursor-pointer group">
           {/* Main Display Area (Click to Toggle Studio) */}
           <button 
             className="flex items-center gap-2 pr-1"
@@ -2532,7 +2272,7 @@ const PlayerPage: React.FC<{
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                setShowRenderPrompt(true);
+                triggerVocalSynthesis(true);
               }}
               className={`px-1.5 py-[1px] -m-0.5 rounded-full text-[6.5px] font-black uppercase tracking-widest border transition-all shadow-[0_0_10px_rgba(0,229,255,0.2)] ${
                 isModelLoading 
@@ -2611,12 +2351,64 @@ const PlayerPage: React.FC<{
         className={`flex-1 flex flex-row relative w-full overflow-hidden ${isResizing ? 'select-none pointer-events-none' : ''}`}
       >
 
+        {/* ── LEFT SIDEBAR: ORIGINAL IMAGE COMPARISON (SPLIT VIEW) ── */}
+        {song?.coverUrl && activeCard === 'score' && (
+          <div 
+            className={`relative flex flex-col bg-[#0c0c0e] transition-[width] duration-0 ease-in-out z-[1000]`}
+            style={{ width: !isOriginalViewHidden ? `${sidebarWidth}%` : '0px' }}
+          >
+            {/* Toggle Button (Eye) - Floats outside when hidden */}
+            <button
+              onClick={() => setIsOriginalViewHidden(!isOriginalViewHidden)}
+              className={`absolute top-4 ${!isOriginalViewHidden ? 'right-4' : '-right-12 bg-white/10 backdrop-blur-md rounded-r-xl border border-l-0 border-white/20 px-2 py-2 pointer-events-auto'} z-[5000] text-zinc-400 hover:text-white transition-all`}
+              title={!isOriginalViewHidden ? "Hide Original View" : "Show Original View"}
+            >
+              {!isOriginalViewHidden ? <EyeOff size={20} /> : <Eye size={20} />}
+            </button>
 
+            {!isOriginalViewHidden && (
+              <div className="flex flex-col w-full h-full p-4 overflow-y-auto pointer-events-auto custom-scrollbar">
+                <div className="flex items-center gap-2 mb-4 shrink-0">
+                  <span className="text-[10px] font-black text-[#00e5ff] uppercase tracking-widest bg-[#00e5ff]/10 px-2 py-1 rounded">Original Sheet</span>
+                </div>
+                
+                {/* Thumbnails / Full Image View */}
+                <div className="w-full flex-1 rounded-xl overflow-hidden border border-white/20 bg-[#121216] shadow-2xl relative">
+                  <div className="absolute inset-0 overflow-y-auto custom-scrollbar">
+                    {song.coverUrl.startsWith('pdf:') ? (
+                      <iframe 
+                        src={song.coverUrl.replace('pdf:', '')} 
+                        className="w-full h-full border-0 bg-zinc-900" 
+                        title="Original PDF"
+                      />
+                    ) : (
+                      <img 
+                        src={song.coverUrl} 
+                        alt="Original Sheet Music" 
+                        className="w-full h-auto object-contain cursor-crosshair min-h-full" 
+                      />
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── DRAGGABLE DIVIDER ── */}
+        {song?.coverUrl && activeCard === 'score' && !isOriginalViewHidden && (
+          <div
+            onMouseDown={() => setIsResizing(true)}
+            className="w-1.5 bg-black hover:bg-[#00e5ff] flex items-center justify-center cursor-col-resize z-[2000] transition-colors pointer-events-auto"
+          >
+            <div className="w-px h-8 bg-white/30" />
+          </div>
+        )}
 
         {/* ── MAIN CONTENT AREA (RIGHT SIDE IN SPLIT VIEW) ── */}
         <div className="flex-1 flex flex-col relative overflow-hidden pointer-events-auto pb-[54px]">
         {renderHistory.length === 0 && activeCard === 'score' && (
-          <div className="absolute right-1 top-1/2 -translate-y-1/2 z-[3000] flex flex-col items-center pointer-events-auto bg-[#0c0c0e]/95 p-1.5 rounded-lg border border-white/10 backdrop-blur-xl shadow-2xl w-[34px]">
+          <div className="absolute left-1 top-1/2 -translate-y-1/2 z-[3000] flex flex-col items-center pointer-events-auto bg-[#0c0c0e]/95 p-1.5 rounded-lg border border-white/10 backdrop-blur-xl shadow-2xl w-[34px]">
             <button
               onClick={() => { setModalSelectedTracks(tracks.map(t => t.id)); setShowRenderPrompt(true); }}
               className="w-6 h-6 rounded-lg flex flex-col items-center justify-center border font-bold uppercase transition-all bg-zinc-900 border-zinc-800 text-[#00e5ff] hover:text-white hover:border-[#00e5ff] hover:shadow-[0_0_10px_rgba(0,229,255,0.4)] animate-pulse"
@@ -2633,31 +2425,30 @@ const PlayerPage: React.FC<{
             {isRenderHistoryHidden ? (
               <button
                 onClick={() => setIsRenderHistoryHidden(false)}
-                className="absolute right-0 top-1/2 -translate-y-1/2 z-[3000] w-3.5 h-10 bg-[#0c0c0e]/90 border border-r-0 border-white/10 hover:bg-zinc-800 rounded-l-md flex items-center justify-center text-zinc-500 hover:text-white pointer-events-auto shadow-md transition-all active:scale-95"
+                className="absolute left-0 top-1/2 -translate-y-1/2 z-[3000] w-3.5 h-10 bg-[#0c0c0e]/90 border border-l-0 border-white/10 hover:bg-zinc-800 rounded-r-md flex items-center justify-center text-zinc-500 hover:text-white pointer-events-auto shadow-md transition-all active:scale-95"
                 title="Show Memo Renders"
               >
-                <ChevronLeft size={10} />
+                <ChevronRight size={10} />
               </button>
             ) : (
-              <div className="absolute right-1 top-1/2 -translate-y-1/2 z-[3000] flex flex-col gap-1 pointer-events-auto bg-[#0c0c0e]/95 p-1 rounded-lg border border-white/10 backdrop-blur-xl shadow-2xl max-h-[70vh] overflow-y-auto scrollbar-hide w-[34px]">
+              <div className="absolute left-1 top-1/2 -translate-y-1/2 z-[3000] flex flex-col gap-1 pointer-events-auto bg-[#0c0c0e]/95 p-1 rounded-lg border border-white/10 backdrop-blur-xl shadow-2xl max-h-[70vh] overflow-y-auto scrollbar-hide w-[34px]">
                 <div className="flex items-center justify-between border-b border-white/5 pb-0.5 mb-0.5 w-full">
-                  <span className="text-[7px] font-black text-zinc-400 uppercase tracking-widest pl-1">Renders</span>
+                  <span className="text-[4.2px] font-black text-zinc-400 uppercase tracking-widest pl-0.5">Renders</span>
                   <button
                     onClick={() => setIsRenderHistoryHidden(true)}
                     className="w-2.5 h-2.5 flex items-center justify-center text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 rounded transition-colors"
                     title="Hide Memo Renders"
                   >
-                    <ChevronRight size={6} />
+                    <ChevronLeft size={6} />
                   </button>
                 </div>
-                {renderHistory.map((h, idx) => {
+                {renderHistory.map((h) => {
                   const hKey = `${h.bpmPercent}_${h.songKey}_${h.engineId||'default'}_${h.lyricMode||''}_${h.voiceName||'Auto'}`;
                   const isActive = activeRenderKey === hKey;
                   const isInfoOpen = memoInfoOpenKey === hKey;
                   const shortDate = h.renderedAt ? new Date(h.renderedAt).toLocaleDateString('th-TH', { day:'2-digit', month:'2-digit' }) : null;
                   const speedDiff = h.bpmPercent - 100;
                   const diffStr = speedDiff > 0 ? `+${speedDiff}%` : speedDiff < 0 ? `${speedDiff}%` : '±0%';
-                  const renderNumber = renderHistory.length - idx; // oldest is 1
                   return (
                     <div key={hKey} className="relative group">
                       {/* Main render button */}
@@ -2732,17 +2523,16 @@ const PlayerPage: React.FC<{
                             setIsAudioLoading(false);
                           }
                         }}
-                        className={`w-10 h-10 rounded-lg flex flex-col items-center justify-center border font-bold uppercase transition-all shadow-md relative leading-none select-none
+                        className={`w-6 h-6 rounded-lg flex flex-col items-center justify-center border font-bold uppercase transition-all shadow-md relative leading-none select-none
                           ${isActive 
                             ? 'bg-gradient-to-br from-cyan-400 to-indigo-600 text-black border-transparent shadow-[0_0_10px_rgba(0,229,255,0.4)]' 
                             : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700'
                           }`}
                         title={`เล่นประสานเสียง (${h.voiceName || 'Auto'} • ${h.lyricMode || 'SYS'} • Key ${h.songKey} • BPM ${h.bpmPercent}%)`}
                       >
-                        <span className="text-[6.5px] font-black text-white/50 absolute top-0.5 right-1">#{renderNumber}</span>
-                        <span className="text-[7px] tracking-tighter leading-none mb-0.5">{h.songKey}</span>
-                        <span className="text-[5px] opacity-80 leading-none">{diffStr}</span>
-                        <span className="text-[4px] opacity-60 mt-0.5 tracking-tighter max-w-[34px] truncate leading-none">{h.voiceName || 'Auto'}</span>
+                        <span className="text-[4.5px] tracking-tighter leading-none mb-0.5">{h.songKey}</span>
+                        <span className="text-[3.2px] opacity-80 leading-none">{diffStr}</span>
+                        <span className="text-[2.2px] opacity-60 mt-0.5 tracking-tighter max-w-[22px] truncate leading-none">{h.voiceName || 'Auto'}</span>
                       </button>
     
                       {/* Info popup toggle — tiny badge */}
@@ -2842,7 +2632,253 @@ const PlayerPage: React.FC<{
           <div className="absolute inset-0 z-[8999]" onClick={() => setMemoInfoOpenKey(null)} />
         )}
 
-        {/* TRACK MIC BUTTONS MOVED TO ProScoreEditor overlay prop */}
+        {/* ── TRACK MIC BUTTONS: pinned to actual staff Y positions ── */}
+        {activeCard === 'score' && tracks.length > 0 && (
+          <div className="absolute left-0 top-0 w-full h-full z-[3000] pointer-events-none">
+            {/* Song Actions: Favorite & Folder selection */}
+            {(() => {
+              const baseTop = staffYPositions.length > 0 ? staffYPositions[0] : 60;
+              return (
+                <div 
+                  ref={folderPopoverRef}
+                  className="absolute left-1 z-[6000] flex flex-col gap-0.5 pointer-events-auto items-start opacity-60 hover:opacity-100 transition-opacity duration-200"
+                  style={{ top: `${Math.max(2, baseTop - 42)}px` }}
+                >
+                  <button
+                    onClick={handleToggleFavorite}
+                    className={`h-2 px-0.5 rounded-sm flex items-center gap-0.5 text-[3.2px] font-black uppercase tracking-wider transition-all border shadow-sm ${
+                      isFavorite
+                        ? 'bg-rose-600 border-rose-500 text-white'
+                        : 'bg-zinc-800 border-zinc-600 text-zinc-300 hover:text-rose-400 hover:border-rose-400/60'
+                    }`}
+                    title={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+                  >
+                    <Heart size={3} fill={isFavorite ? 'currentColor' : 'none'} className={isFavorite ? 'text-white' : ''} />
+                    {isFavorite ? 'Favorite' : 'Add Fav'}
+                  </button>
+
+                  <div className="relative">
+                    <button
+                      onClick={() => setIsFolderPopoverOpen(!isFolderPopoverOpen)}
+                      className={`h-2 px-0.5 rounded-sm flex items-center gap-0.5 text-[3.2px] font-black uppercase tracking-wider transition-all border shadow-sm ${
+                        currentFolderId
+                          ? 'bg-indigo-600 border-indigo-500 text-white'
+                          : 'bg-zinc-800 border-zinc-600 text-zinc-300 hover:text-indigo-400 hover:border-indigo-400/60'
+                      }`}
+                      title="Manage Folder"
+                    >
+                      <Folder size={3} />
+                      {currentFolderId ? (folders.find(f => f.id === currentFolderId)?.name || 'Folder') : 'Add Folder'}
+                    </button>
+
+                    {isFolderPopoverOpen && (
+                      <div className="absolute left-0 mt-1 bg-[#0c0c0e]/95 backdrop-blur-xl border border-white/10 p-2 rounded-lg shadow-xl flex flex-col gap-1.5 w-[160px] z-[9000] animate-in fade-in duration-100">
+                        <span className="text-[6.5px] font-black text-white/40 uppercase tracking-wider px-1">Select Folder</span>
+                        
+                        <div className="flex flex-col gap-0.5 max-h-[100px] overflow-y-auto scrollbar-hide">
+                          {folders.map(f => (
+                            <div key={f.id} className="flex items-center justify-between hover:bg-white/5 rounded px-1 py-0.5">
+                              <button
+                                onClick={() => handleAssignFolder(f.id)}
+                                className={`text-[7px] font-bold text-left flex items-center gap-1 flex-1 truncate ${
+                                  currentFolderId === f.id ? 'text-indigo-400' : 'text-zinc-300 hover:text-white'
+                                }`}
+                              >
+                                <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: f.color || '#6366f1' }} />
+                                <span className="truncate">{f.name}</span>
+                              </button>
+                              
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteFolder(f.id);
+                                }}
+                                className="w-3.5 h-3.5 flex items-center justify-center text-zinc-500 hover:text-rose-500 rounded hover:bg-rose-500/10 transition-colors"
+                                title="Delete Folder"
+                              >
+                                <Trash2 size={7} />
+                              </button>
+                            </div>
+                          ))}
+
+                          {folders.length === 0 && (
+                            <span className="text-[6px] text-zinc-500 italic px-1">No folders created</span>
+                          )}
+                        </div>
+
+                        {currentFolderId && (
+                          <button
+                            onClick={() => handleAssignFolder(undefined)}
+                            className="w-full text-left text-[6.5px] font-bold text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded px-1 py-0.5 transition-colors border border-rose-500/20"
+                          >
+                            × Remove from Folder
+                          </button>
+                        )}
+
+                        <div className="h-px bg-white/5 my-0.5" />
+
+                        {showNewFolderForm ? (
+                          <div className="flex flex-col gap-1.5 p-1 bg-white/5 rounded border border-white/5">
+                            <input
+                              type="text"
+                              placeholder="Folder name..."
+                              value={newFolderName}
+                              onChange={(e) => setNewFolderName(e.target.value)}
+                              className="w-full bg-black/60 border border-white/10 rounded px-1 py-0.5 text-[7px] text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500"
+                              autoFocus
+                            />
+                            <div className="flex justify-between items-center">
+                              <div className="flex gap-1">
+                                {['#6366f1', '#ec4899', '#10b981', '#f59e0b', '#3b82f6'].map(c => (
+                                  <button
+                                    key={c}
+                                    onClick={() => setNewFolderColor(c)}
+                                    className={`w-2 h-2 rounded-full border transition-transform ${
+                                      newFolderColor === c ? 'scale-125 border-white' : 'border-transparent'
+                                    }`}
+                                    style={{ backgroundColor: c }}
+                                  />
+                                ))}
+                              </div>
+                              <div className="flex gap-1">
+                                <button
+                                  onClick={() => setShowNewFolderForm(false)}
+                                  className="px-1.5 py-0.5 bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white rounded text-[6px] font-bold uppercase"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  onClick={handleCreateFolder}
+                                  className="px-1.5 py-0.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-[6px] font-bold uppercase"
+                                >
+                                  Create
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setShowNewFolderForm(true)}
+                            className="w-full py-1 border border-dashed border-white/15 hover:border-indigo-500/50 hover:bg-indigo-500/5 rounded flex items-center justify-center gap-1 text-[6.5px] font-black uppercase text-indigo-400 transition-all"
+                          >
+                            <Plus size={6} /> New Folder
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {tracks.map((track, i) => {
+              const isMuted = mutedVocalTracks.has(track.id);
+              const baseTop = staffYPositions.length > 0 ? staffYPositions[0] : 60;
+              const yPos = staffYPositions[i] ?? (baseTop + i * 80);
+              return (
+                <div 
+                  key={track.id} 
+                  className="absolute left-1 z-50 flex flex-col gap-1 pointer-events-auto"
+                  style={{ top: `${yPos - 2}px` }}
+                >
+                  {/* Button Row */}
+                  <div className="flex flex-row gap-0.5 items-center">
+                    <button
+                      onClick={() => {
+                        setTracks((prev: any) => prev.map((t: any) => ({
+                          ...t, mode: t.id === track.id ? 'vocal' : t.mode
+                        })));
+                        setActiveRenderTrackId(track.id);
+                        triggerVocalSynthesis(true);
+                      }}
+                      className={`h-2.5 px-0.5 rounded-sm flex items-center gap-0.5 text-[3.5px] font-black uppercase transition-all border shadow-sm ${
+                        track.mode === 'vocal'
+                          ? 'bg-cyan-600 border-cyan-400 text-white'
+                          : 'bg-zinc-800 border-zinc-600 text-zinc-300 hover:text-cyan-400 hover:border-cyan-400/60'
+                      }`}
+                      title={`Render "${track.name}" as vocal`}
+                    >
+                      <Mic2 size={4.5} />
+                      Render
+                    </button>
+                    
+                    <button
+                      onClick={() => setMutedVocalTracks(prev => {
+                        const next = new Set(prev);
+                        next.has(track.id) ? next.delete(track.id) : next.add(track.id);
+                        return next;
+                      })}
+                      className={`w-2.5 h-2.5 rounded-sm border flex items-center justify-center transition-all ${
+                        !isMuted 
+                          ? 'bg-red-600 border-red-500 text-white shadow-[0_0_5px_rgba(220,38,38,0.5)]' 
+                          : 'bg-zinc-300 border-zinc-400 text-zinc-800 hover:bg-zinc-200'
+                      }`}
+                      title={isMuted ? 'Piano mode' : 'Vocal mode'}
+                    >
+                      {isMuted ? <span className="text-[4.5px]">🎹</span> : <Mic2 size={5} />}
+                    </button>
+
+                    {/* Stem Solo — hidden behind toggle to prevent accidental clicks */}
+                    {showStemControls && availableStems[track.id] > 0 && (() => {
+                      const stemTrackId = track.id;
+                      const isOpen = expandedStemTrack === stemTrackId;
+                      return (
+                        <div className="relative pointer-events-auto">
+                          {/* Tiny toggle: only shows a small diamond icon */}
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setExpandedStemTrack(isOpen ? null : stemTrackId); }}
+                            className={`w-3 h-3 rounded-sm flex items-center justify-center transition-all border text-[5px] font-black ${
+                              isOpen 
+                                ? 'bg-cyan-600 border-cyan-400 text-white shadow-[0_0_6px_rgba(6,182,212,0.5)]' 
+                                : soloedStems[stemTrackId] !== null
+                                  ? 'bg-amber-600 border-amber-400 text-white animate-pulse'
+                                  : 'bg-zinc-900/60 border-zinc-700/50 text-zinc-500 hover:text-cyan-400 hover:border-cyan-500/50'
+                            }`}
+                            title={isOpen ? 'Close stem panel' : `Stem Solo (${availableStems[stemTrackId]} parts)`}
+                          >
+                            ◆
+                          </button>
+                          {/* Expandable panel — only shows when toggled open */}
+                          {isOpen && (
+                            <div className="absolute left-5 top-0 flex flex-row gap-0.5 items-center bg-black/80 p-1 rounded-md border border-cyan-500/30 backdrop-blur-xl shadow-xl select-none z-[9000] animate-in fade-in duration-150">
+                              <span className="text-[5.5px] font-black text-cyan-400/80 uppercase px-0.5 whitespace-nowrap">Solo:</span>
+                              {Array.from({ length: availableStems[stemTrackId] }).map((_, idx) => {
+                                const isSoloed = soloedStems[stemTrackId] === idx;
+                                return (
+                                  <button
+                                    key={idx}
+                                    onClick={() => handleSoloStem(stemTrackId, isSoloed ? null : idx)}
+                                    className={`w-4 h-4 rounded text-[6.5px] font-black flex items-center justify-center transition-all border ${
+                                      isSoloed
+                                        ? 'bg-cyan-500 border-cyan-300 text-white shadow-[0_0_5px_rgba(6,182,212,0.4)]'
+                                        : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700 hover:border-zinc-500 hover:text-white'
+                                    }`}
+                                    title={isSoloed ? `Mute voice part ${idx + 1} and play all` : `Solo voice part ${idx + 1}`}
+                                  >
+                                    S{idx + 1}
+                                  </button>
+                                );
+                              })}
+                              {soloedStems[stemTrackId] !== null && (
+                                <button
+                                  onClick={() => handleSoloStem(stemTrackId, null)}
+                                  className="px-1 py-0.5 bg-rose-600 border border-rose-500 rounded text-[5px] font-black uppercase text-white hover:bg-rose-500 transition-all"
+                                  title="Play all voices together"
+                                >
+                                  All
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {/* ProScoreEditor: Handles Score, MemoChord */}
           <div
@@ -2871,282 +2907,7 @@ const PlayerPage: React.FC<{
             layoutBundle={layoutBundle}
             isVisible={activeCard === 'score'}
           />
-          
-          {/* TRACK CONTROLS OVERLAY - Rendered outside ProScoreEditor to bypass React.memo trap! */}
-          {(activeCard === 'score') && (
-            <div className="absolute left-0 top-0 w-full h-full z-[3000] pointer-events-none">
-
-              {/* Song Actions: Favorite & Folder selection */}
-                  {(() => {
-                    const baseY = staffPositions.length > 0 ? staffPositions[0].y : 60;
-                    return (
-                      <div 
-                        ref={folderPopoverRef}
-                        className="absolute left-1 z-[6000] flex flex-col gap-0.5 pointer-events-auto items-start opacity-100 transition-opacity duration-200"
-                        style={{ top: `${Math.max(2, baseY - 70)}px` }}
-                      >
-                        <button
-                          onClick={handleToggleFavorite}
-                          className={`h-4 px-1.5 rounded-sm flex items-center gap-1 text-[6.5px] font-black uppercase tracking-wider transition-all border shadow-sm ${
-                            isFavorite
-                              ? 'bg-rose-600 border-rose-500 text-white'
-                              : 'bg-zinc-800 border-zinc-600 text-zinc-300 hover:text-rose-400 hover:border-rose-400/60'
-                          }`}
-                          title={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
-                        >
-                          <Heart size={6} fill={isFavorite ? 'currentColor' : 'none'} className={isFavorite ? 'text-white' : ''} />
-                          {isFavorite ? 'Favorite' : 'Add Fav'}
-                        </button>
-
-                        <div className="relative mt-1">
-                          <button
-                            onClick={() => setIsFolderPopoverOpen(!isFolderPopoverOpen)}
-                            className={`h-4 px-1.5 rounded-sm flex items-center gap-1 text-[6.5px] font-black uppercase tracking-wider transition-all border shadow-sm ${
-                              currentFolderId
-                                ? 'bg-indigo-600 border-indigo-500 text-white'
-                                : 'bg-zinc-800 border-zinc-600 text-zinc-300 hover:text-indigo-400 hover:border-indigo-400/60'
-                            }`}
-                            title="Manage Folder"
-                          >
-                            <Folder size={6} />
-                            {currentFolderId ? (folders.find(f => f.id === currentFolderId)?.name || 'Folder') : 'Add Folder'}
-                          </button>
-
-                          {isFolderPopoverOpen && (
-                            <div className="absolute left-0 mt-1 bg-[#0c0c0e]/95 backdrop-blur-xl border border-white/10 p-2 rounded-lg shadow-xl flex flex-col gap-1.5 w-[160px] z-[9000] animate-in fade-in duration-100">
-                              <span className="text-[6.5px] font-black text-white/40 uppercase tracking-wider px-1">Select Folder</span>
-                              
-                              <div className="flex flex-col gap-0.5 max-h-[100px] overflow-y-auto scrollbar-hide">
-                                {folders.map(f => (
-                                  <div key={f.id} className="flex items-center justify-between hover:bg-white/5 rounded px-1 py-0.5">
-                                    <button
-                                      onClick={() => handleAssignFolder(f.id)}
-                                      className={`text-[7px] font-bold text-left flex items-center gap-1 flex-1 truncate ${
-                                        currentFolderId === f.id ? 'text-indigo-400' : 'text-zinc-300 hover:text-white'
-                                      }`}
-                                    >
-                                      <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: f.color || '#6366f1' }} />
-                                      <span className="truncate">{f.name}</span>
-                                    </button>
-                                    
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleDeleteFolder(f.id);
-                                      }}
-                                      className="w-3.5 h-3.5 flex items-center justify-center text-zinc-500 hover:text-rose-500 rounded hover:bg-rose-500/10 transition-colors"
-                                      title="Delete Folder"
-                                    >
-                                      <Trash2 size={7} />
-                                    </button>
-                                  </div>
-                                ))}
-
-                                {folders.length === 0 && (
-                                  <span className="text-[6px] text-zinc-500 italic px-1">No folders created</span>
-                                )}
-                              </div>
-
-                              {currentFolderId && (
-                                <button
-                                  onClick={() => handleAssignFolder(undefined)}
-                                  className="w-full text-left text-[6.5px] font-bold text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded px-1 py-0.5 transition-colors border border-rose-500/20"
-                                >
-                                  × Remove from Folder
-                                </button>
-                              )}
-
-                              <div className="h-px bg-white/5 my-0.5" />
-
-                              {showNewFolderForm ? (
-                                <div className="flex flex-col gap-1.5 p-1 bg-white/5 rounded border border-white/5">
-                                  <input
-                                    type="text"
-                                    placeholder="Folder name..."
-                                    value={newFolderName}
-                                    onChange={(e) => setNewFolderName(e.target.value)}
-                                    className="w-full bg-black/60 border border-white/10 rounded px-1 py-0.5 text-[7px] text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500"
-                                    autoFocus
-                                  />
-                                  <div className="flex justify-between items-center">
-                                    <div className="flex gap-1">
-                                      {['#6366f1', '#ec4899', '#10b981', '#f59e0b', '#3b82f6'].map(c => (
-                                        <button
-                                          key={c}
-                                          onClick={() => setNewFolderColor(c)}
-                                          className={`w-2 h-2 rounded-full border transition-transform ${
-                                            newFolderColor === c ? 'scale-125 border-white' : 'border-transparent'
-                                          }`}
-                                          style={{ backgroundColor: c }}
-                                        />
-                                      ))}
-                                    </div>
-                                    <div className="flex gap-1">
-                                      <button
-                                        onClick={() => setShowNewFolderForm(false)}
-                                        className="px-1.5 py-0.5 bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white rounded text-[6px] font-bold uppercase"
-                                      >
-                                        Cancel
-                                      </button>
-                                      <button
-                                        onClick={handleCreateFolder}
-                                        className="px-1.5 py-0.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-[6px] font-bold uppercase"
-                                      >
-                                        Create
-                                      </button>
-                                    </div>
-                                  </div>
-                                </div>
-                              ) : (
-                                <button
-                                  onClick={() => setShowNewFolderForm(true)}
-                                  className="w-full py-1 border border-dashed border-white/15 hover:border-indigo-500/50 hover:bg-indigo-500/5 rounded flex items-center justify-center gap-1 text-[6.5px] font-black uppercase text-indigo-400 transition-all"
-                                >
-                                  <Plus size={6} /> New Folder
-                                </button>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })()}
-
-                  {(() => {
-                    // Fallback: If Verovio SVG hasn't rendered staves yet, use tracks array to stack buttons vertically
-                    const effectivePositions = staffPositions.length > 0 
-                      ? staffPositions 
-                      : tracks.map((_, i) => ({ x: 0, y: 120 + i * 80 }));
-
-                    const currentStaffMap = staffToTrackMap.length > 0 
-                      ? staffToTrackMap 
-                      : effectivePositions.map((_, i) => Math.min(i, tracks.length - 1));
-
-                    return effectivePositions.map((pos, staffIndex) => {
-                      const trackIndex = currentStaffMap[staffIndex] ?? (tracks.length - 1);
-                      
-                      // Only render track controls for the FIRST occurrence of this track (prevents duplicates on wrapped lines)
-                      if (currentStaffMap.indexOf(trackIndex) !== staffIndex) {
-                        return null;
-                      }
-
-                      const track = tracks[trackIndex];
-                      if (!track) return null;
-                      const isMuted = mutedVocalTracks.has(track.id);
-
-                      return (
-                        <div 
-                          key={`${track.id}-${staffIndex}`} 
-                          className="absolute z-50 flex flex-row gap-0.5 items-center pointer-events-auto"
-                          style={{ top: `${pos.y + 2}px`, left: `4px`, transform: 'translateY(-50%)' }}
-                        >
-                          {/* Render Button (Blue) - NO MIC ICON, SHORTER */}
-                          <button
-                            onClick={() => {
-                              setTracks((prev: any) => prev.map((t: any) => ({
-                                ...t, mode: t.id === track.id ? 'vocal' : t.mode
-                              })));
-                              setActiveRenderTrackId(track.id);
-                              triggerVocalSynthesis(true);
-                            }}
-                            className={`h-[11px] px-0.5 rounded-sm flex items-center justify-center text-[6.5px] font-black uppercase transition-all border shadow-sm ${
-                              track.mode === 'vocal'
-                                ? 'bg-cyan-600 border-cyan-400 text-white'
-                                : 'bg-zinc-800 border-zinc-600 text-zinc-300 hover:text-cyan-400 hover:border-cyan-400/60'
-                            }`}
-                            title={`Render "${track.name}" as vocal`}
-                          >
-                            <span>VOCAL</span>
-                          </button>
-
-                          {/* Mode Toggle (Red) - Square */}
-                          <button
-                            onClick={() => setMutedVocalTracks(prev => {
-                              const next = new Set(prev);
-                              next.has(track.id) ? next.delete(track.id) : next.add(track.id);
-                              return next;
-                            })}
-                            className={`h-[11px] w-[11px] rounded-[2px] border flex items-center justify-center flex-shrink-0 transition-all ${
-                              !isMuted 
-                                ? 'bg-red-600 border-red-500 text-white shadow-[0_0_5px_rgba(220,38,38,0.5)]' 
-                                : 'bg-zinc-300 border-zinc-400 text-zinc-800 hover:bg-zinc-200'
-                            }`}
-                            title={isMuted ? 'Piano mode' : 'Vocal mode'}
-                          >
-                            {isMuted ? <span className="text-[7.5px]">🎹</span> : <Mic2 size={8} />}
-                          </button>
-
-                          {/* All VO Button (if soloed) */}
-                          {soloedStems[track.id] !== null && soloedStems[track.id] !== undefined && (
-                            <button
-                              onClick={() => handleSoloStem(track.id, null)}
-                              className="h-[11px] px-0.5 bg-rose-600 border border-rose-500 rounded-sm text-[6.5px] font-bold uppercase text-white shadow-[0_0_5px_rgba(225,29,72,0.5)] hover:bg-rose-500 transition-all flex items-center justify-center"
-                              title="Un-solo and play all voices"
-                            >
-                              ALL VO
-                            </button>
-                          )}
-
-                          {/* Stem Solo Buttons (Gray) */}
-                          {(() => {
-                            const trackNotes = parsedData.notes.filter((n: any) => n.trackId === track.id);
-                            let maxVoices = 1;
-                            if (trackNotes.length > 0) {
-                              const sorted = [...trackNotes].sort((a, b) => {
-                                const timeDiff = a.startTime - b.startTime;
-                                if (Math.abs(timeDiff) > 0.005) return timeDiff;
-                                return (b.midi || b.pitch || 60) - (a.midi || a.pitch || 60);
-                              });
-                              const monoTracks: any[][] = [];
-                              for (const note of sorted) {
-                                let placed = false;
-                                for (let k = 0; k < monoTracks.length; k++) {
-                                  const trk = monoTracks[k];
-                                  const lastNote = trk[trk.length - 1];
-                                  if (note.startTime >= lastNote.startTime + lastNote.duration - 0.005) {
-                                    trk.push(note);
-                                    placed = true;
-                                    break;
-                                  }
-                                }
-                                if (!placed) monoTracks.push([note]);
-                              }
-                              maxVoices = monoTracks.length;
-                            }
-
-                            const numVoices = availableStems[track.id] > 0 
-                              ? availableStems[track.id] 
-                              : Math.max(1, maxVoices);
-                            
-                            return (
-                              <div className="flex flex-row gap-0.5">
-                                {Array.from({ length: numVoices }).map((_, idx) => {
-                                  const isSoloed = soloedStems[track.id] === idx;
-                                  return (
-                                    <button
-                                      key={idx}
-                                      onClick={() => handleSoloStem(track.id, isSoloed ? null : idx)}
-                                      className={`h-[11px] px-1 rounded-[2px] flex items-center justify-center text-[6.5px] font-bold uppercase transition-all border shadow-sm ${
-                                        isSoloed
-                                          ? 'bg-amber-500 border-amber-300 text-white shadow-[0_0_5px_rgba(245,158,11,0.5)]'
-                                          : 'bg-zinc-800/90 border-zinc-600/50 text-zinc-300 hover:text-amber-400 hover:border-amber-400/60'
-                                      }`}
-                                      title={isSoloed ? `Mute Voice ${idx + 1}` : `Solo Voice ${idx + 1}`}
-                                    >
-                                      {`S${idx + 1}`}
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            );
-                          })()}
-                        </div>
-                      );
-                    });
-                  })()}
-                </div>
-              )}
-          </div>
+        </div>
 
         {/* ── [VOCAL MODEL BACKGROUND AUTO-LOAD BANNER - NON-BLOCKING FLOATING CARD] ── */}
         {isModelLoading && !hideLoadBanner && (
@@ -3202,167 +2963,100 @@ const PlayerPage: React.FC<{
 
         {/* ── [SVS READY RENDER PROMPT] ── */}
         {showRenderPrompt && (
-          <div className="fixed inset-0 z-[6000] flex items-center justify-center pointer-events-none">
-            <div className={`absolute inset-0 ${renderCardStyle === 'large' ? 'bg-black/80 backdrop-blur-md' : 'bg-black/70 backdrop-blur-md'} pointer-events-auto`} />
-            
-            {renderCardStyle === 'large' ? (
-              <div className="relative flex flex-col items-center p-12 bg-zinc-900 border border-zinc-700 rounded-[2rem] w-[540px] max-w-[95vw] shadow-2xl pointer-events-auto animate-in zoom-in-95 duration-300">
-                <div className="relative w-32 h-32 flex items-center justify-center mb-8">
-                  <div className="absolute inset-0 rounded-full bg-cyan-500/20 animate-ping" style={{ animationDuration: '3s' }} />
-                  <div className="absolute -inset-4 rounded-full bg-gradient-to-tr from-cyan-400 to-indigo-500 opacity-20 blur-2xl animate-pulse" />
-                  <div className="relative w-28 h-28 rounded-full bg-gradient-to-br from-cyan-500 to-indigo-600 shadow-[0_0_40px_rgba(6,182,212,0.5)] flex items-center justify-center border border-white/20">
-                    <Sparkles size={48} className="text-black animate-pulse" />
-                  </div>
+          <div className="fixed inset-0 z-[6000] flex items-center justify-center bg-black/70 backdrop-blur-md pointer-events-auto">
+            <div className="relative flex flex-col items-center p-8 bg-zinc-950/95 border border-zinc-800 rounded-3xl w-[320px] shadow-[0_20px_50px_rgba(0,0,0,0.8)] animate-in zoom-in-95 duration-300">
+              <div className="relative w-28 h-28 flex items-center justify-center mb-6">
+                <div className="absolute inset-0 rounded-full bg-cyan-500/20 animate-ping" style={{ animationDuration: '3s' }} />
+                <div className="absolute -inset-2 rounded-full bg-gradient-to-tr from-cyan-400 to-indigo-500 opacity-20 blur-xl animate-pulse" />
+                <div className="relative w-24 h-24 rounded-full bg-gradient-to-br from-cyan-500 to-indigo-600 shadow-[0_0_30px_rgba(6,182,212,0.4)] flex items-center justify-center border border-white/10">
+                  <Sparkles size={36} className="text-black animate-pulse" />
                 </div>
-                <h3 className="text-2xl font-black text-white text-center mb-4 uppercase tracking-widest drop-shadow-md">Render AI Vocals?</h3>
-                <p className="text-sm text-zinc-300 text-center mb-8 px-4 leading-relaxed max-w-sm">
-                  {svsEngine === 'vocalido' ? (
-                    <>
-                      Would you like to render the AI vocals now using the <span className="text-cyan-400 font-bold">Local SVS Server (Vocalido)</span>?
-                    </>
-                  ) : (
-                    <>
-                      The voice model is ready on your device. Would you like to render the AI vocals now using <span className="text-cyan-400 font-bold">On-Device (20 Steps HD)</span>?
-                    </>
-                  )}
-                </p>
+              </div>
+              <h3 className="text-base font-black text-white text-center mb-2 uppercase tracking-widest">Render AI Vocals?</h3>
+              <p className="text-[10px] text-zinc-400 text-center mb-4 px-1 leading-relaxed">
+                {svsEngine === 'vocalido' ? (
+                  <>
+                    Would you like to render the AI vocals now using the <span className="text-cyan-400 font-bold">Local SVS Server (Vocalido)</span>?
+                  </>
+                ) : (
+                  <>
+                    The voice model is ready on your device. Would you like to render the AI vocals now using <span className="text-cyan-400 font-bold">On-Device (20 Steps HD)</span>?
+                  </>
+                )}
+              </p>
 
-              {/* Track Selection UI for Large Mode */}
+              {/* Track Selection UI */}
               {tracks.length > 1 && (
-                <div className="w-full max-w-sm flex flex-col gap-3 mb-8 bg-black/40 border border-zinc-800 rounded-xl p-4">
-                  <span className="text-xs font-black text-cyan-400 uppercase tracking-widest mb-2 border-b border-white/10 pb-2">Select Tracks to Render</span>
+                <div className="w-full flex flex-col gap-2 mb-6">
+                  <span className="text-[9px] font-black text-cyan-400 uppercase tracking-widest mb-1 border-b border-white/10 pb-1">Select Tracks</span>
                   
-                  <div className="flex flex-col gap-3">
-                    <label className="flex items-center gap-3 cursor-pointer group">
-                      <div className="relative flex items-center justify-center">
-                        <input type="checkbox" checked={modalSelectedTracks.length === 1 && modalSelectedTracks[0] === tracks[0].id} onChange={() => setModalSelectedTracks([tracks[0].id])} className="peer sr-only" />
-                        <div className="w-5 h-5 rounded border border-zinc-600 bg-zinc-900 peer-checked:bg-cyan-500 peer-checked:border-cyan-400 transition-all flex items-center justify-center">
-                          <svg className="w-3.5 h-3.5 text-black opacity-0 peer-checked:opacity-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
-                        </div>
+                  <label className="flex items-center gap-2 cursor-pointer group">
+                    <div className="relative flex items-center justify-center">
+                      <input 
+                        type="checkbox" 
+                        checked={modalSelectedTracks.length === 1 && modalSelectedTracks[0] === tracks[0].id}
+                        onChange={() => setModalSelectedTracks([tracks[0].id])}
+                        className="peer sr-only" 
+                      />
+                      <div className="w-4 h-4 rounded border border-zinc-600 bg-zinc-900 peer-checked:bg-cyan-500 peer-checked:border-cyan-400 transition-all flex items-center justify-center">
+                        <svg className="w-2.5 h-2.5 text-black opacity-0 peer-checked:opacity-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
                       </div>
-                      <span className="text-sm font-bold text-zinc-300 group-hover:text-white transition-colors">Select Melody only</span>
-                    </label>
+                    </div>
+                    <span className="text-[10px] font-bold text-zinc-300 group-hover:text-white transition-colors">Select Melody only</span>
+                  </label>
 
-                    <label className="flex items-center gap-3 cursor-pointer group">
-                      <div className="relative flex items-center justify-center">
-                        <input type="checkbox" checked={modalSelectedTracks.length === tracks.length} onChange={() => setModalSelectedTracks(tracks.map(t => t.id))} className="peer sr-only" />
-                        <div className="w-5 h-5 rounded border border-zinc-600 bg-zinc-900 peer-checked:bg-cyan-500 peer-checked:border-cyan-400 transition-all flex items-center justify-center">
-                          <svg className="w-3.5 h-3.5 text-black opacity-0 peer-checked:opacity-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
-                        </div>
+                  <label className="flex items-center gap-2 cursor-pointer group">
+                    <div className="relative flex items-center justify-center">
+                      <input 
+                        type="checkbox" 
+                        checked={modalSelectedTracks.length === tracks.length}
+                        onChange={() => setModalSelectedTracks(tracks.map(t => t.id))}
+                        className="peer sr-only" 
+                      />
+                      <div className="w-4 h-4 rounded border border-zinc-600 bg-zinc-900 peer-checked:bg-cyan-500 peer-checked:border-cyan-400 transition-all flex items-center justify-center">
+                        <svg className="w-2.5 h-2.5 text-black opacity-0 peer-checked:opacity-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
                       </div>
-                      <span className="text-sm font-bold text-zinc-300 group-hover:text-white transition-colors">Select All Tracks</span>
-                    </label>
+                    </div>
+                    <span className="text-[10px] font-bold text-zinc-300 group-hover:text-white transition-colors">Select All Tracks</span>
+                  </label>
+
+                  <div className="max-h-24 overflow-y-auto no-scrollbar flex flex-col gap-1.5 mt-1 border border-zinc-800 rounded-lg p-2 bg-black/40">
+                    {tracks.map(t => (
+                      <label key={t.id} className="flex items-center gap-2 cursor-pointer group">
+                        <div className="relative flex items-center justify-center">
+                          <input 
+                            type="checkbox" 
+                            checked={modalSelectedTracks.includes(t.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setModalSelectedTracks(prev => [...prev.filter(id => id !== t.id), t.id]);
+                              } else {
+                                setModalSelectedTracks(prev => prev.filter(id => id !== t.id));
+                              }
+                            }}
+                            className="peer sr-only" 
+                          />
+                          <div className="w-3.5 h-3.5 rounded-sm border border-zinc-700 bg-zinc-900 peer-checked:bg-cyan-600 peer-checked:border-cyan-500 transition-all flex items-center justify-center">
+                            <svg className="w-2 h-2 text-white opacity-0 peer-checked:opacity-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                          </div>
+                        </div>
+                        <span className="text-[9px] font-medium text-zinc-400 group-hover:text-zinc-200 transition-colors truncate flex-1">{t.name}</span>
+                      </label>
+                    ))}
                   </div>
                 </div>
               )}
 
-              <div className="flex gap-4 w-full max-w-sm">
-                <button onClick={() => setShowRenderPrompt(false)} className="flex-1 py-4 px-6 bg-white/5 hover:bg-white/10 text-white font-black text-sm uppercase tracking-widest rounded-2xl active:scale-95 transition-all duration-200">
-                  Cancel
-                </button>
-                <button
-                  onClick={() => { setShowRenderPrompt(false); triggerVocalSynthesis(false, modalSelectedTracks.length > 0 ? modalSelectedTracks : tracks.map(t => t.id)); }}
-                  className="flex-1 py-4 px-6 bg-gradient-to-r from-cyan-400 to-indigo-500 text-black font-black text-sm uppercase tracking-widest rounded-2xl hover:shadow-[0_0_30px_rgba(6,182,212,0.5)] active:scale-95 transition-all duration-200"
-                >
-                  Render Now
-                </button>
-              </div>
+              <button
+                onClick={() => { setShowRenderPrompt(false); triggerVocalSynthesis(false, modalSelectedTracks.length > 0 ? modalSelectedTracks : tracks.map(t => t.id)); }}
+                className="w-full py-3 px-4 bg-gradient-to-r from-cyan-400 to-indigo-500 text-black font-black text-xs uppercase tracking-widest rounded-xl hover:shadow-[0_0_20px_rgba(6,182,212,0.4)] active:scale-98 transition-all duration-200 mt-2"
+              >
+                Render Now
+              </button>
+              <button onClick={() => setShowRenderPrompt(false)} className="w-full mt-2.5 py-3 px-4 bg-transparent border border-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-white font-black text-[10px] uppercase tracking-widest rounded-xl active:scale-98 transition-all duration-200">
+                Close
+              </button>
             </div>
-            ) : (
-              <div className="relative flex flex-col items-center p-8 bg-zinc-950/95 border border-zinc-800 rounded-3xl w-[320px] shadow-[0_20px_50px_rgba(0,0,0,0.8)] animate-in zoom-in-95 duration-300 pointer-events-auto">
-                <div className="relative w-28 h-28 flex items-center justify-center mb-6">
-                  <div className="absolute inset-0 rounded-full bg-cyan-500/20 animate-ping" style={{ animationDuration: '3s' }} />
-                  <div className="absolute -inset-2 rounded-full bg-gradient-to-tr from-cyan-400 to-indigo-500 opacity-20 blur-xl animate-pulse" />
-                  <div className="relative w-24 h-24 rounded-full bg-gradient-to-br from-cyan-500 to-indigo-600 shadow-[0_0_30px_rgba(6,182,212,0.4)] flex items-center justify-center border border-white/10">
-                    <Sparkles size={36} className="text-black animate-pulse" />
-                  </div>
-                </div>
-                <h3 className="text-base font-black text-white text-center mb-2 uppercase tracking-widest">Render AI Vocals?</h3>
-                <p className="text-[10px] text-zinc-400 text-center mb-4 px-1 leading-relaxed">
-                  {svsEngine === 'vocalido' ? (
-                    <>
-                      Would you like to render the AI vocals now using the <span className="text-cyan-400 font-bold">Local SVS Server (Vocalido)</span>?
-                    </>
-                  ) : (
-                    <>
-                      The voice model is ready on your device. Would you like to render the AI vocals now using <span className="text-cyan-400 font-bold">On-Device (20 Steps HD)</span>?
-                    </>
-                  )}
-                </p>
-
-                {/* Track Selection UI */}
-                {tracks.length > 1 && (
-                  <div className="w-full flex flex-col gap-2 mb-6">
-                    <span className="text-[9px] font-black text-cyan-400 uppercase tracking-widest mb-1 border-b border-white/10 pb-1">Select Tracks</span>
-                    
-                    <label className="flex items-center gap-2 cursor-pointer group">
-                      <div className="relative flex items-center justify-center">
-                        <input 
-                          type="checkbox" 
-                          checked={modalSelectedTracks.length === 1 && modalSelectedTracks[0] === tracks[0].id}
-                          onChange={() => setModalSelectedTracks([tracks[0].id])}
-                          className="peer sr-only" 
-                        />
-                        <div className="w-4 h-4 rounded border border-zinc-600 bg-zinc-900 peer-checked:bg-cyan-500 peer-checked:border-cyan-400 transition-all flex items-center justify-center">
-                          <svg className="w-2.5 h-2.5 text-black opacity-0 peer-checked:opacity-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
-                        </div>
-                      </div>
-                      <span className="text-[10px] font-bold text-zinc-300 group-hover:text-white transition-colors">Select Melody only</span>
-                    </label>
-
-                    <label className="flex items-center gap-2 cursor-pointer group">
-                      <div className="relative flex items-center justify-center">
-                        <input 
-                          type="checkbox" 
-                          checked={modalSelectedTracks.length === tracks.length}
-                          onChange={() => setModalSelectedTracks(tracks.map(t => t.id))}
-                          className="peer sr-only" 
-                        />
-                        <div className="w-4 h-4 rounded border border-zinc-600 bg-zinc-900 peer-checked:bg-cyan-500 peer-checked:border-cyan-400 transition-all flex items-center justify-center">
-                          <svg className="w-2.5 h-2.5 text-black opacity-0 peer-checked:opacity-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
-                        </div>
-                      </div>
-                      <span className="text-[10px] font-bold text-zinc-300 group-hover:text-white transition-colors">Select All Tracks</span>
-                    </label>
-
-                    <div className="max-h-24 overflow-y-auto no-scrollbar flex flex-col gap-1.5 mt-1 border border-zinc-800 rounded-lg p-2 bg-black/40">
-                      {tracks.map(t => (
-                        <label key={t.id} className="flex items-center gap-2 cursor-pointer group">
-                          <div className="relative flex items-center justify-center">
-                            <input 
-                              type="checkbox" 
-                              checked={modalSelectedTracks.includes(t.id)}
-                              onChange={(e) => {
-                                if (e.target.checked) {
-                                  setModalSelectedTracks(prev => [...prev.filter(id => id !== t.id), t.id]);
-                                } else {
-                                  setModalSelectedTracks(prev => prev.filter(id => id !== t.id));
-                                }
-                              }}
-                              className="peer sr-only" 
-                            />
-                            <div className="w-3.5 h-3.5 rounded-sm border border-zinc-700 bg-zinc-900 peer-checked:bg-cyan-600 peer-checked:border-cyan-500 transition-all flex items-center justify-center">
-                              <svg className="w-2 h-2 text-white opacity-0 peer-checked:opacity-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
-                            </div>
-                          </div>
-                          <span className="text-[9px] font-medium text-zinc-400 group-hover:text-zinc-200 transition-colors truncate flex-1">{t.name}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                <button
-                  onClick={() => { setShowRenderPrompt(false); triggerVocalSynthesis(false, modalSelectedTracks.length > 0 ? modalSelectedTracks : tracks.map(t => t.id)); }}
-                  className="w-full py-3 px-4 bg-gradient-to-r from-cyan-400 to-indigo-500 text-black font-black text-xs uppercase tracking-widest rounded-xl hover:shadow-[0_0_20px_rgba(6,182,212,0.4)] active:scale-98 transition-all duration-200 mt-2"
-                >
-                  Render Now
-                </button>
-                <button onClick={() => setShowRenderPrompt(false)} className="w-full mt-2.5 py-3 px-4 bg-transparent border border-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-white font-black text-[10px] uppercase tracking-widest rounded-xl active:scale-98 transition-all duration-200">
-                  Close
-                </button>
-              </div>
-            )}
           </div>
         )}
 
@@ -3370,79 +3064,49 @@ const PlayerPage: React.FC<{
         {isRenderingVocal && (
           <div className="fixed inset-0 z-[5000] flex items-center justify-center pointer-events-none">
             {/* Backdrop */}
-            <div className={`absolute inset-0 ${renderCardStyle === 'large' ? 'bg-black/80 backdrop-blur-md' : 'bg-black/60 backdrop-blur-sm'} pointer-events-auto`} />
-            
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm pointer-events-auto" />
             {/* Card */}
-            {renderCardStyle === 'large' ? (
-              <div className="relative z-10 w-[600px] max-w-[95vw] p-10 bg-zinc-900 border border-zinc-700 rounded-3xl shadow-2xl flex flex-col items-center pointer-events-auto animate-in zoom-in-95 fade-in duration-300">
-                <h2 className="text-2xl font-black uppercase tracking-widest text-white mb-6">AI Voice Synthesis</h2>
-                <div className="relative w-32 h-32 flex items-center justify-center mb-6">
-                  <svg viewBox="0 0 100 100" className="absolute inset-0 w-full h-full -rotate-90">
-                    <circle cx="50" cy="50" r="44" stroke="currentColor" strokeWidth="6" fill="transparent" className="text-white/10" />
-                    {!renderError && (
-                      <circle cx="50" cy="50" r="44" stroke="currentColor" strokeWidth="8" strokeDasharray="276.5" strokeDashoffset={276.5 - (276.5 * renderProgress) / 100} strokeLinecap="round" fill="transparent" className="text-cyan-400 transition-[stroke-dashoffset] duration-150 linear" />
-                    )}
-                  </svg>
-                  <span className="text-2xl font-black text-white tabular-nums drop-shadow-md">
-                    {renderError ? "⚠️" : `${Math.round(renderProgress)}%`}
-                  </span>
-                </div>
-                <span className={`text-lg font-bold tracking-wide truncate mb-2 ${renderError ? 'text-rose-400' : 'text-cyan-300'}`}>
-                  {renderError ? "Synthesis Failed" : (renderStatusText || (renderProgress > 95 ? "Finalizing Audio..." : "Rendering vocals..."))}
-                </span>
-                <div className="text-sm text-zinc-400 font-medium tracking-wide flex gap-2 truncate mb-6">
-                  <span>{(activeVoiceName || 'Vocalido Soprano').toUpperCase()}</span>
-                  <span>•</span>
-                  <span>{Math.round(currentBpm)} BPM</span>
-                  <span>•</span>
-                  <span>KEY: {transpose > 0 ? `+${transpose}` : transpose}</span>
-                </div>
-                <button onClick={closeRenderOverlay} className="px-8 py-3 bg-white/5 hover:bg-white/10 text-white rounded-full text-sm font-bold tracking-widest uppercase transition-all">
-                  Cancel Synthesis
-                </button>
-              </div>
-            ) : (
-              <div className="relative z-10 w-[340px] max-w-[90vw] p-5 bg-zinc-950/95 border border-zinc-700/80 rounded-3xl shadow-[0_20px_60px_rgba(0,0,0,0.7),0_0_0_1px_rgba(255,255,255,0.05)] backdrop-blur-2xl flex items-center gap-4 animate-in zoom-in-95 fade-in duration-300 pointer-events-auto">
-                {/* Left side: Circular Progress */}
-                <div className="relative w-16 h-16 flex-shrink-0 flex items-center justify-center">
-                  <svg viewBox="0 0 100 100" className="absolute inset-0 w-full h-full -rotate-90">
+            <div className="relative z-10 w-[340px] max-w-[90vw] p-5 bg-zinc-950/95 border border-zinc-700/80 rounded-3xl shadow-[0_20px_60px_rgba(0,0,0,0.7),0_0_0_1px_rgba(255,255,255,0.05)] backdrop-blur-2xl flex items-center gap-4 animate-in zoom-in-95 fade-in duration-300 pointer-events-auto">
+              {/* Left side: Circular Progress */}
+              <div className="relative w-16 h-16 flex-shrink-0 flex items-center justify-center">
+                <svg viewBox="0 0 100 100" className="absolute inset-0 w-full h-full -rotate-90">
+                  <circle
+                    cx="50" cy="50" r="44"
+                    stroke="currentColor"
+                    strokeWidth="6"
+                    fill="transparent"
+                    className="text-white/10"
+                  />
+                  {!renderError && (
                     <circle
                       cx="50" cy="50" r="44"
                       stroke="currentColor"
-                      strokeWidth="6"
+                      strokeWidth="8"
+                      strokeDasharray="276.5"
+                      strokeDashoffset={276.5 - (276.5 * renderProgress) / 100}
+                      strokeLinecap="round"
                       fill="transparent"
-                      className="text-white/10"
+                      className="text-cyan-400 transition-[stroke-dashoffset] duration-150 linear"
                     />
-                    {!renderError && (
-                      <circle
-                        cx="50" cy="50" r="44"
-                        stroke="currentColor"
-                        strokeWidth="8"
-                        strokeDasharray="276.5"
-                        strokeDashoffset={276.5 - (276.5 * renderProgress) / 100}
-                        strokeLinecap="round"
-                        fill="transparent"
-                        className="text-cyan-400 transition-[stroke-dashoffset] duration-150 linear"
-                      />
-                    )}
-                  </svg>
-                  <span className="text-[13px] font-black text-white tabular-nums drop-shadow-md">
-                    {renderError ? "⚠️" : `${Math.round(renderProgress)}%`}
-                  </span>
-                </div>
+                  )}
+                </svg>
+                <span className="text-[13px] font-black text-white tabular-nums drop-shadow-md">
+                  {renderError ? "⚠️" : `${Math.round(renderProgress)}%`}
+                </span>
+              </div>
 
-                {/* Right side: Info and actions */}
-                <div className="flex-1 min-w-0 flex flex-col justify-center">
-                  <span className="text-[9px] font-black uppercase tracking-widest text-zinc-500">
-                    AI Voice Synthesis
-                  </span>
-                  
-                  <span className={`text-[13px] font-bold tracking-wide truncate mt-1 ${renderError ? 'text-rose-400' : 'text-cyan-300'}`}>
-                    {renderError 
-                      ? "Synthesis Failed" 
-                      : (renderStatusText || (renderProgress > 95 ? "Finalizing Audio..." : "Rendering vocals..."))
-                    }
-                  </span>
+              {/* Right side: Info and actions */}
+              <div className="flex-1 min-w-0 flex flex-col justify-center">
+                <span className="text-[9px] font-black uppercase tracking-widest text-zinc-500">
+                  AI Voice Synthesis
+                </span>
+                
+                <span className={`text-[13px] font-bold tracking-wide truncate mt-1 ${renderError ? 'text-rose-400' : 'text-cyan-300'}`}>
+                  {renderError 
+                    ? "Synthesis Failed" 
+                    : (renderStatusText || (renderProgress > 95 ? "Finalizing Audio..." : "Rendering vocals..."))
+                  }
+                </span>
 
                 <div className="text-[9px] text-zinc-500 font-medium tracking-wide mt-0.5 flex gap-1 truncate">
                   <span>{(activeVoiceName || 'Vocalido Soprano').toUpperCase()}</span>
@@ -3478,9 +3142,8 @@ const PlayerPage: React.FC<{
                     </button>
                   )}
                 </div>
-                </div>
               </div>
-            )}
+            </div>
           </div>
         )}
 
@@ -3498,7 +3161,6 @@ const PlayerPage: React.FC<{
               isPlaying={isPlaying}
               songKey={localSong.key}
               beatsPerMeasure={beatsPerMeasure}
-              soloedStems={soloedStems}
             />
           </div>
         )}
@@ -3580,13 +3242,12 @@ const PlayerPage: React.FC<{
           {/* Floating Translucent Eye - Shows ONLY when transport is completely hidden */}
           <button
             onClick={() => {
-              setIsTransportHidden(false);
               const el = document.getElementById('transport-container');
               if (el) {
                 el.style.transform = 'translateY(0)';
               }
             }}
-            className={`absolute bottom-4 left-1/2 -translate-x-1/2 z-[5000] w-12 h-8 bg-white/10 backdrop-blur-md rounded-full border border-white/20 shadow-[0_0_20px_rgba(255,255,255,0.1)] flex items-center justify-center text-white/50 hover:text-white hover:bg-white/20 transition-all duration-300 no-print ${!isTransportHidden ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
+            className={`absolute bottom-4 left-1/2 -translate-x-1/2 z-[5000] w-12 h-8 bg-white/10 backdrop-blur-md rounded-full border border-white/20 shadow-[0_0_20px_rgba(255,255,255,0.1)] flex items-center justify-center text-white/50 hover:text-white hover:bg-white/20 transition-all duration-300 md:hidden no-print ${!isTransportHidden ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
             title="Show Controls"
           >
             <Eye size={20} />
@@ -3740,29 +3401,9 @@ const PlayerPage: React.FC<{
  
               {/* CENTER GROUP: Narrow LCD Display */}
               <div className="flex-1 flex justify-center px-1">
-                <div className="bg-[#0c0c0e] rounded overflow-hidden flex flex-row items-center justify-center font-mono text-[#00e5ff] w-full max-w-[280px] sm:max-w-[340px] md:max-w-[420px] h-[34px] min-[360px]:h-[38px] sm:h-[42px] md:h-[46px] border border-white/5 shadow-inner relative">
-                  <div className="flex-1 h-full border-r border-white/[0.03] flex items-center justify-center relative">
+                <div className="w-[130px] min-[350px]:w-[148px] min-[380px]:w-[168px] sm:w-[215px] md:w-[250px] h-[34px] min-[360px]:h-[40px] bg-[#0c0c0e] rounded-md flex items-center border border-black shadow-inner overflow-hidden">
+                  <div className="flex-1 h-full border-r border-white/[0.03] flex items-center justify-center">
                     <KeyTransposeDisplay keySig={parsedData.metadata.key || localSong.key} transpose={transpose} onTransposeChange={setTranspose} />
-                  </div>
-
-                  {/* ── ✨ AI Render Button (Centered between KEY and BPM) ── */}
-                  <div className="absolute left-[33.333%] top-1/2 -translate-x-1/2 -translate-y-1/2 z-[6000]">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (!!activeRenderKey && transpose === renderedTranspose) return;
-                        const currentVocalIds = tracks.filter(t => t.mode === 'vocal').map(t => t.id);
-                        triggerVocalSynthesis(true, currentVocalIds.length > 0 ? currentVocalIds : undefined);
-                      }}
-                      className={`w-5 h-5 sm:w-7 sm:h-7 rounded-full border flex items-center justify-center transition-all group ${
-                        !activeRenderKey || transpose !== renderedTranspose
-                          ? 'bg-gradient-to-br from-fuchsia-500 via-purple-500 to-indigo-600 shadow-[0_0_20px_rgba(217,70,239,0.8)] border-white/50 animate-bounce hover:animate-none hover:scale-110 active:scale-95 cursor-pointer'
-                          : 'bg-zinc-800/80 border-white/10 opacity-30 cursor-not-allowed hover:opacity-50'
-                      }`}
-                      title={(!activeRenderKey || transpose !== renderedTranspose) ? "Render AI Voice" : "AI Voice is up to date"}
-                    >
-                      <span className={`text-[10px] sm:text-[13px] transition-transform ${(!activeRenderKey || transpose !== renderedTranspose) ? 'group-hover:rotate-12' : 'grayscale opacity-50'}`}>✨</span>
-                    </button>
                   </div>
                   <div className="flex-1 h-full border-r border-white/[0.03] flex items-center justify-center">
                     <BpmDisplay bpm={currentBpm} onBpmChange={(b) => { setCurrentBpm(b); musicEngine.setBpm(b); }} />

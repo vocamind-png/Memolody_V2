@@ -405,13 +405,14 @@ export class SongStorage {
     });
 
     // กรองเอาเฉพาะเพลงใหม่ที่ไม่ได้ถูกลบ
+    const ignoreTombstones = existingKeys.size === 0; // ถ้าคลังว่างเปล่า ให้เพิกเฉยต่อประวัติการลบ เพื่อโหลดเพลงทั้งหมดกลับมาใหม่
     const newSongs: any[] = [];
     for (const s of songsToImport) {
       const rawId = s.metadata?.id || s.id;
       if (!rawId) continue;
       const idStr = String(rawId);
 
-      if (existingKeys.has(idStr) || deletedKeys.has(idStr)) {
+      if (existingKeys.has(idStr) || (!ignoreTombstones && deletedKeys.has(idStr))) {
         continue; // ข้ามเพลงที่มีอยู่แล้ว หรือเพลงที่ผู้ใช้ลบไปแล้ว
       }
 
