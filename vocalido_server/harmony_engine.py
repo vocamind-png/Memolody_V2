@@ -19,6 +19,10 @@ TENOR_RANGE = (Pitch("C3"), Pitch("G4"))
 BASS_RANGE = (Pitch("E2"), Pitch("C4"))
 
 
+def get_solfege(pitch_obj):
+    mapping = {'C': 'Do', 'D': 'Re', 'E': 'Mi', 'F': 'Fa', 'G': 'Sol', 'A': 'La', 'B': 'Ti'}
+    return mapping.get(pitch_obj.step, pitch_obj.step)
+
 def voiceNote(noteName, pitchRange):
     """Generates voicings for a note in a given pitch range.
 
@@ -101,12 +105,18 @@ def progressionCost(key, chord1, chord2):
     ):
         cost += 40
 
-    # Avoid big jumps
-    diff = [abs(chord1.pitches[i].midi - chord2.pitches[i].midi) for i in range(4)]
-    cost += (diff[3] // 3) ** 2 if diff[3] else 1
-    cost += diff[2] ** 2 // 3
-    cost += diff[1] ** 2 // 3
-    cost += diff[0] ** 2 // 50 if diff[0] != 12 else 0
+    for i, (v1, v2) in enumerate(zip(chord1.pitches, chord2.pitches)):
+        # Penalize large melodic leaps (CUBIC penalty to strongly force parsimonious voice leading)
+        # diff**3 is safe because diff is positive.
+        diff = abs(v1.midi - v2.midi)
+        if diff > 2:
+            if i == 0:
+                multiplier = 20  # Soprano leap penalty
+            elif i == 3:
+                multiplier = 10  # Bass leap penalty (allowed to jump more, but still penalized)
+            else:
+                multiplier = 50 # Inner voices MUST be extremely smooth
+            cost += (diff ** 3) * multiplier
 
     # Contrary motion is good, parallel fifths are bad
     for i in range(4):
@@ -117,12 +127,12 @@ def progressionCost(key, chord1, chord2):
                 continue
             i1, i2 = t1.midi - b1.midi, t2.midi - b2.midi
             if i1 % 12 == i2 % 12 == 7:  # Parallel fifth
-                cost += 60
+                cost += 5000
             if i1 % 12 == i2 % 12 == 0:  # Parallel octave
-                cost += 100
+                cost += 10000
             if i == 0 and j == 3:  # Soprano and bass not contrary
                 if (t2 > t1 and b2 > b1) or (t2 < t1 and b2 < b1):
-                    cost += 2
+                    cost += 500
 
     # Chordal 7th should resolve downward or stay
     if chord1.seventh:
@@ -212,17 +222,44 @@ def generateScore(chords, lengths=None, ts="4/4"):
         bass, tenor, alto, soprano = [
             Note(p, quarterLength=length) for p in chord.pitches
         ]
-        bass.addLyric(chord.lyric)
-        bass.stemDirection = alto.stemDirection = "down"
-        tenor.stemDirection = soprano.stemDirection = "up"
+        
+        # Add Note names as the primary lyric for all voices
+        soprano.addLyric(get_solfege(soprano.pitch))
+        alto.addLyric(get_solfege(alto.pitch))
+        tenor.addLyric(get_solfege(tenor.pitch))
+        bass.addLyric(get_solfege(bass.pitch))
+        
+        # Add Roman Numeral chord on bass lyric line 2
+        bass.addLyric(chord.lyric, 2)
+        
+        bass.stemDirection = "down"
+        tenor.stemDirection = "up"
+        alto.stemDirection = "down"
+        soprano.stemDirection = "up"
         voices[0].append(soprano)
         voices[1].append(alto)
         voices[2].append(tenor)
         voices[3].append(bass)
 
-    female = Part([TrebleClef(), TimeSignature(ts), voices[0], voices[1]])
-    male = Part([BassClef(), TimeSignature(ts), voices[2], voices[3]])
-    score = Score([female, male])
+    # Export as 4 completely separate parts for 4 staves (Open Score).
+    # This allows Memolody to create 4 independent tracks (S1, S2, S3, S4) for perfect Solo separation and lyrics sync.
+    p_soprano = Part([TrebleClef(), TimeSignature(ts), voices[0]])
+    p_soprano.id = "Soprano"
+    p_soprano.partName = "Soprano"
+    
+    p_alto = Part([TrebleClef(), TimeSignature(ts), voices[1]])
+    p_alto.id = "Alto"
+    p_alto.partName = "Alto"
+    
+    p_tenor = Part([BassClef(), TimeSignature(ts), voices[2]])
+    p_tenor.id = "Tenor"
+    p_tenor.partName = "Tenor"
+    
+    p_bass = Part([BassClef(), TimeSignature(ts), voices[3]])
+    p_bass.id = "Bass"
+    p_bass.partName = "Bass"
+
+    score = Score([p_soprano, p_alto, p_tenor, p_bass])
     return score
 
 

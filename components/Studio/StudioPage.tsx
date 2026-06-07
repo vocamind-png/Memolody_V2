@@ -140,6 +140,12 @@ const StudioPage: React.FC<StudioPageProps> = ({
       if (data.musicxml) {
         onXmlChange(data.musicxml);
         setShowHarmonyModal(false);
+        // Automatically save the generated harmony back to IndexedDB
+        if (currentProject) {
+          const updatedMeta = { ...currentProject };
+          await songStorage.saveSong(updatedMeta, data.musicxml, layoutBundle);
+          onPublish(); // Trigger sync/refresh in App.tsx
+        }
       } else {
         alert('Error generating harmony: ' + data.error);
       }
@@ -161,6 +167,32 @@ const StudioPage: React.FC<StudioPageProps> = ({
     const lastBeat = parsedData.notes.reduce((max, n) => Math.max(max, (n.startTime || 0) + (n.duration || 0)), 0);
     return (lastBeat * 60) / (currentBpm || 120) + 2; // +2s tail
   }, [parsedData, currentBpm]);
+
+  // Sync tracks state when new parts are detected (e.g. after generating SATB)
+  useEffect(() => {
+    if (!parsedData.partNames) return;
+    const newTrackIds = Object.keys(parsedData.partNames).sort().join(',');
+    setTracks(prev => {
+      const currentTrackIds = prev.map(t => t.id).sort().join(',');
+      if (currentTrackIds === newTrackIds) return prev;
+      
+      return Object.keys(parsedData.partNames).map((id, index) => {
+        const name = parsedData.partNames[id] || 'Track';
+        const low = name.toLowerCase();
+        let isVocal = false;
+        if (Object.keys(parsedData.partNames).length === 1) isVocal = true;
+        else if (/soprano|alto|tenor|bass|voice|vocal|choir|lead|harmony|melody|singer/.test(low)) isVocal = true;
+        else if (index === 0) isVocal = true;
+
+        return {
+          id, name, isMuted: false, isSolo: false, lyricMode: 'British Fixed Doh' as any, volume: 0.8, pan: 0,
+          mode: isVocal ? 'vocal' : 'instrument',
+          instrument: isVocal ? 'Auto' : 'Piano',
+          effects: Array(6).fill(null)
+        };
+      });
+    });
+  }, [parsedData.partNames, setTracks]);
 
   useEffect(() => {
     if (parsedData.metadata) {
@@ -360,8 +392,30 @@ const StudioPage: React.FC<StudioPageProps> = ({
           </div>
         </div>
 
-        {/* ── Center Controls (Mode) ── */}
+        {/* ── Center Controls (Undo/Redo & Mode) ── */}
         <div className="flex items-center gap-4 shrink-0 mx-auto">
+          {/* Undo / Redo */}
+          {studioMode === 'editor' && (
+            <div className="flex bg-[#111] p-1 rounded-2xl border border-white/10 shrink-0 gap-1">
+              <button 
+                onClick={() => setHistoryIndex(i => Math.max(0, i - 1))}
+                disabled={historyIndex <= 0}
+                className="w-8 h-7 flex items-center justify-center rounded-xl text-zinc-400 hover:text-white hover:bg-white/5 disabled:opacity-30 disabled:pointer-events-none transition-all"
+                title="Undo"
+              >
+                <RotateCcw size={12} />
+              </button>
+              <button 
+                onClick={() => setHistoryIndex(i => Math.min(xmlHistory.length - 1, i + 1))}
+                disabled={historyIndex >= xmlHistory.length - 1}
+                className="w-8 h-7 flex items-center justify-center rounded-xl text-zinc-400 hover:text-white hover:bg-white/5 disabled:opacity-30 disabled:pointer-events-none transition-all"
+                title="Redo"
+              >
+                <RotateCw size={12} />
+              </button>
+            </div>
+          )}
+
           <div className="flex bg-[#111] p-1 rounded-2xl border border-white/10 shrink-0">
             <button 
               onClick={() => setStudioMode('arranger')} 
@@ -490,77 +544,97 @@ const StudioPage: React.FC<StudioPageProps> = ({
 
       {/* ══ Studio View Area ═════════════════════════════════════════════ */}
       <div className="flex-1 relative overflow-hidden bg-[#0a0a0c]">
-        {studioMode === 'arranger' ? (
-          <ArrangerPage 
-            song={currentProject} 
-            musicXml={currentXml} 
-            tracks={tracks} 
-            setTracks={setTracks} 
-            hideHeader={true}
-            visualType={arrangerVisualType}
-            onTrackDoubleClick={(trackId, targetMode) => {
-              setPianorollTrackId(trackId);
-              setStudioMode(targetMode || 'pianoroll');
-            }}
-          />
-        ) : studioMode === 'pianoroll' ? (
-          <div className="absolute inset-0 z-10 overflow-hidden bg-[#0a0a0c]">
-            <PerformanceScore
-              notes={parsedData?.notes?.filter(n => n.trackId === pianorollTrackId) || []}
-              tracks={tracks}
-              musicalTimeRef={musicalTimeRef}
-              onSeek={(time) => musicEngine.setTransportSeconds(time)}
-              onTogglePlay={() => {
-                if (musicEngine.transportState === 'started') musicEngine.pause();
-                else musicEngine.start();
-              }}
-              bpm={currentBpm}
-              isPlaying={isPlaying}
-              songKey={currentProject?.key || 'C'}
-              beatsPerMeasure={parsedData?.timeSignature?.beats || 4}
-            />
-            {/* Back button */}
-            <button 
-              onClick={() => setStudioMode('arranger')}
-              className="absolute top-4 left-4 z-[5000] px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-black uppercase tracking-widest backdrop-blur-md shadow-lg border border-white/10 transition-all active:scale-95 flex items-center gap-2"
-            >
-              ← Back to Arranger
-            </button>
-          </div>
-        ) : (
-          <>
-            <div ref={scoreContainerRef} className="absolute inset-0 z-0">
-              <ProScoreEditor
-                ref={scoreRef}
-                xmlData={currentXml}
-                lyricMode={localStorage.getItem('memo_lyric_mode') || 'Ju Solfege Movable Doh'}
-                onXmlChange={(newXml) => {
-                  const solfegeXml = injectSolfegeToXml(newXml, localStorage.getItem('memo_lyric_mode') || 'Ju Solfege Movable Doh');
-                  onXmlChange(solfegeXml);
-                }}
-                currentTime={0}
-                isPlaying={isPlaying}
-                layoutMode="paginated"
-                isLoupeEnabled={false}
-                songMetadata={currentProject}
-                zoom={1.0}
-                isEditable={true}
-                onPageCountChange={setSvgPagesCount}
-                layoutBundle={layoutBundle}
-              />
-            </div>
+        {(() => {
+          const allPlayableNotes = (() => {
+            let combined = [...(parsedData?.notes || [])];
+            if (tracks && tracks.length > 0) {
+              tracks.forEach(t => {
+                if ((t as any)._generatedNotes) {
+                  combined = combined.concat((t as any)._generatedNotes);
+                }
+              });
+            }
+            return combined;
+          })();
 
-            <ScoreEditOverlay
-              containerRef={scoreContainerRef}
-              xmlData={currentXml}
-              isEditable={true}
-              activeTool={activeTool}
-              activeDuration={activeDuration || 'quarter'}
-              onXmlChange={onXmlChange}
-              svgPagesCount={svgPagesCount}
-            />
-          </>
-        )}
+          if (studioMode === 'arranger') {
+            return (
+              <ArrangerPage 
+                song={currentProject} 
+                musicXml={currentXml} 
+                tracks={tracks} 
+                setTracks={setTracks} 
+                hideHeader={true}
+                visualType={arrangerVisualType}
+                onTrackDoubleClick={(trackId, targetMode) => {
+                  setPianorollTrackId(trackId);
+                  setStudioMode(targetMode || 'pianoroll');
+                }}
+              />
+            );
+          } else if (studioMode === 'pianoroll') {
+            return (
+              <div className="absolute inset-0 z-10 overflow-hidden bg-[#0a0a0c]">
+                <PerformanceScore
+                  notes={allPlayableNotes.filter(n => n.trackId === pianorollTrackId) || []}
+                  tracks={tracks}
+                  musicalTimeRef={musicalTimeRef}
+                  onSeek={(time) => musicEngine.setTransportSeconds(time)}
+                  onTogglePlay={() => {
+                    if (musicEngine.transportState === 'started') musicEngine.pause();
+                    else musicEngine.start();
+                  }}
+                  bpm={currentBpm}
+                  isPlaying={isPlaying}
+                  songKey={currentProject?.key || 'C'}
+                  beatsPerMeasure={parsedData?.timeSignature?.beats || 4}
+                />
+                {/* Back button */}
+                <button 
+                  onClick={() => setStudioMode('arranger')}
+                  className="absolute top-4 left-4 z-[5000] px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-black uppercase tracking-widest backdrop-blur-md shadow-lg border border-white/10 transition-all active:scale-95 flex items-center gap-2"
+                >
+                  ← Back to Arranger
+                </button>
+              </div>
+            );
+          } else {
+            return (
+              <>
+                <div ref={scoreContainerRef} className="absolute inset-0 z-0">
+                  <ProScoreEditor
+                    ref={scoreRef}
+                    xmlData={currentXml}
+                    lyricMode={localStorage.getItem('memo_lyric_mode') || 'Ju Solfege Movable Doh'}
+                    onXmlChange={(newXml) => {
+                      const solfegeXml = injectSolfegeToXml(newXml, localStorage.getItem('memo_lyric_mode') || 'Ju Solfege Movable Doh');
+                      onXmlChange(solfegeXml);
+                    }}
+                    currentTime={0}
+                    isPlaying={isPlaying}
+                    layoutMode="paginated"
+                    isLoupeEnabled={false}
+                    songMetadata={currentProject}
+                    zoom={1.0}
+                    isEditable={true}
+                    onPageCountChange={setSvgPagesCount}
+                    layoutBundle={layoutBundle}
+                  />
+                </div>
+
+                <ScoreEditOverlay
+                  containerRef={scoreContainerRef}
+                  xmlData={currentXml}
+                  isEditable={true}
+                  activeTool={activeTool}
+                  activeDuration={activeDuration || 'quarter'}
+                  onXmlChange={onXmlChange}
+                  svgPagesCount={svgPagesCount}
+                />
+              </>
+            );
+          }
+        })()}
       </div>
 
       {/* ══ Maestro Engraver — floating draggable panel ══════════════════ */}

@@ -365,6 +365,50 @@ class HarmonyRequest(BaseModel):
     chord_progression: str = "I IV V I"
     durations: str = "1 1 1 1"
     time_signature: str = "4/4"
+    prompt: Optional[str] = ""
+
+def call_gemini_for_harmony(prompt: str, key: str, time_sig: str) -> dict:
+    import urllib.request
+    import json
+    
+    # Try to load API key from root .env if not in os.environ
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+        if os.path.exists(env_path):
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("GEMINI_API_KEY="):
+                        api_key = line.strip().split("=", 1)[1].strip('"\'')
+                        break
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY not found in .env")
+        
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={api_key}"
+    
+    system_instruction = (
+        "You are an expert music arranger. The user will provide a musical brief or prompt. "
+        f"The current key is {key} and time signature is {time_sig}. "
+        "Generate a suitable chord progression (in Roman numerals like I IV V I, or standard chords like C F G C) "
+        "and corresponding duration list (in beats, separated by spaces, like 1 1 1 1). "
+        "Return ONLY a JSON object with 'chord_progression' and 'durations' keys. Do not include markdown formatting or extra text."
+    )
+    
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "systemInstruction": {"parts": [{"text": system_instruction}]},
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "temperature": 0.7
+        }
+    }
+    
+    req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req) as response:
+        result = json.loads(response.read().decode("utf-8"))
+        
+    content_text = result["candidates"][0]["content"]["parts"][0]["text"]
+    return json.loads(content_text)
 
 @app.post("/v1/generate_harmony")
 async def generate_harmony(request: HarmonyRequest):
@@ -373,8 +417,24 @@ async def generate_harmony(request: HarmonyRequest):
         from harmony_engine import generateChorale
         from fractions import Fraction
         
-        dur_list = [Fraction(x) for x in request.durations.split()]
-        key_chords = f"{request.key}: {request.chord_progression}"
+        chord_progression = request.chord_progression
+        durations = request.durations
+        key_val = request.key
+        
+        if request.prompt and request.prompt.strip():
+            print(f"[Harmony] 🤖 AI Brief received: {request.prompt}")
+            try:
+                ai_data = call_gemini_for_harmony(request.prompt, key_val, request.time_signature)
+                if "chord_progression" in ai_data:
+                    chord_progression = ai_data["chord_progression"]
+                if "durations" in ai_data:
+                    durations = str(ai_data["durations"])
+                print(f"[Harmony] 🤖 AI Output -> Chords: {chord_progression}, Durations: {durations}")
+            except Exception as ai_e:
+                print(f"[Harmony] ⚠️ AI Generation failed, falling back to manual inputs: {ai_e}")
+        
+        dur_list = [Fraction(str(x)) for x in durations.split()]
+        key_chords = f"{key_val}: {chord_progression}"
         score = generateChorale(key_chords, dur_list, request.time_signature)
         
         # Save to MusicXML string

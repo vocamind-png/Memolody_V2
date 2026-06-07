@@ -355,69 +355,108 @@ export const transposeMusicXml = (xmlString: string, transpose: number): string 
  * ปรับปรุง: ใช้ voice number เป็น lyric number เพื่อให้ Verovio เรียงคำร้องแนวตั้งตามแนวโน้ต
  */
 export const injectSolfegeToXml = (xmlString: string, mode: string): string => {
-  if (!xmlString || xmlString.length < 50 || mode === 'Close' || mode === 'Lyric') return xmlString;
+  if (!xmlString || xmlString.length < 50 || mode === "Close") return xmlString;
 
   try {
     const parser = new DOMParser();
     const xmlDoc = parser.parseFromString(xmlString, "text/xml");
     const parts = xmlDoc.querySelectorAll("part");
 
+    // Pre-processing: remove <tied type="stop"> from <notations> so Verovio renders lyrics on all notes.
+    xmlDoc.querySelectorAll("notations tied[type=\"stop\"]").forEach(el => el.remove());
+    xmlDoc.querySelectorAll("tie[type=\"stop\"]").forEach(el => el.remove());
+
+    const stepToSemitone: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+
+    const createLyric = (lyricNum: number, solfegeText: string): Element => {
+      const lyric = xmlDoc.createElement("lyric");
+      lyric.setAttribute("number", lyricNum.toString());
+      lyric.setAttribute("placement", "below");
+      const textElement = xmlDoc.createElement("text");
+      textElement.textContent = solfegeText;
+      if (mode === "Jianpu") {
+        textElement.setAttribute("font-weight", "bold");
+        textElement.setAttribute("font-size", "6.0");
+      } else if (mode.includes("Kodaly")) {
+        textElement.setAttribute("font-style", "italic");
+        textElement.setAttribute("font-size", "5.4");
+      }
+      lyric.appendChild(textElement);
+      // Ensure <syllabic>single</syllabic> for robust rendering
+      const syllabic = xmlDoc.createElement("syllabic");
+      syllabic.textContent = "single";
+      lyric.appendChild(syllabic);
+      return lyric;
+    };
+
+    const getPrimaryNote = (noteEl: Element): Element => {
+      if (!noteEl.querySelector("chord")) return noteEl;
+      let curr = noteEl.previousElementSibling;
+      while (curr) {
+        if (curr.tagName === "note" && !curr.querySelector("chord")) {
+          return curr;
+        }
+        curr = curr.previousElementSibling;
+      }
+      return noteEl;
+    };
+
     parts.forEach(part => {
+      const measures = part.querySelectorAll("measure");
+      let currentKey = "C";
       let currentFifths = 0;
       let divisions = 1;
-      const measures = part.querySelectorAll("measure");
 
       measures.forEach(measure => {
-        const fifthsNode = measure.querySelector("key fifths");
-        if (fifthsNode) currentFifths = parseInt(fifthsNode.textContent || "0");
+        const keyFifths = measure.querySelector("attributes key fifths");
+        if (keyFifths) {
+          currentFifths = parseInt(keyFifths.textContent || "0");
+          currentKey = FIFTHS_TO_KEY[currentFifths] || "C";
+        }
         const divNode = measure.querySelector("attributes divisions");
-        if (divNode) divisions = parseInt(divNode.textContent || "1");
+        if (divNode) divisions = parseInt(divNode.textContent || "1") || 1;
 
-        const isFixedMode = mode.includes('Fixed');
-        const currentKey = isFixedMode ? 'C' : (FIFTHS_TO_KEY[currentFifths] || 'C');
-        const allNotes = Array.from(measure.querySelectorAll("note"));
-
-        // ── Collect notes into chord groups by actual onset time ──
-        // This prevents lyrics from overlapping when multiple voices play at the same time.
+        // Group notes by chords AND staff
         let currentTime = 0;
         let prevNoteStartTime = 0;
-        const timeGroups: Record<number, Element[]> = {};
+        // Key is `${staffNum}_${time}`
+        const timeGroups: Record<string, Element[]> = {};
 
         Array.from(measure.children).forEach(child => {
           if (child.tagName === "note") {
             const isChord = child.querySelector("chord") !== null;
             const isGrace = child.querySelector("grace") !== null;
-            // Grace notes technically don't consume time in MusicXML
-            const duration = isGrace ? 0 : parseInt(child.querySelector("duration")?.textContent || "0");
-            
+            const duration = isGrace ? 0 : Math.max(0, parseInt(child.querySelector("duration")?.textContent || "0"));
             const startTime = isChord ? prevNoteStartTime : currentTime;
             
-            if (!timeGroups[startTime]) {
-              timeGroups[startTime] = [];
+            const staffEl = child.querySelector("staff");
+            const staffNum = staffEl ? parseInt(staffEl.textContent || "1") : 1;
+            const groupKey = `${staffNum}_${startTime}`;
+
+            if (!timeGroups[groupKey]) {
+              timeGroups[groupKey] = [];
             }
-            timeGroups[startTime].push(child);
-            
-            if (!isChord) {
-              currentTime += duration;
-            }
+            timeGroups[groupKey].push(child);
+
+            if (!isChord) currentTime += duration;
             prevNoteStartTime = startTime;
-            
+
           } else if (child.tagName === "backup") {
-            const duration = parseInt(child.querySelector("duration")?.textContent || "0");
-            currentTime -= duration;
+            const d = parseInt(child.querySelector("duration")?.textContent || "0");
+            currentTime = Math.max(0, currentTime - d);
           } else if (child.tagName === "forward") {
-            const duration = parseInt(child.querySelector("duration")?.textContent || "0");
-            currentTime += duration;
+            const d = parseInt(child.querySelector("duration")?.textContent || "0");
+            currentTime += d;
           }
         });
 
         const chordGroups = Object.values(timeGroups);
 
-        const stepToSemitone: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
-
-        // ── Process each chord group ──
         for (const group of chordGroups) {
-          // Remove any pre-existing lyrics from ALL notes in this group EXCEPT custom ones
+          const originalLyrics = group.map(note =>
+            note.querySelector("lyric:not([name=\"custom\"]) > text")?.textContent || null
+          );
+
           let groupHasCustomLyric = false;
           for (const note of group) {
             const lyrics = Array.from(note.querySelectorAll("lyric"));
@@ -430,85 +469,53 @@ export const injectSolfegeToXml = (xmlString: string, mode: string): string => {
             }
           }
 
-          if (groupHasCustomLyric) {
-            continue; // Skip injecting solfege if any note in the chord has a custom lyric
-          }
+          if (groupHasCustomLyric) continue;
 
-          // Collect pitched note info with MIDI value for sorting
-          const pitchedInfos: Array<{
-            note: Element; step: string; effectiveAlter: number; midi: number; ratio: number;
-          }> = [];
+          const pitchedInfos: any[] = [];
 
-          for (const note of group) {
+          group.forEach((note, noteIdx) => {
             const isRest = note.querySelector("rest");
             const pitch = note.querySelector("pitch");
-            if (isRest || !pitch) continue;
+            const isUnpitched = note.querySelector("unpitched");
+            if (isRest || !pitch || isUnpitched) return;
 
-            const step = pitch.querySelector("step")?.textContent || "C";
+            const step = pitch.querySelector("step")?.textContent?.trim() || "C";
             const octave = parseInt(pitch.querySelector("octave")?.textContent || "4");
-            const explicitAlter = pitch.querySelector("alter")?.textContent;
-            const xmlAlter = explicitAlter !== null && explicitAlter !== undefined
-              ? parseInt(explicitAlter || "0")
-              : null;
+            const alterText = pitch.querySelector("alter")?.textContent;
+            const effectiveAlter = alterText ? Math.round(parseFloat(alterText)) : 0;
+            const durText = note.querySelector("duration")?.textContent;
+            const dur = durText ? parseInt(durText) : 0;
+            const ratio = dur / divisions;
+            const midi = (octave + 1) * 12 + (stepToSemitone[step.toUpperCase()] || 0) + effectiveAlter;
 
-            let effectiveAlter = xmlAlter ?? 0;
-            if (xmlAlter === null) {
-              const flatOrder = ['B', 'E', 'A', 'D', 'G', 'C', 'F'];
-              const sharpOrder = ['F', 'C', 'G', 'D', 'A', 'E', 'B'];
-              if (currentFifths < 0) {
-                const flattedNotes = flatOrder.slice(0, Math.abs(currentFifths));
-                if (flattedNotes.includes(step)) effectiveAlter = -1;
-              } else if (currentFifths > 0) {
-                const sharpedNotes = sharpOrder.slice(0, currentFifths);
-                if (sharpedNotes.includes(step)) effectiveAlter = 1;
-              }
-            }
-
-            const duration = parseInt(note.querySelector("duration")?.textContent || "0");
-            const ratio = duration / divisions;
-            const midi = (octave + 1) * 12 + (stepToSemitone[step] || 0) + effectiveAlter;
-
-            pitchedInfos.push({ note, step, effectiveAlter, midi, ratio });
-          }
+            pitchedInfos.push({
+              note, step, octave, effectiveAlter, midi, ratio,
+              originalLyric: originalLyrics[noteIdx] || null,
+            });
+          });
 
           if (pitchedInfos.length === 0) continue;
-
-          // ── Sort by MIDI pitch DESCENDING ──
-          // Highest pitch → lyric number 1 (closest to staff in Verovio)
+          
+          // Sort descending by MIDI pitch so highest note gets lyric line 1
           pitchedInfos.sort((a, b) => b.midi - a.midi);
-
-          // ── Assign solfege lyrics with correct vertical ordering ──
+          
           pitchedInfos.forEach((info, idx) => {
-            const solfegeText = getChromaticSolfege(
-              info.step, info.effectiveAlter, currentKey, mode, info.ratio, currentFifths
-            );
+            let solfegeText = mode === "Lyric" ? info.originalLyric : getChromaticSolfege(info.step, info.effectiveAlter, currentKey, mode, info.ratio, currentFifths);
             if (!solfegeText) return;
 
-            const lyric = xmlDoc.createElement("lyric");
-            lyric.setAttribute("number", (idx + 1).toString());
-            lyric.setAttribute("placement", "below");
-
-            const textElement = xmlDoc.createElement("text");
-            textElement.textContent = solfegeText;
-
-            if (mode === 'Jianpu') {
-              textElement.setAttribute("font-weight", "bold");
-              textElement.setAttribute("font-size", "6.0");
-            } else if (mode.includes('Kodaly')) {
-              textElement.setAttribute("font-style", "italic");
-              textElement.setAttribute("font-size", "5.4");
-            }
-
-            lyric.appendChild(textElement);
-            info.note.appendChild(lyric);
+            // Use strictly ordered index for lyricLine
+            const lyricLine = idx + 1;
+            
+            // Attach lyric to the primary note of the chord (or the note itself if it is an independent voice)
+            const targetNote = getPrimaryNote(info.note);
+            targetNote.appendChild(createLyric(lyricLine, solfegeText));
           });
         }
       });
     });
 
     let serialized = new XMLSerializer().serializeToString(xmlDoc);
-    // Verovio can fail silently if XMLSerializer injects xhtml namespaces for new elements
-    serialized = serialized.replace(/xmlns="[^"]*"/g, '');
+    serialized = serialized.replace(/xmlns=\"[^\"]*\"/g, "");
     return serialized;
   } catch (err) {
     console.error("Lyric Injection Failed:", err);

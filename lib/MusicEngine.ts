@@ -1,6 +1,6 @@
 
 import * as Tone from 'tone';
-import { PitchShifter } from 'soundtouchjs';
+
 import { TrackState, ParsedNote } from '../types';
 
 import { SoundBankEngine } from '../plugins/soundbank';
@@ -15,8 +15,6 @@ export class MusicEngine {
   private trackVocalRenderBpm: Map<string, number> = new Map();
   private trackModes: Map<string, 'instrument' | 'vocal'> = new Map();
   // Vocal pitch shifting states
-  public vocalPitchShifters: Map<string, PitchShifter[]> = new Map();
-  public vocalPitchStems: Map<string, PitchShifter[]> = new Map();
   public vocalPitchShiftSemitones: Map<string, number> = new Map();
   public vocalAudioElements: Map<string, HTMLAudioElement> = new Map(); // For AI Vocal playback
   private vocalBlobUrls: Map<string, string> = new Map(); // Track pre-fetched local Blob URLs
@@ -246,8 +244,8 @@ export class MusicEngine {
       : (FIFTHS_TO_MAJOR[fifths] || defaultMeta.key);
 
     // Parse Notes
-    const notes: ParsedNote[] = [];
-    const partNames: Record<string, string> = {};
+    let notes: ParsedNote[] = [];
+    let partNames: Record<string, string> = {};
     const trackClefs: Record<string, string> = {};
     let beats = 4;
     let beatType = 4;
@@ -544,6 +542,98 @@ export class MusicEngine {
           partNames[usedStaves[0]] = basePartName;
         }
       });
+
+      // Post-processing: Split polyphonic tracks (chords) into completely separate monophonic tracks
+      const trackGroups: Record<string, ParsedNote[]> = {};
+      for (const n of notes) {
+        if (!trackGroups[n.trackId]) trackGroups[n.trackId] = [];
+        trackGroups[n.trackId].push(n);
+      }
+
+      const finalNotes: ParsedNote[] = [];
+      const finalPartNames: Record<string, string> = {};
+
+      for (const [originalTrackId, trackNotes] of Object.entries(trackGroups)) {
+        // Group notes by exactly their startTime
+        const timeGroups: Record<number, ParsedNote[]> = {};
+        for (const n of trackNotes) {
+          const t = n.startTime;
+          if (!timeGroups[t]) timeGroups[t] = [];
+          timeGroups[t].push(n);
+        }
+
+        const times = Object.keys(timeGroups).map(Number).sort((a, b) => a - b);
+        
+        // Find max concurrent notes to determine how many sub-tracks we need
+        let maxVoices = 1;
+        for (const t of times) {
+          if (timeGroups[t].length > maxVoices) {
+            maxVoices = timeGroups[t].length;
+          }
+        }
+
+        if (maxVoices > 1) {
+          // ── Polyphonic Voice Splitter: Strict Top-Down ──
+          // To prevent missing notes in the Melody track (Voice 0),
+          // we always assign the highest note of any chord (or the only note) to Voice 0.
+          // Remaining notes are assigned to Voice 1, Voice 2, etc. in descending pitch order.
+          
+          const STEP_SEMI = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+          const toMidi = (n: ParsedNote) => n.octave * 12 + STEP_SEMI.indexOf(n.step.toUpperCase()) + n.alter;
+          
+          // Ensure all voice track names exist upfront
+          for (let v = 0; v < maxVoices; v++) {
+            const tid = `${originalTrackId}_V${v + 1}`;
+            if (!finalPartNames[tid]) {
+              finalPartNames[tid] = `${partNames[originalTrackId] || originalTrackId} (Voice ${v + 1})`;
+            }
+          }
+          
+          for (const t of times) {
+            const concurrentNotes = timeGroups[t];
+            
+            // Deduplicate notes with exact same pitch to avoid phantom duplicate voices
+            const uniqueNotes: typeof concurrentNotes = [];
+            const seenPitches = new Set<number>();
+            for (const n of concurrentNotes) {
+              const midi = toMidi(n);
+              if (!seenPitches.has(midi)) {
+                seenPitches.add(midi);
+                uniqueNotes.push(n);
+              }
+            }
+            
+            // Sort highest to lowest pitch
+            uniqueNotes.sort((a, b) => toMidi(b) - toMidi(a));
+
+            // Assign top-down
+            for (let i = 0; i < uniqueNotes.length; i++) {
+              const targetVoice = Math.min(i, maxVoices - 1);
+              const originalNote = uniqueNotes[i];
+              const n = { ...originalNote }; // Clone to avoid overwriting properties
+              
+              const newTrackId = `${originalTrackId}_V${targetVoice + 1}`;
+              n.trackId = newTrackId;
+              n.voiceIdx = targetVoice; // Store for ProScoreEditor lyric colorizing
+              finalNotes.push(n);
+            }
+          }
+          
+          delete partNames[originalTrackId];
+          
+        } else {
+          // Strictly monophonic already
+          finalPartNames[originalTrackId] = partNames[originalTrackId] || originalTrackId;
+          for (const n of trackNotes) {
+            n.voiceIdx = 0;
+            finalNotes.push(n);
+          }
+        }
+      }
+
+      notes = finalNotes;
+      partNames = finalPartNames;
+
     } catch (e) {
       console.warn('[MusicEngine] Error parsing notes from XML:', e);
     }
@@ -661,36 +751,23 @@ export class MusicEngine {
     const loadPromises: Promise<void>[] = [];
 
     // 1. Load Main Mix Player
-    let mainPlayer: Tone.GrainPlayer | null = null;
     if (audioUrl) {
       loadPromises.push(new Promise<void>((resolve) => {
         const player = new Tone.GrainPlayer({
           url: audioUrl,
           onload: () => {
             if (myGeneration === this._vocalGeneration) {
-              mainPlayer = player;
-              if (renderBpm) (mainPlayer as any).renderBpm = renderBpm;
-              // Initialize PitchShifter
-              if (!this.vocalPitchShifters.has(trackId)) this.vocalPitchShifters.set(trackId, []);
-              const rawCtx = Tone.getContext().rawContext;
-              const nativeCtx = (rawCtx as any)._nativeAudioContext || (rawCtx as any)._nativeContext || (rawCtx as any).nativeContext || rawCtx;
-              if (typeof nativeCtx.createScriptProcessor !== 'function') {
-                console.error('[MusicEngine] 🚨 NATIVE CONTEXT STILL MISSING createScriptProcessor!');
-              }
-              const shifter = new PitchShifter(nativeCtx, player.buffer.get(), 1024);
-              const dummy = nativeCtx.createBufferSource();
-              dummy.buffer = nativeCtx.createBuffer(1, 1, nativeCtx.sampleRate);
-              dummy.loop = true;
-              dummy.connect(shifter.node);
-              dummy.start();
-              (shifter as any)._dummySource = dummy;
-              this.vocalPitchShifters.get(trackId).push(shifter);
+              const players = this.trackVocalLayers.get(trackId) || [];
+              players.push(player);
+              this.trackVocalLayers.set(trackId, players);
+              if (renderBpm) (player as any).renderBpm = renderBpm;
+              player.connect(channel);
             } else {
               player.dispose();
             }
             resolve();
           }
-        }).connect(channel);
+        });
       }));
     }
 
@@ -705,27 +782,13 @@ export class MusicEngine {
               if (myGeneration === this._vocalGeneration) {
                 loadedStems[index] = player;
                 if (renderBpm) (player as any).renderBpm = renderBpm;
-                // Initialize Stem PitchShifter
-                if (!this.vocalPitchStems.has(trackId)) this.vocalPitchStems.set(trackId, []);
-                const rawCtx = Tone.getContext().rawContext;
-              const nativeCtx = (rawCtx as any)._nativeAudioContext || (rawCtx as any)._nativeContext || (rawCtx as any).nativeContext || rawCtx;
-              if (typeof nativeCtx.createScriptProcessor !== 'function') {
-                console.error('[MusicEngine] 🚨 NATIVE CONTEXT STILL MISSING createScriptProcessor!');
-              }
-              const shifter = new PitchShifter(nativeCtx, player.buffer.get(), 1024);
-              const dummy2 = nativeCtx.createBufferSource();
-              dummy2.buffer = nativeCtx.createBuffer(1, 1, nativeCtx.sampleRate);
-              dummy2.loop = true;
-              dummy2.connect(shifter.node);
-              dummy2.start();
-              (shifter as any)._dummySource = dummy2;
-              this.vocalPitchStems.get(trackId)[index] = shifter;
+                player.connect(channel);
               } else {
                 player.dispose();
               }
               resolve();
             }
-          }).connect(channel);
+          });
         }));
       });
     }
@@ -735,29 +798,23 @@ export class MusicEngine {
     // If generation changed during load, discard new nodes
     if (myGeneration !== this._vocalGeneration) {
       console.log(`[MusicEngine] 🗑️ Stale gen=${myGeneration} after loading — discarding players`);
-      if (mainPlayer) (mainPlayer as Tone.GrainPlayer).dispose();
+      this.trackVocalLayers.get(trackId)?.forEach(p => p.dispose());
       loadedStems.forEach(p => p?.dispose());
       return;
     }
 
-    if (mainPlayer) {
-      this.trackVocalLayers.set(trackId, [mainPlayer]);
-    }
     if (loadedStems.length > 0) {
       this.trackVocalStems.set(trackId, loadedStems.filter(Boolean) as Tone.GrainPlayer[]);
     }
 
     this.trackModes.set(trackId, 'vocal');
-    console.log(`[MusicEngine] 🎤 Vocal layers loaded for track=${trackId}. Main mix: ${!!mainPlayer}, Stems count: ${loadedStems.filter(Boolean).length}`);
+    console.log(`[MusicEngine] 🎤 Vocal layers loaded for track=${trackId}. Main mix: ${!!this.trackVocalLayers.has(trackId)}, Stems count: ${loadedStems.filter(Boolean).length}`);
   }
 
   clearVocalLayers(trackId: string) {
-    const layers = this.trackVocalLayers.get(trackId);
-    if (layers) {
-      layers.forEach(p => {
-        p.unsync();
-        p.dispose();
-      });
+    const players = this.trackVocalLayers.get(trackId);
+    if (players) {
+      players.forEach(p => p && p.dispose());
       this.trackVocalLayers.delete(trackId);
     }
     const stems = this.trackVocalStems.get(trackId);
@@ -772,21 +829,7 @@ export class MusicEngine {
     }
     
     this.trackActiveStem.set(trackId, null);
-
-    const shifters = this.vocalPitchShifters.get(trackId);
-    if (shifters) {
-      shifters.forEach(shifter => { try { shifter.disconnect(); } catch (e) {} });
-    }
-    const stemShifters = this.vocalPitchStems.get(trackId);
-    if (stemShifters) {
-      stemShifters.forEach(shifter => { try { shifter?.disconnect(); } catch (e) {} });
-    }
     
-    // Clear arrays
-    this.vocalPitchShifters.delete(trackId);
-    this.vocalPitchStems.delete(trackId);
-
-
     // Revoke and clear blob URLs
     const oldUrl = this.vocalBlobUrls.get(trackId);
     if (oldUrl) {
@@ -882,15 +925,18 @@ export class MusicEngine {
       return;
     }
 
-    // Skip if already initialized for the SAME mode
-    if (this.trackSamplers.has(trackId) && currentMode === requestedMode) {
-      console.log(`[MusicEngine] [initSampler] skipping already initialized trackId=${trackId}`);
+    const requestedInstrument = pluginSettings?.instrument || 'HD Grand Piano';
+    const currentInstrument = (this.trackSamplers.get(trackId) as any)?._instrumentName || 'HD Grand Piano';
+
+    // Skip if already initialized for the SAME mode AND the SAME instrument
+    if (this.trackSamplers.has(trackId) && currentMode === requestedMode && currentInstrument === requestedInstrument) {
+      console.log(`[MusicEngine] [initSampler] skipping already initialized trackId=${trackId} with instrument=${currentInstrument}`);
       return;
     }
 
-    // If mode changed, dispose old sampler first
-    if (this.trackSamplers.has(trackId) && currentMode !== requestedMode) {
-      console.log(`[MusicEngine] [initSampler] disposing old sampler for trackId=${trackId} due to mode change`);
+    // If mode OR instrument changed, dispose old sampler first
+    if (this.trackSamplers.has(trackId) && (currentMode !== requestedMode || currentInstrument !== requestedInstrument)) {
+      console.log(`[MusicEngine] [initSampler] disposing old sampler for trackId=${trackId} due to mode or instrument change`);
       this.disposeSampler(trackId);
     }
 
@@ -908,6 +954,12 @@ export class MusicEngine {
       );
       console.log(`[MusicEngine] [initSampler] channel created for trackId=${trackId}`);
       this.trackModes.set(trackId, requestedMode);
+      
+      // Tag the sampler with its instrument name for future cache checks
+      const sampler = this.trackSamplers.get(trackId);
+      if (sampler) {
+        (sampler as any)._instrumentName = requestedInstrument;
+      }
     } catch (e) {
       console.error(`[MusicEngine] ❌ [initSampler] Failed for track ${trackId}:`, e);
     }
@@ -1070,16 +1122,12 @@ public setVocalTranspose(trackId: string, diffSemitones: number) {
 
     const currentBpm = Tone.Transport.bpm.value;
 
-    this.trackVocalLayers.forEach((players, trackId) => {
-      const shifters = this.vocalPitchShifters.get(trackId) || [];
+    const processPlayers = (players: Tone.GrainPlayer[], trackId: string) => {
       const diffSemitones = this.vocalPitchShiftSemitones.get(trackId) || 0;
-
-      players.forEach((player, i) => {
+      players.forEach((player) => {
         if (!player || !player.buffer || !player.buffer.loaded) return;
-        const shifter = shifters[i];
         
         try { player.stop(triggerTime); } catch (e) {}
-        if (shifter) shifter.disconnect();
 
         const renderBpm = (player as any).renderBpm || currentBpm;
         const ratio = currentBpm / renderBpm;
@@ -1088,93 +1136,30 @@ public setVocalTranspose(trackId: string, diffSemitones: number) {
 
         if (offsetInAudio >= duration) return;
 
-        console.log(`[MusicEngine Debug] trackId=${trackId}, diffSemitones=${diffSemitones}, shifter_exists=${!!shifter}, isMuted=${player.mute}, offset=${offsetInAudio}`);
-        if (diffSemitones !== 0 && shifter) {
-          shifter.tempo = ratio;
-          shifter.pitchSemitones = diffSemitones;
-          shifter.percentagePlayed = offsetInAudio / duration;
-          if (transportState === 'started') {
-            const channel = this.trackChannels.get(trackId);
-            if (channel) {
-              try {
-                Tone.connect(shifter.node, channel);
-              } catch (e) {
-                console.warn('[MusicEngine] Tone.connect failed, falling back to native destination', e);
-                const rawCtx = Tone.getContext().rawContext;
-                const nativeCtx = (rawCtx as any)._nativeContext || (rawCtx as any).nativeContext || rawCtx;
-                shifter.node.connect(nativeCtx.destination);
-              }
-            }
-          }
+        if (typeof player.playbackRate === 'number') {
+          player.playbackRate = ratio;
         } else {
-          if (typeof player.playbackRate === 'number') {
-            player.playbackRate = ratio;
-          } else if (player.playbackRate && (player.playbackRate as any).value !== undefined) {
-            (player.playbackRate as any).value = ratio;
-          }
-          if (transportState === 'started') {
-            if (songTime < 0) {
-              player.start(triggerTime + (-songTime), 0);
-            } else {
-              player.start(triggerTime, offsetInAudio);
-            }
+          (player.playbackRate as any).value = ratio;
+        }
+        
+        player.detune = diffSemitones * 100;
+
+        if (transportState === 'started') {
+          if (songTime < 0) {
+            player.start(triggerTime + (-songTime), 0);
+          } else {
+            player.start(triggerTime, offsetInAudio);
           }
         }
       });
+    };
+
+    this.trackVocalLayers.forEach((players, trackId) => {
+      processPlayers(players, trackId);
     });
 
     this.trackVocalStems.forEach((players, trackId) => {
-      const shifters = this.vocalPitchStems.get(trackId) || [];
-      const diffSemitones = this.vocalPitchShiftSemitones.get(trackId) || 0;
-
-      players.forEach((player, i) => {
-        if (!player) return;
-        if (!player.buffer || !player.buffer.loaded) return;
-        const shifter = shifters[i];
-        
-        try { player.stop(triggerTime); } catch (e) {}
-        if (shifter) shifter.disconnect();
-
-        const renderBpm = (player as any).renderBpm || currentBpm;
-        const ratio = currentBpm / renderBpm;
-        const duration = player.buffer.duration;
-        const offsetInAudio = Math.max(0, songTime * ratio);
-
-        if (offsetInAudio >= duration) return;
-
-        console.log(`[MusicEngine Debug] trackId=${trackId}, diffSemitones=${diffSemitones}, shifter_exists=${!!shifter}, isMuted=${player.mute}, offset=${offsetInAudio}`);
-        if (diffSemitones !== 0 && shifter) {
-          shifter.tempo = ratio;
-          shifter.pitchSemitones = diffSemitones;
-          shifter.percentagePlayed = offsetInAudio / duration;
-          if (transportState === 'started') {
-            const channel = this.trackChannels.get(trackId);
-            if (channel) {
-              try {
-                Tone.connect(shifter.node, channel);
-              } catch (e) {
-                console.warn('[MusicEngine] Stem Tone.connect failed, falling back to native destination', e);
-                const rawCtx = Tone.getContext().rawContext;
-                const nativeCtx = (rawCtx as any)._nativeContext || (rawCtx as any).nativeContext || rawCtx;
-                shifter.node.connect(nativeCtx.destination);
-              }
-            }
-          }
-        } else {
-          if (typeof player.playbackRate === 'number') {
-            player.playbackRate = ratio;
-          } else if (player.playbackRate && (player.playbackRate as any).value !== undefined) {
-            (player.playbackRate as any).value = ratio;
-          }
-          if (transportState === 'started') {
-            if (songTime < 0) {
-              player.start(triggerTime + (-songTime), 0);
-            } else {
-              player.start(triggerTime, offsetInAudio);
-            }
-          }
-        }
-      });
+      processPlayers(players, trackId);
     });
   }
 
@@ -1255,7 +1240,8 @@ public setVocalTranspose(trackId: string, diffSemitones: number) {
     // Initialize samplers only for tracks that don't already have one
     console.log("[MusicEngine] [loadSong] Initializing samplers...");
     const initPromises = tracks.map(t => {
-      return this.initSampler(t.id, t.name, t.pluginSettings, t.mode);
+      const settings = { instrument: t.instrument, ...(t.pluginSettings || {}) };
+      return this.initSampler(t.id, t.name, settings, t.mode);
     });
     await Promise.all(initPromises);
     console.log("[MusicEngine] [loadSong] Samplers initialized!");

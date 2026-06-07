@@ -26,6 +26,7 @@ interface SelectedNote {
   staff: number;
   xmlIndex: number;  // index in doc.querySelectorAll('note')
   lyric: string;
+  dx: number;        // horizontal offset
 }
 
 // ── Music helpers ────────────────────────────────────────────────────
@@ -96,6 +97,16 @@ function applyLyricToDoc(doc: Document, noteIdx: number, text: string) {
   textEl.textContent = text;
 }
 
+function applyDxToDoc(doc: Document, noteIdx: number, dx: number) {
+  const noteEl = Array.from(doc.querySelectorAll('note'))[noteIdx];
+  if (!noteEl) return;
+  if (dx === 0) {
+    noteEl.removeAttribute('memolody-dx');
+  } else {
+    noteEl.setAttribute('memolody-dx', String(dx));
+  }
+}
+
 function appendNoteToDoc(doc: Document, step: string, octave: number) {
   const measures = doc.querySelectorAll('measure');
   if (measures.length === 0) return;
@@ -118,9 +129,21 @@ function appendNoteToDoc(doc: Document, step: string, octave: number) {
   targetMeasure.appendChild(note);
 }
 
+function safeParseXML(xmlStr: string): Document {
+  let cleanXml = xmlStr;
+  if (!cleanXml.startsWith('<?xml')) {
+    cleanXml = '<?xml version="1.0" encoding="UTF-8"?>\n' + cleanXml;
+  }
+  cleanXml = cleanXml
+    .replace(/<!DOCTYPE[^>]*(\[[\s\S]*?\])?>/gi, '')
+    .replace(/<!ENTITY[^>]*>/gi, '')
+    .trim();
+  return new DOMParser().parseFromString(cleanXml, 'text/xml');
+}
+
 function parsePitch(xmlStr: string, noteIdx: number) {
   try {
-    const doc = new DOMParser().parseFromString(xmlStr, 'text/xml');
+    const doc = safeParseXML(xmlStr);
     const noteEl = Array.from(doc.querySelectorAll('note'))[noteIdx];
     if (!noteEl) return null;
     const step = noteEl.querySelector('pitch > step')?.textContent || 'C';
@@ -133,7 +156,8 @@ function parsePitch(xmlStr: string, noteIdx: number) {
     const voiceNum = parseInt(noteEl.querySelector('voice')?.textContent || '1');
     const staff = parseInt(noteEl.querySelector('staff')?.textContent || '1');
     const lyric = noteEl.querySelector('lyric > text')?.textContent || '';
-    return { step, octave, alter, durationType, dots, isRest, measureNum, voiceNum, staff, lyric };
+    const dx = parseFloat(noteEl.getAttribute('memolody-dx') || '0');
+    return { step, octave, alter, durationType, dots, isRest, measureNum, voiceNum, staff, lyric, dx };
   } catch { return null; }
 }
 
@@ -144,8 +168,12 @@ function highlightNote(containerEl: HTMLElement, svgId: string, on: boolean) {
   if (!el) return;
   el.querySelectorAll('use, ellipse, rect').forEach(n => {
     const s = n as SVGElement;
-    if (on) { s.style.fill = '#06b6d4'; s.style.filter = 'drop-shadow(0 0 4px #06b6d4)'; }
-    else     { s.style.fill = ''; s.style.filter = ''; }
+    if (on) { 
+      s.style.fill = '#06b6d4'; 
+      // Removed drop-shadow filter as it causes severe SVG flickering/blinking in Safari/WebKit
+    } else { 
+      s.style.fill = ''; 
+    }
   });
 }
 
@@ -196,12 +224,18 @@ const ScoreEditOverlay: React.FC<ScoreEditOverlayProps> = ({
 }) => {
   const [selected, setSelected] = useState<SelectedNote | null>(null);
   const toolbar = useDraggableToolbar(window.innerWidth / 2 - 140, 140);
+  const hudRef = useRef<HTMLDivElement>(null);
 
   // Drag-to-pitch state
   const dragStartY = useRef<number | null>(null);
+  const dragStartX = useRef<number | null>(null);
   const dragStartPitch = useRef<{ step: string; octave: number; alter: number } | null>(null);
+  const dragStartDx = useRef<number>(0);
   const isDraggingNote = useRef(false);
   const dragSemis = useRef(0);
+  const dragDx = useRef(0);
+  const draggedSvgId = useRef<string | null>(null);
+  const draggedXmlIndex = useRef<number | null>(null);
 
   // Scroll/Drag state for empty space
   const isScrollingRef = useRef(false);
@@ -210,16 +244,21 @@ const ScoreEditOverlay: React.FC<ScoreEditOverlayProps> = ({
   const hasMovedRef = useRef(false);
   const wasScrollingRef = useRef(false);
 
+  // dx offsets are now handled safely in ProScoreEditor.tsx after SVG render
+
   // ── Find note hits ─────────────────────────────────────────────────
   const getNoteHits = useCallback(() => {
     if (!containerRef.current) return [];
     const hits: { svgId: string; rect: DOMRect; xmlIndex: number }[] = [];
-    containerRef.current.querySelectorAll('g.note[id]').forEach((g, i) => {
+    containerRef.current.querySelectorAll('g.note[id^="m-note-"]').forEach((g) => {
       try {
+        const match = g.id.match(/^m-note-(\d+)$/);
+        if (!match) return;
+        const xmlIndex = parseInt(match[1], 10);
         const use = g.querySelector('use, ellipse, path') as SVGElement | null;
         const r = (use || g).getBoundingClientRect();
         if (r.width === 0 && r.height === 0) return;
-        hits.push({ svgId: (g as Element).id, rect: r, xmlIndex: i });
+        hits.push({ svgId: g.id, rect: r, xmlIndex });
       } catch { /* skip */ }
     });
     return hits;
@@ -256,31 +295,28 @@ const ScoreEditOverlay: React.FC<ScoreEditOverlayProps> = ({
     const cx = hit.rect.left + hit.rect.width / 2;
     const cy = hit.rect.top  + hit.rect.height / 2;
     setSelected({ svgId: hit.svgId, screenX: cx, screenY: cy, xmlIndex: hit.xmlIndex, ...data });
-    // auto-position toolbar above the note if far away
-    toolbar.setPos(prev => ({
-      x: Math.max(8, Math.min(window.innerWidth - 300, cx - 140)),
-      y: Math.max(60, cy - 130),
-    }));
-  }, [xmlData, selected, containerRef, toolbar]);
+    // Note: We no longer auto-position the toolbar here to prevent it from blocking the notes
+  }, [xmlData, selected, containerRef]);
 
   // ── Commit XML ────────────────────────────────────────────────────
-  const commitPitch = useCallback((step: string, octave: number, alter: number, noteIdx: number) => {
+  const commitMove = useCallback((step: string, octave: number, alter: number, dx: number, noteIdx: number) => {
     if (!xmlData) return;
-    const doc = new DOMParser().parseFromString(xmlData, 'text/xml');
+    const doc = safeParseXML(xmlData);
     applyPitchToDoc(doc, noteIdx, step, octave, alter);
-    onXmlChange(new XMLSerializer().serializeToString(doc), `Pitch → ${step}${octave}`);
+    applyDxToDoc(doc, noteIdx, dx);
+    onXmlChange(new XMLSerializer().serializeToString(doc), `Move Note`);
   }, [xmlData, onXmlChange]);
 
   const changePitch = useCallback((semitones: number) => {
     if (!selected || !xmlData) return;
     const { step, octave, alter } = transposePitch(selected.step, selected.octave, selected.alter, semitones);
-    commitPitch(step, octave, alter, selected.xmlIndex);
+    commitMove(step, octave, alter, selected.dx, selected.xmlIndex);
     setSelected(s => s ? { ...s, step, octave, alter } : null);
-  }, [selected, xmlData, commitPitch]);
+  }, [selected, xmlData, commitMove]);
 
   const changeDuration = useCallback((durType: NoteType) => {
     if (!selected || !xmlData) return;
-    const doc = new DOMParser().parseFromString(xmlData, 'text/xml');
+    const doc = safeParseXML(xmlData);
     applyDurationToDoc(doc, selected.xmlIndex, durType);
     onXmlChange(new XMLSerializer().serializeToString(doc), `Duration → ${durType}`);
     setSelected(s => s ? { ...s, durationType: durType } : null);
@@ -289,7 +325,7 @@ const ScoreEditOverlay: React.FC<ScoreEditOverlayProps> = ({
   const deleteSelected = useCallback(() => {
     if (!selected || !xmlData) return;
     if (containerRef.current) highlightNote(containerRef.current, selected.svgId, false);
-    const doc = new DOMParser().parseFromString(xmlData, 'text/xml');
+    const doc = safeParseXML(xmlData);
     deleteNoteFromDoc(doc, selected.xmlIndex);
     onXmlChange(new XMLSerializer().serializeToString(doc), 'Delete note');
     setSelected(null);
@@ -297,11 +333,16 @@ const ScoreEditOverlay: React.FC<ScoreEditOverlayProps> = ({
 
   const changeLyric = useCallback((text: string) => {
     if (!selected || !xmlData) return;
-    const doc = new DOMParser().parseFromString(xmlData, 'text/xml');
+    const doc = safeParseXML(xmlData);
     applyLyricToDoc(doc, selected.xmlIndex, text);
     onXmlChange(new XMLSerializer().serializeToString(doc), `Lyric → ${text}`);
     setSelected(s => s ? { ...s, lyric: text } : null);
   }, [selected, xmlData, onXmlChange]);
+
+  const changeDx = useCallback((dx: number) => {
+    if (!selected || !xmlData) return;
+    commitMove(selected.step, selected.octave, selected.alter, dx, selected.xmlIndex);
+  }, [selected, xmlData, commitMove]);
 
   // ── Mouse handlers ─────────────────────────────────────────────────
   const onOverlayMouseDown = useCallback((e: React.MouseEvent) => {
@@ -309,7 +350,7 @@ const ScoreEditOverlay: React.FC<ScoreEditOverlayProps> = ({
     const hit = hitTest(e.clientX, e.clientY);
     if (!hit) {
       if (activeTool === 'pencil') {
-        const doc = new DOMParser().parseFromString(xmlData, 'text/xml');
+        const doc = safeParseXML(xmlData);
         appendNoteToDoc(doc, 'C', 4);
         onXmlChange(new XMLSerializer().serializeToString(doc), 'Draw note');
         return;
@@ -328,19 +369,24 @@ const ScoreEditOverlay: React.FC<ScoreEditOverlayProps> = ({
 
     if (activeTool === 'eraser') {
       if (containerRef.current) highlightNote(containerRef.current, hit.svgId, false);
-      const doc = new DOMParser().parseFromString(xmlData, 'text/xml');
+      const doc = safeParseXML(xmlData);
       deleteNoteFromDoc(doc, hit.xmlIndex);
       onXmlChange(new XMLSerializer().serializeToString(doc), 'Erase note');
       if (selected?.svgId === hit.svgId) setSelected(null);
       return;
     }
 
-    // SELECT: begin potential drag-to-pitch
+    // SELECT: begin potential 2D drag
     selectNote(hit);
     dragStartY.current = e.clientY;
+    dragStartX.current = e.clientX;
     dragSemis.current = 0;
+    dragDx.current = 0;
+    draggedSvgId.current = hit.svgId;
+    draggedXmlIndex.current = hit.xmlIndex;
     const data = parsePitch(xmlData, hit.xmlIndex);
     dragStartPitch.current = data ? { step: data.step, octave: data.octave, alter: data.alter } : null;
+    dragStartDx.current = data ? data.dx : 0;
     isDraggingNote.current = false;
   }, [isEditable, xmlData, activeTool, hitTest, selectNote, selected, containerRef, onXmlChange]);
 
@@ -362,19 +408,39 @@ const ScoreEditOverlay: React.FC<ScoreEditOverlayProps> = ({
       return;
     }
 
-    if (dragStartY.current === null || !dragStartPitch.current || !selected) return;
+    if (dragStartY.current === null || dragStartX.current === null || !dragStartPitch.current || !draggedSvgId.current) return;
+    
+    // Update HUD position exactly on cursor
+    if (hudRef.current) {
+      hudRef.current.style.left = `${e.clientX}px`;
+      hudRef.current.style.top = `${e.clientY}px`;
+    }
+
     const deltaY = dragStartY.current - e.clientY; // positive = up = higher pitch
-    const semis = Math.round(deltaY / 10);          // 10px per semitone
-    if (Math.abs(deltaY) > 5) isDraggingNote.current = true;
-    if (semis !== dragSemis.current) {
+    const semis = Math.round(deltaY / 15);         // 15px per semitone (less sensitive)
+    const deltaX = e.clientX - dragStartX.current;
+    
+    if (Math.abs(deltaY) > 5 || Math.abs(deltaX) > 5) isDraggingNote.current = true;
+    
+    const newDx = dragStartDx.current + deltaX;
+
+    if (semis !== dragSemis.current || deltaX !== dragDx.current) {
       dragSemis.current = semis;
+      dragDx.current = deltaX;
+      
       const { step, octave, alter } = transposePitch(
         dragStartPitch.current.step, dragStartPitch.current.octave, dragStartPitch.current.alter, semis
       );
-      // Live preview: just update selected display, commit on mouseup
-      setSelected(s => s ? { ...s, step, octave, alter } : null);
+      
+      // Live preview
+      setSelected(s => s ? { ...s, step, octave, alter, dx: newDx } : null);
+      
+      if (containerRef.current && draggedSvgId.current) {
+        const el = containerRef.current.querySelector(`#${draggedSvgId.current}`) as SVGElement;
+        if (el) el.style.transform = `translateX(${newDx}px)`;
+      }
     }
-  }, [isEditable, selected, containerRef]);
+  }, [isEditable, containerRef]);
 
   const onOverlayMouseUp = useCallback((e: React.MouseEvent) => {
     if (isScrollingRef.current) {
@@ -391,21 +457,29 @@ const ScoreEditOverlay: React.FC<ScoreEditOverlayProps> = ({
       return;
     }
 
-    if (dragStartY.current === null || !dragStartPitch.current || !selected || !xmlData) {
+    if (dragStartY.current === null || !dragStartPitch.current || !xmlData || draggedXmlIndex.current === null) {
       dragStartY.current = null;
+      dragStartX.current = null;
+      draggedSvgId.current = null;
+      draggedXmlIndex.current = null;
       return;
     }
-    if (isDraggingNote.current && dragSemis.current !== 0) {
+    
+    if (isDraggingNote.current && (dragSemis.current !== 0 || dragDx.current !== 0)) {
       const { step, octave, alter } = transposePitch(
         dragStartPitch.current.step, dragStartPitch.current.octave, dragStartPitch.current.alter, dragSemis.current
       );
-      commitPitch(step, octave, alter, selected.xmlIndex);
-      setSelected(s => s ? { ...s, step, octave, alter } : null);
+      const newDx = dragStartDx.current + dragDx.current;
+      commitMove(step, octave, alter, newDx, draggedXmlIndex.current);
+      setSelected(s => s ? { ...s, step, octave, alter, dx: newDx } : null);
     }
     dragStartY.current = null;
+    dragStartX.current = null;
     dragStartPitch.current = null;
+    draggedSvgId.current = null;
+    draggedXmlIndex.current = null;
     isDraggingNote.current = false;
-  }, [selected, xmlData, commitPitch, containerRef]);
+  }, [xmlData, commitMove, containerRef]);
 
   const onOverlayClick = useCallback((e: React.MouseEvent) => {
     if (wasScrollingRef.current) {
@@ -414,12 +488,14 @@ const ScoreEditOverlay: React.FC<ScoreEditOverlayProps> = ({
     }
     if (isDraggingNote.current) return; // was a drag, not a click
     const hit = hitTest(e.clientX, e.clientY);
-    if (!hit && selected) {
+    if (!hit) {
       // Click empty area → deselect
-      if (containerRef.current) highlightNote(containerRef.current, selected.svgId, false);
-      setSelected(null);
+      if (activeTool === 'select' && selected) {
+        if (containerRef.current) highlightNote(containerRef.current, selected.svgId, false);
+        setSelected(null);
+      }
     }
-  }, [hitTest, selected, containerRef]);
+  }, [hitTest, activeTool, selected, containerRef]);
 
   // ── Touch handlers ─────────────────────────────────────────────────
   const onOverlayTouchStart = useCallback((e: React.TouchEvent) => {
@@ -428,7 +504,7 @@ const ScoreEditOverlay: React.FC<ScoreEditOverlayProps> = ({
     const hit = hitTest(touch.clientX, touch.clientY);
     if (!hit) {
       if (activeTool === 'pencil') {
-        const doc = new DOMParser().parseFromString(xmlData, 'text/xml');
+        const doc = safeParseXML(xmlData);
         appendNoteToDoc(doc, 'C', 4);
         onXmlChange(new XMLSerializer().serializeToString(doc), 'Draw note');
         return;
@@ -447,7 +523,7 @@ const ScoreEditOverlay: React.FC<ScoreEditOverlayProps> = ({
 
     if (activeTool === 'eraser') {
       if (containerRef.current) highlightNote(containerRef.current, hit.svgId, false);
-      const doc = new DOMParser().parseFromString(xmlData, 'text/xml');
+      const doc = safeParseXML(xmlData);
       deleteNoteFromDoc(doc, hit.xmlIndex);
       onXmlChange(new XMLSerializer().serializeToString(doc), 'Erase note');
       if (selected?.svgId === hit.svgId) setSelected(null);
@@ -457,9 +533,14 @@ const ScoreEditOverlay: React.FC<ScoreEditOverlayProps> = ({
     // SELECT note on touch
     selectNote(hit);
     dragStartY.current = touch.clientY;
+    dragStartX.current = touch.clientX;
     dragSemis.current = 0;
+    dragDx.current = 0;
+    draggedSvgId.current = hit.svgId;
+    draggedXmlIndex.current = hit.xmlIndex;
     const data = parsePitch(xmlData, hit.xmlIndex);
     dragStartPitch.current = data ? { step: data.step, octave: data.octave, alter: data.alter } : null;
+    dragStartDx.current = data ? data.dx : 0;
     isDraggingNote.current = false;
   }, [isEditable, xmlData, activeTool, hitTest, selectNote, selected, containerRef, onXmlChange]);
 
@@ -483,19 +564,36 @@ const ScoreEditOverlay: React.FC<ScoreEditOverlayProps> = ({
       return;
     }
 
-    if (dragStartY.current === null || !dragStartPitch.current || !selected) return;
+    if (dragStartY.current === null || dragStartX.current === null || !dragStartPitch.current || !draggedSvgId.current) return;
+    
+    if (hudRef.current) {
+      hudRef.current.style.left = `${touch.clientX}px`;
+      hudRef.current.style.top = `${touch.clientY}px`;
+    }
+
     const deltaY = dragStartY.current - touch.clientY;
-    const semis = Math.round(deltaY / 10);
-    if (Math.abs(deltaY) > 5) isDraggingNote.current = true;
-    if (semis !== dragSemis.current) {
+    const semis = Math.round(deltaY / 15);
+    const deltaX = touch.clientX - dragStartX.current;
+    
+    if (Math.abs(deltaY) > 5 || Math.abs(deltaX) > 5) isDraggingNote.current = true;
+    
+    const newDx = dragStartDx.current + deltaX;
+
+    if (semis !== dragSemis.current || deltaX !== dragDx.current) {
       dragSemis.current = semis;
+      dragDx.current = deltaX;
       const { step, octave, alter } = transposePitch(
         dragStartPitch.current.step, dragStartPitch.current.octave, dragStartPitch.current.alter, semis
       );
-      setSelected(s => s ? { ...s, step, octave, alter } : null);
+      setSelected(s => s ? { ...s, step, octave, alter, dx: newDx } : null);
+      
+      if (containerRef.current && draggedSvgId.current) {
+        const el = containerRef.current.querySelector(`#${draggedSvgId.current}`) as SVGElement;
+        if (el) el.style.transform = `translateX(${newDx}px)`;
+      }
     }
     if (e.cancelable) e.preventDefault();
-  }, [isEditable, selected, containerRef]);
+  }, [isEditable, containerRef]);
 
   const onOverlayTouchEnd = useCallback((e: React.TouchEvent) => {
     if (isScrollingRef.current) {
@@ -514,19 +612,23 @@ const ScoreEditOverlay: React.FC<ScoreEditOverlayProps> = ({
 
     if (dragStartY.current === null || !dragStartPitch.current || !selected || !xmlData) {
       dragStartY.current = null;
+      dragStartX.current = null;
       return;
     }
-    if (isDraggingNote.current && dragSemis.current !== 0) {
+    
+    if (isDraggingNote.current && (dragSemis.current !== 0 || dragDx.current !== 0)) {
       const { step, octave, alter } = transposePitch(
         dragStartPitch.current.step, dragStartPitch.current.octave, dragStartPitch.current.alter, dragSemis.current
       );
-      commitPitch(step, octave, alter, selected.xmlIndex);
-      setSelected(s => s ? { ...s, step, octave, alter } : null);
+      const newDx = dragStartDx.current + dragDx.current;
+      commitMove(step, octave, alter, newDx, selected.xmlIndex);
+      setSelected(s => s ? { ...s, step, octave, alter, dx: newDx } : null);
     }
     dragStartY.current = null;
+    dragStartX.current = null;
     dragStartPitch.current = null;
     isDraggingNote.current = false;
-  }, [selected, xmlData, commitPitch, containerRef]);
+  }, [selected, xmlData, commitMove, containerRef]);
 
   // ── Keyboard ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -538,8 +640,9 @@ const ScoreEditOverlay: React.FC<ScoreEditOverlayProps> = ({
         case 'Delete': case 'Backspace': e.preventDefault(); deleteSelected(); break;
         case 'ArrowUp':   e.preventDefault(); changePitch(e.shiftKey ? 12 : 1);  break;
         case 'ArrowDown': e.preventDefault(); changePitch(e.shiftKey ? -12 : -1); break;
+        case 'ArrowLeft': e.preventDefault(); changeDx(selected.dx - (e.shiftKey ? 10 : 1)); break;
+        case 'ArrowRight':e.preventDefault(); changeDx(selected.dx + (e.shiftKey ? 10 : 1)); break;
         case 'Enter':
-          // Confirm/deselect
           if (containerRef.current) highlightNote(containerRef.current, selected.svgId, false);
           setSelected(null);
           break;
@@ -551,7 +654,7 @@ const ScoreEditOverlay: React.FC<ScoreEditOverlayProps> = ({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [isEditable, selected, deleteSelected, changePitch, containerRef]);
+  }, [isEditable, selected, deleteSelected, changePitch, changeDx, containerRef]);
 
   // Clear on score re-render
   useEffect(() => { setSelected(null); }, [svgPagesCount]);
@@ -581,13 +684,59 @@ const ScoreEditOverlay: React.FC<ScoreEditOverlayProps> = ({
         onTouchEnd={onOverlayTouchEnd}
       />
 
-      {/* Drag pitch indicator stripe */}
-      {isDraggingNote.current && selected && dragSemis.current !== 0 && (
+      {/* 2D HUD Compass - No Background, Pure Text & Vectors */}
+      {isDraggingNote.current && selected && (
         <div
-          className="fixed z-[300] pointer-events-none px-3 py-1 bg-cyan-500 text-black text-[10px] font-black rounded-full shadow-lg"
-          style={{ left: selected.screenX, top: selected.screenY - 50, transform: 'translateX(-50%)' }}
+          ref={hudRef}
+          className="fixed z-[300] pointer-events-none transform -translate-x-1/2 -translate-y-1/2"
         >
-          {dragSemis.current > 0 ? `+${dragSemis.current}` : dragSemis.current} semitones → {noteLabel}
+          {/* Crosshair lines */}
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="w-[100px] h-px bg-cyan-500/50"></div>
+            <div className="absolute w-px h-[100px] bg-cyan-500/50"></div>
+            <div className="absolute w-2 h-2 border border-cyan-400 rounded-full"></div>
+          </div>
+          
+          {/* Coordinates & Arrows */}
+          <div className="relative w-[120px] h-[120px] flex items-center justify-center font-mono text-[10px] font-black tracking-widest">
+            {/* Top (Pitch Up) */}
+            <div className="absolute top-0 text-cyan-400 flex flex-col items-center">
+              <span>↑</span>
+              <span className={dragSemis.current > 0 ? "text-purple-400" : ""}>
+                {dragSemis.current > 0 ? `+${dragSemis.current}` : ''}
+              </span>
+            </div>
+            
+            {/* Bottom (Pitch Down) */}
+            <div className="absolute bottom-0 text-cyan-400 flex flex-col items-center">
+              <span className={dragSemis.current < 0 ? "text-purple-400" : ""}>
+                {dragSemis.current < 0 ? `${dragSemis.current}` : ''}
+              </span>
+              <span>↓</span>
+            </div>
+            
+            {/* Left (X Offset) */}
+            <div className="absolute left-0 text-cyan-400 flex items-center gap-1">
+              <span>←</span>
+              <span className={selected.dx < 0 ? "text-emerald-400" : ""}>
+                {selected.dx < 0 ? `${selected.dx}px` : ''}
+              </span>
+            </div>
+            
+            {/* Right (X Offset) */}
+            <div className="absolute right-0 text-cyan-400 flex items-center gap-1">
+              <span className={selected.dx > 0 ? "text-emerald-400" : ""}>
+                {selected.dx > 0 ? `+${selected.dx}px` : ''}
+              </span>
+              <span>→</span>
+            </div>
+
+            {/* Center Label */}
+            <div className="absolute bottom-[-20px] right-[-40px] flex flex-col items-start bg-black/40 px-1.5 py-0.5 rounded backdrop-blur-sm border border-cyan-500/20">
+              <span className="text-cyan-300 text-[8px] whitespace-nowrap">ID: {selected.svgId}</span>
+              <span className="text-purple-300 text-[8px] whitespace-nowrap">NOTE: {noteLabel}</span>
+            </div>
+          </div>
         </div>
       )}
 
@@ -696,7 +845,7 @@ const ScoreEditOverlay: React.FC<ScoreEditOverlayProps> = ({
 
             {/* Hint row */}
             <div className="px-3 pb-2 text-[7px] text-zinc-700 text-center">
-              Drag note ↑↓ to change pitch · Arrow keys · Shift+↑↓ octave · Del to delete · Enter to confirm
+              Drag note to change pitch/position · Arrow keys · Del to delete · Enter to confirm
             </div>
           </div>
         </div>

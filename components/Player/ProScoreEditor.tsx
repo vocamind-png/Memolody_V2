@@ -92,6 +92,7 @@ interface ProScoreEditorProps {
   } | null;
   isVisible?: boolean;
   soloedStems?: Record<string, number | null>;
+  soloedTracks?: Set<string>;
   trackControlsOverlay?: React.ReactNode;
 }
 
@@ -285,6 +286,7 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
   layoutBundle = null,
   isVisible = true,
   soloedStems = {},
+  soloedTracks = new Set(),
   trackControlsOverlay,
 }, ref) => {
   // Detection for Mobile Devices (Centralized)
@@ -551,7 +553,7 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
             n.octave === oct
           );
           
-          let matchedNote = matchedNotes.find(n => n.trackId.endsWith(`-S${staffNum}`)) || matchedNotes[0];
+          let matchedNote = matchedNotes.find(n => n.trackId.includes(`-S${staffNum}`)) || matchedNotes[0];
 
           if (matchedNote) {
             trackId = matchedNote.trackId;
@@ -1042,8 +1044,19 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
       }
 
       // Inject Lyric based on mode
-      if (lyricMode !== 'Close' && lyricMode !== 'Lyric') {
+      if (lyricMode !== 'Close') {
         finalXml = injectSolfegeToXml(finalXml, lyricMode as any);
+      }
+
+      // ── CRITICAL: Inject xml:id into EVERY <note> so we can perfectly map SVG back to xmlIndex ──
+      try {
+        const idDoc = new DOMParser().parseFromString(finalXml, 'text/xml');
+        Array.from(idDoc.querySelectorAll('note')).forEach((n, idx) => {
+          n.setAttribute('xml:id', `m-note-${idx}`);
+        });
+        finalXml = new XMLSerializer().serializeToString(idDoc);
+      } catch (err) {
+        console.warn('[ProScoreEditor] Failed to inject xml:id', err);
       }
 
       // ── Chord symbols: Process in all modes per user request ──────
@@ -1111,6 +1124,8 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
         pageMarginRight: vrvPageMarginRight,
         spacingSystem: vrvSpacingSystem,
         spacingStaff: vrvSpacingStaff,
+        spacingLinear: 0.35,
+        spacingNonLinear: 0.6,
         justifyVertically: false,
         lyricTopMinMargin: 2.0,
         lyricSize: 3.0,
@@ -1118,7 +1133,8 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
         barLineWidth: barlineThickness,
         staffLineWidth: stafflineThickness,
         svgViewBox: true,
-        breaks: hasEncodedBreaks ? 'encoded' : 'auto',
+        breaks: 'auto',
+        ignoreLayout: true,
       });
 
       // Yield before Verovio parse (heavy WASM call)
@@ -1224,14 +1240,22 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
     }
   }, [isReady, xmlData, lyricMode, transpose, isEditable, musicFont, systemSpacing, stemThickness, barlineThickness, stafflineThickness, onPageCountChange, createCoordMap]);
 
+  const renderScoreRef = useRef(renderScore);
+  useEffect(() => {
+    renderScoreRef.current = renderScore;
+  }, [renderScore]);
+
   useEffect(() => {
     if (xmlData) {
-      const debounce = setTimeout(renderScore, 200);
+      const debounce = setTimeout(() => {
+        if (renderScoreRef.current) renderScoreRef.current();
+      }, 200);
       return () => clearTimeout(debounce);
     } else {
       setSvgPages([]);
     }
-  }, [renderScore, xmlData]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [xmlData, lyricMode, transpose, isEditable, musicFont, systemSpacing, stemThickness, barlineThickness, stafflineThickness, layoutBundle]);
 
   // ══════════════════════════════════════════════════════════════
 
@@ -1569,47 +1593,7 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
     initialDistanceRef.current = null;
   };
 
-  // Colorize lyrics based on soloedStems
-  useEffect(() => {
-    if (!svgNoteMapRef.current || svgNoteMapRef.current.length === 0) return;
-    svgNoteMapRef.current.forEach(note => {
-      if (!note.solfegeElement) return;
-      const isSoloed = soloedStems?.[note.trackId] === note.voiceIdx;
-      const hasAnySolo = soloedStems?.[note.trackId] !== undefined && soloedStems?.[note.trackId] !== null;
-      
-      if (hasAnySolo) {
-        // console.log(`[ProScoreEditor] Lyric Color Check: note trackId=${note.trackId}, voiceIdx=${note.voiceIdx}, isSoloed=${isSoloed}`);
-        const applyStyle = (el: SVGElement, color: string, opacity: string, weight: string) => {
-          el.style.setProperty('fill', color, 'important');
-          el.style.setProperty('opacity', opacity, 'important');
-          el.style.setProperty('font-weight', weight, 'important');
-          el.querySelectorAll('tspan').forEach(tspan => {
-            (tspan as SVGElement).style.setProperty('fill', color, 'important');
-            (tspan as SVGElement).style.setProperty('opacity', opacity, 'important');
-            (tspan as SVGElement).style.setProperty('font-weight', weight, 'important');
-          });
-        };
 
-        if (isSoloed) {
-          applyStyle(note.solfegeElement, '#f59e0b', '1', '900');
-        } else {
-          applyStyle(note.solfegeElement, '#a1a1aa', '0.2', 'normal');
-        }
-      } else {
-        const removeStyle = (el: SVGElement) => {
-          el.style.removeProperty('fill');
-          el.style.removeProperty('opacity');
-          el.style.removeProperty('font-weight');
-          el.querySelectorAll('tspan').forEach(tspan => {
-            (tspan as SVGElement).style.removeProperty('fill');
-            (tspan as SVGElement).style.removeProperty('opacity');
-            (tspan as SVGElement).style.removeProperty('font-weight');
-          });
-        };
-        removeStyle(note.solfegeElement);
-      }
-    });
-  }, [soloedStems, mappedCount]);
 
   if (!xmlData && !loadingStep) {
     return (
@@ -1627,6 +1611,33 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
     );
   }
 
+  // ── Re-apply dx offsets after render ───────────────────────────────
+  useEffect(() => {
+    if (!containerRef.current || !xmlData) return;
+    try {
+      const doc = new DOMParser().parseFromString(xmlData, 'text/xml');
+      const xmlNotes = Array.from(doc.querySelectorAll('note'));
+      const svgNotes = Array.from(containerRef.current.querySelectorAll('g.note[id^="m-note-"]')) as SVGElement[];
+      
+      svgNotes.forEach(el => {
+        const match = el.id.match(/^m-note-(\d+)$/);
+        if (match) {
+          const idx = parseInt(match[1], 10);
+          if (xmlNotes[idx]) {
+            const dx = parseFloat(xmlNotes[idx].getAttribute('memolody-dx') || '0');
+            if (dx !== 0) {
+              (el as SVGElement).style.transform = `translateX(${dx}px)`;
+            } else {
+              (el as SVGElement).style.transform = '';
+            }
+          }
+        }
+      });
+    } catch (err) {
+      console.warn('[ProScoreEditor] Failed to apply dx offsets', err);
+    }
+  }, [xmlData, svgPages]);
+
   return (
     <div className="w-full h-full flex flex-col overflow-hidden relative no-print items-center bg-[#050507]">
       <style>{`
@@ -1643,8 +1654,6 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
             height: auto; 
             display: block; 
             shape-rendering: geometricPrecision;
-            ${isMobile ? '' : 'filter: drop-shadow(0 4px 12px rgba(0,0,0,0.5));'} 
-            transition: filter 0.3s; 
         }
         .xml-overlay-container { position: relative; width: 100%; height: auto; }
         g.harm, g.harmony { 
@@ -1836,14 +1845,7 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
         </div>
       )}
 
-      {loadingStep && !error && (
-        <div className="absolute inset-0 bg-black/80 z-[10000] flex items-center justify-center">
-          <div className="flex flex-col items-center gap-4">
-            <div className="w-10 h-10 border-4 border-cyan-500/10 border-t-cyan-500 rounded-full animate-spin" />
-            <span className="text-[8px] font-black text-cyan-400 uppercase tracking-widest animate-pulse">{loadingStep}</span>
-          </div>
-        </div>
-      )}
+      {/* Render overlay removed to prevent flashing and blocking the screen during note edits. */}
     </div>
   );
 });

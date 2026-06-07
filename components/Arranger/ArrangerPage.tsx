@@ -158,6 +158,8 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
       const words = lyricsPrompt ? lyricsPrompt.split(/\s+/) : ['La', 'la', 'la', 'la', 'la'];
       let wordIndex = 0;
       
+      const leadMelody = parsedData ? parsedData.notes.filter(n => n.trackId === tracks[0]?.id || (!n.trackId && tracks.length <= 1)) : [];
+      
       // Apply lyrics to the lead melody
       const updatedNotes = leadMelody.map(n => {
         const lyric = words[wordIndex % words.length];
@@ -556,6 +558,18 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
                   </span>
                 </button>
               </div>
+              
+              <div className="flex gap-2 ml-4">
+                <button
+                  onClick={() => {
+                    const originalTracks = tracks.filter(t => !t.name.startsWith('AI '));
+                    setTracks(originalTracks);
+                  }}
+                  className="px-3 h-7 bg-red-500/10 border border-red-500/20 text-red-500 rounded-lg text-[9px] font-black uppercase hover:bg-red-500 hover:text-white transition-all flex items-center gap-1.5"
+                >
+                  <Trash2 size={12} /> CLEAR AI
+                </button>
+              </div>
             </div>
 
             {/* Bottom Row: Config Controls */}
@@ -696,12 +710,45 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
                             {((track as any)._generatedNotes?.length) || parsedData.notes.filter(n => n.trackId === track.id || (!n.trackId && index === 0)).length} notes
                           </span>
                         </div>
-                      <div className="flex items-center gap-1.5 w-full">
-                        <button className={`w-5 h-5 rounded flex items-center justify-center text-[10px] font-black leading-none transition-all ${track.isMuted ? 'bg-rose-500 text-white shadow-[0_0_8px_rgba(244,63,94,0.5)]' : 'bg-white/5 text-zinc-500 hover:text-white hover:bg-white/10'}`}>
+                      <div className="flex items-center gap-1.5 w-full mt-1">
+                        <select 
+                          className="bg-black/50 border border-white/10 text-white text-[9px] rounded px-1 py-0.5 outline-none focus:border-cyan-500 w-[45px] truncate"
+                          value={track.instrument || 'piano'}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => {
+                            e.stopPropagation();
+                            const newTracks = [...tracks];
+                            newTracks[index] = { ...track, instrument: e.target.value as any, mode: 'instrument' };
+                            setTracks(newTracks);
+                            // Also switch instrument in MusicEngine
+                            musicEngine.switchTrackMode(track.id, track.name, 'instrument', { instrument: e.target.value });
+                          }}
+                        >
+                          <option value="piano">Piano</option>
+                          <option value="bass">Bass</option>
+                          <option value="drums">Drums</option>
+                          <option value="guitar">Guitar</option>
+                          <option value="strings">Strings</option>
+                          <option value="synth">Synth</option>
+                          <option value="vocal">Vocal</option>
+                        </select>
+                        <button onClick={(e) => { e.stopPropagation(); const t=[...tracks]; t[index].isMuted=!t[index].isMuted; setTracks(t); }} className={`w-5 h-5 rounded flex items-center justify-center text-[10px] font-black leading-none transition-all ${track.isMuted ? 'bg-rose-500 text-white shadow-[0_0_8px_rgba(244,63,94,0.5)]' : 'bg-white/5 text-zinc-500 hover:text-white hover:bg-white/10'}`}>
                           M
                         </button>
-                        <button className={`w-5 h-5 rounded flex items-center justify-center text-[10px] font-black leading-none transition-all ${track.isSolo ? 'bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.5)]' : 'bg-white/5 text-zinc-500 hover:text-white hover:bg-white/10'}`}>
+                        <button onClick={(e) => { e.stopPropagation(); const t=[...tracks]; t[index].isSolo=!t[index].isSolo; setTracks(t); }} className={`w-5 h-5 rounded flex items-center justify-center text-[10px] font-black leading-none transition-all ${track.isSolo ? 'bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.5)]' : 'bg-white/5 text-zinc-500 hover:text-white hover:bg-white/10'}`}>
                           S
+                        </button>
+                        <button 
+                          onClick={(e) => { 
+                            e.stopPropagation(); 
+                            if (confirm(`Delete track "${track.name}"?`)) {
+                              setTracks(tracks.filter(t => t.id !== track.id));
+                            }
+                          }} 
+                          className="w-5 h-5 rounded flex items-center justify-center text-zinc-500 hover:text-red-500 hover:bg-red-500/10 transition-all ml-auto"
+                          title="Delete Track"
+                        >
+                          <Trash2 size={10} />
                         </button>
                       </div>
                     </div>

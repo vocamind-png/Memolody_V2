@@ -564,8 +564,29 @@ class VocalidoRenderService {
         await musicEngine.loadSong(parsedData.notes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn);
         
         // Load layer AFTER loadSong
-        await musicEngine.addVocalLayer(primaryTrackId, cacheBusted, stemsWithBust, renderBpm);
-
+        const cachedStemsByTrack = cached.stemsByTrack || {};
+        for (const tid of cachedVocalTracks) {
+          const rawTrackStems = cachedStemsByTrack[tid] || [];
+          const trackStems = rawTrackStems.map((sUrl: string) => {
+            const fixed = fixAudioUrl(sUrl);
+            return fixed.startsWith('blob:') ? fixed
+              : (fixed.includes('?t=') ? fixed.replace(/\\?t=\\d+/, `?t=${Date.now()}`) : `${fixed}?t=${Date.now()}`);
+          });
+          let trackAudioUrl = "";
+          let stemsToPass: string[] = [];
+          
+          if (trackStems.length > 0) {
+            trackAudioUrl = trackStems[0];
+            stemsToPass = trackStems.length > 1 ? trackStems : [];
+          } else if (tid === primaryTrackId) {
+            trackAudioUrl = cacheBusted;
+            stemsToPass = stemsWithBust; // fallback
+          }
+          
+          if (trackAudioUrl) {
+            await musicEngine.addVocalLayer(tid, trackAudioUrl, stemsToPass, renderBpm);
+          }
+        }
         musicEngine.setTransportSeconds(livePos);
         if (livePlaying) {
           await musicEngine.start();
@@ -636,8 +657,11 @@ class VocalidoRenderService {
 
         // Remove any accidentally empty tracks (shouldn't happen, but safe)
         let filledTracks = monoTracks.filter(mt => mt.length > 0);
-        
-        const collapseChords = localStorage.getItem('vocalido_collapse_chords') !== 'false'; // Default to TRUE (Top note only)
+        // We MUST NOT collapse chords if we actually have multiple distinct voices coming from different SATB parts!
+        // Actually, we should just disable collapseChords entirely when generating SATB, 
+        // or check if we are in polyphonic mode. 
+        // For SATB, we want to hear ALL voices.
+        const collapseChords = localStorage.getItem('vocalido_collapse_chords') === 'true'; // Default to FALSE to hear all parts!
         if (collapseChords && filledTracks.length > 0) {
            filledTracks = [filledTracks[0]];
         }
@@ -1439,17 +1463,35 @@ class VocalidoRenderService {
             
             // addVocalLayer AFTER — so initSampler doesn't overwrite the vocal layer
             for (const tid of vocalTrackIds) {
-              const trackAudioUrl = (tid === primaryTrackId) ? cacheBustedUrl : "";
               const trackStems = stemsByTrack[tid] || [];
-              await musicEngine.addVocalLayer(tid, trackAudioUrl, trackStems, actualBpm);
+              let trackAudioUrl = "";
+              let stemsToPass: string[] = [];
+              
+              if (trackStems.length > 0) {
+                trackAudioUrl = trackStems[0];
+                stemsToPass = trackStems.length > 1 ? trackStems : [];
+              } else if (tid === primaryTrackId) {
+                trackAudioUrl = cacheBustedUrl;
+                stemsToPass = stemsByTrack[tid] || [];
+              }
+              
+              if (trackAudioUrl) {
+                await musicEngine.addVocalLayer(tid, trackAudioUrl, stemsToPass, actualBpm);
+              }
             }
             
-            if (useDirectBlobUrl && cacheBustedUrl.startsWith('blob:')) {
-              musicEngine.unlockVocalAudio(primaryTrackId);
-              const audioEl = musicEngine.vocalAudioElements.get(primaryTrackId);
-              if (audioEl) {
-                audioEl.src = cacheBustedUrl;
-                audioEl.load();
+            if (useDirectBlobUrl) {
+              for (const tid of vocalTrackIds) {
+                const trackStems = stemsByTrack[tid] || [];
+                const tAudioUrl = trackStems.length > 0 ? trackStems[0] : (tid === primaryTrackId ? cacheBustedUrl : "");
+                if (tAudioUrl && tAudioUrl.startsWith('blob:')) {
+                  musicEngine.unlockVocalAudio(tid);
+                  const audioEl = musicEngine.vocalAudioElements.get(tid);
+                  if (audioEl) {
+                    audioEl.src = tAudioUrl;
+                    audioEl.load();
+                  }
+                }
               }
             }
 

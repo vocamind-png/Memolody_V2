@@ -100,6 +100,7 @@ export interface ParsedNote {
   staff?: number; // 1 for Treble Clef, 2 for Bass Clef
   voice?: number; // For multiple voices within the same staff
   measure?: string;
+  voiceIdx?: number;
 }
 
 export interface PluginDefinition {

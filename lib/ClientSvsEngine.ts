@@ -132,6 +132,7 @@ export interface ClientSvsParams {
   vibrato_depth?: number; // Depth of vibrato in cents (0 = off)
   vibrato_speed?: number; // Speed of vibrato in Hz (default 4.8)
   vibrato_sync?: boolean; // Sync vibrato speed to BPM (default false)
+  pitch_blend?: number; // Blend neural pitch with MIDI pitch (0.0 = MIDI, 1.0 = Neural)
 }
 
 export interface NoteData {
@@ -583,7 +584,7 @@ export class ClientSvsEngine {
           if (pitchResult.fromCache) this.lastLoadStats.cached++; else this.lastLoadStats.downloaded++;
           pitchBuffer = pitchResult.buffer;
         } catch (e: any) {
-          console.warn('[ClientSvsEngine] Pitch model download failed:', e);
+          throw new Error(`Pitch model download failed: ${e.message || e}`);
         }
       }
 
@@ -643,10 +644,11 @@ export class ClientSvsEngine {
 
       // Optimize sub-models: Try WebGPU if available to offload from the WASM heap,
       // and disable memory patterns/arenas to prevent WASM heap fragmentation and out-of-bounds errors.
-      const subModelOptions = {
+      const subModelOptions: any = {
         executionProviders: hasWebGPU ? ['webgpu', 'wasm'] : ['wasm'],
         enableMemPattern: false,
         enableCpuMemArena: false,
+        graphOptimizationLevel: 'disabled', // Changed from 'none' to 'disabled'
       };
 
       // Report buffer status (visible in main thread via progress)
@@ -658,6 +660,8 @@ export class ClientSvsEngine {
         try {
           this.linguisticSession = await ort.InferenceSession.create(new Uint8Array(linguisticBuffer), subModelOptions);
           sendWorkerDebug(`[ClientSvsEngine] ✅ Linguistic session loaded. Inputs: ${this.linguisticSession.inputNames.join(', ')}`);
+          linguisticBuffer = null; // Free JS memory
+          await new Promise(r => setTimeout(r, 20)); // Yield to GC
         } catch (e: any) {
           sendWorkerDebug(`[ClientSvsEngine] ❌ Failed to create linguistic session: ${e.message || e}`);
           onProgress({ stage: 'initializing', message: `❌ Linguistic session FAILED: ${e.message?.substring(0, 80)}`, progress: 87 });
@@ -668,6 +672,8 @@ export class ClientSvsEngine {
         try {
           this.durSession = await ort.InferenceSession.create(new Uint8Array(durBuffer), subModelOptions);
           sendWorkerDebug(`[ClientSvsEngine] ✅ Duration session loaded. Inputs: ${this.durSession.inputNames.join(', ')}`);
+          durBuffer = null; // Free JS memory
+          await new Promise(r => setTimeout(r, 20)); // Yield to GC
         } catch (e: any) {
           sendWorkerDebug(`[ClientSvsEngine] ❌ Failed to create duration session: ${e.message || e}`);
           onProgress({ stage: 'initializing', message: `❌ Duration session FAILED: ${e.message?.substring(0, 80)}`, progress: 87 });
@@ -678,9 +684,10 @@ export class ClientSvsEngine {
         try {
           this.pitchSession = await ort.InferenceSession.create(new Uint8Array(pitchBuffer), subModelOptions);
           sendWorkerDebug(`[ClientSvsEngine] ✅ Pitch session loaded. Inputs: ${this.pitchSession.inputNames.join(', ')}`);
+          pitchBuffer = null; // Free JS memory
+          await new Promise(r => setTimeout(r, 20)); // Yield to GC
         } catch (e: any) {
-          sendWorkerDebug(`[ClientSvsEngine] ❌ Failed to create pitch session: ${e.message || e}`);
-          onProgress({ stage: 'initializing', message: `❌ Pitch session FAILED: ${e.message?.substring(0, 80)}`, progress: 87 });
+          throw new Error(`Failed to create pitch session: ${e.message || e}`);
         }
       }
 
@@ -1339,6 +1346,20 @@ export class ClientSvsEngine {
         ppFinal[i] = ppData[i];
       }
     }
+
+    // ----- HUMANIZED INTONATION BLEND (AUTOTUNE) -----
+    // Blend: neural pitch (natural glides) + MIDI ideal pitch
+    // 0.0 = perfect MIDI pitch (robot), 1.0 = full neural AI (expressive but might be off-pitch)
+    const NEURAL_BLEND = params?.pitch_blend ?? 0.0; // Default to 0.0 (strict autotune) to fix off-pitch issues
+    console.log(`[ClientSvsEngine] Applying pitch blend: ${NEURAL_BLEND}`);
+    
+    for (let i = 0; i < ppFinal.length; i++) {
+      if (f0MidiArr[i] > 0.0 && ppFinal[i] > 0.0) {
+        const idealHz = 440.0 * Math.pow(2.0, (f0MidiArr[i] - 69.0) / 12.0);
+        ppFinal[i] = (1.0 - NEURAL_BLEND) * idealHz + NEURAL_BLEND * ppFinal[i];
+      }
+    }
+    // -------------------------------------------------
 
     // Apply custom Vibrato to F0
     const vibDepthCents = params?.vibrato_depth ?? 0;

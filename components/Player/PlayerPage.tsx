@@ -889,6 +889,7 @@ const PlayerPage: React.FC<{
   }, [collapseChords]);
   // Per-track vocal: muted tracks use piano
   const [mutedVocalTracks, setMutedVocalTracks] = useState<Set<string>>(new Set());
+  const [soloedTracks, setSoloedTracks] = useState<Set<string>>(new Set());
   // Active track for per-staff render
   const [activeRenderTrackId, setActiveRenderTrackId] = useState<string>('');
 
@@ -1032,8 +1033,8 @@ const PlayerPage: React.FC<{
       musicEngine.setMasterVolume(masterVolume);
 
       // Step C: Load song
-      console.log("[PlayerPage] Step C: Loading song...", { notes: parsedData.notes.length, tracks: updatedTracks.length, transpose, isMetronomeOn });
-      await musicEngine.loadSong(parsedData.notes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn);
+      console.log("[PlayerPage] Step C: Loading song...", { notes: allPlayableNotes.length, tracks: updatedTracks.length, transpose, isMetronomeOn });
+      await musicEngine.loadSong(allPlayableNotes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn);
       console.log("[PlayerPage] Step C done. isSongLoaded:", musicEngine.isSongLoaded, "currentPart exists:", !!musicEngine.isSongLoaded);
 
       // Step D: Start playback
@@ -1215,6 +1216,18 @@ const PlayerPage: React.FC<{
       return { notes: [], metadata: {} as any, partNames: {}, timeSignature: { beats: 4, beatType: 4 } };
     }
   }, [musicXml]);
+
+  const allPlayableNotes = useMemo(() => {
+    let combined = [...(parsedData?.notes || [])];
+    if (tracks && tracks.length > 0) {
+      tracks.forEach(t => {
+        if ((t as any)._generatedNotes) {
+          combined = combined.concat((t as any)._generatedNotes);
+        }
+      });
+    }
+    return combined;
+  }, [parsedData?.notes, tracks]);
 
   const vocalTrack = useMemo(() => {
     if (!tracks || tracks.length === 0) return null;
@@ -1471,7 +1484,26 @@ const PlayerPage: React.FC<{
 
       // Load vocal layer in background
       setIsAudioLoading(true);
-      musicEngine.addVocalLayer(primaryTrackId, fixedUrl, stemsWithBust)
+      
+      const vocalTracksArr = cached.vocalTracks ? cached.vocalTracks.split(',') : [primaryTrackId];
+      
+      Promise.all(vocalTracksArr.map(async (tid: string) => {
+        const trackStems = (cached.stemsByTrack && cached.stemsByTrack[tid]) ? cached.stemsByTrack[tid].map((s: string) => fixAudioUrl(s)) : [];
+        let trackAudioUrl = "";
+        let stemsToPass: string[] = [];
+        
+        if (trackStems.length > 0) {
+          trackAudioUrl = trackStems[0];
+          stemsToPass = trackStems.length > 1 ? trackStems : [];
+        } else if (tid === primaryTrackId) {
+          trackAudioUrl = fixedUrl;
+          stemsToPass = stemsWithBust;
+        }
+        
+        if (trackAudioUrl) {
+          await musicEngine.addVocalLayer(tid, trackAudioUrl, stemsToPass, renderBpm);
+        }
+      }))
         .then(() => {
           setAvailableStems(prev => ({ ...prev, [primaryTrackId]: musicEngine.getAvailableStems(primaryTrackId) }));
           setSoloedStems(prev => ({ ...prev, [primaryTrackId]: null }));
@@ -1491,7 +1523,7 @@ const PlayerPage: React.FC<{
           );
           setTracks(updatedTracks);
           
-          return musicEngine.loadSong(parsedData.notes, updatedTracks, tVal, parsedData.timeSignature, isMetronomeOn);
+          return musicEngine.loadSong(allPlayableNotes, updatedTracks, tVal, parsedData.timeSignature, isMetronomeOn);
         })
         .catch(err => console.warn('[PlayerPage] Auto-restore render failed:', err))
         .finally(() => setIsAudioLoading(false));
@@ -1866,8 +1898,11 @@ const PlayerPage: React.FC<{
     const syncTracks = async () => {
       const updatedTracks = tracks.map(t => {
         const isVocalMuted = mutedVocalTracks.has(t.id);
+        const isMutedBySolo = soloedTracks.size > 0 && !soloedTracks.has(t.id);
         return {
           ...t,
+          isMuted: isVocalMuted,
+          isSolo: soloedTracks.has(t.id),
           mode: (isVocalMuted ? 'instrument' : t.mode) as 'instrument' | 'vocal'
         };
       });
@@ -1883,7 +1918,7 @@ const PlayerPage: React.FC<{
     };
 
     syncTracks();
-  }, [tracks, mutedVocalTracks]);
+  }, [tracks, mutedVocalTracks, soloedTracks]);
 
   // ── Transpose change → reload engine with new semitone shift ──────────────
   useEffect(() => {
@@ -1904,7 +1939,7 @@ const PlayerPage: React.FC<{
         mode: (mutedVocalTracks.has(t.id) ? 'instrument' : t.mode) as 'instrument' | 'vocal'
       }));
       musicEngine.ensureInitialized()
-        .then(() => musicEngine.loadSong(parsedData.notes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn))
+        .then(() => musicEngine.loadSong(allPlayableNotes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn))
         .then(() => {
           musicEngine.setTransportSeconds(savedPos);
           if (wasPlaying) return musicEngine.start();
@@ -2460,7 +2495,7 @@ const PlayerPage: React.FC<{
                             }
   
                             // Load song (5 arguments)
-                            await musicEngine.loadSong(parsedData.notes, updatedTracks, tVal, parsedData.timeSignature, isMetronomeOn);
+                            await musicEngine.loadSong(allPlayableNotes, updatedTracks, tVal, parsedData.timeSignature, isMetronomeOn);
                             
                             musicEngine.setTransportSeconds(currentPos);
                             if (wasPlaying) {
@@ -2561,7 +2596,7 @@ const PlayerPage: React.FC<{
                             );
                             setTracks(updatedTracks);
                             // Reload song to apply instrument sampler
-                            musicEngine.loadSong(parsedData.notes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn).catch(() => {});
+                            musicEngine.loadSong(allPlayableNotes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn).catch(() => {});
                           }
                           if (memoInfoOpenKey === hKey) setMemoInfoOpenKey(null);
                         }}
@@ -2725,7 +2760,16 @@ const PlayerPage: React.FC<{
             {tracks.map((track, i) => {
               const isMuted = mutedVocalTracks.has(track.id);
               const baseTop = staffYPositions.length > 0 ? staffYPositions[0] : 60;
-              const yPos = staffYPositions[i] ?? (baseTop + i * 80);
+              const staffMatch = track.id.match(/-S(\d+)/);
+              const staffIdx = staffMatch ? parseInt(staffMatch[1]) - 1 : 0;
+              const baseStaffY = staffYPositions[staffIdx] ?? (baseTop + staffIdx * 100);
+              
+              const sId = track.id.split('_')[0];
+              const tracksInSameStaff = tracks.filter((t: any) => t.id.startsWith(sId));
+              const subIndex = tracksInSameStaff.findIndex((t: any) => t.id === track.id);
+              const yOffset = subIndex * 14; // offset each track on the same staff (tighter grouping)
+              const yPos = baseStaffY + yOffset;
+
               return (
                 <div 
                   key={track.id} 
@@ -2734,24 +2778,27 @@ const PlayerPage: React.FC<{
                 >
                   {/* Button Row */}
                   <div className="flex flex-row gap-0.5 items-center">
-                    <button
-                      onClick={() => {
-                        setTracks((prev: any) => prev.map((t: any) => ({
-                          ...t, mode: t.id === track.id ? 'vocal' : t.mode
-                        })));
-                        setActiveRenderTrackId(track.id);
-                        triggerVocalSynthesis(true);
-                      }}
-                      className={`h-2.5 px-0.5 rounded-sm flex items-center gap-0.5 text-[3.5px] font-black uppercase transition-all border shadow-sm ${
-                        track.mode === 'vocal'
-                          ? 'bg-cyan-600 border-cyan-400 text-white'
-                          : 'bg-zinc-800 border-zinc-600 text-zinc-300 hover:text-cyan-400 hover:border-cyan-400/60'
-                      }`}
-                      title={`Render "${track.name}" as vocal`}
-                    >
-                      <Mic2 size={4.5} />
-                      Render
-                    </button>
+                    {/* Only show Render button for the primary melody track (first track) */}
+                    {i === 0 && (
+                      <button
+                        onClick={() => {
+                          setTracks((prev: any) => prev.map((t: any) => ({
+                            ...t, mode: t.id === track.id ? 'vocal' : t.mode
+                          })));
+                          setActiveRenderTrackId(track.id);
+                          triggerVocalSynthesis(true);
+                        }}
+                        className={`h-2.5 px-0.5 rounded-sm flex items-center gap-0.5 text-[3.5px] font-black uppercase transition-all border shadow-sm ${
+                          track.mode === 'vocal'
+                            ? 'bg-cyan-600 border-cyan-400 text-white'
+                            : 'bg-zinc-800 border-zinc-600 text-zinc-300 hover:text-cyan-400 hover:border-cyan-400/60'
+                        }`}
+                        title={`Render "${track.name}" as vocal`}
+                      >
+                        <Mic2 size={4.5} />
+                        Render
+                      </button>
+                    )}
                     
                     <button
                       onClick={() => setMutedVocalTracks(prev => {
@@ -2767,6 +2814,27 @@ const PlayerPage: React.FC<{
                       title={isMuted ? 'Piano mode' : 'Vocal mode'}
                     >
                       {isMuted ? <span className="text-[4.5px]">🎹</span> : <Mic2 size={5} />}
+                    </button>
+
+                    <button
+                      onClick={() => setSoloedTracks(prev => {
+                        const next = new Set(prev);
+                        if (next.has(track.id)) {
+                          next.delete(track.id);
+                        } else {
+                          // Soloing this track (can be additive or exclusive depending on standard UX, here we allow multiple solos)
+                          next.add(track.id);
+                        }
+                        return next;
+                      })}
+                      className={`w-2.5 h-2.5 rounded-sm border flex items-center justify-center transition-all ${
+                        soloedTracks.has(track.id)
+                          ? 'bg-amber-500 border-amber-400 text-white shadow-[0_0_5px_rgba(245,158,11,0.5)]'
+                          : 'bg-zinc-800 border-zinc-600 text-zinc-500 hover:text-amber-400 hover:border-amber-400/60'
+                      }`}
+                      title={soloedTracks.has(track.id) ? 'Unsolo track' : 'Solo track (mute others)'}
+                    >
+                      <span className="text-[5.5px] font-black">S</span>
                     </button>
 
                     {/* Stem Solo — hidden behind toggle to prevent accidental clicks */}
@@ -2853,6 +2921,7 @@ const PlayerPage: React.FC<{
             isLoupeEnabled={false}
             showLaser={true}
             lyricMode={activeLyricMode}
+            soloedTracks={soloedTracks}
             activeLoop={activeLoop}
             performanceMode={performanceMode}
             layoutBundle={layoutBundle}
@@ -3619,7 +3688,7 @@ const PlayerPage: React.FC<{
                         t.id === primaryTrackId ? { ...t, mode: 'instrument' } as TrackState : t
                       );
                       setTracks(updatedTracks);
-                      musicEngine.loadSong(parsedData?.notes || [], updatedTracks, transpose, parsedData?.timeSignature, isMetronomeOn).catch(() => {});
+                      musicEngine.loadSong(allPlayableNotes, updatedTracks, transpose, parsedData?.timeSignature, isMetronomeOn).catch(() => {});
                     }
                   }}
                     className="text-[8px] text-zinc-600 underline text-right">Clear History</button>
