@@ -587,12 +587,15 @@ const App: React.FC = () => {
     nimoBrain.updateState('selectedSong', selectedSong);
     nimoBrain.updateState('preferredLanguage', preferredLanguage);
     nimoBrain.updateState('userInstrument', userInstrument);
-    nimoBrain.updateState('songLibrary', userSongs.map(s => ({
-      id: s.metadata.id,
-      title: s.metadata.title,
-      artist: s.metadata.artist,
-      category: s.metadata.category
-    })));
+    nimoBrain.updateState('songLibrary', {
+      totalSongs: userSongs.length,
+      sampleSongs: userSongs.slice(0, 50).map(s => ({
+        id: s.metadata.id,
+        title: s.metadata.title,
+        artist: s.metadata.artist,
+        category: s.metadata.category
+      }))
+    });
   }, [currentView, selectedSong, preferredLanguage, userInstrument, userSongs]);
 
   // Start remote polling (disabled by default to prevent console errors when backend is offline)

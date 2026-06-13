@@ -105,7 +105,7 @@ export const FloatingNimoContent: React.FC<Props> = ({
         const r = new SR();
         r.continuous = false;
         r.interimResults = false;
-        r.lang = preferredLanguage === 'th' ? 'th-TH' : 'en-US';
+        r.lang = 'th-TH'; // Always default to Thai for Speech Recognition so users can ask to switch back to Thai
 
         r.onstart = () => {
             setListening(true);
@@ -233,7 +233,7 @@ export const FloatingNimoContent: React.FC<Props> = ({
                 window.speechSynthesis.cancel();
                 setSpeaking(true);
                 const u = new SpeechSynthesisUtterance(fixPronunciation(confirmationText));
-                u.lang = preferredLanguage === 'th' ? 'th-TH' : 'en-US';
+                u.lang = /[\\u0E00-\\u0E7F]/.test(confirmationText) ? 'th-TH' : 'en-US';
                 u.rate = 1.05;
                 u.onend = () => {
                     setSpeaking(false);
@@ -253,7 +253,9 @@ export const FloatingNimoContent: React.FC<Props> = ({
         }
 
         try {
-            const key = import.meta.env.VITE_GEMINI_API_KEY || '';
+            // Check both VITE_ and global injected by vite.config.ts
+            // @ts-ignore
+            const key = import.meta.env.VITE_GEMINI_API_KEY || (typeof __GEMINI_API_KEY__ !== 'undefined' ? __GEMINI_API_KEY__ : '');
             if (!key) throw new Error('System: API Key missing');
 
             const isMale = voiceType === 'teen_boy' || voiceType === 'adult_man';
@@ -368,7 +370,7 @@ You must output valid JSON matching the schema. If no actions are needed, return
             });
 
             const res = await fetch(
-                `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`,
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${key}`,
                 {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -414,7 +416,8 @@ You must output valid JSON matching the schema. If no actions are needed, return
 
             let parsedRes = { reply: '', actions: [] as any[] };
             try {
-                parsedRes = JSON.parse(reply);
+                let cleanJsonStr = reply.replace(/```json/gi, '').replace(/```/g, '').trim();
+                parsedRes = JSON.parse(cleanJsonStr);
             } catch(e) {
                 parsedRes = { reply: reply, actions: [] };
             }
@@ -442,7 +445,7 @@ You must output valid JSON matching the schema. If no actions are needed, return
                 window.speechSynthesis.cancel();
                 setSpeaking(true);
                 const u = new SpeechSynthesisUtterance(preferredLanguage === 'th' ? fixPronunciation(cleanReply) : cleanReply);
-                u.lang = preferredLanguage === 'th' ? 'th-TH' : 'en-US';
+                u.lang = /[\\u0E00-\\u0E7F]/.test(cleanReply) ? 'th-TH' : 'en-US';
                 u.rate = 1.05;
                 u.onend = () => {
                     setSpeaking(false);

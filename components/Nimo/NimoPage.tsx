@@ -84,7 +84,7 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
         const r = new SR();
         r.continuous = false;
         r.interimResults = false;
-        r.lang = preferredLanguage === 'th' ? 'th-TH' : 'en-US';
+        r.lang = 'th-TH'; // Always default to Thai for Speech Recognition
 
         r.onstart = () => {
             setListening(true);
@@ -308,7 +308,7 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
                     ? `แปลงสำเร็จแล้วค่ะ เพลง ${result.song.title} โดย ${result.song.artist || 'สโกเลนส์ เอไอ'}`
                     : `Conversion complete. ${result.song.title} by ${result.song.artist || 'ScoreLens AI'}`;
                 const u = new SpeechSynthesisUtterance(preferredLanguage === 'th' ? fixPronunciation(speechText) : speechText);
-                u.lang = preferredLanguage === 'th' ? 'th-TH' : 'en-US';
+                u.lang = /[\\u0E00-\\u0E7F]/.test(speechText) ? 'th-TH' : 'en-US';
                 u.rate = 1.05;
                 u.onend = () => {
                     setSpeaking(false);
@@ -362,7 +362,7 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
                     ? `ขออภัยค่ะ ไม่สามารถแปลงโน้ตได้สำเร็จ กรุณาลองใหม่อีกครั้งนะคะ`
                     : `Sorry, could not convert. Please try again.`;
                 const u = new SpeechSynthesisUtterance(preferredLanguage === 'th' ? fixPronunciation(speechText) : speechText);
-                u.lang = preferredLanguage === 'th' ? 'th-TH' : 'en-US';
+                u.lang = /[\\u0E00-\\u0E7F]/.test(speechText) ? 'th-TH' : 'en-US';
                 u.rate = 1.05;
                 u.onend = () => {
                     setSpeaking(false);
@@ -430,7 +430,7 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
                 window.speechSynthesis.cancel();
                 setSpeaking(true);
                 const u = new SpeechSynthesisUtterance(fixPronunciation(confirmationText));
-                u.lang = preferredLanguage === 'th' ? 'th-TH' : 'en-US';
+                u.lang = /[\\u0E00-\\u0E7F]/.test(confirmationText) ? 'th-TH' : 'en-US';
                 u.rate = 1.05;
                 u.onend = () => {
                     setSpeaking(false);
@@ -451,7 +451,8 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
 
         try {
             // @ts-ignore
-            const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "";
+            // Check both VITE_ and global injected by vite.config.ts
+            const apiKey = import.meta.env.VITE_GEMINI_API_KEY || (typeof __GEMINI_API_KEY__ !== 'undefined' ? __GEMINI_API_KEY__ : '');
             if (!apiKey) throw new Error('System: API Key missing');
 
             const appState = typeof window !== 'undefined' && window.NimoBrain 
@@ -524,7 +525,7 @@ Supported Actions:
 You must output valid JSON matching the schema. If no system controls are requested, return an empty array for actions.`;
 
             // Direct API call
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`;
             const res = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -569,7 +570,8 @@ You must output valid JSON matching the schema. If no system controls are reques
 
             let parsedRes = { reply: '', actions: [] as any[] };
             try {
-                parsedRes = JSON.parse(reply);
+                let cleanJsonStr = reply.replace(/```json/gi, '').replace(/```/g, '').trim();
+                parsedRes = JSON.parse(cleanJsonStr);
             } catch(e) {
                 parsedRes = { reply: reply, actions: [] };
             }
@@ -597,7 +599,7 @@ You must output valid JSON matching the schema. If no system controls are reques
                 window.speechSynthesis.cancel();
                 setSpeaking(true);
                 const u = new SpeechSynthesisUtterance(preferredLanguage === 'th' ? fixPronunciation(cleanReply) : cleanReply);
-                u.lang = preferredLanguage === 'th' ? 'th-TH' : 'en-US';
+                u.lang = /[\\u0E00-\\u0E7F]/.test(cleanReply) ? 'th-TH' : 'en-US';
                 u.rate = 1.05;
                 u.onend = () => {
                     setSpeaking(false);
