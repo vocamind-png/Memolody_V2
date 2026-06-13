@@ -755,6 +755,8 @@ export class MusicEngine {
       loadPromises.push(new Promise<void>((resolve) => {
         const player = new Tone.GrainPlayer({
           url: audioUrl,
+          overlap: 0.01,
+          grainSize: 0.05,
           onload: () => {
             if (myGeneration === this._vocalGeneration) {
               const players = this.trackVocalLayers.get(trackId) || [];
@@ -766,6 +768,10 @@ export class MusicEngine {
               player.dispose();
             }
             resolve();
+          },
+          onerror: (err) => {
+            console.error('[MusicEngine] ❌ Error loading main vocal audio:', err);
+            resolve(); // Resolve anyway so it doesn't hang
           }
         });
       }));
@@ -778,6 +784,8 @@ export class MusicEngine {
         loadPromises.push(new Promise<void>((resolve) => {
           const player = new Tone.GrainPlayer({
             url: url,
+            overlap: 0.01,
+            grainSize: 0.05,
             onload: () => {
               if (myGeneration === this._vocalGeneration) {
                 loadedStems[index] = player;
@@ -787,6 +795,11 @@ export class MusicEngine {
                 player.dispose();
               }
               resolve();
+            },
+            onerror: (err) => {
+              console.error(`[MusicEngine] ❌ Error loading stem audio ${index}:`, err);
+              loadedStems[index] = null;
+              resolve(); // Resolve anyway so it doesn't hang
             }
           });
         }));
@@ -1275,24 +1288,27 @@ public setVocalTranspose(trackId: string, diffSemitones: number) {
       this.currentMeasure = event.measure || '';
 
       // Play the sampler only if the track mode is NOT 'vocal' (strict separation)
+      const hasVocalLayer = this.trackVocalLayers.has(event.trackId);
       const isVocalMode = this.trackModes.get(event.trackId) === 'vocal';
+      const playMidi = !isVocalMode || !hasVocalLayer;
       
-      if (!isVocalMode) {
+      if (playMidi) {
         const activeStem = this.trackActiveStem.get(event.trackId) ?? null;
         if (activeStem !== null) {
-          // Find unique voices for this track to map activeStem to MusicXML voice
           const trackNotes = this.lastLoadedNotes.filter(n => n.trackId === event.trackId);
           const uniqueVoices = Array.from(new Set(trackNotes.map(n => n.voice || 1))).sort((a, b) => a - b);
           const allowedVoice = uniqueVoices[activeStem];
           if (event.voice !== allowedVoice) {
-            // console.log(`[MusicEngine] Muting MIDI note: trackId=${event.trackId}, voice=${event.voice}, allowed=${allowedVoice}, activeStem=${activeStem}`);
-            return; // Mute this MIDI note because it belongs to an un-soloed voice
+            return;
           }
         }
 
         const sampler = this.trackSamplers.get(event.trackId);
+        // console.log(`[MusicEngine] Playing note: freq=${event.freq}, trackId=${event.trackId}, hasSampler=${!!sampler}`);
         if (sampler) {
           sampler.triggerAttackRelease(event.freq, event.duration, time, 0.75);
+        } else {
+          console.warn(`[MusicEngine] No sampler found for trackId=${event.trackId}`);
         }
       }
     }, events).start(0);
@@ -1499,6 +1515,27 @@ public setVocalTranspose(trackId: string, diffSemitones: number) {
     Tone.Transport.seconds = 0;
 
     console.log('[MusicEngine] 🧹 stopAndClear — all song data purged');
+  }
+
+  // ── Live MIDI Playback ──────────────────────────────────────────────────
+  public playLiveNote(trackId: string, freq: number, velocity: number = 0.8) {
+    if (!this.isInitialized) return;
+    const sampler = this.trackSamplers.get(trackId);
+    if (sampler) {
+      if ((sampler as any).triggerAttack) {
+        (sampler as any).triggerAttack(freq, Tone.now(), velocity);
+      }
+    }
+  }
+
+  public stopLiveNote(trackId: string, freq: number) {
+    if (!this.isInitialized) return;
+    const sampler = this.trackSamplers.get(trackId);
+    if (sampler) {
+      if ((sampler as any).triggerRelease) {
+        (sampler as any).triggerRelease(freq, Tone.now());
+      }
+    }
   }
 }
 export const musicEngine = new MusicEngine();

@@ -1166,7 +1166,7 @@ export class ClientSvsEngine {
         phDur.push(wdur);
       } else {
         const equalVal = Math.floor(wdur / wdiv);
-        const minVal = 2;
+        const minVal = 1; // Changed from 2 to 1 for faster attack
         let consDur = Math.round(minVal + (equalVal - minVal) * (timingFeel / 100.0));
         if (consDur < minVal) consDur = minVal;
         if (consDur > equalVal) consDur = equalVal;
@@ -1191,7 +1191,7 @@ export class ClientSvsEngine {
           consDurSum += phDur[tokStart + k];
         }
         const targetBorrow = Math.round(consDurSum * (1.0 - timingFeel / 100.0));
-        const minPrecedingDur = 2;
+        const minPrecedingDur = 2; // Reverted back to 2 to prevent choking the preceding vowel (which caused missing notes)
         const availableToBorrow = Math.max(0, phDur[tokStart - 1] - minPrecedingDur);
         const borrowDur = Math.min(targetBorrow, availableToBorrow);
         
@@ -1556,7 +1556,7 @@ export class ClientSvsEngine {
         // Distribute phonemes based on SVS Timing Feel setting:
         const timingFeel = params?.timing_feel ?? 50.0;
         const equalVal = Math.floor(noteFrames / phonemes.length);
-        const minVal = 2;
+        const minVal = 1; // Reduced from 2 to 1 for sharper consonant attacks
         let consDur = Math.round(minVal + (equalVal - minVal) * (timingFeel / 100.0));
         if (consDur < minVal) consDur = minVal;
         if (consDur > equalVal) consDur = equalVal;

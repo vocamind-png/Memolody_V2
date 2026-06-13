@@ -16,6 +16,7 @@ const getMusicEngine = async () => {
 
 import { initPlugins } from './lib/plugin-init';
 import { telemetry } from './lib/Telemetry';
+import { midiInputManager } from './lib/MidiInputManager';
 import { songStorage } from './lib/SongStorage';
 import { DEMO_SONGS } from './data/demo_songs';
 import { SplashLoader } from './components/Home/SplashLoader';
@@ -232,34 +233,10 @@ const App: React.FC = () => {
           sessionStorage.removeItem('memo_session_active');
         }
 
-        // 🚨 Free Tier Session Wiping: Clear songs and caches if free user in new session
-        const storedTier = typeof window !== 'undefined' ? localStorage.getItem('mock_membership_tier') : 'free';
-        const isFreeInit = !storedTier || storedTier === 'free';
+        // 🚨 Free Tier Session Wiping: We no longer wipe caches aggressively
+        // so that returning users don't lose their local renders and tracks.
         const sessionActive = typeof window !== 'undefined' ? sessionStorage.getItem('memo_session_active') : 'true';
-        if (isFreeInit && !sessionActive) {
-          setInitStatus('Preparing Free Session');
-          console.log('[Cache Wrecker] 🚨 Free Tier Session: Wiping cached song states & songs...');
-          // 1. Clear IndexedDB user songs
-          await songStorage.deleteAllSongs();
-          
-          // 2. Clear localStorage keys
-          const keysToRemove: string[] = [];
-          for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
-            if (key && (
-              key.startsWith('tracks_state_') ||
-              key.startsWith('memo_render_history_') ||
-              key.startsWith('active_render_key_') ||
-              key.startsWith('memo_render_u') ||
-              key.startsWith('memo_selected_song_id')
-            )) {
-              keysToRemove.push(key);
-            }
-          }
-          keysToRemove.forEach(k => localStorage.removeItem(k));
-          sessionStorage.setItem('memo_session_active', 'true');
-        } else {
-          // Mark session active even if they are Pro/Premium so that it's set
+        if (!sessionActive) {
           sessionStorage.setItem('memo_session_active', 'true');
         }
 
@@ -350,7 +327,7 @@ const App: React.FC = () => {
         const updatedSongs = await songStorage.getAllSongs();
         userSongsRef.current = updatedSongs;
         setUserSongs(updatedSongs);
-        alert(`Successfully synced ${syncResult.total} songs from GCS!`);
+        console.log(`[GCS Sync] ✅ Successfully synced ${syncResult.total} songs from GCS`);
       }
     } catch (e: any) {
       console.warn("Sync interrupted:", e.message);
@@ -454,11 +431,14 @@ const App: React.FC = () => {
 
   const handleSongSelect = useCallback(async (
     song: Song, xml?: string,
-    mode: 'listen' | 'studio' | 'edit' = 'studio',
+    mode: 'listen' | 'studio' | 'edit' | 'play' = 'studio',
     fromMarket = false,
     desiredView?: { main: 'player' | 'tracks', player?: 'score' | 'pianoroll' }
   ) => {
     try {
+      if (mode === 'play') {
+        setAutoPlayOnLoad(true);
+      }
       let finalXml = xml;
       const owned = userSongsRef.current.find(s => String(s.metadata.id) === String(song.id)); // use ref — stable
       if (!finalXml) finalXml = owned?.xmlData || '';
