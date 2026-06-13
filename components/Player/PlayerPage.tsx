@@ -152,8 +152,8 @@ const getTransposeDiff = (origKey: string, targetKey: string): number => {
 const getCustomBackendUrl = () => {
   if (typeof window === 'undefined') return '';
   
-  // Auto-detect local network IP and route to local SVS server on port 5001
   const hostname = window.location.hostname;
+  const port = window.location.port;
   const isLocalIp = 
     hostname === 'localhost' || 
     hostname === '127.0.0.1' || 
@@ -163,6 +163,11 @@ const getCustomBackendUrl = () => {
     /^172\.(1[6-9]|2[0-9]|3[01])\./.test(hostname);
     
   if (isLocalIp) {
+    // When running on Vite dev server (port 3100), use relative paths
+    // so requests go through Vite's proxy → avoids CORS issues
+    if (port === '3100') {
+      return ''; // relative paths → Vite proxy handles forwarding to :5001
+    }
     return `http://${hostname}:5001`;
   }
 
@@ -705,6 +710,9 @@ const PlayerPage: React.FC<{
     const val = e.target.value;
     setCustomBackendUrl(val);
     localStorage.setItem('memolody_custom_backend_url', val);
+    
+    // Dispatch event to trigger connection check
+    window.dispatchEvent(new Event('vocalido_backend_url_changed'));
   };
   // SVS Engine: Vocalido only (ACE-Step removed)
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -772,7 +780,8 @@ const PlayerPage: React.FC<{
               if (!hasPromptedRenderRef.current) {
                 hasPromptedRenderRef.current = true;
                 // Only prompt for songs that have never been rendered before
-                const histStr = song?.id ? localStorage.getItem(`memo_render_history_${song.id}`) : null;
+                const songIdForHist = song?.id || '_unsaved_';
+                const histStr = localStorage.getItem(`memo_render_history_${songIdForHist}`);
                 const hasExistingRender = histStr ? (JSON.parse(histStr) || []).length > 0 : false;
                 if (!hasExistingRender) {
                   setModalSelectedTracks(tracks.map(t => t.id));
@@ -804,10 +813,11 @@ const PlayerPage: React.FC<{
 
   // Show prompt if using vocalido server, server is online, and song has never been rendered before
   useEffect(() => {
-    if (svsEngine === 'vocalido' && isServerOnline && song?.id) {
+    const songId = song?.id || '_unsaved_';
+    if (svsEngine === 'vocalido' && isServerOnline) {
       if (!hasPromptedRenderRef.current) {
         hasPromptedRenderRef.current = true;
-        const histStr = localStorage.getItem(`memo_render_history_${song.id}`);
+        const histStr = localStorage.getItem(`memo_render_history_${songId}`);
         const hasExistingRender = histStr ? (JSON.parse(histStr) || []).length > 0 : false;
         if (!hasExistingRender) {
           const timer = setTimeout(() => {
@@ -846,14 +856,18 @@ const PlayerPage: React.FC<{
   const [activeRenderKey, setActiveRenderKey] = useState<string | null>(null);
   // ── Track which MemoRender info popup is open ──
   const [memoInfoOpenKey, setMemoInfoOpenKey] = useState<string | null>(null);
+  // ── Guard: prevent saving empty [] to localStorage before restore completes ──
+  const isHistoryRestoredRef = useRef(false);
   // ── Persist render history to localStorage whenever it changes (song-specific) ──
   useEffect(() => {
-    if (song?.id) {
-      try {
-        localStorage.setItem(`memo_render_history_${song.id}`, JSON.stringify(renderHistory));
-      } catch (e) {}
-    }
+    const songId = song?.id || '_unsaved_';
+    // Only save after history has been restored (prevents wiping existing data on mount)
+    if (!isHistoryRestoredRef.current) return;
+    try {
+      localStorage.setItem(`memo_render_history_${songId}`, JSON.stringify(renderHistory));
+    } catch (e) {}
   }, [renderHistory, song?.id]);
+
   // Vocalido Setup modal
   const [showVocalidoSetup, setShowVocalidoSetup] = useState(false);
   const [cacheClearedText, setCacheClearedText] = useState(false);
@@ -1175,6 +1189,7 @@ const PlayerPage: React.FC<{
     return () => observer.disconnect();
   }, [tracks.length, activeCard, musicXml]);
 
+
   // Mouse event handlers for resizing
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -1292,27 +1307,35 @@ const PlayerPage: React.FC<{
     }
 
     // Load render history for this song (from local storage first, then fetch from server)
-    if (song?.id) {
-      try {
-        const localHist = localStorage.getItem(`memo_render_history_${song.id}`);
-        if (localHist) {
-          const parsed = JSON.parse(localHist);
-          if (Array.isArray(parsed)) {
-            const mapped = parsed.map((h: any) => ({
-              ...h,
-              lyricMode: mapToLyricMode(h.lyricMode),
-            }));
-            restoreCachedBlobs(song.id, mapped).then(setRenderHistory);
-          } else {
-            setRenderHistory([]);
-          }
+    isHistoryRestoredRef.current = false; // reset guard before restoring
+    const songId = song?.id || '_unsaved_';
+    try {
+      const localHist = localStorage.getItem(`memo_render_history_${songId}`);
+      if (localHist) {
+        const parsed = JSON.parse(localHist);
+        if (Array.isArray(parsed)) {
+          const mapped = parsed.map((h: any) => ({
+            ...h,
+            lyricMode: mapToLyricMode(h.lyricMode),
+          }));
+          restoreCachedBlobs(songId, mapped).then((restored) => {
+            setRenderHistory(restored);
+            isHistoryRestoredRef.current = true;
+          });
         } else {
           setRenderHistory([]);
+          isHistoryRestoredRef.current = true;
         }
-      } catch (e) {
+      } else {
         setRenderHistory([]);
+        isHistoryRestoredRef.current = true;
       }
+    } catch (e) {
+      setRenderHistory([]);
+      isHistoryRestoredRef.current = true;
+    }
 
+    if (song?.id) {
       svsFetch(getFetchUrl(`/studio/renders/${encodeURIComponent(song.id)}?owner_id=${encodeURIComponent(authUser?.id || '')}`))
         .then(r => r.ok ? r.json() : null)
         .then(data => {
@@ -1329,15 +1352,17 @@ const PlayerPage: React.FC<{
                 voiceName: r.engine_id || 'Auto',
                 savedStemUrls: (r.saved_stem_urls || []).map((sUrl: string) => fixAudioUrl(sUrl)),
               }));
-              restoreCachedBlobs(song.id, mapped).then(setRenderHistory);
+              restoreCachedBlobs(song.id, mapped).then((restored) => {
+                setRenderHistory(restored);
+                isHistoryRestoredRef.current = true;
+              });
             } else {
               setRenderHistory([]);
+              isHistoryRestoredRef.current = true;
             }
           }
         })
         .catch(() => {});
-    } else {
-      setRenderHistory([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [song?.id]);
@@ -1346,51 +1371,58 @@ const PlayerPage: React.FC<{
   useEffect(() => {
     if (!parsedData.notes.length || tracks.length > 0) return;
 
-    if (parsedData.partNames && song?.id) {
-      const partIds = Object.keys(parsedData.partNames);
-      if (partIds.length > 0) {
-        // Try to load saved tracks from localStorage
-        let restoredTracks: TrackState[] = [];
-        try {
-          const saved = localStorage.getItem(`tracks_state_${song.id}`);
-          if (saved) {
-            restoredTracks = JSON.parse(saved);
-          }
-        } catch (e) {}
+    const songId = song?.id || '_unsaved_';
+    const partIds = parsedData.partNames ? Object.keys(parsedData.partNames) : [];
+    let currentPartNames = parsedData.partNames || {};
+    
+    // If we have no partIds but we have notes, create a default track
+    if (partIds.length === 0 && parsedData.notes.length > 0) {
+      partIds.push('P1');
+      currentPartNames = { ...currentPartNames, 'P1': 'Part 1' };
+    }
 
-        if (restoredTracks.length > 0) {
-          console.log('[PlayerPage] 🎹 Restored tracks from localStorage:', restoredTracks);
-          const hasLotte = voiceEngines.some(v => v.id === 'lotte_v_ai_dol') || 
-                            (localStorage.getItem('vocalido_active_engine') === 'lotte_v_ai_dol');
-          if (hasLotte) {
-            restoredTracks = restoredTracks.map((t: any) => 
-              (t.mode === 'vocal' && (t.engineId === 'default' || !t.engineId))
-                ? { ...t, engineId: 'lotte_v_ai_dol' }
-                : t
-            );
-          }
-          setTracks(restoredTracks);
-          return;
+    if (partIds.length > 0) {
+      // Try to load saved tracks from localStorage
+      let restoredTracks: TrackState[] = [];
+      try {
+        const saved = localStorage.getItem(`tracks_state_${songId}`);
+        if (saved) {
+          restoredTracks = JSON.parse(saved);
         }
+      } catch (e) {}
 
-        console.log('[PlayerPage] 🎹 Auto-assigning track roles based on parsed notes');
-        // Restore last-used lyric mode from localStorage
-        const savedLyricMode = (() => { try { return localStorage.getItem('memo_lyric_mode') || ''; } catch { return ''; } })();
-        const newTracks = partIds.map((id, index) => ({
-          id,
-          name: parsedData.partNames[id] || `Track ${index + 1}`,
-          volume: 1.0,
-          pan: 0,
-          isMuted: false,
-          isSolo: false,
-          mode: index === 0 ? 'vocal' : 'instrument',
-          instrument: index === 0 ? (activeVoiceName || 'Alto Female') : 'Piano',
-          lyricMode: (savedLyricMode || activeLyricMode || 'British Fixed Doh') as LyricMode,
-          engineId: activeEngineId,
-          effects: Array(6).fill(null)
-        }));
-        setTracks(newTracks);
+      if (restoredTracks.length > 0) {
+        console.log('[PlayerPage] 🎹 Restored tracks from localStorage:', restoredTracks);
+        const hasLotte = voiceEngines.some(v => v.id === 'lotte_v_ai_dol') || 
+                          (localStorage.getItem('vocalido_active_engine') === 'lotte_v_ai_dol');
+        if (hasLotte) {
+          restoredTracks = restoredTracks.map((t: any) => 
+            (t.mode === 'vocal' && (t.engineId === 'default' || !t.engineId))
+              ? { ...t, engineId: 'lotte_v_ai_dol' }
+              : t
+          );
+        }
+        setTracks(restoredTracks);
+        return;
       }
+
+      console.log('[PlayerPage] 🎹 Auto-assigning track roles based on parsed notes');
+      // Restore last-used lyric mode from localStorage
+      const savedLyricMode = (() => { try { return localStorage.getItem('memo_lyric_mode') || ''; } catch { return ''; } })();
+      const newTracks = partIds.map((id, index) => ({
+        id,
+        name: currentPartNames[id] || `Track ${index + 1}`,
+        volume: 1.0,
+        pan: 0,
+        isMuted: false,
+        isSolo: false,
+        mode: index === 0 ? 'vocal' : 'instrument',
+        instrument: index === 0 ? (activeVoiceName || 'Alto Female') : 'Piano',
+        lyricMode: (savedLyricMode || activeLyricMode || 'British Fixed Doh') as LyricMode,
+        engineId: activeEngineId,
+        effects: Array(6).fill(null)
+      }));
+      setTracks(newTracks);
     }
   }, [parsedData.notes.length, parsedData.partNames, setTracks, activeVoiceName, activeLyricMode, tracks.length, song?.id]);
 
@@ -1502,6 +1534,18 @@ const PlayerPage: React.FC<{
         
         if (trackAudioUrl) {
           await musicEngine.addVocalLayer(tid, trackAudioUrl, stemsToPass, renderBpm);
+          
+          if (trackAudioUrl.startsWith('blob:')) {
+            let audioEl = musicEngine.vocalAudioElements.get(tid);
+            if (!audioEl) {
+              audioEl = new Audio();
+              audioEl.crossOrigin = 'anonymous';
+              audioEl.preservesPitch = true;
+              musicEngine.vocalAudioElements.set(tid, audioEl);
+            }
+            audioEl.src = trackAudioUrl;
+            audioEl.load();
+          }
         }
       }))
         .then(() => {
@@ -1723,7 +1767,7 @@ const PlayerPage: React.FC<{
   // Load engines and stored active engine
   useEffect(() => {
     let active = true;
-    const fetchEngines = async () => {
+    const fetchEngines = async (manualCheck = false) => {
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 3000); // 3-second quick connection check
@@ -1739,7 +1783,7 @@ const PlayerPage: React.FC<{
           
           // Auto-select SVS rendering mode: prioritize server-side vocalido when local server is online
           const savedSvsEngine = localStorage.getItem('vocalido_svs_engine');
-          if (!savedSvsEngine) {
+          if (!savedSvsEngine || manualCheck) {
             setSvsEngine('vocalido');
             localStorage.setItem('vocalido_svs_engine', 'vocalido');
           } else {
@@ -1807,6 +1851,11 @@ const PlayerPage: React.FC<{
     };
     fetchEngines();
 
+    const handleBackendChange = () => {
+      fetchEngines(true);
+    };
+    window.addEventListener('vocalido_backend_url_changed', handleBackendChange);
+
     try {
       const storedEngine = localStorage.getItem('vocalido_active_engine');
       if (storedEngine) setActiveEngineId(storedEngine);
@@ -1814,6 +1863,7 @@ const PlayerPage: React.FC<{
 
     return () => {
       active = false;
+      window.removeEventListener('vocalido_backend_url_changed', handleBackendChange);
     };
   }, [song?.id]);
 
@@ -2475,6 +2525,18 @@ const PlayerPage: React.FC<{
   
                             const primaryTrackId = tracks.find(t => t.mode === 'vocal')?.id || tracks[0]?.id || 'P1';
                             await musicEngine.addVocalLayer(primaryTrackId, cacheBusted, stemsWithBust);
+                            
+                            if (cacheBusted.startsWith('blob:')) {
+                              let audioEl = musicEngine.vocalAudioElements.get(primaryTrackId);
+                              if (!audioEl) {
+                                audioEl = new Audio();
+                                audioEl.crossOrigin = 'anonymous';
+                                audioEl.preservesPitch = true;
+                                musicEngine.vocalAudioElements.set(primaryTrackId, audioEl);
+                              }
+                              audioEl.src = cacheBusted;
+                              audioEl.load();
+                            }
   
                             // Set the track mode to vocal so UI state reflects it
                             const updatedTracks = tracks.map((t: any) => 
@@ -2778,42 +2840,23 @@ const PlayerPage: React.FC<{
                 >
                   {/* Button Row */}
                   <div className="flex flex-row gap-0.5 items-center">
-                    {/* Only show Render button for the primary melody track (first track) */}
-                    {i === 0 && (
-                      <button
-                        onClick={() => {
-                          setTracks((prev: any) => prev.map((t: any) => ({
-                            ...t, mode: t.id === track.id ? 'vocal' : t.mode
-                          })));
-                          setActiveRenderTrackId(track.id);
-                          triggerVocalSynthesis(true);
-                        }}
-                        className={`h-2.5 px-0.5 rounded-sm flex items-center gap-0.5 text-[3.5px] font-black uppercase transition-all border shadow-sm ${
-                          track.mode === 'vocal'
-                            ? 'bg-cyan-600 border-cyan-400 text-white'
-                            : 'bg-zinc-800 border-zinc-600 text-zinc-300 hover:text-cyan-400 hover:border-cyan-400/60'
-                        }`}
-                        title={`Render "${track.name}" as vocal`}
-                      >
-                        <Mic2 size={4.5} />
-                        Render
-                      </button>
-                    )}
                     
+                    {/* Toggle between Vocal and Instrument */}
                     <button
-                      onClick={() => setMutedVocalTracks(prev => {
-                        const next = new Set(prev);
-                        next.has(track.id) ? next.delete(track.id) : next.add(track.id);
-                        return next;
-                      })}
-                      className={`w-2.5 h-2.5 rounded-sm border flex items-center justify-center transition-all ${
-                        !isMuted 
-                          ? 'bg-red-600 border-red-500 text-white shadow-[0_0_5px_rgba(220,38,38,0.5)]' 
-                          : 'bg-zinc-300 border-zinc-400 text-zinc-800 hover:bg-zinc-200'
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setTracks((prev: any) => prev.map((t: any) => 
+                          t.id === track.id ? { ...t, mode: t.mode === 'vocal' ? 'instrument' : 'vocal' } : t
+                        ));
+                      }}
+                      className={`w-4 h-4 rounded-md flex items-center justify-center transition-all border shadow-lg ${
+                        track.mode === 'vocal'
+                          ? 'bg-cyan-600 border-cyan-400 text-white shadow-[0_0_10px_rgba(34,211,238,0.4)]'
+                          : 'bg-[#1a1a1e] border-zinc-700 text-zinc-400 hover:text-cyan-400 hover:border-cyan-400/60'
                       }`}
-                      title={isMuted ? 'Piano mode' : 'Vocal mode'}
+                      title={track.mode === 'vocal' ? `Switch "${track.name}" to Instrument` : `Switch "${track.name}" to Vocal`}
                     >
-                      {isMuted ? <span className="text-[4.5px]">🎹</span> : <Mic2 size={5} />}
+                      {track.mode === 'vocal' ? <Mic2 size={8} /> : <span className="text-[8px]">🎹</span>}
                     </button>
 
                     <button
@@ -2822,20 +2865,21 @@ const PlayerPage: React.FC<{
                         if (next.has(track.id)) {
                           next.delete(track.id);
                         } else {
-                          // Soloing this track (can be additive or exclusive depending on standard UX, here we allow multiple solos)
                           next.add(track.id);
                         }
                         return next;
                       })}
-                      className={`w-2.5 h-2.5 rounded-sm border flex items-center justify-center transition-all ${
+                      className={`w-4 h-4 rounded-md border flex items-center justify-center transition-all shadow-lg ${
                         soloedTracks.has(track.id)
-                          ? 'bg-amber-500 border-amber-400 text-white shadow-[0_0_5px_rgba(245,158,11,0.5)]'
-                          : 'bg-zinc-800 border-zinc-600 text-zinc-500 hover:text-amber-400 hover:border-amber-400/60'
+                          ? 'bg-amber-500 border-amber-400 text-white shadow-[0_0_10px_rgba(245,158,11,0.5)]'
+                          : 'bg-[#1a1a1e] border-zinc-700 text-zinc-500 hover:text-amber-400 hover:border-amber-400/60'
                       }`}
                       title={soloedTracks.has(track.id) ? 'Unsolo track' : 'Solo track (mute others)'}
                     >
-                      <span className="text-[5.5px] font-black">S</span>
+                      <span className="text-[6.5px] font-black">S</span>
                     </button>
+
+                    {/* Render button removed per user request */}
 
                     {/* Stem Solo — hidden behind toggle to prevent accidental clicks */}
                     {showStemControls && availableStems[track.id] > 0 && (() => {
@@ -3501,13 +3545,27 @@ const PlayerPage: React.FC<{
                 <span className="text-[8px] text-zinc-500">
                   สำหรับใช้งานบน Vercel/มือถือ ให้กรอก HTTPS Tunnel URL (เช่น Serveo / Localtunnel)
                 </span>
-                <input
-                  type="text"
-                  value={customBackendUrl}
-                  onChange={handleCustomBackendUrlChange}
-                  placeholder="https://your-tunnel.serveo.net"
-                  className="mt-1 w-full bg-[#0c0c0e] border border-white/10 focus:border-cyan-500 rounded-xl px-3 py-2 text-[10px] text-white focus:outline-none transition-all placeholder:text-zinc-600"
-                />
+                <div className="flex gap-2 mt-1 w-full">
+                  <input
+                    type="text"
+                    value={customBackendUrl}
+                    onChange={handleCustomBackendUrlChange}
+                    placeholder="https://your-tunnel.serveo.net"
+                    className="flex-1 min-w-0 bg-[#0c0c0e] border border-white/10 focus:border-cyan-500 rounded-xl px-3 py-2 text-[10px] text-white focus:outline-none transition-all placeholder:text-zinc-600"
+                  />
+                  <button
+                    onClick={() => {
+                      window.dispatchEvent(new Event('vocalido_backend_url_changed'));
+                    }}
+                    className={`shrink-0 rounded-xl px-4 py-2 text-[10px] font-bold transition-all ${
+                      isServerOnline 
+                        ? 'bg-[#00e5ff]/20 text-[#00e5ff] border border-[#00e5ff]/40 shadow-[0_0_12px_rgba(0,229,255,0.15)]' 
+                        : 'bg-[#0c0c0e] text-zinc-400 border border-white/10 hover:border-cyan-500 hover:text-cyan-400'
+                    }`}
+                  >
+                    {isServerOnline ? 'Connected' : 'Connect'}
+                  </button>
+                </div>
               </div>
 
               {/* AI Voice Model Selection */}
