@@ -1098,6 +1098,7 @@ export class ClientSvsEngine {
     noteDurFr.push(initialApFr);
 
     let currentFr = initialApFr;
+    let lastVowel = 'a';
 
     for (let i = 0; i < trackNotes.length; i++) {
       const { start, dur, note } = trackNotes[i];
@@ -1125,10 +1126,24 @@ export class ClientSvsEngine {
       const durFr = Math.max(2, noteEndFr - actualStartFr);
 
       const midi = note.midi ?? note.pitch ?? 60;
-      const lyric = (note.lyric || 'a').trim();
-      const isRest = ['', '-', '~', 'rest', '_'].includes(lyric);
+      let lyric = (note.lyric || '-').trim();
+      if (['', '~', '_'].includes(lyric)) lyric = '-';
+      const isRest = lyric.toLowerCase() === 'rest';
 
-      const phonemes = this.lyricToPhonemes(lyric);
+      let phonemes: string[];
+      if (isRest) {
+        phonemes = ['SP'];
+      } else if (lyric === '-') {
+        if ('-' in this.phonemeToId) {
+          phonemes = ['-'];
+        } else {
+          phonemes = [lastVowel];
+        }
+      } else {
+        phonemes = this.lyricToPhonemes(lyric);
+        if (phonemes.length > 0) lastVowel = phonemes[phonemes.length - 1];
+      }
+
       const ids = phonemes.map(p => this.phonemeToId[p] ?? SP_ID);
       if (ids.length === 0) ids.push(SP_ID);
 
@@ -1521,6 +1536,7 @@ export class ClientSvsEngine {
     const phList: string[] = ["SP"];
     const phDurFrames: number[] = [initialSpFrames];
     const phF0: number[] = [0.0];
+    let lastVowel = 'a';
 
     // Build timeline of phonemes and frequencies
     for (let i = 0; i < trackNotes.length; i++) {
@@ -1538,8 +1554,23 @@ export class ClientSvsEngine {
       }
 
       // Convert word to phonemes
-      const lyric = note.lyric || "doh";
-      const phonemes = this.lyricToPhonemes(lyric);
+      let lyric = (note.lyric || '-').trim();
+      if (['', '~', '_'].includes(lyric)) lyric = '-';
+      const isRest = lyric.toLowerCase() === 'rest';
+
+      let phonemes: string[];
+      if (isRest) {
+        phonemes = ['SP'];
+      } else if (lyric === '-') {
+        if ('-' in this.phonemeToId) {
+          phonemes = ['-'];
+        } else {
+          phonemes = [lastVowel];
+        }
+      } else {
+        phonemes = this.lyricToPhonemes(lyric);
+        if (phonemes.length > 0) lastVowel = phonemes[phonemes.length - 1];
+      }
       
       const actualStartFr = Math.max(phDurFrames.reduce((a, b) => a + b, 0), noteStartFr);
       let noteFrames = Math.max(2, noteEndFr - actualStartFr);
