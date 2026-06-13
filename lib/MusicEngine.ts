@@ -9,8 +9,8 @@ export class MusicEngine {
   private trackSamplers: Map<string, Tone.Sampler> = new Map();
   private trackChannels: Map<string, Tone.Channel> = new Map();
   private trackMeters: Map<string, Tone.Meter> = new Map();
-  private trackVocalLayers: Map<string, Tone.GrainPlayer[]> = new Map();
-  private trackVocalStems: Map<string, Tone.GrainPlayer[]> = new Map();
+  private trackVocalLayers: Map<string, Tone.Player[]> = new Map();
+  private trackVocalStems: Map<string, Tone.Player[]> = new Map();
   private trackActiveStem: Map<string, number | null> = new Map();
   private trackVocalRenderBpm: Map<string, number> = new Map();
   private trackModes: Map<string, 'instrument' | 'vocal'> = new Map();
@@ -89,7 +89,7 @@ export class MusicEngine {
       if (!this.loopActive) return;
       
       const songTime = startSec - this.countInDuration;
-      const allPlayers: Tone.GrainPlayer[] = [];
+      const allPlayers: Tone.Player[] = [];
       this.trackVocalLayers.forEach(players => allPlayers.push(...players));
       this.trackVocalStems.forEach(players => allPlayers.push(...players.filter(Boolean)));
       
@@ -442,6 +442,7 @@ export class MusicEngine {
           });
 
           let prevNoteStartTime = currentTime;
+          let graceOffset = 0;
 
           Array.from(measure.children).forEach((child) => {
             if (child.tagName === "backup") {
@@ -459,7 +460,13 @@ export class MusicEngine {
               const staff = parseInt(child.querySelector("staff")?.textContent || "1");
               const voice = parseInt(child.querySelector("voice")?.textContent || "1");
 
-              const startTimeVal = isChord ? prevNoteStartTime : currentTime;
+              let startTimeVal = isChord ? prevNoteStartTime : currentTime;
+              if (isGrace) {
+                graceOffset += 0.005;
+                startTimeVal = Math.max(0, currentTime - 0.05 + graceOffset);
+              } else if (!isChord) {
+                graceOffset = 0;
+              }
 
               const currentTrackId = `${partId}-S${staff}`;
               if (!partNames[currentTrackId]) {
@@ -753,10 +760,8 @@ export class MusicEngine {
     // 1. Load Main Mix Player
     if (audioUrl) {
       loadPromises.push(new Promise<void>((resolve) => {
-        const player = new Tone.GrainPlayer({
+        const player = new Tone.Player({
           url: audioUrl,
-          overlap: 0.01,
-          grainSize: 0.05,
           onload: () => {
             if (myGeneration === this._vocalGeneration) {
               const players = this.trackVocalLayers.get(trackId) || [];
@@ -778,14 +783,12 @@ export class MusicEngine {
     }
 
     // 2. Load Stems Players
-    const loadedStems: (Tone.GrainPlayer | null)[] = [];
+    const loadedStems: (Tone.Player | null)[] = [];
     if (stemUrls && stemUrls.length > 0) {
       stemUrls.forEach((url, index) => {
         loadPromises.push(new Promise<void>((resolve) => {
-          const player = new Tone.GrainPlayer({
+          const player = new Tone.Player({
             url: url,
-            overlap: 0.01,
-            grainSize: 0.05,
             onload: () => {
               if (myGeneration === this._vocalGeneration) {
                 loadedStems[index] = player;
@@ -817,7 +820,7 @@ export class MusicEngine {
     }
 
     if (loadedStems.length > 0) {
-      this.trackVocalStems.set(trackId, loadedStems.filter(Boolean) as Tone.GrainPlayer[]);
+      this.trackVocalStems.set(trackId, loadedStems.filter(Boolean) as Tone.Player[]);
     }
 
     this.trackModes.set(trackId, 'vocal');
@@ -1135,7 +1138,7 @@ public setVocalTranspose(trackId: string, diffSemitones: number) {
 
     const currentBpm = Tone.Transport.bpm.value;
 
-    const processPlayers = (players: Tone.GrainPlayer[], trackId: string) => {
+    const processPlayers = (players: Tone.Player[], trackId: string) => {
       const diffSemitones = this.vocalPitchShiftSemitones.get(trackId) || 0;
       players.forEach((player) => {
         if (!player || !player.buffer || !player.buffer.loaded) return;
@@ -1146,16 +1149,9 @@ public setVocalTranspose(trackId: string, diffSemitones: number) {
         const ratio = currentBpm / renderBpm;
         const duration = player.buffer.duration;
         const offsetInAudio = Math.max(0, songTime * ratio);
-
         if (offsetInAudio >= duration) return;
 
-        if (typeof player.playbackRate === 'number') {
-          player.playbackRate = ratio;
-        } else {
-          (player.playbackRate as any).value = ratio;
-        }
-        
-        player.detune = diffSemitones * 100;
+        player.playbackRate = ratio * Math.pow(2, diffSemitones / 12);
 
         if (transportState === 'started') {
           if (songTime < 0) {

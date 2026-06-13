@@ -1133,8 +1133,7 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
         barLineWidth: barlineThickness,
         staffLineWidth: stafflineThickness,
         svgViewBox: true,
-        breaks: 'auto',
-        ignoreLayout: true,
+        breaks: 'auto'
       });
 
       // Yield before Verovio parse (heavy WASM call)
@@ -1492,20 +1491,27 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
 
   // Automatically re-build coordmap when the container dimensions change (e.g. after SVG layouts finish, orientation rotates, or user scales)
   const lastSizeRef = useRef({ width: 0, height: 0 });
+  const coordMapTimerRef = useRef<any>(null);
   useEffect(() => {
     if (!containerRef.current) return;
     const observer = new ResizeObserver(entries => {
       for (const entry of entries) {
         const { width, height } = entry.contentRect;
-        if (Math.abs(width - lastSizeRef.current.width) > 0.5 || Math.abs(height - lastSizeRef.current.height) > 0.5) {
+        if (Math.abs(width - lastSizeRef.current.width) > 5 || Math.abs(height - lastSizeRef.current.height) > 5) {
           lastSizeRef.current = { width, height };
           console.log('[ProScoreEditor] 📐 Container size changed, rebuilding coordmap:', width, 'x', height);
-          createCoordMap();
+          if (coordMapTimerRef.current) clearTimeout(coordMapTimerRef.current);
+          coordMapTimerRef.current = setTimeout(() => {
+            createCoordMap();
+          }, 300);
         }
       }
     });
     observer.observe(containerRef.current);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (coordMapTimerRef.current) clearTimeout(coordMapTimerRef.current);
+    };
   }, [createCoordMap]);
 
 
@@ -1638,6 +1644,35 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
     }
   }, [xmlData, svgPages]);
 
+  const handleScoreClick = (e: React.MouseEvent<HTMLDivElement>, pageIndex: number) => {
+    if (!barMapsRef.current || barMapsRef.current.length === 0) return;
+    
+    const rect = e.currentTarget.getBoundingClientRect();
+    const relX = (e.clientX - rect.left) / rect.width;
+    const relY = (e.clientY - rect.top) / rect.height;
+
+    const pageMeasures = barMapsRef.current.filter(m => m.pageIndex === pageIndex);
+    if (pageMeasures.length === 0) return;
+
+    let closestMeasure = pageMeasures[0];
+    let minDist = Infinity;
+
+    for (const m of pageMeasures) {
+      const cx = m.startRelX + (m.endRelX - m.startRelX) / 2;
+      const cy = m.y + m.height / 2;
+      const dist = Math.pow(cx - relX, 2) + Math.pow((cy - relY) * 5, 2);
+      if (dist < minDist) {
+        minDist = dist;
+        closestMeasure = m;
+      }
+    }
+
+    if (closestMeasure && musicEngine) {
+      musicEngine.setTransportSeconds(closestMeasure.timestampStart);
+    }
+  };
+
+
   return (
     <div className="w-full h-full flex flex-col overflow-hidden relative no-print items-center bg-[#050507]">
       <style>{`
@@ -1739,7 +1774,8 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
             <div
               data-page-index={i}
               key={i}
-              className={`page-container relative group/page bg-white mb-8 shrink-0
+              onMouseDown={(e) => handleScoreClick(e, i)}
+              className={`page-container cursor-pointer relative group/page bg-white mb-8 shrink-0
                 ${showBorders ? 'shadow-[0_20px_60px_rgba(0,0,0,0.8)] border border-white/10' : ''}
                 ${isPreviewMode && i > 0 ? 'filter blur-xl grayscale opacity-50' : ''}`}
               style={{
