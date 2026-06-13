@@ -451,7 +451,7 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
 
         try {
             // @ts-ignore
-            const apiKey = process.env.GEMINI_API_KEY || "";
+            const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "";
             if (!apiKey) throw new Error('System: API Key missing');
 
             const appState = typeof window !== 'undefined' && window.NimoBrain 
@@ -524,7 +524,7 @@ Supported Actions:
 You must output valid JSON matching the schema. If no system controls are requested, return an empty array for actions.`;
 
             // Direct API call
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`;
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
             const res = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },

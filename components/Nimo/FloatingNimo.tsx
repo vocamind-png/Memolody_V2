@@ -253,7 +253,7 @@ export const FloatingNimoContent: React.FC<Props> = ({
         }
 
         try {
-            const key = process.env.GEMINI_API_KEY || '';
+            const key = import.meta.env.VITE_GEMINI_API_KEY || '';
             if (!key) throw new Error('System: API Key missing');
 
             const isMale = voiceType === 'teen_boy' || voiceType === 'adult_man';
@@ -368,7 +368,7 @@ You must output valid JSON matching the schema. If no actions are needed, return
             });
 
             const res = await fetch(
-                `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${key}`,
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`,
                 {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
