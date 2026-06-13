@@ -1099,6 +1099,7 @@ export class ClientSvsEngine {
 
     let currentFr = initialApFr;
     let lastVowel = 'a';
+    if (!this.phonemeToId['a']) lastVowel = 'aa' in this.phonemeToId ? 'aa' : (Object.keys(this.phonemeToId).find(k => k !== 'SP' && k !== 'AP') || 'a');
 
     for (let i = 0; i < trackNotes.length; i++) {
       const { start, dur, note } = trackNotes[i];
@@ -1134,11 +1135,7 @@ export class ClientSvsEngine {
       if (isRest) {
         phonemes = ['SP'];
       } else if (lyric === '-') {
-        if ('-' in this.phonemeToId) {
-          phonemes = ['-'];
-        } else {
-          phonemes = [lastVowel];
-        }
+        phonemes = [lastVowel]; // Always use the previous vowel for slurs
       } else {
         phonemes = this.lyricToPhonemes(lyric);
         if (phonemes.length > 0) lastVowel = phonemes[phonemes.length - 1];
@@ -1537,6 +1534,7 @@ export class ClientSvsEngine {
     const phDurFrames: number[] = [initialSpFrames];
     const phF0: number[] = [0.0];
     let lastVowel = 'a';
+    if (!this.phonemeToId['a']) lastVowel = 'aa' in this.phonemeToId ? 'aa' : (Object.keys(this.phonemeToId).find(k => k !== 'SP' && k !== 'AP') || 'a');
 
     // Build timeline of phonemes and frequencies
     for (let i = 0; i < trackNotes.length; i++) {
@@ -1562,11 +1560,7 @@ export class ClientSvsEngine {
       if (isRest) {
         phonemes = ['SP'];
       } else if (lyric === '-') {
-        if ('-' in this.phonemeToId) {
-          phonemes = ['-'];
-        } else {
-          phonemes = [lastVowel];
-        }
+        phonemes = [lastVowel]; // Always use the previous vowel for slurs
       } else {
         phonemes = this.lyricToPhonemes(lyric);
         if (phonemes.length > 0) lastVowel = phonemes[phonemes.length - 1];
