@@ -774,7 +774,7 @@ class VocalidoRenderService {
       let stemBlobs: Blob[] = [];
       let polyStemUrls: string[] = [];
 
-      if (svsEngine === 'browser-ai') {
+      if (activeSvsEngine === 'browser-ai') {
         if (!selectedVoice?.model_files) {
           throw new Error(`The selected voice "${selectedVoice?.name || 'Unknown'}" does not support browser-side SVS rendering.`);
         }
