@@ -1,4 +1,5 @@
 import * as Tone from 'tone';
+import { Soundfont } from 'smplr';
 import { SoundBankSettings } from '../types';
 import { AudioBlobCache } from '../../../lib/AudioBlobCache';
 
@@ -46,73 +47,6 @@ export class SoundBankEngine {
                 return;
             }
 
-            const nameL = trackName.toLowerCase();
-            const instrument = settings?.instrument || 'HD Grand Piano';
-            const isOrchestra = nameL.includes('orchestr') || nameL.includes('string') || instrument.includes('String');
-            const isSynth = instrument.includes('Wave') || instrument.includes('Pluck');
-
-            const isBass = instrument.toLowerCase().includes('bass');
-            const isDrums = instrument.toLowerCase().includes('drum');
-
-            if (isDrums) {
-                // A very basic drum kit using Tone.PolySynth and NoiseSynth
-                // For simplicity, we just use a MembraneSynth for kicks/toms and MetalSynth for hats
-                const drumSynth = new Tone.PolySynth(Tone.MembraneSynth, {
-                    pitchDecay: 0.05,
-                    octaves: 4,
-                    oscillator: { type: 'sine' },
-                    envelope: { attack: 0.001, decay: 0.4, sustain: 0.01, release: 1.4, attackCurve: 'exponential' }
-                });
-
-                const channel = new Tone.Channel(0, 0).connect(masterBus);
-                const meter = new Tone.Meter().connect(channel);
-                drumSynth.connect(channel);
-
-                trackSamplers.set(trackId, drumSynth as any);
-                trackChannels.set(trackId, channel);
-                trackMeters.set(trackId, meter);
-                resolve();
-                return;
-            }
-
-            if (isBass) {
-                const bassSynth = new Tone.PolySynth(Tone.FMSynth, {
-                    harmonicity: 1.5,
-                    modulationIndex: 2,
-                    oscillator: { type: 'triangle' },
-                    envelope: { attack: 0.01, decay: 0.2, sustain: 0.8, release: 1.5 },
-                    modulation: { type: 'sine' },
-                    modulationEnvelope: { attack: 0.01, decay: 0.2, sustain: 0.5, release: 1.5 }
-                });
-
-                const channel = new Tone.Channel(0, 0).connect(masterBus);
-                const meter = new Tone.Meter().connect(channel);
-                bassSynth.connect(channel);
-
-                trackSamplers.set(trackId, bassSynth as any);
-                trackChannels.set(trackId, channel);
-                trackMeters.set(trackId, meter);
-                resolve();
-                return;
-            }
-
-            if (isOrchestra || isSynth) {
-                const synthType = isSynth ? (instrument.includes('Pluck') ? "square" : "sine") : "sine";
-                const polySynth = new Tone.PolySynth(Tone.Synth, {
-                    oscillator: { type: synthType },
-                    envelope: { attack: 0.1, decay: 0.2, sustain: 0.8, release: 1.5 }
-                });
-
-                const channel = new Tone.Channel(0, 0).connect(masterBus);
-                const meter = new Tone.Meter().connect(channel);
-                polySynth.connect(channel);
-
-                trackSamplers.set(trackId, polySynth as any);
-                trackChannels.set(trackId, channel);
-                trackMeters.set(trackId, meter);
-                resolve();
-                return;
-            }
 
             // Mobile Optimization: Bypass expensive convolution reverb on mobile
             const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);

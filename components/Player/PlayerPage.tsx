@@ -1760,6 +1760,8 @@ const PlayerPage: React.FC<{
   useEffect(() => {
     return () => {
       nimoBrain.updateState('isPlaying', false);
+      musicEngine.stopAndClear();
+      setIsPlaying(false);
     };
   }, []);
 

@@ -269,9 +269,10 @@ export const FloatingNimoContent: React.FC<Props> = ({
 
             // System instructions
             const sys = preferredLanguage === 'th'
-                ? `คุณคือ Nimo AI ผู้ช่วยอัจฉริยะแบบ Agentic AI ของแอพพลิเคชัน Memolody V2
-คุณทำหน้าที่ตอบคำถาม อธิบายวิธีใช้งาน แก้ไขปัญหาการใช้งาน และจัดการตนเองภายในแอพพลิเคชันผ่านเครื่องมือและปุ่มต่างๆ
-คุณมีความสามารถในการควบคุม UI เล่นเพลง ปรับระดับเสียง ปรับความเร็ว เปิด/ปิด Mixer, Metronome, Transposition, และ Favorite
+                ? `คุณคือ Nimo ผู้ช่วย Agentic AI สุดอัจฉริยะของแอพพลิเคชัน Memolody V2 (มีความฉลาดระดับเดียวกับ Gemini 1.5 Pro)
+คุณมีบุคลิกที่เป็นธรรมชาติ เป็นมิตร และมีความรู้ลึกซึ้งเหมือนมนุษย์จริงๆ คุณตอบคำถามได้ลื่นไหล ไม่แข็งกระด้างเหมือนหุ่นยนต์
+(ห้ามตอบเป็นข้อๆ หรือมีหมายเลขกำกับ เช่น 1. 2. 3. ถ้าไม่จำเป็น ให้ตอบแบบสนทนาปกติ)
+คุณสามารถตอบคำถาม อธิบายวิธีใช้งาน แก้ไขปัญหา และจัดการแอพพลิเคชันผ่านเครื่องมือต่างๆ ได้
 
 สถานะปัจจุบันของแอพพลิเคชัน (Application State):
 ${appStateStr}
@@ -305,10 +306,9 @@ ${appStateStr}
 14. 'toggle_favorite': กดเพิ่มหรือเอาเพลงปัจจุบันออกจากรายการโปรด (Favorite) (ไม่มี params)
 15. 'take_screenshot': ถ่ายรูปภาพหน้าจอปัจจุบันของแอพพลิเคชันเพื่อตรวจสอบความถูกต้องหรือแก้ไขปัญหาให้ผู้ใช้ (ไม่มี params)
 
-การตอบกลับ:
-คุณต้องตอบกลับเป็น JSON ที่สอดคล้องกับ JSON Schema ที่กำหนดเท่านั้น โดยมีสองฟิลด์:
-- 'reply': ข้อความตอบกลับที่กระชับและเป็นมิตรเพื่อแสดงผลและใช้พูดออกเสียงผ่าน TTS (ภาษาไทยลงท้ายด้วย ${suffix} เสมอ) อธิบายการช่วยเหลือผู้ใช้งานอย่างละเอียดและเป็นลำดับขั้นตอน
-- 'actions': รายการคำสั่ง (Array of action objects) ที่ต้องการรันตามความต้องการของผู้ใช้ ถ้าไม่มีให้ใช้ []`
+ข้อสำคัญเกี่ยวกับการตอบกลับ (JSON):
+- 'reply': เป็นข้อความที่ใช้พูดและแสดงผล ต้องมีความเป็นมนุษย์ เป็นมิตร (ลงท้ายด้วย ${suffix} เสมอ) และ **ห้ามขึ้นบรรทัดใหม่ด้วย \n หรือใช้เครื่องหมาย Bullet Point** ให้เขียนเป็นพารากราฟติดกัน
+- 'actions': รายการคำสั่งที่จะรันตามความต้องการของผู้ใช้ ถ้าไม่มีให้ใช้ []`
                 : `You are Nimo, an Agentic AI assistant and central brain for Memolody V2 app.
 You answer usage questions, troubleshoot issues, and manage the app UI (playback, settings, navigation, volume, tempo, mixer, metronome, transpose, favorites) via actions.
 You also have vision capabilities and can view screenshots of the app to diagnose issues or guide the user.
@@ -445,7 +445,18 @@ You must output valid JSON matching the schema. If no actions are needed, return
                 window.speechSynthesis.cancel();
                 setSpeaking(true);
                 const u = new SpeechSynthesisUtterance(preferredLanguage === 'th' ? fixPronunciation(cleanReply) : cleanReply);
-                u.lang = /[\\u0E00-\\u0E7F]/.test(cleanReply) ? 'th-TH' : 'en-US';
+                const isThai = /[\\u0E00-\\u0E7F]/.test(cleanReply);
+                u.lang = isThai ? 'th-TH' : 'en-US';
+                
+                // Explicitly find a Thai voice if needed
+                if (isThai) {
+                    const voices = window.speechSynthesis.getVoices();
+                    const thVoice = voices.find(v => v.lang === 'th-TH' || v.lang.includes('th') || v.lang.includes('TH'));
+                    if (thVoice) {
+                        u.voice = thVoice;
+                    }
+                }
+                
                 u.rate = 1.05;
                 u.onend = () => {
                     setSpeaking(false);

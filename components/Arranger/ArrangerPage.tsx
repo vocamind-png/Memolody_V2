@@ -1,5 +1,5 @@
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import { Blocks, Music2, Scissors, Repeat, Trash2, PlusCircle, Search, Settings2, ArrowLeft, Wand2, Volume2, VolumeX, Mic2, MessageSquare, ZoomIn, ZoomOut, Undo2, Redo2, ClipboardPaste, Copy, Eraser, MousePointerClick, Wrench } from 'lucide-react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { Blocks, Loader2, Music2, Scissors, Repeat, Trash2, PlusCircle, Search, Settings2, ArrowLeft, Wand2, Volume2, VolumeX, Mic2, MessageSquare, ZoomIn, ZoomOut, Undo2, Redo2, ClipboardPaste, Copy, Eraser, MousePointerClick, Wrench, Download, BookOpen, Headphones } from 'lucide-react';
 import { Song, TrackState } from '../../types';
 import { musicEngine } from '../../lib/MusicEngine';
 import { SymbolicArranger, ArrangementConfig } from '../../lib/SymbolicArranger';
@@ -27,7 +27,45 @@ interface ArrangerPageProps {
 
 const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, setTracks, hideHeader, onTrackDoubleClick, visualType = 'pianoroll' }) => {
   const localSong = useMemo(() => song || { title: 'Untitled Composition', artist: 'Nimo', bpm: 120, key: 'C', duration: 180 } as any, [song]);
-  const parsedData = useMemo(() => musicEngine.parseMusicXml(musicXml || ''), [musicXml]);
+  const [localXml, setLocalXml] = useState(musicXml || '');
+  const parsedData = useMemo(() => musicEngine.parseMusicXml(localXml), [localXml]);
+  
+  useEffect(() => {
+    if (musicXml) setLocalXml(musicXml);
+  }, [musicXml]);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleExportStem = () => {
+    if (!localXml) {
+      alert("No notes to export");
+      return;
+    }
+    const blob = new Blob([localXml], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'melody-stem.musicxml';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleAddSong = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      const xml = ev.target?.result as string;
+      try {
+        setLocalXml(xml);
+        alert("Song loaded successfully!");
+      } catch (err) {
+        alert("Failed to load song: " + err);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
   
   // Calculate total measures
   const totalBeats = parsedData.notes.reduce((max, note) => Math.max(max, (note.startTime || 0) + (note.duration || 0)), 0);
@@ -57,18 +95,31 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
   const [copiedSections, setCopiedSections] = useState<SongSection[]>([]);
   const [hasSavedDragHistory, setHasSavedDragHistory] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [arrangeStyle, setArrangeStyle] = useState('pop');
+  const [arrangeStyle, setArrangeStyle] = useState('auto');
+  const [arrangeBpm, setArrangeBpm] = useState(localSong.bpm);
+  const [isSimpleMode, setIsSimpleMode] = useState(true);
+  
+  // UI Toggles
+  const [localVisualType, setLocalVisualType] = useState<'score' | 'pianoroll'>(visualType);
+  const [scrollMode, setScrollMode] = useState<'page' | 'continuous'>('continuous');
+
+  const [aiEngine, setAiEngine] = useState('auto');
   const [arrangeKey, setArrangeKey] = useState(song?.key || 'C');
-  const [arrangeBpm, setArrangeBpm] = useState(song?.tempo || 120);
   const [chordSource, setChordSource] = useState<'ai' | 'original'>('ai');
   const [aiPrompt, setAiPrompt] = useState('');
-  const [isPromptModalOpen, setIsPromptModalOpen] = useState(false);
+  const [isAIStudioModalOpen, setIsAIStudioModalOpen] = useState(false);
+  const [aiStudioTab, setAiStudioTab] = useState<'arrange' | 'lyria' | 'lyrics'>('arrange');
   const [lyricsPrompt, setLyricsPrompt] = useState('');
-  const [isLyricsModalOpen, setIsLyricsModalOpen] = useState(false);
+
   const [zoomLevel, setZoomLevel] = useState(1);
-  const [isSimpleMode, setIsSimpleMode] = useState(true);
 
   const pixelsPerMeasure = 80 * zoomLevel; // Dynamic pixels per measure based on zoom
+
+  // Ref to hold current scrollMode without triggering re-renders of the effect
+  const scrollModeRef = useRef(scrollMode);
+  useEffect(() => {
+    scrollModeRef.current = scrollMode;
+  }, [scrollMode]);
 
   // Animate Playhead using DOM manipulation for performance
   useEffect(() => {
@@ -87,12 +138,22 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
         // Auto-scroll the container to keep playhead in view
         const scrollContainer = document.getElementById('arranger-scroll-container');
         if (scrollContainer) {
-          // Keep playhead roughly in the middle of the view (offset by 100px for left sticky header)
-          const targetScroll = x - (scrollContainer.clientWidth / 2) + 100;
-          if (targetScroll > 0) {
-            scrollContainer.scrollLeft = targetScroll;
+          if (scrollModeRef.current === 'continuous') {
+            // SCROLL MODE: Keep playhead fixed in the middle (timeline scrolls)
+            const targetScroll = x - (scrollContainer.clientWidth / 2) + 100;
+            scrollContainer.scrollLeft = Math.max(0, targetScroll);
           } else {
-            scrollContainer.scrollLeft = 0;
+            // PAGE MODE / STATIC: Playhead moves. When it reaches 90% of view, snap timeline to next page
+            const containerScrollLeft = scrollContainer.scrollLeft;
+            const containerWidth = scrollContainer.clientWidth;
+            const viewRightEdge = containerScrollLeft + containerWidth;
+            
+            // If playhead goes beyond 90% of the visible container
+            if (x + 100 > viewRightEdge - (containerWidth * 0.1)) {
+              scrollContainer.scrollLeft = x + 100 - (containerWidth * 0.1);
+            } else if (x + 100 < containerScrollLeft) {
+              scrollContainer.scrollLeft = Math.max(0, x + 100 - (containerWidth * 0.1));
+            }
           }
         }
       }
@@ -102,32 +163,138 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
     return () => cancelAnimationFrame(rafId);
   }, [pixelsPerMeasure, beatsPerMeasure, parsedData.metadata?.bpm]);
 
+  const handleLyriaRender = async () => {
+    setIsGenerating(true);
+    try {
+      // @ts-ignore
+      const abcData = musicEngine.musicXmlToAbc(localXml);
+      // Logic placeholder for actual Lyria render endpoint
+      alert("Rendering with Lyria...");
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleInstrumentoRender = async (track: TrackState, index: number) => {
+    setIsGenerating(true);
+    try {
+      // Find notes for this track
+      const trackNotes = (track as any)._generatedNotes || parsedData.notes.filter(n => n.trackId === track.id || (!n.trackId && index === 0));
+      if (!trackNotes.length) {
+        alert("No notes in this track to render.");
+        return;
+      }
+      
+      const { NeuralRenderService } = await import('../../lib/NeuralRenderService');
+      let audioUrl;
+      if (track.instrument === 'vocal' || track.mode === 'vocal') {
+        audioUrl = await NeuralRenderService.renderTrack({ ...track, mode: 'vocal' }, trackNotes);
+      } else {
+        audioUrl = await NeuralRenderService.renderInstrumento(track, trackNotes);
+      }
+      
+      // Successfully generated. Update the track to use this audio URL and switch its mode to audio/vocal
+      const newTracks = [...tracks];
+      newTracks[index] = { ...track, mode: 'vocal', instrument: track.instrument };
+      setTracks(newTracks);
+      
+      // Load into MusicEngine as an audio stem
+      // @ts-ignore
+      await musicEngine.addVocalLayer(track.id, audioUrl);
+      
+    } catch (e: any) {
+      alert(`Instrumento Render Failed: ${e.message}`);
+      console.error(e);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
   const handleGenerate = async () => {
     setIsGenerating(true);
     try {
-      const config = {
+      let config = {
         key: arrangeKey,
         bpm: arrangeBpm,
         timeSignature: parsedData.timeSignature || { beats: 4, beatType: 4 },
         style: arrangeStyle,
         chordSource: chordSource,
         prompt: aiPrompt,
-        sections: sections
+        sections: sections,
+        instruments: undefined,
+        is4PartChorus: undefined,
+        chordProgression: undefined
       } as any;
+      
+      const baseUrl = '/vocalido';
+
+      if (chordSource === 'ai' && aiPrompt.trim()) {
+        try {
+          const res = await fetch(`${baseUrl}/v1/analyze_arranger_brief`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              prompt: aiPrompt,
+              key: arrangeKey,
+              bpm: arrangeBpm,
+              time_signature: `${config.timeSignature.beats}/${config.timeSignature.beatType}`
+            })
+          });
+          const data = await res.json();
+          if (data && !data.error) {
+            console.log("AI Arranger Parsed:", data);
+            config.style = data.style || arrangeStyle;
+            if (data.tempo) {
+              config.bpm = data.tempo;
+              setArrangeBpm(data.tempo);
+            }
+            config.instruments = data.instruments;
+            config.is4PartChorus = data.is_4_part_chorus;
+            config.chordProgression = data.chord_progression;
+          }
+        } catch (e) {
+          console.error("Failed to analyze brief with backend:", e);
+        }
+      }
       
       // Get lead melody
       const leadMelody = parsedData.notes.filter(n => n.trackId === tracks[0]?.id || (!n.trackId && tracks.length <= 1));
       
-      // Generate new tracks using local symbolic engine
-      const newTracks = await SymbolicArranger.generateArrangement(leadMelody, config);
+      // Generate new tracks using Python Multi-Engine AI Router
+      const res = await fetch(`${baseUrl}/api/arrange`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+              engine: aiEngine,
+              leadMelody: leadMelody,
+              prompt: aiPrompt,
+              style: arrangeStyle,
+              key: arrangeKey,
+              bpm: arrangeBpm,
+              sections: sections,
+              config: {
+                is_simple_mode: isSimpleMode
+              }
+          })
+      });
+      const resData = await res.json();
+      if (!resData.success) {
+          throw new Error(resData.message || "Failed to generate arrangement");
+      }
+      const newTracks = resData.data.tracks || [];
       
-      // Update state
-      const leadTrack = tracks.length > 0 ? tracks[0] : { id: 'track-1', name: 'Melody', instrument: 'piano', mode: 'vocal', volume: 0, pan: 0, isMuted: false, isSolo: false } as any;
-      const updatedTracks = [leadTrack, ...newTracks];
+      // Filter out old AI tracks, keep user tracks
+      const existingTracks = tracks.filter(t => !t.name.startsWith('AI '));
+      const updatedTracks = [...existingTracks, ...newTracks];
       setTracks(updatedTracks);
       
       // Load into MusicEngine so it actually plays
-      let allNotes = [...leadMelody];
+      // Keep notes that belong to user tracks
+      const existingTrackIds = new Set(existingTracks.map(t => t.id));
+      let allNotes = parsedData.notes.filter(n => !n.trackId || existingTrackIds.has(n.trackId));
+      
       newTracks.forEach(t => {
         if ((t as any)._generatedNotes) {
           allNotes = allNotes.concat((t as any)._generatedNotes);
@@ -139,16 +306,17 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
         console.error('Failed to load generated song into MusicEngine:', err);
       }
       
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed to generate arrangement:', e);
-      alert('Error generating arrangement.');
-    } finally {
       setIsGenerating(false);
+      // Use setTimeout to allow React to update the state and render the UI before the alert blocks the thread
+      setTimeout(() => {
+        alert(`Error: ${e.message || 'Failed to generate arrangement'}`);
+      }, 100);
     }
   };
 
   const handleGenerateLyrics = async () => {
-    setIsLyricsModalOpen(false);
     setIsGenerating(true);
     try {
       // Simulate AI generating lyrics
@@ -427,7 +595,8 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
   }, [dragState, pixelsPerMeasure, totalMeasures, sections, hasSavedDragHistory, saveHistory]);
 
   return (
-    <div className="h-full flex flex-col bg-[#050507] overflow-hidden relative">
+    <div className="relative flex flex-col h-full bg-[#0c0c0e] overflow-hidden group/arranger">
+      <input type="file" ref={fileInputRef} className="hidden" accept=".xml,.musicxml,.mxl,.mid,.midi" onChange={handleAddSong} />
       <style>{`
         .track-lane {
           background: rgba(12, 12, 14, 0.4);
@@ -482,10 +651,20 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
             </div>
           </div>
           <div className="flex items-center gap-2">
-              <button className="px-3 py-2 rounded-full text-[9px] font-black uppercase tracking-widest bg-white/5 text-zinc-500 hover:text-white"><Search size={14}/></button>
-              <button className="px-3 py-2 rounded-full text-[9px] font-black uppercase tracking-widest bg-white/5 text-zinc-500 hover:text-white"><Settings2 size={14}/></button>
+              <div className="relative group">
+                <button className="px-3 py-2 rounded-full text-[9px] font-black uppercase tracking-widest bg-white/5 text-emerald-400 hover:text-white hover:bg-emerald-500/20 border border-emerald-500/30 transition-all flex items-center gap-2">
+                  <Download size={14}/> EXPORT
+                </button>
+                <div className="absolute top-full right-0 mt-2 w-32 bg-[#111] border border-white/10 rounded-xl overflow-hidden opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[9000] shadow-2xl">
+                  <button onClick={handleExportStem} className="w-full text-left px-4 py-2 text-[10px] font-black uppercase text-zinc-400 hover:text-white hover:bg-white/10">Export Stem (Notes)</button>
+                  <button onClick={handleExportStem} className="w-full text-left px-4 py-2 text-[10px] font-black uppercase text-zinc-400 hover:text-white hover:bg-white/10">Export Selected Tracks (MIDI)</button>
+                </div>
+              </div>
+              <button onClick={() => fileInputRef.current?.click()} className="px-3 py-2 rounded-full text-[9px] font-black uppercase tracking-widest bg-purple-500/20 text-purple-400 border border-purple-500/30 hover:bg-purple-500/40 hover:text-white transition-all flex items-center gap-2">
+                  <PlusCircle size={14}/> ADD MY SONG
+              </button>
               <button onClick={addNewSection} className="px-3 py-2 rounded-full text-[9px] font-black uppercase tracking-widest bg-cyan-600 text-white shadow-lg flex items-center gap-2">
-                  <PlusCircle size={14}/> ADD SECTION
+                  <Blocks size={14}/> ADD SECTION
               </button>
           </div>
         </header>
@@ -518,6 +697,24 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
                     PRO
                   </button>
                 </div>
+                
+                {/* View Type Toggle (Removed per request) */}
+
+                {/* Scroll Mode Toggle */}
+                <div className="flex bg-[#111] p-1 rounded-xl border border-white/10 shrink-0 ml-1">
+                  <button 
+                    onClick={() => setScrollMode('page')} 
+                    className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${scrollMode === 'page' ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-white'}`}
+                  >
+                    STATIC
+                  </button>
+                  <button 
+                    onClick={() => setScrollMode('continuous')} 
+                    className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${scrollMode === 'continuous' ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-white'}`}
+                  >
+                    SCROLL
+                  </button>
+                </div>
 
               </div>
 
@@ -533,7 +730,7 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
                   </>
                 )}
                 <button 
-                  onClick={handleGenerate} 
+                  onClick={() => setIsAIStudioModalOpen(true)} 
                   disabled={isGenerating}
                   className={`relative px-6 py-2.5 rounded-full text-[12px] font-black uppercase tracking-widest flex items-center gap-2 transition-all overflow-hidden ${
                     isGenerating 
@@ -551,9 +748,9 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
                   )}
                   <span className="relative z-10 flex items-center gap-2 drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)]">
                     {isGenerating ? (
-                      <><Blocks className="animate-spin" size={16}/> WAIT...</>
+                      <><Loader2 className="animate-spin" size={16}/> ARRANGING...</>
                     ) : (
-                      <><Wand2 size={16} className="text-yellow-100 animate-pulse" /> ARRANGE</>
+                      <><Wand2 size={16} className="text-yellow-100 animate-pulse" /> ✨ AI STUDIO</>
                     )}
                   </span>
                 </button>
@@ -619,27 +816,12 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
                 </div>
               </div>
 
-              {/* AI Prompts */}
+              {/* AI Prompts (Consolidated into AI Studio) */}
               <div className="flex items-center gap-1.5 shrink-0">
-                <button 
-                  onClick={() => setIsPromptModalOpen(true)} 
-                  className="relative group px-2 min-[380px]:px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest bg-zinc-950 border border-emerald-500/40 text-emerald-400 hover:text-emerald-300 hover:border-emerald-400 hover:bg-emerald-950/30 transition-all flex items-center justify-center gap-1 overflow-hidden shadow-[inset_0_0_10px_rgba(16,185,129,0.05)] min-w-[32px]"
-                >
-                  <div className="absolute top-1/2 left-1/2 w-[250%] h-[250%] -translate-x-1/2 -translate-y-1/2 bg-[conic-gradient(from_0deg,transparent_0_150deg,rgba(52,211,153,0.4)_180deg,transparent_210deg)] animate-[spin_4s_linear_infinite] pointer-events-none" />
-                  <MessageSquare size={12} className="relative z-10 drop-shadow-[0_0_5px_rgba(52,211,153,0.6)]" />
-                  <span className="relative z-10 drop-shadow-[0_0_5px_rgba(52,211,153,0.6)] hidden min-[400px]:inline">{aiPrompt ? 'EDIT BRIEF' : 'AI BRIEF'}</span>
-                </button>
-                <button 
-                  onClick={() => setIsLyricsModalOpen(true)} 
-                  className="relative group px-2 min-[380px]:px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest bg-zinc-950 border border-purple-500/40 text-purple-400 hover:text-purple-300 hover:border-purple-400 hover:bg-purple-950/30 transition-all flex items-center justify-center gap-1 overflow-hidden shadow-[inset_0_0_10px_rgba(168,85,247,0.05)] min-w-[32px]"
-                >
-                  <div className="absolute top-1/2 left-1/2 w-[250%] h-[250%] -translate-x-1/2 -translate-y-1/2 bg-[conic-gradient(from_0deg,transparent_0_150deg,rgba(192,132,252,0.4)_180deg,transparent_210deg)] animate-[spin_4s_linear_infinite] pointer-events-none" style={{ animationDelay: '-2s' }} />
-                  <Mic2 size={12} className="relative z-10 drop-shadow-[0_0_5px_rgba(192,132,252,0.6)]" />
-                  <span className="relative z-10 drop-shadow-[0_0_5px_rgba(192,132,252,0.6)] hidden min-[400px]:inline">{lyricsPrompt ? 'LYRICS' : 'AI LYRICS'}</span>
-                </button>
               </div>
 
               <select value={arrangeStyle} onChange={e => setArrangeStyle(e.target.value)} className="bg-zinc-900 border border-white/10 text-white text-[11px] rounded-lg px-2 py-1.5 w-20 outline-none focus:border-emerald-500 shrink-0">
+                <option value="auto">Auto</option>
                 <option value="pop">Pop</option>
                 <option value="jazz">Jazz</option>
                 <option value="rock">Rock</option>
@@ -656,6 +838,13 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
               <select value={chordSource} onChange={e => setChordSource(e.target.value as any)} className="bg-zinc-900 border border-emerald-500/30 text-emerald-400 font-bold text-[11px] rounded-lg px-2 py-1.5 w-24 outline-none shadow-[0_0_10px_rgba(16,185,129,0.1)] shrink-0">
                 <option value="ai">AI Chords</option>
                 <option value="original">Original</option>
+              </select>
+              <select value={aiEngine} onChange={e => setAiEngine(e.target.value)} title="Advanced Engine Settings" className="bg-zinc-900 border border-purple-500/30 text-purple-400 font-bold text-[11px] rounded-lg px-2 py-1.5 w-[110px] outline-none shadow-[0_0_10px_rgba(168,85,247,0.1)] shrink-0">
+                <option value="auto">⚙️ Auto Engine</option>
+                <option value="gemini">⚙️ Gemini LLM</option>
+                <option value="magenta">⚙️ Magenta</option>
+                <option value="symphonynet">⚙️ SymphonyNet</option>
+                <option value="choir">⚙️ Choir (SATB)</option>
               </select>
               <div className="flex items-center gap-0.5 bg-[#0c0c0e] rounded-lg p-0.5 border border-white/10 shrink-0">
                 <button onClick={() => setZoomLevel(z => Math.max(0.5, z - 0.25))} className="w-5 h-5 flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/10 rounded transition-colors"><ZoomOut size={12}/></button>
@@ -696,48 +885,95 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
 
               {/* Track Lanes */}
               <div className="flex-1 relative flex flex-col z-10">
-                {tracks.map((track, index) => (
-                  <div 
-                    key={track.id} 
-                    onDoubleClick={() => onTrackDoubleClick && onTrackDoubleClick(track.id, visualType === 'score' ? 'editor' : 'pianoroll')}
-                    className="track-lane group hover:bg-white/[0.02] flex h-32 border-b border-white/5 transition-colors relative cursor-pointer"
-                  >
-                    {/* Track Header (Sticky Left) */}
-                    <div className="w-[100px] shrink-0 h-full flex flex-col justify-center items-start px-3 border-r border-white/10 bg-[#0c0c0e] sticky left-0 z-[50] shadow-[4px_0_10px_rgba(0,0,0,0.5)]">
-                        <div className="flex flex-col w-full gap-0.5 mb-1.5 overflow-hidden">
-                          <span className="text-white text-[9px] font-black uppercase tracking-wide leading-tight truncate w-full" title={track.name}>{track.name}</span>
-                          <span className="text-zinc-600 text-[8px] font-mono">
-                            {((track as any)._generatedNotes?.length) || parsedData.notes.filter(n => n.trackId === track.id || (!n.trackId && index === 0)).length} notes
-                          </span>
-                        </div>
+                {(() => {
+                  const activeTracksCount = tracks.filter((t, i) => {
+                    const count = ((t as any)._generatedNotes?.length) || parsedData.notes.filter(n => n.trackId === t.id || (!n.trackId && i === 0)).length;
+                    return count > 0;
+                  }).length;
+
+                  return tracks.map((track, index) => {
+                    const trackNoteCount = ((track as any)._generatedNotes?.length) || parsedData.notes.filter(n => n.trackId === track.id || (!n.trackId && index === 0)).length;
+                    const isTrackEmpty = trackNoteCount === 0;
+
+                    return (
+                      <div 
+                        key={track.id} 
+                        onDoubleClick={() => onTrackDoubleClick && onTrackDoubleClick(track.id, visualType === 'score' ? 'editor' : 'pianoroll')}
+                        className="track-lane group hover:bg-white/[0.02] flex h-32 border-b border-white/5 transition-colors relative cursor-pointer"
+                      >
+                        {/* Track Header (Sticky Left) */}
+                        <div className="w-[100px] shrink-0 h-full flex flex-col justify-center items-start px-3 border-r border-white/10 bg-[#0c0c0e] sticky left-0 z-[50] shadow-[4px_0_10px_rgba(0,0,0,0.5)]">
+                            <div className="flex flex-col w-full gap-0.5 mb-1.5 overflow-hidden">
+                              <span className="text-white text-[9px] font-black uppercase tracking-wide leading-tight truncate w-full" title={track.name}>{track.name}</span>
+                              <span className="text-zinc-600 text-[8px] font-mono">
+                                {trackNoteCount} notes
+                              </span>
+                            </div>
                       <div className="flex items-center gap-1.5 w-full mt-1">
                         <select 
                           className="bg-black/50 border border-white/10 text-white text-[9px] rounded px-1 py-0.5 outline-none focus:border-cyan-500 w-[45px] truncate"
-                          value={track.instrument || 'piano'}
+                          value={track.mode === 'vocal' ? 'vocal' : (track.instrument || 'piano')}
                           onClick={(e) => e.stopPropagation()}
                           onChange={(e) => {
                             e.stopPropagation();
+                            const val = e.target.value;
+                            const newMode = val === 'vocal' ? 'vocal' : 'instrument';
                             const newTracks = [...tracks];
-                            newTracks[index] = { ...track, instrument: e.target.value as any, mode: 'instrument' };
+                            newTracks[index] = { ...track, instrument: val as any, mode: newMode };
                             setTracks(newTracks);
                             // Also switch instrument in MusicEngine
-                            musicEngine.switchTrackMode(track.id, track.name, 'instrument', { instrument: e.target.value });
+                            musicEngine.switchTrackMode(track.id, track.name, newMode, { instrument: val });
                           }}
                         >
-                          <option value="piano">Piano</option>
-                          <option value="bass">Bass</option>
-                          <option value="drums">Drums</option>
-                          <option value="guitar">Guitar</option>
-                          <option value="strings">Strings</option>
-                          <option value="synth">Synth</option>
-                          <option value="vocal">Vocal</option>
+                          <optgroup label="Standard (Soundfont)">
+                            <option value="piano">Piano</option>
+                            <option value="bass">Bass</option>
+                            <option value="drums">Drums</option>
+                            <option value="guitar">Guitar</option>
+                            <option value="synth">Synth</option>
+                          </optgroup>
+                          <optgroup label="Instrumento AI (MIDI-DDSP)">
+                            <option value="violin">Violin</option>
+                            <option value="viola">Viola</option>
+                            <option value="cello">Cello</option>
+                            <option value="double bass">Double Bass</option>
+                            <option value="flute">Flute</option>
+                            <option value="oboe">Oboe</option>
+                            <option value="clarinet">Clarinet</option>
+                            <option value="saxophone">Saxophone</option>
+                            <option value="bassoon">Bassoon</option>
+                            <option value="trumpet">Trumpet</option>
+                            <option value="horn">Horn</option>
+                            <option value="trombone">Trombone</option>
+                            <option value="tuba">Tuba</option>
+                          </optgroup>
+                          <optgroup label="Vocals">
+                            <option value="vocal">Vocal</option>
+                          </optgroup>
                         </select>
-                        <button onClick={(e) => { e.stopPropagation(); const t=[...tracks]; t[index].isMuted=!t[index].isMuted; setTracks(t); }} className={`w-5 h-5 rounded flex items-center justify-center text-[10px] font-black leading-none transition-all ${track.isMuted ? 'bg-rose-500 text-white shadow-[0_0_8px_rgba(244,63,94,0.5)]' : 'bg-white/5 text-zinc-500 hover:text-white hover:bg-white/10'}`}>
-                          M
-                        </button>
-                        <button onClick={(e) => { e.stopPropagation(); const t=[...tracks]; t[index].isSolo=!t[index].isSolo; setTracks(t); }} className={`w-5 h-5 rounded flex items-center justify-center text-[10px] font-black leading-none transition-all ${track.isSolo ? 'bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.5)]' : 'bg-white/5 text-zinc-500 hover:text-white hover:bg-white/10'}`}>
-                          S
-                        </button>
+                        {['vocal', 'violin', 'viola', 'cello', 'double bass', 'flute', 'oboe', 'clarinet', 'saxophone', 'bassoon', 'trumpet', 'horn', 'trombone', 'tuba'].includes(track.instrument || '') && (
+                          <button 
+                            onClick={(e) => { 
+                              e.stopPropagation();
+                              handleInstrumentoRender(track, index);
+                            }} 
+                            disabled={isTrackEmpty || isGenerating}
+                            className={`w-5 h-5 rounded flex items-center justify-center text-[10px] transition-all ${isGenerating ? 'opacity-50 cursor-not-allowed' : (track.instrument === 'vocal' ? 'bg-gradient-to-br from-rose-500 to-pink-600 text-white shadow-[0_0_8px_rgba(244,63,94,0.5)]' : 'bg-gradient-to-br from-cyan-500 to-blue-600 text-white shadow-[0_0_8px_rgba(6,182,212,0.5)]') } hover:scale-105`}
+                            title={track.instrument === 'vocal' ? "Render with Vocalido AI" : "Render with Instrumento AI"}
+                          >
+                            <Wand2 size={10} />
+                          </button>
+                        )}
+                        {!isTrackEmpty && (
+                          <button onClick={(e) => { e.stopPropagation(); const t=[...tracks]; t[index].isMuted=!t[index].isMuted; setTracks(t); }} className={`w-5 h-5 rounded flex items-center justify-center text-[10px] font-black leading-none transition-all ${track.isMuted ? 'bg-rose-500 text-white shadow-[0_0_8px_rgba(244,63,94,0.5)]' : 'bg-white/5 text-zinc-500 hover:text-white hover:bg-white/10'}`}>
+                            M
+                          </button>
+                        )}
+                        {!isTrackEmpty && activeTracksCount > 1 && (
+                          <button onClick={(e) => { e.stopPropagation(); const t=[...tracks]; t[index].isSolo=!t[index].isSolo; setTracks(t); }} className={`w-5 h-5 rounded flex items-center justify-center text-[10px] font-black leading-none transition-all ${track.isSolo ? 'bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.5)]' : 'bg-white/5 text-zinc-500 hover:text-white hover:bg-white/10'}`}>
+                            S
+                          </button>
+                        )}
                         <button 
                           onClick={(e) => { 
                             e.stopPropagation(); 
@@ -759,22 +995,27 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
                         notes={(track as any)._generatedNotes || parsedData.notes.filter(n => n.trackId === track.id || (!n.trackId && index === 0))} 
                         width={totalMeasures * pixelsPerMeasure}
                         height={128} // h-32 = 128px
-                        visualType={visualType}
+                        visualType={localVisualType}
                         pixelsPerBeat={pixelsPerMeasure / beatsPerMeasure}
+                        songKey={arrangeKey}
                       />
                       {/* Overlay Measures Grid on top of Visualizer if needed */}
-                      <div className="absolute inset-0 pointer-events-none z-10">
-                        {Array.from({ length: totalMeasures }).map((_, i) => (
-                          <div 
-                            key={`grid-m-${i}`} 
-                            className="measure-line" 
-                            style={{ left: i * pixelsPerMeasure }}
-                          />
-                        ))}
-                      </div>
+                      {localVisualType !== 'score' && (
+                        <div className="absolute inset-0 pointer-events-none z-10">
+                          {Array.from({ length: totalMeasures }).map((_, i) => (
+                            <div 
+                              key={`grid-m-${i}`} 
+                              className="measure-line" 
+                              style={{ left: i * pixelsPerMeasure }}
+                            />
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
-                ))}
+                );
+              })
+            })()}
 
               {/* Section Blocks Overlay - NOW INSIDE TRACK LANES CONTAINER */}
               <div className="absolute top-0 left-[100px] right-0 bottom-0 pointer-events-none z-[20] overflow-hidden">
@@ -819,7 +1060,14 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
                   )})
                 )}
                 
-
+                {/* Playhead */}
+                <div 
+                  id="arranger-playhead"
+                  className="absolute top-0 bottom-0 w-[2px] bg-red-500 z-[100] shadow-[0_0_10px_rgba(239,68,68,0.8)] pointer-events-none"
+                  style={{ left: 0, transform: 'translateX(0px)', willChange: 'transform' }}
+                >
+                  <div className="absolute -top-3 -left-1.5 w-0 h-0 border-l-[6px] border-r-[6px] border-t-[8px] border-l-transparent border-r-transparent border-t-red-500" />
+                </div>
               </div>
             </div>
           </div>
@@ -827,69 +1075,95 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
       </div>
       </div>
 
-      {/* Prompt Modal */}
-      {isPromptModalOpen && (
+      {/* Unified AI Studio Modal */}
+      {isAIStudioModalOpen && (
         <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#0c0c0e] border border-white/10 rounded-2xl p-6 w-full max-w-lg shadow-2xl">
-            <h3 className="text-lg font-black text-emerald-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-              <MessageSquare size={18}/> AI ARRANGER BRIEF
+          <div className="bg-[#0c0c0e] border border-white/10 rounded-2xl p-6 w-full max-w-2xl shadow-2xl flex flex-col">
+            <h3 className="text-xl font-black text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-cyan-400 to-indigo-400 uppercase tracking-widest mb-6 flex items-center gap-2">
+              <Wand2 size={24} className="text-cyan-400"/> ✨ AI STUDIO
             </h3>
-            <p className="text-xs text-zinc-400 mb-4 leading-relaxed">
-              Provide additional instructions for the AI, e.g., <em>"Sad mood with leading piano", "Upbeat K-Pop style", or "Epic orchestral strings"</em>.
-            </p>
-            <textarea 
-              className="w-full bg-black/50 border border-white/10 rounded-xl p-4 text-white text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 min-h-[120px] resize-none"
-              placeholder="Ex: Upbeat, mid-tempo, chill acoustic guitar strumming..."
-              value={aiPrompt}
-              onChange={e => setAiPrompt(e.target.value)}
-            />
-            <div className="flex justify-end gap-3 mt-6">
+            
+            {/* Tabs */}
+            <div className="flex bg-[#111] p-1.5 rounded-xl border border-white/10 mb-6">
               <button 
-                onClick={() => setIsPromptModalOpen(false)}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-zinc-400 hover:text-white hover:bg-white/5 transition-colors"
+                onClick={() => setAiStudioTab('arrange')}
+                className={`flex-1 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${aiStudioTab === 'arrange' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shadow-[0_0_15px_rgba(16,185,129,0.2)]' : 'text-zinc-500 hover:text-zinc-300'}`}
               >
-                CLOSE
+                <div className="flex items-center justify-center gap-2"><Music2 size={14}/> Arrange MIDI</div>
               </button>
               <button 
-                onClick={() => setIsPromptModalOpen(false)}
-                className="px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest bg-emerald-500 text-black shadow-[0_0_15px_rgba(16,185,129,0.4)] hover:scale-105 transition-all"
+                onClick={() => setAiStudioTab('lyrics')}
+                className={`flex-1 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${aiStudioTab === 'lyrics' ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30 shadow-[0_0_15px_rgba(168,85,247,0.2)]' : 'text-zinc-500 hover:text-zinc-300'}`}
               >
-                SAVE BRIEF
+                <div className="flex items-center justify-center gap-2"><Mic2 size={14}/> Write Lyrics</div>
               </button>
             </div>
-          </div>
-        </div>
-      )}
 
-      {/* Lyrics Modal */}
-      {isLyricsModalOpen && (
-        <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#0c0c0e] border border-white/10 rounded-2xl p-6 w-full max-w-lg shadow-2xl">
-            <h3 className="text-lg font-black text-purple-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-              <Mic2 size={18}/> AI LYRICS WRITER
-            </h3>
-            <p className="text-xs text-zinc-400 mb-4 leading-relaxed">
-              Describe your concept to let the AI write lyrics perfectly fitting this melody, e.g., <em>"Fun children's song about brushing teeth", "Heartbreak pop ballad", or "Aggressive hip-hop diss track"</em>.
-            </p>
-            <textarea 
-              className="w-full bg-black/50 border border-white/10 rounded-xl p-4 text-white text-sm focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500 min-h-[120px] resize-none"
-              placeholder="Ex: I want a fun English children's song about brushing teeth..."
-              value={lyricsPrompt}
-              onChange={e => setLyricsPrompt(e.target.value)}
-            />
-            <div className="flex justify-end gap-3 mt-6">
-              <button 
-                onClick={() => setIsLyricsModalOpen(false)}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-zinc-400 hover:text-white hover:bg-white/5 transition-colors"
-              >
-                CLOSE
-              </button>
-              <button 
-                onClick={handleGenerateLyrics}
-                className="px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest bg-purple-500 text-black shadow-[0_0_15px_rgba(168,85,247,0.4)] hover:scale-105 transition-all"
-              >
-                GENERATE LYRICS
-              </button>
+            {/* Tab Contents */}
+            <div className="flex-1 overflow-y-auto min-h-[200px]">
+              {aiStudioTab === 'arrange' && (
+                <div className="animate-in fade-in zoom-in-95 duration-200">
+                  <p className="text-xs text-zinc-400 mb-4 leading-relaxed">
+                    Generate editable background tracks (Piano, Bass, Drums) based on your melody. This is great for <span className="text-emerald-400">learning notes and chords</span>.
+                  </p>
+                  <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Arrangement Brief</label>
+                  <textarea 
+                    className="w-full bg-black/50 border border-white/10 rounded-xl p-4 text-white text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 min-h-[120px] resize-none"
+                    placeholder="Ex: Upbeat, mid-tempo, chill acoustic guitar strumming..."
+                    value={aiPrompt}
+                    onChange={e => setAiPrompt(e.target.value)}
+                  />
+                  <div className="flex justify-end gap-3 mt-6">
+                    <button 
+                      onClick={() => setIsAIStudioModalOpen(false)}
+                      className="px-4 py-2 rounded-xl text-xs font-bold text-zinc-400 hover:text-white hover:bg-white/5 transition-colors"
+                    >
+                      CANCEL
+                    </button>
+                    <button 
+                      onClick={() => {
+                        setIsAIStudioModalOpen(false);
+                        handleGenerate();
+                      }}
+                      className="px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest bg-emerald-500 text-black shadow-[0_0_15px_rgba(16,185,129,0.4)] hover:scale-105 transition-all"
+                    >
+                      GENERATE MIDI TRACKS
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {aiStudioTab === 'lyrics' && (
+                <div className="animate-in fade-in zoom-in-95 duration-200">
+                  <p className="text-xs text-zinc-400 mb-4 leading-relaxed">
+                    Let AI write lyrics perfectly fitting your melody notes. 
+                  </p>
+                  <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Lyrics Concept</label>
+                  <textarea 
+                    className="w-full bg-black/50 border border-white/10 rounded-xl p-4 text-white text-sm focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500 min-h-[120px] resize-none"
+                    placeholder="Ex: I want a fun English children's song about brushing teeth..."
+                    value={lyricsPrompt}
+                    onChange={e => setLyricsPrompt(e.target.value)}
+                  />
+                  <div className="flex justify-end gap-3 mt-6">
+                    <button 
+                      onClick={() => setIsAIStudioModalOpen(false)}
+                      className="px-4 py-2 rounded-xl text-xs font-bold text-zinc-400 hover:text-white hover:bg-white/5 transition-colors"
+                    >
+                      CANCEL
+                    </button>
+                    <button 
+                      onClick={() => {
+                        setIsAIStudioModalOpen(false);
+                        handleGenerateLyrics();
+                      }}
+                      className="px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest bg-purple-500 text-black shadow-[0_0_15px_rgba(168,85,247,0.4)] hover:scale-105 transition-all"
+                    >
+                      GENERATE LYRICS
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

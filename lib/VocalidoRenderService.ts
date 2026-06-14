@@ -116,6 +116,7 @@ const saveRenderToLocalCache = async (
 const getCustomBackendUrl = () => {
   if (typeof window === 'undefined') return '';
   const hostname = window.location.hostname;
+  const port = window.location.port;
   const isLocalIp = 
     hostname === 'localhost' || 
     hostname === '127.0.0.1' || 
@@ -125,6 +126,11 @@ const getCustomBackendUrl = () => {
     /^172\.(1[6-9]|2[0-9]|3[01])\./.test(hostname);
     
   if (isLocalIp) {
+    // When running on Vite dev server (port 3100), use relative paths
+    // so requests go through Vite's proxy → avoids CORS issues
+    if (port === '3100') {
+      return ''; // relative paths → Vite proxy handles forwarding to :5001
+    }
     return hostname === 'localhost' ? `http://127.0.0.1:5001` : `http://${hostname}:5001`;
   }
 
@@ -141,7 +147,8 @@ const getFetchUrl = (path: string) => {
   if (path.startsWith('blob:') || path.startsWith('data:') || path.startsWith('http://') || path.startsWith('https://')) {
     return path;
   }
-  const customBackend = getCustomBackendUrl() || 'https://k2nrn0nn5jkjjv-5001.proxy.runpod.net';
+  const customBackend = getCustomBackendUrl();
+  // If customBackend is empty, use relative paths (Vite proxy will forward)
   if (!customBackend) return path;
 
   let cleanPath = path;
@@ -365,7 +372,7 @@ class VocalidoRenderService {
       if (this.abortController === controller) {
         controller.abort();
       }
-    }, 300000); // 5 min timeout for large orchestra scores
+    }, 900000); // 15 min timeout for large orchestra scores on CPU
     this.timeoutId = timeoutId;
 
     const vocalIds = tracks.filter(t => t.mode === 'vocal').map(t => t.id);
@@ -811,8 +818,38 @@ class VocalidoRenderService {
               audioBlobs.push(wavBlob);
               renderedPan.push(vl.pan);
               console.log(`[VocalidoRenderService] [Browser-AI] ✅ Voice ${vIdx + 1} (${vl.label}) blob ready: ${(wavBlob.size / 1024).toFixed(0)} KB`);
-            } catch (voiceErr) {
+            } catch (voiceErr: any) {
               console.warn(`[VocalidoRenderService] [Browser-AI] ❌ Voice ${vIdx + 1} (${vl.label}) failed:`, voiceErr);
+              if (voiceErr.message?.includes('timeout') && clientSvsEngine.forceWasm) {
+                console.log(`[VocalidoRenderService] Retrying Voice ${vIdx + 1} with CPU/WASM Fallback...`);
+                this.statusText = `Retrying ${vl.label} (CPU Fallback)...`;
+                this.notify();
+                try {
+                  // Reload voice to spawn new worker with WASM forced
+                  await clientSvsEngine.loadVoice(selectedVoice.id, selectedVoice.files, (p) => {
+                    this.progress = Math.min(99.9, p.progress);
+                    this.notify();
+                  });
+                  const retryBlob = await clientSvsEngine.synthesize(vl.notes, {
+                    bpm: actualBpm,
+                    formant_shift: 0,
+                    speed: 1.0,
+                    breathiness: 0,
+                    vocal_mode: 'root',
+                    steps: svsSteps,
+                    timing_feel: svsTimingFeel,
+                    portamento: svsPortamento,
+                    vibrato_start: svsVibratoStart,
+                    vibrato_depth: svsVibratoDepth,
+                    vibrato_speed: svsVibratoSpeed,
+                  });
+                  audioBlobs.push(retryBlob);
+                  renderedPan.push(vl.pan);
+                  console.log(`[VocalidoRenderService] [Browser-AI] ✅ Voice ${vIdx + 1} (${vl.label}) retry successful`);
+                } catch (retryErr) {
+                  console.warn(`[VocalidoRenderService] [Browser-AI] ❌ Retry failed for Voice ${vIdx + 1}:`, retryErr);
+                }
+              }
             }
           }
 
@@ -1229,12 +1266,19 @@ class VocalidoRenderService {
             }
             result = data;
         } catch (fetchErr: any) {
-          // RunPod Fallback
-          const runpodUrl = import.meta.env.VITE_RUNPOD_API_URL;
+          // RunPod Fallback — use absolute URL to bypass any proxy issues
+          const runpodEnvUrl = import.meta.env.VITE_RUNPOD_API_URL;
           const runpodKey = import.meta.env.VITE_RUNPOD_API_KEY;
+          
+          // Convert relative proxy URL to absolute RunPod API URL
+          let runpodUrl = runpodEnvUrl;
+          if (runpodUrl && runpodUrl.startsWith('/api/runpod/')) {
+            runpodUrl = 'https://api.runpod.ai/v2/' + runpodUrl.replace('/api/runpod/', '');
+          }
           
           if (runpodUrl && runpodKey) {
             console.warn('[VocalidoRenderService] ⚠️ Server synthesis failed. Falling back to RunPod API...', fetchErr);
+            console.log('[VocalidoRenderService] RunPod URL:', runpodUrl);
             this.statusText = 'Server offline. Rendering via RunPod GPU...';
             this.notify();
             
@@ -1270,16 +1314,17 @@ class VocalidoRenderService {
             const jobId = rpJson.id;
 
             if (status === 'IN_QUEUE' || status === 'IN_PROGRESS') {
-              const statusUrl = runpodUrl.endsWith('/runsync')
-                ? runpodUrl.replace('/runsync', `/status/${jobId}`)
-                : runpodUrl.replace('/run', `/status/${jobId}`);
+              // Build absolute status URL from the base RunPod API URL
+              const endpointBase = runpodUrl.replace(/\/(run|runsync)$/, '');
+              const statusUrl = `${endpointBase}/status/${jobId}`;
+              console.log('[VocalidoRenderService] Polling status at:', statusUrl);
               let attempts = 0;
               const maxAttempts = 120;
               
               while ((status === 'IN_QUEUE' || status === 'IN_PROGRESS') && attempts < maxAttempts) {
                 await new Promise(resolve => setTimeout(resolve, 2000));
                 attempts++;
-                this.statusText = `Starting GPU container... (${attempts * 2}s)`;
+                this.statusText = `RunPod GPU rendering... (${attempts * 2}s)`;
                 this.notify();
                 
                 const pollResponse = await fetch(statusUrl, {
@@ -1333,28 +1378,35 @@ class VocalidoRenderService {
         } else if (result.saved_url && !result.audio_b64) {
           url = result.saved_url;
         } else if (result.audio_b64) {
-          const binary = atob(result.audio_b64);
-          const array = new Uint8Array(binary.length);
-          for (let i = 0; i < binary.length; i++) array[i] = binary.charCodeAt(i);
-          const blob = new Blob([array], { type: result.mime_type || 'audio/wav' });
-          url = URL.createObjectURL(blob);
-          useDirectBlobUrl = true;
-          mainAudioBlob = blob;
+          console.log('[VocalidoRenderService] 🔄 Decoding base64 audio...', result.audio_b64.length, 'chars');
+          try {
+            const mime = result.mime_type || 'audio/wav';
+            const base64Str = result.audio_b64.startsWith('data:') ? result.audio_b64 : `data:${mime};base64,${result.audio_b64}`;
+            const res = await fetch(base64Str);
+            const blob = await res.blob();
+            url = URL.createObjectURL(blob);
+            useDirectBlobUrl = true;
+            mainAudioBlob = blob;
+            console.log('[VocalidoRenderService] ✅ Audio blob created:', blob.size, 'bytes, url:', url);
+          } catch (e) {
+            console.error('[VocalidoRenderService] Base64 decode error:', e);
+            throw new Error('Failed to decode audio base64');
+          }
         } else {
           throw new Error("Invalid synthesis response: no audio data");
         }
         
         let stemUrls: string[] = [];
         if (result.stems_b64 && result.stems_b64.length > 1) {
-          stemUrls = result.stems_b64.map((b64: string) => {
-            const binary = atob(b64);
-            const array = new Uint8Array(binary.length);
-            for (let i = 0; i < binary.length; i++) array[i] = binary.charCodeAt(i);
-            const blob = new Blob([array], { type: result.mime_type || 'audio/wav' });
+          stemUrls = await Promise.all(result.stems_b64.map(async (b64: string) => {
+            const mime = result.mime_type || 'audio/wav';
+            const base64Str = b64.startsWith('data:') ? b64 : `data:${mime};base64,${b64}`;
+            const res = await fetch(base64Str);
+            const blob = await res.blob();
             useDirectBlobUrl = true;
             stemBlobs.push(blob);
             return URL.createObjectURL(blob);
-          });
+          }));
         }
         // Use polyphonic voice stems if available (from multi-pass rendering)
         if (polyStemUrls.length > 0 && stemUrls.length === 0) {
@@ -1374,18 +1426,31 @@ class VocalidoRenderService {
         });
         
         const stemsByTrack: Record<string, string[]> = {};
-        let sIdx = 0;
-        for (const vl of voiceLines) {
-          if (!stemsByTrack[vl.trackId]) stemsByTrack[vl.trackId] = [];
-          if (sIdx < stemsWithBust.length) {
-            stemsByTrack[vl.trackId].push(stemsWithBust[sIdx]);
+        
+        // If polyphony is OFF or chords are collapsed, we have a single merged audio line representing ALL selected tracks.
+        // We must assign this audio to ALL vocalTrackIds so that soloing any of them plays the merged vocal.
+        // If we don't, only the primary track gets audio and the others are silently muted in 'vocal' mode.
+        if (voiceLines.length === 1 && vocalTrackIds.length > 0) {
+          for (const tid of vocalTrackIds) {
+            stemsByTrack[tid] = stemsWithBust.length > 0 ? stemsWithBust : [cacheBustedUrl];
           }
-          sIdx++;
+        } else {
+          // Normal polyphony: map each stem to its corresponding voice line trackId
+          let sIdx = 0;
+          for (const vl of voiceLines) {
+            if (!stemsByTrack[vl.trackId]) stemsByTrack[vl.trackId] = [];
+            if (sIdx < stemsWithBust.length) {
+              stemsByTrack[vl.trackId].push(stemsWithBust[sIdx]);
+            }
+            sIdx++;
+          }
         }
         
         this.progress = 100;
+        this.statusText = 'Processing audio...';
         this.notify();
         cleanup();
+        console.log('[VocalidoRenderService] ✅ Progress 100% — processing result...');
 
         const filenameFromUrl = result.saved_url ? result.saved_url.split('/').pop() || '' : '';
         const voiceNameForHist = activeVoiceName || 'Auto';
@@ -1395,12 +1460,14 @@ class VocalidoRenderService {
         const newLabel = result.label || `${songKey} ${bpmPct}%${shortVoice}`;
         const newEntryKey = `${bpmPct}_${songKey}_${storedEngineId}_${activeLyricMode}_${storedVoiceName}_tf${svsTimingFeel}_v2`;
         
+        console.log('[VocalidoRenderService] 💾 Saving render to local cache...');
         saveRenderToLocalCache(
           song.id,
           newEntryKey,
           mainAudioBlob || url,
           stemBlobs.length > 0 ? stemBlobs : stemUrls
         );
+        console.log('[VocalidoRenderService] ✅ Saved to local cache');
 
         let history: any[] = [];
         try {
@@ -1458,8 +1525,10 @@ class VocalidoRenderService {
             const livePlaying = wasPlaying || musicEngine.transportState === 'started';
             const livePos = savedPos;
 
+            console.log('[VocalidoRenderService] 🎵 Loading song into musicEngine...');
             // loadSong FIRST — creates Part/Sampler channels
             await musicEngine.loadSong(parsedData.notes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn);
+            console.log('[VocalidoRenderService] ✅ musicEngine.loadSong done');
             
             // addVocalLayer AFTER — so initSampler doesn't overwrite the vocal layer
             for (const tid of vocalTrackIds) {
@@ -1476,7 +1545,9 @@ class VocalidoRenderService {
               }
               
               if (trackAudioUrl) {
+                console.log(`[VocalidoRenderService] 🎤 Adding vocal layer for track ${tid}:`, trackAudioUrl.substring(0, 80));
                 await musicEngine.addVocalLayer(tid, trackAudioUrl, stemsToPass, actualBpm);
+                console.log(`[VocalidoRenderService] ✅ Vocal layer added for ${tid}`);
               }
             }
             
@@ -1485,12 +1556,15 @@ class VocalidoRenderService {
                 const trackStems = stemsByTrack[tid] || [];
                 const tAudioUrl = trackStems.length > 0 ? trackStems[0] : (tid === primaryTrackId ? cacheBustedUrl : "");
                 if (tAudioUrl && tAudioUrl.startsWith('blob:')) {
-                  musicEngine.unlockVocalAudio(tid);
-                  const audioEl = musicEngine.vocalAudioElements.get(tid);
-                  if (audioEl) {
-                    audioEl.src = tAudioUrl;
-                    audioEl.load();
+                  let audioEl = musicEngine.vocalAudioElements.get(tid);
+                  if (!audioEl) {
+                    audioEl = new Audio();
+                    audioEl.crossOrigin = 'anonymous';
+                    audioEl.preservesPitch = true;
+                    musicEngine.vocalAudioElements.set(tid, audioEl);
                   }
+                  audioEl.src = tAudioUrl;
+                  audioEl.load();
                 }
               }
             }
@@ -1523,6 +1597,8 @@ class VocalidoRenderService {
 
       if (err.name === 'AbortError' || err.message === 'Aborted' || controller.signal.aborted) {
         console.log('[VocalidoRenderService] Synthesis aborted/cancelled by user');
+        this.isRendering = false;
+        this.notify();
         return;
       }
       console.error('[VocalidoRenderService] Synthesis Error:', err);
@@ -1558,6 +1634,27 @@ class VocalidoRenderService {
     try {
       localStorage.removeItem('vocalido_rendering_active_song');
     } catch (e) {}
+  }
+
+  public async renderWithLyria(abcData: string, prompt: string): Promise<string> {
+    try {
+      const backendUrl = getCustomBackendUrl() || 'http://localhost:5001';
+      const response = await svsFetch(`${backendUrl}/api/ai/lyria-render`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ abc: abcData, prompt })
+      });
+      
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || 'Failed to render with Lyria');
+      }
+      
+      return data.data.url;
+    } catch (err: any) {
+      console.error('[Lyria Render Error]', err);
+      throw err;
+    }
   }
 }
 

@@ -82,6 +82,7 @@ export interface TrackState {
   pan: number;
   isArmed?: boolean;
   mode?: 'instrument' | 'vocal';
+  audioSrc?: string;
   instrument?: string;
   pluginId?: 'memolody-sampler' | 'svs-vocal' | null;
   pluginSettings?: any;

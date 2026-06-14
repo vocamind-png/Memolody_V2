@@ -5,6 +5,15 @@ import sys
 import time
 import soundfile as sf
 import numpy as np
+import tempfile
+
+try:
+    import midi_ddsp
+    from midi_ddsp import synthesize_midi
+    MIDI_DDSP_AVAILABLE = True
+except ImportError:
+    print("Warning: midi_ddsp package not found. (Instrumento task type will fail)")
+    MIDI_DDSP_AVAILABLE = False
 
 try:
     import runpod
@@ -152,8 +161,63 @@ def numpy_to_base64_compressed(audio_np, sr=44100, preferred_format='MP3'):
         raise e
 
 
+def handle_instrumento(job_input):
+    if not MIDI_DDSP_AVAILABLE:
+        return {"error": "midi_ddsp library is not installed on this pod."}
+    
+    midi_b64 = job_input.get('midi_base64')
+    instrument_name = job_input.get('instrument_name', 'violin')
+    
+    if not midi_b64:
+        return {"error": "midi_base64 is required for instrumento task."}
+        
+    try:
+        midi_bytes = base64.b64decode(midi_b64)
+        
+        # We need to write the MIDI to a temporary file since midi-ddsp takes a path
+        with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as tmp_midi:
+            tmp_midi.write(midi_bytes)
+            tmp_midi_path = tmp_midi.name
+            
+        print(f"[RunPod Handler] Processing Instrumento task. Instrument: {instrument_name}")
+        # MIDI-DDSP uses 16000 SR internally for output
+        output_audio, synth_params = synthesize_midi(
+            midi_file=tmp_midi_path,
+            instrument_name=instrument_name,
+            pitch_offset=0,
+            speed_rate=1.0
+        )
+        
+        # output_audio shape: (batch, length)
+        audio_np = output_audio[0]
+        
+        # Clean up temp file
+        if os.path.exists(tmp_midi_path):
+            os.remove(tmp_midi_path)
+            
+        # Compress and return
+        audio_b64, mime_type = numpy_to_base64_compressed(audio_np, sr=16000, preferred_format='MP3')
+        
+        return {
+            "audio_b64": audio_b64,
+            "mime_type": mime_type,
+            "duration": float(len(audio_np)) / 16000.0,
+            "engine": "instrumento_midi_ddsp",
+            "instrument": instrument_name
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e)}
+
+
 def handler(job):
     job_input = job.get('input', {})
+    
+    task_type = job_input.get('task_type', 'vocalido')
+    
+    if task_type == 'instrumento':
+        return handle_instrumento(job_input)
     
     notes = job_input.get('notes', [])
     params = job_input.get('params', {})

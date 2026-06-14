@@ -1,5 +1,5 @@
 {
-  "name": "memolody-play-by-ear-hear-by-eye",
+  "name": "memolody-v-2-4",
   "private": true,
   "version": "2.2.0",
   "type": "module",
@@ -30,6 +30,7 @@
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "sharp": "^0.34.5",
+    "smplr": "^0.26.0",
     "soundfont-player": "^0.12.0",
     "soundtouchjs": "^0.3.0",
     "tone": "^15.1.22",
@@ -37,6 +38,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
+    "@types/webmidi": "^2.1.0",
     "@vitejs/plugin-react": "^5.0.0",
     "autoprefixer": "^10.4.27",
     "concurrently": "^9.2.1",

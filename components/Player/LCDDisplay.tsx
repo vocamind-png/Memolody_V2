@@ -166,10 +166,16 @@ export const TimeSigDisplay: React.FC<{ beats?: number; beatType?: number }> = (
   );
 };
 
-export const BarBeatPositionDisplay: React.FC<{ barRef: React.RefObject<HTMLSpanElement>; beatRef: React.RefObject<HTMLSpanElement>; onSeek?: (bar: number) => void }> = ({ barRef, beatRef, onSeek }) => {
+export const BarBeatPositionDisplay: React.FC<{ 
+  barRef?: React.RefObject<HTMLSpanElement>; 
+  beatRef?: React.RefObject<HTMLSpanElement>; 
+  bar?: number;
+  beat?: number;
+  onSeek?: (bar: number) => void 
+}> = ({ barRef, beatRef, bar, beat, onSeek }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState("1");
-  const getBar = () => parseInt(barRef.current?.innerText || '1') || 1;
+  const getBar = () => bar ?? (parseInt(barRef?.current?.innerText || '1') || 1);
   const { isDragging, handleStart } = useValueDrag(getBar, 1, (val) => onSeek?.(Math.max(1, val)));
 
   const handleEditSubmit = () => {
@@ -201,13 +207,13 @@ export const BarBeatPositionDisplay: React.FC<{ barRef: React.RefObject<HTMLSpan
     >
       <div className="flex items-baseline gap-1 sm:gap-2 leading-none">
         <span ref={barRef} className="text-[13px] min-[360px]:text-[16px] sm:text-[22px] font-black italic text-[#ffab00] lcd-font tracking-tighter">
-            1
+            {bar ?? 1}
         </span>
         <span className="text-[10px] min-[360px]:text-[13px] sm:text-[17px] font-black text-white/40 mx-0.5">
             :
         </span>
         <span ref={beatRef} className="text-[13px] min-[360px]:text-[16px] sm:text-[22px] font-black italic text-[#ffab00] lcd-font tracking-tighter">
-            1
+            {beat ?? 1}
         </span>
       </div>
       <span className="text-[5px] min-[360px]:text-[6px] sm:text-[7.5px] font-black text-zinc-600 uppercase tracking-widest mt-0.5">Bar:Beat</span>

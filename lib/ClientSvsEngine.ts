@@ -167,7 +167,11 @@ export class ClientSvsEngine {
   private isLoaded = false;
   private activeVoiceId = '';
   private lastLoadedFiles: VoiceModelFiles | null = null;
-  private forceWasm = false;
+  public forceWasm = false;
+  
+  // Need at least 150ms of initial padding so the very first note has enough silence 
+  // before it to "borrow" for its consonants. Otherwise the note gets delayed.
+  private readonly INITIAL_AP_SEC = 0.15;
   private hasWarmedUp = false;
   public actualProvider: 'webgpu' | 'wasm' = 'wasm';
   /** Tracks how many files were loaded from cache vs network in the last loadVoice call */
@@ -1024,10 +1028,12 @@ export class ClientSvsEngine {
       }
 
       // Copy chunk audio into the track master buffer
-      const startSampleIndex = Math.round(chunkStartSec * this.sr);
+      // We must SUBTRACT INITIAL_AP_SEC because chunkAudio has this silence padding at its beginning,
+      // and we want the actual notes to align with chunkStartSec exactly.
+      const startSampleIndex = Math.round((chunkStartSec - this.INITIAL_AP_SEC) * this.sr);
       for (let i = 0; i < chunkAudio.length; i++) {
         const targetIndex = startSampleIndex + i;
-        if (targetIndex < trackAudioBuffer.length) {
+        if (targetIndex >= 0 && targetIndex < trackAudioBuffer.length) {
           trackAudioBuffer[targetIndex] += chunkAudio[i];
         }
       }
@@ -1086,7 +1092,7 @@ export class ClientSvsEngine {
     const noteDurFr: number[] = [];
 
     // Initial silence (AP)
-    const initialApSec = 0.02;
+    const initialApSec = this.INITIAL_AP_SEC;
     const initialApFr = Math.max(1, Math.round(initialApSec * frameHz));
 
     allTok.push(SP_ID);
@@ -1593,7 +1599,8 @@ export class ClientSvsEngine {
         if (phDurFrames.length > 0) {
           const consDurSum = totalConsDur;
           const targetBorrow = Math.round(consDurSum * (1.0 - timingFeel / 100.0));
-          const minPrecedingDur = 2;
+          // Increased from 2 to 4 to ensure the preceding vowel is not choked, which caused missing slurs
+          const minPrecedingDur = 4;
           const availableToBorrow = Math.max(0, phDurFrames[phDurFrames.length - 1] - minPrecedingDur);
           const borrowDur = Math.min(targetBorrow, availableToBorrow);
           if (borrowDur > 0) {
@@ -1630,7 +1637,6 @@ export class ClientSvsEngine {
     // Apply Cosine Legato smoothing (Portamento) on voiced-to-voiced note transitions
     const glideTimeMs = params?.portamento ?? 120.0;
     const glideFrames = Math.round((glideTimeMs / 1000.0) / frameSec);
-    const halfGlide = Math.floor(glideFrames / 2);
 
     let frameIdx = 0;
     for (let pi = 0; pi < phDurFrames.length; pi++) {
@@ -1638,8 +1644,12 @@ export class ClientSvsEngine {
       const hz = phF0[pi];
       if (pi > 0 && hz > 0.0 && phF0[pi - 1] > 0.0 && hz !== phF0[pi - 1]) {
         const prevHz = phF0[pi - 1];
-        const startIdx = Math.max(0, frameIdx - halfGlide);
-        const endIdx = Math.min(f0Arr.length - 1, frameIdx + halfGlide);
+        // Cap glide to half the actual note duration so fast notes aren't completely swallowed
+        const maxGlide = Math.floor(Math.min(nf, phDurFrames[pi - 1]) / 2);
+        const actualHalfGlide = Math.min(Math.floor(glideFrames / 2), maxGlide);
+        
+        const startIdx = Math.max(0, frameIdx - actualHalfGlide);
+        const endIdx = Math.min(f0Arr.length - 1, frameIdx + actualHalfGlide);
         if (startIdx < endIdx) {
           const len = endIdx - startIdx + 1;
           for (let k = startIdx; k <= endIdx; k++) {
@@ -1968,6 +1978,7 @@ export class ClientSvsEngineProxy {
   private activeProgress: ((state: SvsEngineProgress) => void) | null = null;
   public actualProvider: 'webgpu' | 'wasm' = 'wasm';
   public lastLoadStats = { cached: 0, downloaded: 0 };
+  public forceWasm = false;
 
   private ensureWorker() {
     if (!this.worker && typeof window !== 'undefined') {
@@ -2047,7 +2058,7 @@ export class ClientSvsEngineProxy {
       this.activeRejecter = reject;
       this.worker!.postMessage({
         type: 'loadVoice',
-        payload: { voiceId, files }
+        payload: { voiceId, files, forceWasm: this.forceWasm }
       });
     });
   }
@@ -2063,8 +2074,24 @@ export class ClientSvsEngineProxy {
     }
     
     return new Promise((resolve, reject) => {
-      this.activeResolver = resolve;
-      this.activeRejecter = reject;
+      // Add a dynamic timeout. If it exceeds 120 seconds (or more for long chunks), WebGPU likely silently crashed.
+      const timeoutSec = Math.max(90, notes.length * 2 + 30);
+      const timer = setTimeout(() => {
+        if (this.worker) {
+          this.worker.terminate();
+          this.worker = null;
+        }
+        this.forceWasm = true; // Next load will use WASM fallback
+        if (this.activeRejecter) {
+          this.activeRejecter(new Error('SVS Worker synthesis timeout! WebGPU likely crashed. Falling back to CPU/Server...'));
+        }
+        this.activeResolver = null;
+        this.activeRejecter = null;
+      }, timeoutSec * 1000);
+
+      this.activeResolver = (val) => { clearTimeout(timer); resolve(val); };
+      this.activeRejecter = (err) => { clearTimeout(timer); reject(err); };
+
       this.worker!.postMessage({
         type: 'synthesize',
         payload: { notes, params }

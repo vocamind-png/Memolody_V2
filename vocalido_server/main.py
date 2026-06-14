@@ -15,7 +15,12 @@ import uuid
 import base64
 import librosa
 import numpy as np
+import logging
+import traceback
 import soundfile as sf
+import threading
+
+inference_lock = threading.Lock()
 try:
     import fitz # PyMuPDF
     FITZ_OK = True
@@ -92,13 +97,20 @@ async def global_exception_handler(request, exc):
 async def read_root():
     index_path = os.path.join(os.path.dirname(__file__), "static", "index.html")
     with open(index_path, "r", encoding="utf-8") as f:
-        return HTMLResponse(content=f.read())
+        response = HTMLResponse(content=f.read())
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        response.headers["Clear-Site-Data"] = '"cache", "executionContexts"'
+        return response
 
 @app.get("/voice-studio.html", response_class=HTMLResponse)
 async def read_voice_studio():
     p = os.path.join(os.path.dirname(__file__), "static", "voice-studio.html")
     with open(p, "r", encoding="utf-8") as f:
-        return HTMLResponse(content=f.read())
+        response = HTMLResponse(content=f.read())
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return response
 
 @app.get("/{filename}.html", response_class=HTMLResponse)
 async def read_html(filename: str):
@@ -106,7 +118,9 @@ async def read_html(filename: str):
     p = os.path.join(os.path.dirname(__file__), "static", f"{filename}.html")
     if os.path.isfile(p):
         with open(p, "r", encoding="utf-8") as f:
-            return HTMLResponse(content=f.read())
+            response = HTMLResponse(content=f.read())
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            return response
     return HTMLResponse(content="Not Found", status_code=404)
 
 @app.get("/{filename}.js")
@@ -366,6 +380,8 @@ class HarmonyRequest(BaseModel):
     durations: str = "1 1 1 1"
     time_signature: str = "4/4"
     prompt: Optional[str] = ""
+    original_xml: Optional[str] = None
+    model_type: str = "rule-based"  # Can be "rule-based", "deepbach", "transformer"
 
 def call_gemini_for_harmony(prompt: str, key: str, time_sig: str) -> dict:
     import urllib.request
@@ -384,7 +400,7 @@ def call_gemini_for_harmony(prompt: str, key: str, time_sig: str) -> dict:
     if not api_key:
         raise ValueError("GEMINI_API_KEY not found in .env")
         
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={api_key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
     
     system_instruction = (
         "You are an expert music arranger. The user will provide a musical brief or prompt. "
@@ -435,14 +451,110 @@ async def generate_harmony(request: HarmonyRequest):
         
         dur_list = [Fraction(str(x)) for x in durations.split()]
         key_chords = f"{key_val}: {chord_progression}"
-        score = generateChorale(key_chords, dur_list, request.time_signature)
         
+        # Select Model Engine
+        if request.model_type == "deepbach" and request.original_xml:
+            print("[Harmony] Using DeepBach engine...")
+            from deepbach_engine import generate_deepbach_harmony
+            final_score = generate_deepbach_harmony(request.original_xml, target_length_ticks=128)
+            # DeepBach engine already incorporates the original constraints or merges internally
+            # For our current simple wrapper, it just generates a score which we will process similarly
+            score = final_score
+        elif request.model_type == "transformer" and request.original_xml:
+            print("[Harmony] Using Transformer engine...")
+            from transformer_engine import generate_transformer_harmony
+            final_score = generate_transformer_harmony(request.original_xml, target_length_seconds=30)
+            score = final_score
+        else:
+            print("[Harmony] Using Rule-based engine...")
+            from harmony_engine import generateChorale
+            score = generateChorale(key_chords, dur_list, request.time_signature)
+        
+        final_score = score
+        if request.original_xml and request.model_type == "rule-based":
+            import music21
+            try:
+                original_score = music21.converter.parseData(request.original_xml, format='musicxml')
+                # Remove existing SATB tracks if they exist to avoid duplicates
+                satb_names = ["Soprano", "Alto", "Tenor", "Bass"]
+                parts_to_remove = [p for p in original_score.parts if p.partName in satb_names or p.id in satb_names]
+                for p in parts_to_remove:
+                    original_score.remove(p)
+                
+                # Append new SATB tracks
+                for part in score.parts:
+                    original_score.insert(0, part)
+                final_score = original_score
+            except Exception as e:
+                print(f"[Harmony] Failed to parse original_xml, falling back to SATB only: {e}")
+
         # Save to MusicXML string
-        xml_path = score.write("musicxml")
+        xml_path = final_score.write("musicxml")
         with open(xml_path, "r", encoding="utf-8") as f:
             xml_data = f.read()
             
         return JSONResponse({"status": "ok", "musicxml": xml_data})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+class ArrangerBriefRequest(BaseModel):
+    prompt: str
+    key: str = "C"
+    bpm: int = 120
+    time_signature: str = "4/4"
+
+@app.post("/v1/analyze_arranger_brief")
+async def analyze_arranger_brief(request: ArrangerBriefRequest):
+    import urllib.request
+    import json
+    import os
+    
+    # Try to load API key from root .env if not in os.environ
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+        if os.path.exists(env_path):
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("GEMINI_API_KEY="):
+                        api_key = line.strip().split("=", 1)[1].strip('"\'')
+                        break
+    if not api_key:
+        return JSONResponse({"error": "GEMINI_API_KEY not found in .env"}, status_code=500)
+        
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    
+    system_instruction = (
+        "You are an expert music arranger and producer. The user will provide a musical brief or prompt for an arrangement. "
+        f"The current key is {request.key}, BPM is {request.bpm}, and time signature is {request.time_signature}. "
+        "Analyze the prompt and return a structured JSON object with the following keys:\n"
+        "- 'style': string (e.g. 'pop', 'rock', 'acoustic', 'jazz', 'edm', 'rnb', 'classical')\n"
+        "- 'tempo': integer (adjust the original BPM if the prompt implies a different speed, e.g. 'fast' -> 150)\n"
+        "- 'instruments': list of strings from ['bass', 'piano', 'drums', 'guitar', 'strings']\n"
+        "- 'is_4_part_chorus': boolean (true if prompt mentions 4-part, choir, SATB, or chorus harmony)\n"
+        "- 'chord_progression': string (a suitable 4-chord progression based on the style, using STRICTLY standard chords like 'C G Am F', DO NOT use Roman numerals)\n"
+        "- 'durations': string (beat durations for the chords, e.g. '4 4 4 4' for a 4/4 measure per chord)\n"
+        "Return ONLY the JSON object. Do not include markdown formatting or extra text."
+    )
+    
+    payload = {
+        "contents": [{"parts": [{"text": request.prompt}]}],
+        "systemInstruction": {"parts": [{"text": system_instruction}]},
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "temperature": 0.7
+        }
+    }
+    
+    try:
+        req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req) as response:
+            result = json.loads(response.read().decode("utf-8"))
+            
+        content_text = result["candidates"][0]["content"]["parts"][0]["text"]
+        return JSONResponse(json.loads(content_text))
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -898,6 +1010,15 @@ def studio_client_log(req: ClientLogReq):
 
 @app.post("/studio/preview")
 def studio_preview(req: StudioPreviewReq):
+  try:
+    return _studio_preview_impl(req)
+  except Exception as e:
+    import traceback
+    tb = traceback.format_exc()
+    print(f"[studio/preview] ❌ UNHANDLED ERROR:\n{tb}")
+    return JSONResponse(status_code=500, content={"error": str(e), "traceback": tb})
+
+def _studio_preview_impl(req: StudioPreviewReq):
     notes = []
     if req.notes and len(req.notes) > 0:
         for n in req.notes:
@@ -1004,7 +1125,8 @@ def studio_preview(req: StudioPreviewReq):
             print(f"[Jianpu] 🎤 Chinese Neural Synthesis (160k): {len(notes)} notes...")
             try:
                 return_stems = str(req.params.get("return_stems", "false")).lower() == "true"
-                res = _ds_jianpu_engine.synthesize_phrase(notes, req.params)
+                with inference_lock:
+                    res = _ds_jianpu_engine.synthesize_phrase(notes, req.params)
                 if return_stems and isinstance(res, tuple):
                     audio, stems_audio = res
                 else:
@@ -1051,11 +1173,12 @@ def studio_preview(req: StudioPreviewReq):
             
         if audio is None and _target_engine and _target_engine.is_ready:
             print(f"[DiffSinger] 🎤 English Neural Synthesis ({target_voice}): {len(notes)} notes...")
-            print(f"[DEBUG] First 10 MIDI notes received: {[n.get("midi") for n in notes[:10]]}")
-            print(f"[DEBUG] First 10 lyrics received: {[n.get("lyric") for n in notes[:10]]}")
+            print(f"[DEBUG] First 10 MIDI notes received: {[n.get('midi') for n in notes[:10]]}")
+            print(f"[DEBUG] First 10 lyrics received: {[n.get('lyric') for n in notes[:10]]}")
             try:
                 return_stems = str(req.params.get("return_stems", "false")).lower() == "true"
-                res = _target_engine.synthesize_phrase(notes, req.params)
+                with inference_lock:
+                    res = _target_engine.synthesize_phrase(notes, req.params)
                 if return_stems and isinstance(res, tuple):
                     print(f"[DEBUG] Full note payload keys for first note: {list(notes[0].keys()) if notes else []}")
                     audio, stems_audio = res
@@ -1074,7 +1197,8 @@ def studio_preview(req: StudioPreviewReq):
             lib = get_library()
             if lib:
                 try:
-                    audio = studio_synthesize_phrase(notes, lib, req.params)
+                    with inference_lock:
+                        audio = studio_synthesize_phrase(notes, lib, req.params)
                     engine_name = "studio_sampler"
                 except Exception as e:
                     print(f"[Studio] ❌ Synthesis Failed: {e}")
@@ -1084,7 +1208,8 @@ def studio_preview(req: StudioPreviewReq):
         if audio is None and AI_OK and _ai_engine and _ai_engine.model:
             print(f"[AI Engine] 🎤 Neural Synthesis: {len(notes)} notes...")
             try:
-                audio = _ai_engine.synthesize_phrase(notes, req.params)
+                with inference_lock:
+                    audio = _ai_engine.synthesize_phrase(notes, req.params)
                 # Integrity check: is it silence or noise?
                 if audio is not None and np.max(np.abs(audio)) < 0.01:
                     print("[AI Engine] ⚠️ Output too quiet. Falling back.")
@@ -1651,17 +1776,27 @@ print("[Routes] ✅ /vocalido/* prefix routes registered")
 @app.post("/api/arrange")
 async def arrange_music(request: Request):
     try:
-        from gemini_engine import generate_arrangement
+        from ai_router import generate_arrangement
         data = await request.json()
-        result = generate_arrangement(
-            prompt=data.get("prompt", ""),
-            style=data.get("style", "Pop"),
-            key=data.get("key", "C"),
-            bpm=int(data.get("bpm", 120)),
-            num_sections=len(data.get("sections", [1]))
-        )
+        
+        # Build payload for the router
+        payload = {
+            "engine": data.get("engine", "gemini"),
+            "leadMelody": data.get("leadMelody", []),
+            "config": {
+                "prompt": data.get("prompt", ""),
+                "style": data.get("style", "Pop"),
+                "key": data.get("key", "C"),
+                "bpm": int(data.get("bpm", 120)),
+                "num_sections": len(data.get("sections", [1]))
+            }
+        }
+        
+        result = generate_arrangement(payload)
+        
         if "error" in result:
             return JSONResponse({"success": False, "message": result["error"]}, status_code=500)
+            
         return JSONResponse({"success": True, "message": "Arrangement generated", "data": result})
     except Exception as e:
         return JSONResponse({"success": False, "message": str(e)}, status_code=500)
@@ -1680,9 +1815,266 @@ async def write_lyrics(request: Request):
         return JSONResponse({"success": True, "message": "Lyrics generated", "data": result})
     except Exception as e:
         return JSONResponse({"success": False, "message": str(e)}, status_code=500)
+        return JSONResponse({"success": False, "message": str(e)}, status_code=500)
+
+@app.post("/api/ai/lyria-render")
+async def lyria_render(request: Request):
+    """
+    Renders an ABC notation string into an MP3 audio file using Google Lyria-3-Pro-Preview
+    """
+    try:
+        from lyria_engine import generate_lyria_audio, analyze_melody_for_blueprint
+        data = await request.json()
+        
+        # Build ABC from notes
+        notes = data.get("notes", [])
+        prompt = data.get("prompt", "Symphony Orchestra")
+        bpm = data.get("bpm", 120)
+        lyrics = data.get("lyrics", "").strip()
+        
+        if not notes:
+            return JSONResponse({"success": False, "message": "Missing notes data"}, status_code=400)
+            
+        # Convert notes to ABC
+        key = data.get("key", "C") # Use key from request or default
+        abc_str = f"X:1\nT:Lyria Render\nM:4/4\nL:1/4\nK:{key}\n"
+        measure_groups = {}
+        for note in notes:
+            step = note.get("step", "")
+            alter = note.get("alter", 0)
+            octave = note.get("octave", 4)
+            start = note.get("startTime", 0)
+            dur = note.get("duration", 0)
+            
+            note_name = step
+            if alter == 1: note_name += "^"
+            elif alter == -1: note_name += "_"
+            note_name += str(octave)
+            
+            m = int(start // 4) + 1
+            if m not in measure_groups:
+                measure_groups[m] = []
+            
+            dur_val = 1.0
+            try:
+                if isinstance(dur, str) and dur.endswith("n"):
+                    dur_val = 4.0 / float(dur.replace("n", ""))
+                else:
+                    dur_val = float(dur)
+            except Exception:
+                pass
+            
+            abc_dur = max(1, round(dur_val))
+            abc_note = note_name
+            if abc_dur > 1:
+                abc_note += str(abc_dur)
+            elif abc_dur < 1:
+                abc_note += "/2"
+                
+            measure_groups[m].append(abc_note)
+            
+        abc_lines = []
+        for m in sorted(measure_groups.keys()):
+            abc_lines.append(f"| " + " ".join(measure_groups[m]))
+        
+        abc_data = abc_str + "\n".join(abc_lines) + "\n|]"
+        print(f"[Lyria Engine] Converted {len(notes)} notes to ABC Notation:\n{abc_data}")
+        
+        # 1. Smart Pre-Analysis Step
+        print(f"[Lyria Engine] Generating Musical Blueprint...")
+        analysis_data = analyze_melody_for_blueprint(abc_data, key, bpm, prompt)
+        blueprint = analysis_data.get("blueprint", "No blueprint")
+        print(f"[Lyria Engine] Blueprint Generated (Check /tmp/lyria_blueprint.txt)")
+        with open("/tmp/lyria_blueprint.txt", "w") as f:
+            f.write(blueprint)
+            
+        # 2. Audio Generation Step
+        from lyria_engine import generate_lyria_audio
+        import threading
+        
+        print("[Lyria Engine] Redirecting to Lyria Native Engine (Submit Task)...")
+        task_id = f"lyria_task_{uuid.uuid4().hex}"
+        
+        global LYRIA_TASKS
+        if 'LYRIA_TASKS' not in globals():
+            LYRIA_TASKS = {}
+            
+        LYRIA_TASKS[task_id] = {"status": "processing", "audio_bytes": None, "error": None}
+        
+        def _run_lyria():
+            try:
+                audio_bytes = generate_lyria_audio(abc_data, prompt, blueprint, lyrics)
+                LYRIA_TASKS[task_id]["status"] = "completed"
+                LYRIA_TASKS[task_id]["audio_bytes"] = audio_bytes
+            except Exception as e:
+                print(f"[Lyria Task Failed] {e}")
+                LYRIA_TASKS[task_id]["status"] = "error"
+                LYRIA_TASKS[task_id]["error"] = str(e)
+                
+        threading.Thread(target=_run_lyria, daemon=True).start()
+        
+        return JSONResponse({"success": True, "task_id": task_id, "message": "Lyria task queued", "data": {"blueprint": blueprint}})
+        
+    except Exception as e:
+        print(f"[Lyria Render Error] {e}")
+        return JSONResponse({"success": False, "message": str(e)}, status_code=500)
+
+@app.post("/api/ai/lyria-poll")
+async def lyria_poll(request: Request):
+    """
+    Polls the ACE-Step API for audio generation status.
+    """
+    try:
+        from acestep_engine import poll_acestep_task
+        import base64
+        import tempfile
+        import numpy as np
+        import librosa
+        import os
+        import time
+        import uuid
+        
+        data = await request.json()
+        task_id = data.get("task_id")
+        if not task_id:
+            return JSONResponse({"success": False, "message": "Missing task_id"}, status_code=400)
+            
+        global LYRIA_TASKS
+        if 'LYRIA_TASKS' not in globals() or task_id not in LYRIA_TASKS:
+            return JSONResponse({"success": False, "message": "Task not found or expired"}, status_code=404)
+            
+        task = LYRIA_TASKS[task_id]
+        if task["status"] == "processing":
+            return JSONResponse({"success": True, "status": "processing", "progress": "Generating audio with Lyria..."})
+        elif task["status"] == "error":
+            return JSONResponse({"success": False, "error": task.get("error", "Unknown error")}, status_code=500)
+            
+        # Success
+        audio_bytes = task["audio_bytes"]
+        detected_bpm = 120
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+                tmp.write(audio_bytes)
+                tmp_path = tmp.name
+            y_audio, sr_audio = librosa.load(tmp_path)
+            tempo, _ = librosa.beat.beat_track(y=y_audio, sr=sr_audio)
+            detected_bpm = float(tempo[0]) if isinstance(tempo, np.ndarray) else float(tempo)
+            os.remove(tmp_path)
+        except Exception as e:
+            print(f"Failed to detect BPM: {e}")
+            
+        # Save to local file so frontend can download/play it via static URL
+        output_filename = f"lyria_{int(time.time())}_{uuid.uuid4().hex[:6]}.mp3"
+        output_path = os.path.join("renders", output_filename)
+        os.makedirs("renders", exist_ok=True)
+        with open(output_path, "wb") as f:
+            f.write(audio_bytes)
+            
+        audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+        return JSONResponse({
+            "success": True,
+            "status": "success",
+            "message": "Lyria Audio Generated",
+            "data": {
+                "base64": audio_b64,
+                "url": f"/audio/{output_filename}",
+                "detectedBpm": detected_bpm
+            }
+        })
+    except Exception as e:
+        return JSONResponse({"success": False, "message": str(e)}, status_code=500)
 
 _vocalido_router.add_api_route("/api/arrange", arrange_music, methods=["POST"])
 _vocalido_router.add_api_route("/api/lyrics", write_lyrics, methods=["POST"])
+_vocalido_router.add_api_route("/api/ai/lyria-render", lyria_render, methods=["POST"])
+_vocalido_router.add_api_route("/api/ai/lyria-poll", lyria_poll, methods=["POST"])
+
+@app.post("/vocalido/api/ai/extract-stems-midi")
+async def extract_stems_midi(request: Request):
+    try:
+        from lyria_pipeline import pipeline_base64_audio_to_midi_stems
+        data = await request.json()
+        audio_b64 = data.get("audio_base64")
+        mode = data.get("mode", "2stems") # "2stems" or "4stems"
+        
+        if not audio_b64:
+            return JSONResponse({"success": False, "message": "Missing audio_base64"}, status_code=400)
+            
+        print(f"[API] Running extract_stems_midi pipeline in {mode} mode...")
+        # This will separate the stems and convert them to MIDI base64
+        midi_results = pipeline_base64_audio_to_midi_stems(audio_b64, mode=mode)
+        
+        return JSONResponse({
+            "success": True,
+            "message": "Stems separated and MIDI extracted successfully.",
+            "data": midi_results # Dict of { "vocals": "b64...", "other": "b64...", ... }
+        })
+    except Exception as e:
+        print(f"[Extract Stems Error] {e}")
+        return JSONResponse({"success": False, "message": str(e)}, status_code=500)
+
+
+@app.post("/vocalido/api/instrumento/render")
+async def instrumento_render(request: Request):
+    import base64
+    import tempfile
+    import subprocess
+    import uuid
+
+    try:
+        data = await request.json()
+        midi_base64 = data.get("midi_base64")
+        instrument_name = data.get("instrument_name", "violin")
+        
+        if not midi_base64:
+            return JSONResponse({"success": False, "message": "Missing midi_base64"}, status_code=400)
+            
+        midi_bytes = base64.b64decode(midi_base64.split(",")[-1] if "," in midi_base64 else midi_base64)
+        
+        # Write MIDI to temp file
+        with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as tmp_mid:
+            tmp_mid.write(midi_bytes)
+            mid_path = tmp_mid.name
+            
+        out_filename = f"instrumento_{instrument_name}_{uuid.uuid4().hex[:6]}.wav"
+        out_path = os.path.join("renders", out_filename)
+        os.makedirs("renders", exist_ok=True)
+        
+        # Path to conda python and our worker script
+        conda_python = "/Users/paisan/miniconda3/envs/instrumento/bin/python"
+        worker_script = os.path.join(os.path.dirname(__file__), "instrumento_worker.py")
+        
+        print(f"[Instrumento] Running DDSP for {instrument_name}...")
+        
+        # Note: In a real environment, we'd need to modify the midi to map to the correct program number 
+        # so midi-ddsp knows which instrument to use. 
+        # But for this simple implementation, we'll just run it.
+        result = subprocess.run(
+            [conda_python, worker_script, "--midi", mid_path, "--out", out_path],
+            capture_output=True,
+            text=True
+        )
+        
+        os.remove(mid_path)
+        
+        if result.returncode != 0:
+            print(f"[Instrumento] Error: {result.stderr}")
+            return JSONResponse({"success": False, "message": f"DDSP Error: {result.stderr}"}, status_code=500)
+            
+        if not os.path.exists(out_path):
+            return JSONResponse({"success": False, "message": "DDSP failed to produce output file."}, status_code=500)
+            
+        return JSONResponse({
+            "success": True,
+            "data": {
+                "url": f"/audio/{out_filename}",
+                "instrument": instrument_name
+            }
+        })
+    except Exception as e:
+        print(f"[Instrumento] Exception: {e}")
+        return JSONResponse({"success": False, "message": str(e)}, status_code=500)
+
 
 if __name__ == "__main__":
     print("=" * 55)

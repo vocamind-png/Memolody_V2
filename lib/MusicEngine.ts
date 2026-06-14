@@ -371,14 +371,17 @@ export class MusicEngine {
           let measurePlayTime = 0;
           Array.from(measure.children).forEach((child) => {
             if (child.tagName === "backup") {
-              const duration = (parseInt(child.querySelector("duration")?.textContent || "0") / runningDivisions);
+              const durParsed = parseInt(child.querySelector("duration")?.textContent?.trim() || "0");
+              const duration = (isNaN(durParsed) ? 0 : durParsed) / runningDivisions;
               measurePlayTime = Math.round((measurePlayTime - duration) * 100000) / 100000;
             } else if (child.tagName === "forward") {
-              const duration = (parseInt(child.querySelector("duration")?.textContent || "0") / runningDivisions);
+              const durParsed = parseInt(child.querySelector("duration")?.textContent?.trim() || "0");
+              const duration = (isNaN(durParsed) ? 0 : durParsed) / runningDivisions;
               measurePlayTime = Math.round((measurePlayTime + duration) * 100000) / 100000;
             } else if (child.tagName === "note") {
               const isChord = child.querySelector("chord");
-              const duration = (parseInt(child.querySelector("duration")?.textContent || "0") / runningDivisions);
+              const durParsed = parseInt(child.querySelector("duration")?.textContent?.trim() || "0");
+              const duration = (isNaN(durParsed) ? 0 : durParsed) / runningDivisions;
               if (!isChord) {
                 measurePlayTime = Math.round((measurePlayTime + duration) * 100000) / 100000;
               }
@@ -446,17 +449,20 @@ export class MusicEngine {
 
           Array.from(measure.children).forEach((child) => {
             if (child.tagName === "backup") {
-              const duration = (parseInt(child.querySelector("duration")?.textContent || "0") / divisions);
+              const durParsed = parseInt(child.querySelector("duration")?.textContent?.trim() || "0");
+              const duration = (isNaN(durParsed) ? 0 : durParsed) / divisions;
               currentTime = Math.round((currentTime - duration) * 100000) / 100000;
             } else if (child.tagName === "forward") {
-              const duration = (parseInt(child.querySelector("duration")?.textContent || "0") / divisions);
+              const durParsed = parseInt(child.querySelector("duration")?.textContent?.trim() || "0");
+              const duration = (isNaN(durParsed) ? 0 : durParsed) / divisions;
               currentTime = Math.round((currentTime + duration) * 100000) / 100000;
             } else if (child.tagName === "note") {
               const isRest = child.querySelector("rest") !== null;
               const isChord = child.querySelector("chord") !== null;
               const isGrace = child.querySelector("grace") !== null;
-              const rawDuration = isGrace ? 0 : (parseInt(child.querySelector("duration")?.textContent || "0") / divisions);
-              const duration = Math.round((isNaN(rawDuration) ? 0.5 : rawDuration) * 100000) / 100000;
+              const durParsed = parseInt(child.querySelector("duration")?.textContent?.trim() || "0");
+              const rawDuration = isGrace ? 0 : ((isNaN(durParsed) ? 0 : durParsed) / divisions);
+              const duration = Math.round((rawDuration === 0 && !isGrace ? 0.5 : rawDuration) * 100000) / 100000;
               const staff = parseInt(child.querySelector("staff")?.textContent || "1");
               const voice = parseInt(child.querySelector("voice")?.textContent || "1");
 
@@ -468,10 +474,11 @@ export class MusicEngine {
                 graceOffset = 0;
               }
 
-              const currentTrackId = `${partId}-S${staff}`;
+              const currentTrackId = `${partId}-S${staff}-V${voice}`;
               if (!partNames[currentTrackId]) {
                 const staffSuffix = staff === 1 ? ' (Treble)' : staff === 2 ? ' (Bass)' : ` (Staff ${staff})`;
-                partNames[currentTrackId] = `${basePartName}${staffSuffix}`;
+                const voiceSuffix = ` V${voice}`;
+                partNames[currentTrackId] = `${basePartName}${staffSuffix}${voiceSuffix}`;
               }
 
               if (!isRest) {
@@ -509,8 +516,11 @@ export class MusicEngine {
                       }
                     }
                   }
-                  if (!isChord) currentTime = Math.round((currentTime + duration) * 100000) / 100000;
-                  return; // skip creating a new note for the tied continuation
+                  if (merged) {
+                    if (!isChord) currentTime = Math.round((currentTime + duration) * 100000) / 100000;
+                    return; // skip creating a new note for the tied continuation
+                  }
+                  // If merge failed, fall through and add it as a new note.
                 }
 
                 // Extract Lyric/Solfege from XML
@@ -762,6 +772,8 @@ export class MusicEngine {
       loadPromises.push(new Promise<void>((resolve) => {
         const player = new Tone.Player({
           url: audioUrl,
+          fadeIn: 0,
+          fadeOut: 0,
           onload: () => {
             if (myGeneration === this._vocalGeneration) {
               const players = this.trackVocalLayers.get(trackId) || [];
@@ -789,6 +801,8 @@ export class MusicEngine {
         loadPromises.push(new Promise<void>((resolve) => {
           const player = new Tone.Player({
             url: url,
+            fadeIn: 0,
+            fadeOut: 0,
             onload: () => {
               if (myGeneration === this._vocalGeneration) {
                 loadedStems[index] = player;

@@ -36,9 +36,11 @@ const PerformanceScore: React.FC<PerformanceScoreProps> = ({
   const measureWidth = pixelsPerBeat * beatsPerMeasure;
 
   // Store values in refs so rAF loop can read latest without dependency
-  const pixelsPerBeatRef = useRef(pixelsPerBeat);
-  pixelsPerBeatRef.current = pixelsPerBeat;
   const isPlayingRef = useRef(isPlaying);
+  const isDraggingRef = useRef(false);
+  const pixelsPerBeatRef = useRef(pixelsPerBeat);
+  const lastNoteEndRef = useRef(0);
+  pixelsPerBeatRef.current = pixelsPerBeat;
   isPlayingRef.current = isPlaying;
 
   useEffect(() => {
@@ -52,7 +54,6 @@ const PerformanceScore: React.FC<PerformanceScoreProps> = ({
     if (notes.length === 0) return 100;
     return notes.reduce((max, n) => Math.max(max, n.startTime + n.duration), 0);
   }, [notes]);
-  const lastNoteEndRef = useRef(lastNoteEnd);
   lastNoteEndRef.current = lastNoteEnd;
 
   const contentWidth = Math.max((lastNoteEnd + 40) * pixelsPerBeat + pianoWidth, viewportWidth + 500);
@@ -109,16 +110,25 @@ const PerformanceScore: React.FC<PerformanceScoreProps> = ({
         const clampedTime = Math.min(ct, lne + 2);
         const playbackTrackX = clampedTime * ppb;
 
-        // Auto-scroll ONLY when playing
-        if (isPlayingRef.current) {
-          // Keep playhead around the left 20% of the screen if possible
-          const target = Math.max(0, playbackTrackX - el.clientWidth * 0.2);
-          const max = Math.max(0, el.scrollWidth - el.clientWidth);
-          // Only auto-scroll if the playhead is moving out of view or if we want to lock it
-          el.scrollLeft = Math.min(target, max);
-        }
+        if (!isDraggingRef.current) {
+          // Auto-scroll ONLY when playing
+          if (isPlayingRef.current) {
+            // Keep playhead around the left 20% of the screen if possible
+            const target = Math.max(0, playbackTrackX - el.clientWidth * 0.2);
+            const max = Math.max(0, el.scrollWidth - el.clientWidth);
+            // Only auto-scroll if the playhead is moving out of view or if we want to lock it
+            el.scrollLeft = Math.min(target, max);
+          }
 
-        // Build DOM cache once (invalidated when zoom/notes/tracks change)
+          const playhead = document.getElementById('perf-playhead');
+          if (playhead) {
+            playhead.style.transform = `translateX(${playbackTrackX}px)`;
+          }
+          const playheadHandle = document.getElementById('perf-playhead-handle');
+          if (playheadHandle) {
+            playheadHandle.style.transform = `translateX(${playbackTrackX}px)`;
+          }
+        }
         if (!cacheBuilt.current) {
           const nEls = el.querySelectorAll('[data-ns]');
           cachedNoteEls.current = Array.from(nEls).map(n => {
@@ -141,12 +151,7 @@ const PerformanceScore: React.FC<PerformanceScoreProps> = ({
           cacheBuilt.current = true;
         }
 
-        // --- PLAYHEAD UPDATE ---
-        const playhead = document.getElementById('perf-playhead');
-        if (playhead) {
-          playhead.style.transform = `translateX(${playbackTrackX}px)`;
-        }
-
+        // --- PLAYHEAD UPDATE ---        // (Moved playhead update logic up into the non-dragging block)
         const playing = isPlayingRef.current;
 
         // Pass 1: Notes + active midi set — O(notes)
@@ -230,6 +235,48 @@ const PerformanceScore: React.FC<PerformanceScoreProps> = ({
     const count = Math.ceil(contentWidth / measureWidth);
     return Array.from({ length: count }, (_, i) => i);
   }, [contentWidth, measureWidth]);
+
+  const handlePlayheadDrag = (e: React.MouseEvent | React.TouchEvent) => {
+    e.stopPropagation();
+    const viewport = scrollRef.current;
+    if (!viewport) return;
+
+    isDraggingRef.current = true;
+
+    const onMove = (me: MouseEvent | TouchEvent) => {
+      const rect = viewport.getBoundingClientRect();
+      const cx = 'touches' in me ? me.touches[0].clientX : (me as MouseEvent).clientX;
+      const scrollLeft = viewport.scrollLeft;
+      
+      const localX = cx - rect.left + scrollLeft - pianoWidth;
+      const newTimeBeats = Math.max(0, localX / pixelsPerBeat);
+      
+      // Immediately update visual playhead for smooth dragging
+      const playhead = document.getElementById('perf-playhead');
+      const playheadHandle = document.getElementById('perf-playhead-handle');
+      if (playhead) playhead.style.transform = `translateX(${localX}px)`;
+      if (playheadHandle) playheadHandle.style.transform = `translateX(${localX}px)`;
+      
+      // Convert beats to seconds (assuming 4/4 and current bpm)
+      const bpmToUse = bpm || 120;
+      const seconds = newTimeBeats * (60 / bpmToUse);
+      
+      onSeek(seconds);
+    };
+
+    const onEnd = () => {
+      isDraggingRef.current = false;
+      window.removeEventListener('mousemove', onMove as any);
+      window.removeEventListener('mouseup', onEnd);
+      window.removeEventListener('touchmove', onMove as any);
+      window.removeEventListener('touchend', onEnd);
+    };
+
+    window.addEventListener('mousemove', onMove as any);
+    window.addEventListener('mouseup', onEnd);
+    window.addEventListener('touchmove', onMove as any);
+    window.addEventListener('touchend', onEnd);
+  };
 
   // Auto-scroll vertically on first load
   const hasScrolledRef = useRef(false);
@@ -399,6 +446,19 @@ const PerformanceScore: React.FC<PerformanceScoreProps> = ({
                   <span className="text-[9px] font-black text-indigo-400 ml-1.5 leading-none">{i + 1}</span>
                 </div>
               ))}
+              {/* PLAYHEAD GRAB HANDLE (Sticky Top) */}
+              <div
+                id="perf-playhead-handle"
+                className="absolute top-0 h-full w-[2px] bg-indigo-500 z-[3000] cursor-ew-resize group"
+                style={{ left: `0px`, transform: 'translateX(0px)' }}
+                onMouseDown={handlePlayheadDrag}
+                onTouchStart={handlePlayheadDrag}
+              >
+                <div className="absolute top-0 left-1/2 -translate-x-1/2 w-6 h-[28px] bg-indigo-500 rounded-b-xl shadow-lg border-2 border-white flex items-center justify-center cursor-ew-resize transition-transform group-hover:scale-110">
+                  <div className="w-1 h-3 border-l border-r border-white/50" />
+                </div>
+                <div className="absolute top-0 bottom-0 -left-4 -right-4 cursor-ew-resize" />
+              </div>
             </div>
           </div>
 
@@ -518,7 +578,12 @@ const PerformanceScore: React.FC<PerformanceScoreProps> = ({
             </div>
           ))}
 
-
+          {/* PLAYHEAD (Indigo Line) - Extends downwards */}
+          <div
+            id="perf-playhead"
+            className="absolute top-0 bottom-0 w-[2px] bg-indigo-500 z-[3000] pointer-events-none shadow-[0_0_15px_rgba(99,102,241,0.6)] group"
+            style={{ left: `${pianoWidth}px`, height: '100%', transform: 'translateX(0px)' }}
+          />
 
         </div>
       </div>

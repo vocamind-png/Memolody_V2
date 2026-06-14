@@ -474,13 +474,17 @@ class DiffSingerONNXEngine:
                     stolen = max_steal
                     upd[last_vowel_upd_idx] -= stolen
                 
-                remaining_cons_fr = total_cons_fr - stolen
-                if remaining_cons_fr >= wdur:
-                    scale = max(0.1, (wdur - 1) / remaining_cons_fr)
+                target_word_frames = wdur + stolen
+                if total_cons_fr >= target_word_frames:
+                    scale = max(0.1, (target_word_frames - 1) / total_cons_fr)
                     cons_fr_list = [int(c * scale) for c in cons_fr_list]
-                    remaining_cons_fr = sum(cons_fr_list)
+                    total_cons_fr = sum(cons_fr_list)
                 
-                v_fr = max(1, wdur - remaining_cons_fr)
+                v_fr = max(1, target_word_frames - total_cons_fr)
+                
+                diff = target_word_frames - (total_cons_fr + v_fr)
+                if diff != 0:
+                    v_fr += diff
                 
                 for i in range(wdiv):
                     if i == vowel_local_idx:

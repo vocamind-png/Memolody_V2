@@ -464,8 +464,10 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
 
             // System instructions
             const sys = preferredLanguage === 'th'
-                ? `คุณคือ Nimo AI ผู้ช่วยอัจฉริยะส่วนกลางของแอพพลิเคชัน Memolody V2
+                ? `คุณคือ Nimo ผู้ช่วย Agentic AI สุดอัจฉริยะของแอพพลิเคชัน Memolody V2 (มีความฉลาดระดับเดียวกับ Gemini 1.5 Pro)
 คุณทำหน้าที่เป็นแกนสมองหลัก ควบคุม UI ปุ่มกด และการเล่นดนตรีผ่านคำสั่งเสียงของผู้ใช้
+คุณมีบุคลิกที่เป็นธรรมชาติ เป็นมิตร และมีความรู้ลึกซึ้งเหมือนมนุษย์จริงๆ คุณตอบคำถามได้ลื่นไหล ไม่แข็งกระด้างเหมือนหุ่นยนต์
+(ห้ามตอบเป็นข้อๆ หรือมีหมายเลขกำกับ เช่น 1. 2. 3. ถ้าไม่จำเป็น ให้ตอบแบบสนทนาปกติ)
 
 สถานะปัจจุบันของแอพพลิเคชัน (Application State):
 ${appStateStr}
@@ -491,10 +493,9 @@ ${appStateStr}
 9. 'toggle_view_mode': สลับโหมด Score และ Piano Roll (ไม่มี params)
 10. 'toggle_loop': เปิด/ปิดโหมดลูปเสียง (params: { enabled: boolean })
 
-การตอบกลับ:
-คุณต้องตอบกลับเป็น JSON ที่สอดคล้องกับ JSON Schema ที่กำหนดเท่านั้น โดยมีสองฟิลด์:
-- 'reply': ข้อความตอบกลับที่กระชับและเป็นมิตรเพื่อแสดงผลและใช้พูดออกเสียงผ่าน TTS (ภาษาไทยลงท้ายด้วย ${suffix} เสมอ)
-- 'actions': รายการคำสั่ง (Array of action objects) ที่ต้องการรันตามความต้องการของผู้ใช้ ถ้าไม่มีให้ใช้ []`
+ข้อสำคัญเกี่ยวกับการตอบกลับ (JSON):
+- 'reply': เป็นข้อความที่ใช้พูดและแสดงผล ต้องมีความเป็นมนุษย์ เป็นมิตร (ลงท้ายด้วย ${suffix} เสมอ) และ **ห้ามขึ้นบรรทัดใหม่ด้วย \n หรือใช้เครื่องหมาย Bullet Point** ให้เขียนเป็นพารากราฟติดกัน
+- 'actions': รายการคำสั่งที่จะรันตามความต้องการของผู้ใช้ ถ้าไม่มีให้ใช้ []`
                 : `You are Nimo, central AI brain for Memolody app.
 You control the application's limbs (playback, settings, navigation, volume, tempo) via voice commands.
 
@@ -599,7 +600,18 @@ You must output valid JSON matching the schema. If no system controls are reques
                 window.speechSynthesis.cancel();
                 setSpeaking(true);
                 const u = new SpeechSynthesisUtterance(preferredLanguage === 'th' ? fixPronunciation(cleanReply) : cleanReply);
-                u.lang = /[\\u0E00-\\u0E7F]/.test(cleanReply) ? 'th-TH' : 'en-US';
+                const isThai = /[\\u0E00-\\u0E7F]/.test(cleanReply);
+                u.lang = isThai ? 'th-TH' : 'en-US';
+                
+                // Explicitly find a Thai voice if needed
+                if (isThai) {
+                    const voices = window.speechSynthesis.getVoices();
+                    const thVoice = voices.find(v => v.lang === 'th-TH' || v.lang.includes('th') || v.lang.includes('TH'));
+                    if (thVoice) {
+                        u.voice = thVoice;
+                    }
+                }
+                
                 u.rate = 1.05;
                 u.onend = () => {
                     setSpeaking(false);

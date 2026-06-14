@@ -5,9 +5,12 @@ export interface ArrangementConfig {
   key: string;
   bpm: number;
   timeSignature: { beats: number; beatType: number };
-  style?: string; // e.g., 'pop', 'jazz', 'rock', 'classical', 'lofi', 'edm', 'rnb', 'acoustic', 'bossanova', 'funk', 'cinematic', 'kpop'
+  style?: string; // e.g., 'auto', 'pop', 'jazz', 'rock', 'classical', 'lofi', 'edm', 'rnb', 'acoustic', 'bossanova', 'funk', 'cinematic', 'kpop'
   chordSource?: 'ai' | 'original';
   prompt?: string;
+  instruments?: string[];
+  is4PartChorus?: boolean;
+  chordProgression?: string;
 }
 
 export class SymbolicArranger {
@@ -26,7 +29,7 @@ export class SymbolicArranger {
     await new Promise(resolve => setTimeout(resolve, 1500));
     
     const promptStr = (config.prompt || '').toLowerCase();
-    const is4PartChorus = promptStr.includes('4') || promptStr.includes('four') || promptStr.includes('สี่') || promptStr.includes('chorus') || promptStr.includes('คอรัส') || promptStr.includes('ประสาน');
+    const is4PartChorus = config.is4PartChorus !== undefined ? config.is4PartChorus : (promptStr.includes('4') || promptStr.includes('four') || promptStr.includes('สี่') || promptStr.includes('chorus') || promptStr.includes('คอรัส') || promptStr.includes('ประสาน'));
     const isAcoustic = config.style === 'acoustic' || promptStr.includes('acoustic');
     const isRock = config.style === 'rock' || promptStr.includes('rock');
 
@@ -50,7 +53,7 @@ export class SymbolicArranger {
         isMuted: false,
         isSolo: false,
         lyricMode: 'Ju Solfege Movable Doh',
-        volume: -5,
+        volume: 0.8,
         pan: 0.3,
         mode: 'vocal',
         instrument: 'vocal',
@@ -63,6 +66,25 @@ export class SymbolicArranger {
     return tracks;
   }
 
+  private static parseChord(chordName: string): string[] {
+    const notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+    let root = chordName.charAt(0).toUpperCase();
+    if (chordName.length > 1 && (chordName[1] === '#' || chordName[1] === 'b')) {
+      root += chordName[1];
+    }
+    const flatToSharp: any = {'Db': 'C#', 'Eb': 'D#', 'Gb': 'F#', 'Ab': 'G#', 'Bb': 'A#'};
+    if (flatToSharp[root]) root = flatToSharp[root];
+
+    let rootIdx = notes.indexOf(root);
+    if (rootIdx === -1) rootIdx = 0;
+
+    const isMinor = chordName.includes('m') && !chordName.includes('maj');
+    const thirdIdx = (rootIdx + (isMinor ? 3 : 4)) % 12;
+    const fifthIdx = (rootIdx + 7) % 12;
+
+    return [notes[rootIdx], notes[thirdIdx], notes[fifthIdx]];
+  }
+
   private static generateRhythmSection(melody: ParsedNote[], config: ArrangementConfig): TrackState[] {
     const bassId = `track-bass-${Date.now()}`;
     const chordId = `track-chord-${Date.now()}`;
@@ -72,103 +94,87 @@ export class SymbolicArranger {
     const chordNotes: ParsedNote[] = [];
     const drumNotes: ParsedNote[] = [];
 
-    let currentMeasure = '';
     const beatsPerMeasure = config.timeSignature.beats;
+    let totalBeats = 16;
+    if (melody.length > 0) {
+      totalBeats = melody.reduce((max, note) => Math.max(max, (note.startTime || 0) + (note.duration || 0)), 0);
+    }
+    const totalMeasures = Math.max(4, Math.ceil(totalBeats / beatsPerMeasure));
 
-    melody.forEach(note => {
-      if (note.measure && note.measure !== currentMeasure) {
-        currentMeasure = note.measure;
-        
-        // --- BASS ---
-        const bassSolfege = getChromaticSolfege(note.step, note.alter || 0, config.key, 'Ju Solfege Movable Doh');
-        // Play root note on beat 1
+    // Use AI's chord progression or default to a basic I V vi IV progression in C
+    const progStr = config.chordProgression || "C G Am F";
+    const chords = progStr.split(/\s+/).filter(c => c.length > 0);
+
+    for (let m = 1; m <= totalMeasures; m++) {
+      const currentMeasure = String(m);
+      const measureStartTime = (m - 1) * beatsPerMeasure;
+      const chordName = chords[(m - 1) % chords.length];
+      const chordPitches = this.parseChord(chordName);
+      
+      const style = (config.style || 'pop').toLowerCase();
+      
+      // BASS (Root note, 2 octaves below)
+      const bassRoot = chordPitches[0];
+      
+      // Dynamic Bass Pattern
+      if (style.includes('rock') || style.includes('pop')) {
+        // 8th note driving bass
+        for (let b = 0; b < beatsPerMeasure * 2; b++) {
+          bassNotes.push({
+            trackId: bassId, step: bassRoot.replace('#', ''), octave: 2, alter: bassRoot.includes('#') ? 1 : 0,
+            duration: 0.5, startTime: measureStartTime + (b * 0.5), solfege: '', staff: 2, voice: 1, measure: currentMeasure
+          });
+        }
+      } else {
+        // Standard whole note bass
         bassNotes.push({
-          trackId: bassId,
-          step: note.step,
-          octave: Math.max(1, note.octave - 2), // 2 octaves below
-          alter: note.alter || 0,
-          duration: beatsPerMeasure, // Hold for the whole measure
-          startTime: note.startTime,
-          solfege: bassSolfege,
-          staff: 2,
-          voice: 1,
-          measure: currentMeasure
+          trackId: bassId, step: bassRoot.replace('#', ''), octave: 2, alter: bassRoot.includes('#') ? 1 : 0,
+          duration: beatsPerMeasure, startTime: measureStartTime, solfege: '', staff: 2, voice: 1, measure: currentMeasure
         });
-
-        // --- CHORD (Piano) ---
-        // Simple triad (Root, 3rd, 5th)
-        const stepIndex = this.SCALE_STEPS.indexOf(note.step);
-        if (stepIndex !== -1) {
-          const triad = [0, 2, 4];
-          triad.forEach((interval, idx) => {
-            let chordStepIndex = (stepIndex + interval) % 7;
-            let chordOctave = note.octave - 1; // 1 octave below melody
-            if ((stepIndex + interval) >= 7) chordOctave++;
-            
-            const chordStep = this.SCALE_STEPS[chordStepIndex];
-            const solfege = getChromaticSolfege(chordStep, note.alter || 0, config.key, 'Ju Solfege Movable Doh');
-
-            // Play on beat 1, or arpeggiate depending on style
-            // Here we play a block chord
-            chordNotes.push({
-              trackId: chordId,
-              step: chordStep,
-              octave: chordOctave,
-              alter: note.alter || 0, // Simplified
-              duration: beatsPerMeasure,
-              startTime: note.startTime,
-              solfege: solfege,
-              staff: 1,
-              voice: idx + 1,
-              measure: currentMeasure
-            });
-          });
-        }
-
-        // --- DRUMS ---
-        // Basic Pop/Rock Beat (Kick on 1 & 3, Snare on 2 & 4)
-        for (let b = 0; b < beatsPerMeasure; b++) {
-          const isKick = b % 2 === 0;
-          drumNotes.push({
-            trackId: drumId,
-            step: isKick ? 'C' : 'D', // Using C2 for Kick, D2 for Snare
-            octave: 2,
-            alter: 0,
-            duration: 1,
-            startTime: note.startTime + b,
-            solfege: '',
-            staff: 1,
-            voice: 1,
-            measure: currentMeasure
-          });
-          // Hi-hats on every beat
-          drumNotes.push({
-            trackId: drumId,
-            step: 'F#', // F#2 for closed hi-hat
-            octave: 2,
-            alter: 1,
-            duration: 0.5,
-            startTime: note.startTime + b,
-            solfege: '',
-            staff: 1,
-            voice: 2,
-            measure: currentMeasure
-          });
-          drumNotes.push({
-            trackId: drumId,
-            step: 'F',
-            octave: 2,
-            alter: 1,
-            duration: 0.5,
-            startTime: note.startTime + b + 0.5,
-            solfege: '',
-            staff: 1,
-            voice: 2,
-            measure: currentMeasure
-          });
-        }
       }
-    });
+
+      // PIANO / GUITAR (Chords, 1 octave below)
+      if (style.includes('acoustic') || style.includes('pop')) {
+        // Syncopated comping (Beat 1, Beat 2.5, Beat 4)
+        const offsets = [0, 1.5, 3];
+        offsets.forEach(off => {
+          if (off < beatsPerMeasure) {
+            chordPitches.forEach((pitch, idx) => {
+              chordNotes.push({
+                trackId: chordId, step: pitch.replace('#', ''), octave: 3, alter: pitch.includes('#') ? 1 : 0,
+                duration: 1, startTime: measureStartTime + off, solfege: '', staff: 1, voice: idx + 1, measure: currentMeasure
+              });
+            });
+          }
+        });
+      } else {
+        // Whole note chords
+        chordPitches.forEach((pitch, idx) => {
+          chordNotes.push({
+            trackId: chordId, step: pitch.replace('#', ''), octave: 3, alter: pitch.includes('#') ? 1 : 0,
+            duration: beatsPerMeasure, startTime: measureStartTime, solfege: '', staff: 1, voice: idx + 1, measure: currentMeasure
+          });
+        });
+      }
+
+      // DRUMS (Dynamic Patterns)
+      for (let b = 0; b < beatsPerMeasure; b++) {
+        const beatStart = measureStartTime + b;
+        const isKick = b === 0 || b === 2; // Kick on 1 and 3
+        const isSnare = b === 1 || b === 3; // Snare on 2 and 4
+        
+        if (isKick) {
+          drumNotes.push({ trackId: drumId, step: 'C', octave: 2, alter: 0, duration: 1, startTime: beatStart, solfege: '', staff: 1, voice: 1, measure: currentMeasure });
+        }
+        if (isSnare) {
+          drumNotes.push({ trackId: drumId, step: 'D', octave: 2, alter: 0, duration: 1, startTime: beatStart, solfege: '', staff: 1, voice: 1, measure: currentMeasure });
+        }
+
+        // Hi-hat (8th notes)
+        drumNotes.push({ trackId: drumId, step: 'F', octave: 2, alter: 1, duration: 0.5, startTime: beatStart, solfege: '', staff: 1, voice: 2, measure: currentMeasure });
+        drumNotes.push({ trackId: drumId, step: 'F', octave: 2, alter: 1, duration: 0.5, startTime: beatStart + 0.5, solfege: '', staff: 1, voice: 2, measure: currentMeasure });
+      }
+    }
 
     const bassTrack: TrackState = {
       id: bassId, name: `AI Bass (${config.style || 'pop'})`, isMuted: false, isSolo: false, lyricMode: 'Close', volume: 0.85, pan: 0, mode: 'instrument', instrument: 'bass', effects: []
@@ -184,7 +190,13 @@ export class SymbolicArranger {
     (chordTrack as any)._generatedNotes = chordNotes;
     (drumTrack as any)._generatedNotes = drumNotes;
 
-    return [bassTrack, chordTrack, drumTrack];
+    let res = [];
+    const instruments = config.instruments || ['bass', 'piano', 'drums'];
+    if (instruments.includes('bass')) res.push(bassTrack);
+    if (instruments.includes('piano') || instruments.includes('guitar') || instruments.includes('strings')) res.push(chordTrack);
+    if (instruments.includes('drums')) res.push(drumTrack);
+
+    return res;
   }
 
   private static generateSATBChorus(leadMelody: ParsedNote[], config: ArrangementConfig): TrackState[] {

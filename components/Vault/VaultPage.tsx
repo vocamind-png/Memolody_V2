@@ -3,7 +3,7 @@ import React, { useState, useMemo, useRef, memo, useEffect, useCallback } from '
 import {
   Search, Database, X, ChevronRight, Music,
   SortAsc, Plus, Trash2, RefreshCcw, Play, RotateCcw,
-  Loader2, ChevronDown
+  Loader2, ChevronDown, Sparkles
 } from 'lucide-react';
 import { Song } from '../../types';
 import { songStorage } from '../../lib/SongStorage';

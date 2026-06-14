@@ -87,7 +87,7 @@ const ProcessingOverlay: React.FC<{ message: string; error?: string | null; onDi
 
 
 interface HomePageProps {
-  onSongSelect: (song: Song, xml?: string, mode?: 'listen' | 'studio') => void;
+  onSongSelect: (song: Song, xmlData?: string, mode?: 'listen' | 'edit' | 'play') => void;
   userLibrary: { metadata: Song, xmlData: string }[];
   onEnterStudio: () => void;
   onViewVault: () => void;
@@ -153,6 +153,30 @@ const SongRow = memo(({ item, onSongSelect, onToggleDelete, onPermanentDelete, i
         className="w-16 h-9 rounded-xl shrink-0 overflow-hidden relative shadow-md transition-shadow"
       >
         <AbstractCover seed={item.metadata.title || item.metadata.id} size={80} />
+        {(() => {
+          try {
+            const histStr = localStorage.getItem(`memo_render_history_${item.metadata.id}`);
+            const hasRendered = histStr ? (JSON.parse(histStr) || []).length > 0 : false;
+            if (hasRendered) {
+              return (
+                <div className="absolute inset-0 bg-black/30 flex items-center justify-center pointer-events-none group-hover:bg-black/50 transition-all">
+                  <div 
+                    className="w-6 h-6 rounded-full bg-cyan-500/90 backdrop-blur-sm flex items-center justify-center shadow-[0_0_10px_rgba(0,229,255,0.4)] pointer-events-auto cursor-pointer hover:scale-110 active:scale-95 transition-transform"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSongSelect(item.metadata, item.xmlData, 'play');
+                    }}
+                  >
+                    <Play size={12} className="text-black fill-black ml-0.5" />
+                  </div>
+                </div>
+              );
+            }
+          } catch (e) {
+            // Ignore parse errors
+          }
+          return null;
+        })()}
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
@@ -429,6 +453,22 @@ const HomePage: React.FC<HomePageProps> = ({
   // Load folders on mount
   useEffect(() => {
     songStorage.getFolders().then(setFolders);
+  }, []);
+
+  const handleExportDB = useCallback(async () => {
+    try {
+      const jsonStr = await songStorage.exportNeuralCore();
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'nimo-core-export.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Export failed', err);
+      alert('Failed to export database');
+    }
   }, []);
 
   const handleToggleFavorite = useCallback(async (songId: string) => {
@@ -748,7 +788,10 @@ const HomePage: React.FC<HomePageProps> = ({
         {/* Brand/Hero */}
         <div className="flex flex-col items-center gap-1.5">
           <h1 className="text-2xl font-black text-white tracking-[0.4em] uppercase italic">MEMOLODY</h1>
-          <p className="text-[8px] font-black text-zinc-500 uppercase tracking-[0.3em]">Hear by Eye, Play by Ear</p>
+          <p className="text-[8px] font-black text-zinc-500 uppercase tracking-[0.3em] flex items-center gap-2">
+            Hear by Eye, Play by Ear
+            <button onClick={handleExportDB} className="text-[7px] bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 px-2 py-0.5 rounded-full hover:bg-cyan-500/30 transition-colors cursor-pointer">EXPORT DB</button>
+          </p>
         </div>
 
         {/* Hidden file input (kept for programmatic import from + button) */}
@@ -886,17 +929,58 @@ const HomePage: React.FC<HomePageProps> = ({
             <div className="flex gap-2 overflow-x-auto no-scrollbar px-1">
               {recentSongs.map(item => (
                 <div key={item.metadata.id} onClick={() => onSongSelect(item.metadata, item.xmlData, 'listen')}
-                  className="shrink-0 w-[calc(20%-6.4px)] aspect-video rounded-xl overflow-hidden relative group/card hover:scale-[1.03] active:scale-95 transition-all shadow-md hover:shadow-lg hover:shadow-cyan-500/10 border border-white/10">
-                  <AbstractCover seed={item.metadata.title || item.metadata.id} size={200} />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
-                  <div className="absolute inset-0 flex flex-col justify-between p-2">
-                    <div className="flex items-center justify-between">
-                      <div className="w-6 h-6 rounded-md bg-black/30 backdrop-blur-sm flex items-center justify-center text-white/80 group-hover/card:text-cyan-400 group-hover/card:bg-cyan-500/20 transition-colors">
-                        <Play size={12} fill="currentColor" />
-                      </div>
-                      {item.metadata.isFavorite && <Heart size={10} className="text-rose-500 fill-rose-500" />}
-                    </div>
-                    <p className="text-[10px] font-black text-white uppercase italic truncate drop-shadow-lg leading-tight">{item.metadata.title}</p>
+                  className="shrink-0 w-[calc(33.33%-6px)] flex flex-col gap-1.5 group/card cursor-pointer">
+                  {/* Cover Image Area */}
+                  <div className="w-full aspect-video rounded-xl overflow-hidden relative shadow-md group-hover/card:shadow-lg group-hover/card:shadow-cyan-500/10 border border-white/10 transition-all group-hover/card:-translate-y-1">
+                    <AbstractCover seed={item.metadata.title || item.metadata.id} size={200} />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-50" />
+                    
+                    {/* Play Button Overlay */}
+                    {(() => {
+                      try {
+                        const histStr = localStorage.getItem(`memo_render_history_${item.metadata.id}`);
+                        const hasRendered = histStr ? (JSON.parse(histStr) || []).length > 0 : false;
+                        if (hasRendered) {
+                          return (
+                            <div className="absolute inset-0 bg-black/20 flex items-center justify-center pointer-events-none group-hover/card:bg-black/40 transition-all">
+                              <div 
+                                className="w-8 h-8 rounded-full bg-cyan-500/90 backdrop-blur-sm flex items-center justify-center shadow-[0_0_15px_rgba(0,229,255,0.5)] pointer-events-auto cursor-pointer hover:scale-110 active:scale-95 transition-transform"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onSongSelect(item.metadata, item.xmlData, 'play');
+                                }}
+                              >
+                                <Play size={16} className="text-black fill-black ml-0.5" />
+                              </div>
+                            </div>
+                          );
+                        }
+                      } catch (e) {}
+                      
+                      // Default small play button if not rendered
+                      return (
+                        <div className="absolute bottom-1.5 left-1.5 flex items-center justify-center pointer-events-none">
+                          <div 
+                            className="w-6 h-6 rounded-full bg-black/40 backdrop-blur-sm flex items-center justify-center text-white/80 group-hover/card:text-cyan-400 group-hover/card:bg-cyan-500/20 transition-colors pointer-events-auto cursor-pointer"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onSongSelect(item.metadata, item.xmlData, 'play');
+                            }}
+                          >
+                            <Play size={10} fill="currentColor" className="ml-0.5" />
+                          </div>
+                        </div>
+                      );
+                    })()}
+                    
+                    {/* Favorite Icon */}
+                    {item.metadata.isFavorite && <Heart size={10} className="text-rose-500 fill-rose-500 absolute top-1.5 right-1.5" />}
+                  </div>
+                  
+                  {/* Title Area (Outside the cover) */}
+                  <div className="px-0.5">
+                    <p className="text-[10px] leading-tight font-black text-white uppercase italic truncate">{item.metadata.title || 'Untitled Song'}</p>
+                    <p className="text-[8px] leading-tight text-zinc-500 uppercase tracking-wider truncate mt-0.5">{item.metadata.artist || 'Unknown Artist'}</p>
                   </div>
                 </div>
               ))}

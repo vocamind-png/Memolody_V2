@@ -28,3 +28,6 @@ dist/
 *.safetensors
 *.pdf
 *.log
+vocalido_server/
+nimo-core-export.json
+chords_dataset.json

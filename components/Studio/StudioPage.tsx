@@ -1,5 +1,6 @@
 
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { midiInputManager } from '../../lib/MidiInputManager';
 import {
   ArrowLeft, X, PlusCircle, Settings2, Play, Square, Pause,
   Cpu, Bot, FileText, FileCode, Download,
@@ -17,6 +18,7 @@ import { PluginManager } from '../../plugins/core/manager';
 import { songStorage } from '../../lib/SongStorage';
 import { parseMusicXMLMetadata, injectSolfegeToXml } from '../../lib/MusicXmlParser';
 import ArrangerPage from '../Arranger/ArrangerPage';
+import ComposerPage from '../Composer/ComposerPage';
 import { AudioConverter } from '../../lib/AudioConverter';
 
 interface StudioPageProps {
@@ -63,7 +65,7 @@ const StudioPage: React.FC<StudioPageProps> = ({
   const [showPluginSettings, setShowPluginSettings] = useState(false);
   const [activePluginId, setActivePluginId] = useState<string>('vocalido-svs');
   const [plugins] = useState(PluginManager.getInstance().listPlugins());
-  const [studioMode, setStudioMode] = useState<'arranger' | 'editor' | 'pianoroll'>('editor');
+  const [studioMode, setStudioMode] = useState<'composer' | 'arranger' | 'editor' | 'pianoroll'>('arranger');
   const [pianorollTrackId, setPianorollTrackId] = useState<string | null>(null);
 
   // Sync props to state if they change (e.g. when navigating from Player)
@@ -81,6 +83,16 @@ const StudioPage: React.FC<StudioPageProps> = ({
     }
   }, [initialXml]);
 
+  // Keep MidiInputManager updated with the best active track
+  useEffect(() => {
+    if (pianorollTrackId) {
+      midiInputManager.setActiveTrack(pianorollTrackId);
+    } else if (tracks && tracks.length > 0) {
+      const firstInst = tracks.find(t => t.type === 'instrument') || tracks[0];
+      if (firstInst) midiInputManager.setActiveTrack(firstInst.id);
+    }
+  }, [pianorollTrackId, tracks]);
+
   // ── Transport & Audio State ──
   const [masterVolume, setMasterVolume] = useState(0.8);
   const [showVolumeSlider, setShowVolumeSlider] = useState(false);
@@ -96,6 +108,7 @@ const StudioPage: React.FC<StudioPageProps> = ({
   const barTextRef = useRef<HTMLSpanElement>(null);
   const beatTextRef = useRef<HTMLSpanElement>(null);
   const timeTextRef = useRef<HTMLSpanElement>(null);
+
   const scrubberFillRef = useRef<HTMLDivElement>(null);
   const scrubberThumbRef = useRef<HTMLDivElement>(null);
 
@@ -121,6 +134,7 @@ const StudioPage: React.FC<StudioPageProps> = ({
   const [harmonyKey, setHarmonyKey] = useState('C');
   const [harmonyChords, setHarmonyChords] = useState('I IV V I');
   const [harmonyDurations, setHarmonyDurations] = useState('1 1 1 1');
+  const [harmonyModel, setHarmonyModel] = useState('rule-based');
 
   const executeHarmony = async () => {
     setIsPreparing(true);
@@ -133,7 +147,9 @@ const StudioPage: React.FC<StudioPageProps> = ({
           key: harmonyKey,
           chord_progression: harmonyChords,
           durations: harmonyDurations,
-          time_signature: parsedData?.timeSignature ? `${parsedData.timeSignature.beats}/${parsedData.timeSignature.beatType}` : '4/4'
+          time_signature: parsedData?.timeSignature ? `${parsedData.timeSignature.beats}/${parsedData.timeSignature.beatType}` : '4/4',
+          original_xml: currentXml,
+          model_type: harmonyModel
         })
       });
       const data = await res.json();
@@ -161,6 +177,13 @@ const StudioPage: React.FC<StudioPageProps> = ({
   const { tool: activeTool, duration: activeDuration } = mapEngraverTool(engraverTool);
 
   const parsedData = useMemo(() => musicEngine.parseMusicXml(currentXml || ''), [currentXml]);
+
+  useEffect(() => {
+    if (parsedData?.metadata?.bpm) {
+      setCurrentBpm(parsedData.metadata.bpm);
+      musicEngine.setBpm(parsedData.metadata.bpm);
+    }
+  }, [parsedData?.metadata?.bpm]);
 
   const totalDurationSeconds = useMemo(() => {
     if (!parsedData?.notes || parsedData.notes.length === 0) return 180;
@@ -238,7 +261,13 @@ const StudioPage: React.FC<StudioPageProps> = ({
   // Ensure song is loaded into the engine
   useEffect(() => {
     if (parsedData?.notes && tracks.length > 0) {
-      musicEngine.loadSong(parsedData.notes, tracks, transpose, parsedData.timeSignature || { beats: 4 }, isMetronomeOn).catch(e => console.warn('Failed to load song into engine:', e));
+      let combined = [...parsedData.notes];
+      tracks.forEach(t => {
+        if ((t as any)._generatedNotes) {
+          combined = combined.concat((t as any)._generatedNotes);
+        }
+      });
+      musicEngine.loadSong(combined, tracks, transpose, parsedData.timeSignature || { beats: 4 }, isMetronomeOn).catch(e => console.warn('Failed to load song into engine:', e));
     }
   }, [parsedData, tracks, transpose, isMetronomeOn]);
 
@@ -417,32 +446,25 @@ const StudioPage: React.FC<StudioPageProps> = ({
           )}
 
           <div className="flex bg-[#111] p-1 rounded-2xl border border-white/10 shrink-0">
+            {/* COMPOSER TAB */}
             <button 
-              onClick={() => setStudioMode('arranger')} 
+              onClick={() => setStudioMode('composer')} 
               className={`relative px-4 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all group ${
-                studioMode === 'arranger' 
+                studioMode === 'composer' 
                 ? 'text-white shadow-[0_0_30px_rgba(34,211,238,0.6)] scale-105 z-10' 
                 : 'text-zinc-300 hover:text-white'
               }`}
             >
-              {/* === INACTIVE "ALIVE" STATE === */}
-              {studioMode !== 'arranger' && (
+              {studioMode !== 'composer' && (
                 <div className="absolute inset-0 rounded-xl overflow-hidden pointer-events-none">
-                  {/* Slow moving energy gradient inside */}
                   <div className="absolute -inset-[100%] bg-gradient-to-r from-transparent via-cyan-500/20 to-transparent animate-[spin_4s_linear_infinite] opacity-50" />
-                  {/* Faint border glow */}
                   <div className="absolute inset-[1px] bg-[#111] rounded-[10px] z-0" />
                   <div className="absolute inset-0 border border-cyan-500/30 rounded-xl z-0" />
                 </div>
               )}
-
-              {/* === ACTIVE AURA & ENERGY STATE === */}
-              {studioMode === 'arranger' && (
+              {studioMode === 'composer' && (
                 <>
-                  {/* Outer glowing aura */}
                   <div className="absolute -inset-3 bg-gradient-to-r from-cyan-400 to-indigo-500 opacity-40 blur-lg animate-pulse pointer-events-none rounded-2xl" />
-                  
-                  {/* Inner clipping container for the spinning border */}
                   <div className="absolute inset-0 rounded-xl overflow-hidden pointer-events-none shadow-[inset_0_0_20px_rgba(0,229,255,0.5)]">
                     <div className="absolute inset-0 bg-black/60" />
                     <div className="absolute -inset-[100%] bg-[conic-gradient(from_0deg,transparent_0_320deg,rgba(0,229,255,1)_360deg)] animate-[spin_1.5s_linear_infinite]" />
@@ -451,21 +473,38 @@ const StudioPage: React.FC<StudioPageProps> = ({
                   </div>
                 </>
               )}
-
               <span className="relative z-10 flex items-center gap-1.5 drop-shadow-md">
-                {studioMode === 'arranger' ? (
-                  <Zap size={10} className="text-yellow-300 fill-yellow-300 animate-bounce" />
-                ) : (
-                  <Zap size={10} className="text-cyan-400/60 animate-pulse" />
-                )}
-                AI ARRANGER
+                COMPOSER
               </span>
             </button>
+
+            {/* ARRANGER TAB */}
+            <button 
+              onClick={() => setStudioMode('arranger')} 
+              className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5 transition-all ${
+                studioMode === 'arranger' || studioMode === 'pianoroll'
+                  ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-[0_0_15px_rgba(99,102,241,0.4)] scale-105 z-10' 
+                  : 'text-zinc-500 hover:text-white hover:bg-white/5'
+              }`}
+            >
+              {studioMode === 'arranger' ? (
+                <Zap size={10} className="text-yellow-300 fill-yellow-300 animate-bounce" />
+              ) : (
+                <Zap size={10} className="text-cyan-400/60" />
+              )}
+              AI ARRANGER
+            </button>
+
+            {/* EDITOR TAB */}
             <button 
               onClick={() => setStudioMode('editor')} 
-              className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${studioMode === 'editor' ? 'bg-indigo-500 text-white shadow-[0_0_10px_rgba(99,102,241,0.3)]' : 'text-zinc-500 hover:text-white hover:bg-white/5'}`}
+              className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${
+                studioMode === 'editor' 
+                  ? 'bg-amber-500 text-black shadow-[0_0_15px_rgba(245,158,11,0.4)] scale-105 z-10' 
+                  : 'text-zinc-500 hover:text-white hover:bg-white/5'
+              }`}
             >
-              EDIT
+              EDITOR
             </button>
           </div>
         </div>
@@ -557,7 +596,18 @@ const StudioPage: React.FC<StudioPageProps> = ({
             return combined;
           })();
 
-          if (studioMode === 'arranger') {
+          if (studioMode === 'composer') {
+            return (
+              <ComposerPage 
+                parsedData={parsedData}
+                tracks={tracks}
+                setTracks={setTracks}
+                onTrackCreated={(trackId) => {
+                  setStudioMode('arranger');
+                }}
+              />
+            );
+          } else if (studioMode === 'arranger') {
             return (
               <ArrangerPage 
                 song={currentProject} 
@@ -848,6 +898,14 @@ const StudioPage: React.FC<StudioPageProps> = ({
             </h3>
             
             <div className="flex flex-col gap-4">
+              <div>
+                <label className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mb-1 block">AI Model</label>
+                <select value={harmonyModel} onChange={e => setHarmonyModel(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white text-sm outline-none focus:border-indigo-500/50 mb-4 appearance-none">
+                  <option value="rule-based">Rule-Based SATB (Fast, Simple)</option>
+                  <option value="deepbach">DeepBach (JS Bach Style SATB)</option>
+                  <option value="transformer">Transformer (Pop/General Accompaniment)</option>
+                </select>
+              </div>
               <div>
                 <label className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mb-1 block">Key</label>
                 <input type="text" value={harmonyKey} onChange={e => setHarmonyKey(e.target.value)} placeholder="C, G, Dm..." className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white text-sm outline-none focus:border-indigo-500/50" />

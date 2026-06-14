@@ -16,7 +16,11 @@ self.onmessage = async (e: MessageEvent) => {
   const { type, payload } = e.data;
   
   if (type === 'loadVoice') {
-    const { voiceId, files } = payload;
+    const { voiceId, files, forceWasm } = payload;
+    
+    if (forceWasm) {
+      engine.forceWasm = true;
+    }
     
     // Forward debug info back to main thread (worker console.log is invisible)
     self.postMessage({
