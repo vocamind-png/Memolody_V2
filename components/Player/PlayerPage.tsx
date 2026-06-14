@@ -1535,8 +1535,13 @@ const PlayerPage: React.FC<{
         let stemsToPass: string[] = [];
         
         if (trackStems.length > 0) {
-          trackAudioUrl = trackStems[0];
-          stemsToPass = trackStems.length > 1 ? trackStems : [];
+          if (vocalTracksArr.length === 1 && trackStems.length > 1) {
+            trackAudioUrl = fixedUrl;
+            stemsToPass = trackStems;
+          } else {
+            trackAudioUrl = trackStems[0];
+            stemsToPass = trackStems.length > 1 ? trackStems : [];
+          }
         } else if (tid === primaryTrackId) {
           trackAudioUrl = fixedUrl;
           stemsToPass = stemsWithBust;
@@ -1545,17 +1550,15 @@ const PlayerPage: React.FC<{
         if (trackAudioUrl) {
           await musicEngine.addVocalLayer(tid, trackAudioUrl, stemsToPass, renderBpm);
           
-          if (trackAudioUrl.startsWith('blob:')) {
-            let audioEl = musicEngine.vocalAudioElements.get(tid);
-            if (!audioEl) {
-              audioEl = new Audio();
-              audioEl.crossOrigin = 'anonymous';
-              audioEl.preservesPitch = true;
-              musicEngine.vocalAudioElements.set(tid, audioEl);
-            }
-            audioEl.src = trackAudioUrl;
-            audioEl.load();
+          let audioEl = musicEngine.vocalAudioElements.get(tid);
+          if (!audioEl) {
+            audioEl = new Audio();
+            audioEl.crossOrigin = 'anonymous';
+            audioEl.preservesPitch = true;
+            musicEngine.vocalAudioElements.set(tid, audioEl);
           }
+          audioEl.src = trackAudioUrl;
+          audioEl.load();
         }
       }))
         .then(() => {
@@ -1960,13 +1963,17 @@ const PlayerPage: React.FC<{
 
   useEffect(() => {
     const syncTracks = async () => {
+      const hasAnySolo = tracks.some(tr => tr.isSolo) || soloedTracks.size > 0;
+
       const updatedTracks = tracks.map(t => {
-        const isVocalMuted = mutedVocalTracks.has(t.id);
-        const isMutedBySolo = soloedTracks.size > 0 && !soloedTracks.has(t.id);
+        const isVocalMuted = t.isMuted || mutedVocalTracks.has(t.id);
+        const isTrackSoloed = t.isSolo || soloedTracks.has(t.id);
+        const isMutedBySolo = hasAnySolo && !isTrackSoloed;
+        
         return {
           ...t,
-          isMuted: isVocalMuted,
-          isSolo: soloedTracks.has(t.id),
+          isMuted: isVocalMuted || isMutedBySolo,
+          isSolo: isTrackSoloed,
           mode: (isVocalMuted ? 'instrument' : t.mode) as 'instrument' | 'vocal'
         };
       });
@@ -2538,28 +2545,54 @@ const PlayerPage: React.FC<{
                             });
   
                             const primaryTrackId = tracks.find(t => t.mode === 'vocal')?.id || tracks[0]?.id || 'P1';
-                            await musicEngine.addVocalLayer(primaryTrackId, cacheBusted, stemsWithBust);
+                            const vocalTracksArr = h.vocalTracks ? h.vocalTracks.split(',') : [primaryTrackId];
                             
-                            if (cacheBusted.startsWith('blob:')) {
-                              let audioEl = musicEngine.vocalAudioElements.get(primaryTrackId);
-                              if (!audioEl) {
-                                audioEl = new Audio();
-                                audioEl.crossOrigin = 'anonymous';
-                                audioEl.preservesPitch = true;
-                                musicEngine.vocalAudioElements.set(primaryTrackId, audioEl);
+                            await Promise.all(vocalTracksArr.map(async (tid: string) => {
+                              const trackStems = (h.stemsByTrack && h.stemsByTrack[tid]) ? h.stemsByTrack[tid].map((s: string) => {
+                                const fs = fixAudioUrl(s);
+                                return fs.startsWith('blob:') ? fs : (fs.includes('?t=') ? fs.replace(/\?t=\d+/, `?t=${Date.now()}`) : `${fs}?t=${Date.now()}`);
+                              }) : [];
+                              let trackAudioUrl = "";
+                              let stemsToPass: string[] = [];
+                              
+                              if (trackStems.length > 0) {
+                                if (vocalTracksArr.length === 1 && trackStems.length > 1) {
+                                  trackAudioUrl = cacheBusted;
+                                  stemsToPass = trackStems;
+                                } else {
+                                  trackAudioUrl = trackStems[0];
+                                  stemsToPass = trackStems.length > 1 ? trackStems : [];
+                                }
+                              } else if (tid === primaryTrackId) {
+                                trackAudioUrl = cacheBusted;
+                                stemsToPass = stemsWithBust;
                               }
-                              audioEl.src = cacheBusted;
-                              audioEl.load();
-                            }
+                              
+                              if (trackAudioUrl) {
+                                await musicEngine.addVocalLayer(tid, trackAudioUrl, stemsToPass, targetBpm);
+                                
+                                let audioEl = musicEngine.vocalAudioElements.get(tid);
+                                if (!audioEl) {
+                                  audioEl = new Audio();
+                                  audioEl.crossOrigin = 'anonymous';
+                                  audioEl.preservesPitch = true;
+                                  musicEngine.vocalAudioElements.set(tid, audioEl);
+                                }
+                                audioEl.src = trackAudioUrl;
+                                audioEl.load();
+                              }
+                            }));
   
                             // Set the track mode to vocal so UI state reflects it
                             const updatedTracks = tracks.map((t: any) => 
-                              t.id === primaryTrackId ? { ...t, mode: 'vocal' } as TrackState : t
+                              vocalTracksArr.includes(t.id) ? { ...t, mode: 'vocal' } as TrackState : t
                             );
                             setTracks(updatedTracks);
   
-                            setAvailableStems(prev => ({ ...prev, [primaryTrackId]: musicEngine.getAvailableStems(primaryTrackId) }));
-                            setSoloedStems(prev => ({ ...prev, [primaryTrackId]: null }));
+                            vocalTracksArr.forEach((tid: string) => {
+                              setAvailableStems(prev => ({ ...prev, [tid]: musicEngine.getAvailableStems(tid) }));
+                              setSoloedStems(prev => ({ ...prev, [tid]: null }));
+                            });
   
                             setActiveRenderKey(hKey);
                             setMemoInfoOpenKey(null);

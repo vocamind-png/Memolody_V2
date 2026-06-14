@@ -791,12 +791,6 @@ export class MusicEngine {
           }
         }, 10000);
 
-        if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
-          console.log('[MusicEngine] Skipping Tone.Player for vocals on mobile to avoid decoding crashes.');
-          doResolve();
-          return;
-        }
-
         const player = new Tone.Player({
           url: audioUrl,
           fadeIn: 0,
@@ -835,11 +829,6 @@ export class MusicEngine {
               doResolve();
             }
           }, 10000);
-
-          if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
-            doResolve();
-            return;
-          }
 
           const player = new Tone.Player({
             url: url,
@@ -1126,6 +1115,13 @@ export class MusicEngine {
   updateTrackStates(tracks: TrackState[]) {
     this.tracks = tracks;
     const hasSolo = tracks.some(tr => tr.isSolo);
+    
+    // Check if any stem is soloed globally
+    let isAnyStemSoloedGlobally = false;
+    this.trackActiveStem.forEach((idx) => {
+      if (idx !== null) isAnyStemSoloedGlobally = true;
+    });
+
     tracks.forEach(t => {
       const channel = this.trackChannels.get(t.id);
       if (channel) {
@@ -1150,7 +1146,7 @@ export class MusicEngine {
       const vocalPlayers = this.trackVocalLayers.get(t.id);
       if (vocalPlayers) {
         vocalPlayers.forEach(p => {
-          const isMainLayerActive = isVocalPlaying && (activeStemIdx === null);
+          const isMainLayerActive = isVocalPlaying && (activeStemIdx === null) && !isAnyStemSoloedGlobally;
           p.volume.value = isMainLayerActive ? 0 : -100;
         });
       }
@@ -1158,7 +1154,7 @@ export class MusicEngine {
       // Sync HTMLAudio vocal element volume and mute states dynamically
       const audio = this.vocalAudioElements.get(t.id);
       if (audio) {
-        const isMainLayerActive = isVocalPlaying && (activeStemIdx === null);
+        const isMainLayerActive = isVocalPlaying && (activeStemIdx === null) && !isAnyStemSoloedGlobally;
         const vol = typeof t.volume === 'number' ? t.volume : 0.8;
         audio.volume = isMainLayerActive ? vol : 0.0;
         audio.muted = !isMainLayerActive;
