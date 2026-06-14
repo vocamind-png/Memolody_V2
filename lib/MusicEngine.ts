@@ -125,6 +125,19 @@ export class MusicEngine {
             audio.play().catch(() => {});
           }
         });
+        
+        // Loop Stem HTMLAudioElements
+        this.vocalStemAudioElements.forEach((audios) => {
+          audios.forEach((audio) => {
+            if (!audio || !audio.src || audio.src.startsWith('data:')) return;
+            const ratio = currentBpm / ((audio as any).renderBpm || currentBpm);
+            const offsetInAudio = Math.max(0, songTime * ratio);
+            audio.currentTime = offsetInAudio;
+            if (Tone.Transport.state === 'started') {
+              audio.play().catch(() => {});
+            }
+          });
+        });
       }, time);
     }, `${endSec - startSec}`, startSec);
   }
