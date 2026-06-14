@@ -318,6 +318,16 @@ const PlayerPage: React.FC<{
 
   const [svsEngine, setSvsEngine] = useState<'vocalido' | 'browser-ai'>(() => {
     try {
+      if (typeof window !== 'undefined') {
+        const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+        const lowCores = (navigator.hardwareConcurrency || 4) <= 4;
+        const lowMemory = ((navigator as any).deviceMemory || 8) <= 4;
+        if (isMobile || lowCores || lowMemory) {
+          console.log('[PlayerPage] 📱 Mobile or low-end device detected, forcing Server-side (vocalido) rendering');
+          localStorage.setItem('vocalido_svs_engine', 'vocalido');
+          return 'vocalido';
+        }
+      }
       const saved = localStorage.getItem('vocalido_svs_engine');
       if (saved === 'vocalido' || saved === 'browser-ai') {
         return saved;
@@ -1784,8 +1794,10 @@ const PlayerPage: React.FC<{
           setVoiceEngines(data.voices);
           
           // Auto-select SVS rendering mode: prioritize server-side vocalido when local server is online
+          const isMobileOrLowEnd = typeof window !== 'undefined' && (/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) || (navigator.hardwareConcurrency || 4) <= 4 || ((navigator as any).deviceMemory || 8) <= 4);
+          
           const savedSvsEngine = localStorage.getItem('vocalido_svs_engine');
-          if (!savedSvsEngine || manualCheck) {
+          if (!savedSvsEngine || manualCheck || isMobileOrLowEnd) {
             setSvsEngine('vocalido');
             localStorage.setItem('vocalido_svs_engine', 'vocalido');
           } else {
