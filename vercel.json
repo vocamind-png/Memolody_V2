@@ -5,18 +5,10 @@
   "installCommand": "npm install",
   "framework": "vite",
   "rewrites": [
-    {
-      "source": "/vocalido/:match*",
-      "destination": "https://vocalido-server-YOUR_GCP_HASH.a.run.app/:match*"
-    },
-    {
-      "source": "/studio/:match*",
-      "destination": "https://vocalido-server-YOUR_GCP_HASH.a.run.app/studio/:match*"
-    },
-    {
-      "source": "/api/:match*",
-      "destination": "https://omr-server-YOUR_GCP_HASH.a.run.app/api/:match*"
-    },
+    { "source": "/vocalido/voicebanks/:path*", "destination": "https://storage.googleapis.com/memolody-vault/voicebanks/:path*" },
+    { "source": "/vocalido/:path*", "destination": "https://u2txyroyplqko8-5001.proxy.runpod.net/:path*" },
+    { "source": "/studio/:path*", "destination": "https://u2txyroyplqko8-5001.proxy.runpod.net/studio/:path*" },
+    { "source": "/api/manifest", "destination": "https://storage.googleapis.com/memolody-vault/manifest.json" },
     {
       "source": "/(.*)",
       "destination": "/index.html"
