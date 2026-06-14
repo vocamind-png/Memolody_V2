@@ -17,6 +17,7 @@ export class MusicEngine {
   // Vocal pitch shifting states
   public vocalPitchShiftSemitones: Map<string, number> = new Map();
   public vocalAudioElements: Map<string, HTMLAudioElement> = new Map(); // For AI Vocal playback
+  public vocalStemAudioElements: Map<string, HTMLAudioElement[]> = new Map(); // For AI Vocal Stems fallback playback
   private vocalBlobUrls: Map<string, string> = new Map(); // Track pre-fetched local Blob URLs
   public tracks: TrackState[] = [];
 
@@ -817,8 +818,17 @@ export class MusicEngine {
 
     // 2. Load Stems Players
     const loadedStems: (Tone.Player | null)[] = [];
+    const stemAudios: HTMLAudioElement[] = [];
     if (stemUrls && stemUrls.length > 0) {
       stemUrls.forEach((url, index) => {
+        // Fallback for stems
+        const audio = new Audio();
+        audio.crossOrigin = 'anonymous';
+        audio.preservesPitch = true;
+        audio.src = url;
+        audio.load();
+        stemAudios.push(audio);
+
         loadPromises.push(new Promise<void>((resolve) => {
           let isResolved = false;
           const doResolve = () => { if (!isResolved) { isResolved = true; resolve(); } };
@@ -866,6 +876,7 @@ export class MusicEngine {
 
     if (loadedStems.length > 0) {
       this.trackVocalStems.set(trackId, loadedStems.filter(Boolean) as Tone.Player[]);
+      this.vocalStemAudioElements.set(trackId, stemAudios);
     }
 
     this.trackModes.set(trackId, 'vocal');
@@ -877,6 +888,11 @@ export class MusicEngine {
     if (players) {
       players.forEach(p => p && p.dispose());
       this.trackVocalLayers.delete(trackId);
+    }
+    const stemAudios = this.vocalStemAudioElements.get(trackId);
+    if (stemAudios) {
+      stemAudios.forEach(a => { a.pause(); a.src = ''; });
+      this.vocalStemAudioElements.delete(trackId);
     }
     const stems = this.trackVocalStems.get(trackId);
     if (stems) {
@@ -941,6 +957,17 @@ export class MusicEngine {
           }
         });
       }
+    });
+
+    this.vocalStemAudioElements.forEach((audios, tId) => {
+      const activeIdx = this.trackActiveStem.get(tId) ?? null;
+      audios.forEach((audio, i) => {
+        if (audio) {
+          const isStemActive = (activeIdx !== null && i === activeIdx);
+          audio.volume = isStemActive ? 1.0 : 0.0;
+          audio.muted = !isStemActive;
+        }
+      });
     });
   }
   
@@ -1167,6 +1194,17 @@ export class MusicEngine {
             const isStemActive = isVocalPlaying && (activeStemIdx === i);
             p.volume.value = isStemActive ? 0 : -100;
           }
+        });
+      }
+
+      // Sync HTMLAudio vocal stems dynamically
+      const stemAudios = this.vocalStemAudioElements.get(t.id);
+      if (stemAudios) {
+        stemAudios.forEach((audio, i) => {
+          const isStemActive = isVocalPlaying && (activeStemIdx === i);
+          const vol = typeof t.volume === 'number' ? t.volume : 0.8;
+          audio.volume = isStemActive ? vol : 0.0;
+          audio.muted = !isStemActive;
         });
       }
 
@@ -1408,6 +1446,25 @@ public setVocalTranspose(trackId: string, diffSemitones: number) {
           } catch (e) { console.warn('[MusicEngine] Vocal start error:', e); }
         });
 
+        // Start HTMLAudio stem layers synchronously
+        this.vocalStemAudioElements.forEach((audios, trackId) => {
+          try {
+            const track = this.tracks.find(t => t.id === trackId);
+            const isVocalPlaying = track && track.mode === 'vocal' && !track.isMuted;
+            const hasToneStems = this.trackVocalStems.has(trackId) && 
+              this.trackVocalStems.get(trackId)!.some(p => p.buffer && p.buffer.loaded);
+
+            if (isVocalPlaying && !hasToneStems) {
+              audios.forEach(audio => {
+                if (audio.src && !audio.src.startsWith('data:')) {
+                  audio.currentTime = Math.min(songOffset, Math.max(0, (isFinite(audio.duration) ? audio.duration - 0.01 : 0)));
+                  audio.play().catch(e => console.warn('[MusicEngine] Vocal stem audio.play() failed:', e));
+                }
+              });
+            }
+          } catch (e) { console.warn('[MusicEngine] Vocal stem start error:', e); }
+        });
+
         // Start Tone.Transport immediately
         Tone.Transport.start();
         console.log("[MusicEngine] Tone.Transport started!");
@@ -1459,6 +1516,24 @@ public setVocalTranspose(trackId: string, diffSemitones: number) {
         } catch (e) { console.warn('[MusicEngine] Vocal resume error:', e); }
       });
 
+      this.vocalStemAudioElements.forEach((audios, trackId) => {
+        try {
+          const track = this.tracks.find(t => t.id === trackId);
+          const isVocalPlaying = track && track.mode === 'vocal' && !track.isMuted;
+          const hasToneStems = this.trackVocalStems.has(trackId) && 
+            this.trackVocalStems.get(trackId)!.some(p => p.buffer && p.buffer.loaded);
+
+          if (isVocalPlaying && !hasToneStems) {
+            audios.forEach(audio => {
+              if (audio.src && !audio.src.startsWith('data:')) {
+                audio.currentTime = offset;
+                audio.play().catch(e => console.warn('[MusicEngine] Vocal stem audio.play() resume failed:', e));
+              }
+            });
+          }
+        } catch (e) { console.warn('[MusicEngine] Vocal stem resume error:', e); }
+      });
+
       Tone.Transport.start();
 
       // Resume unsynced vocal players (stems)
@@ -1470,6 +1545,9 @@ public setVocalTranspose(trackId: string, diffSemitones: number) {
     Tone.Transport.pause();
     this.vocalAudioElements.forEach(audio => {
       audio.pause();
+    });
+    this.vocalStemAudioElements.forEach(audios => {
+      audios.forEach(audio => audio.pause());
     });
     // Stop unsynced vocal players
     this.updateVocalPlaybackState();
@@ -1550,6 +1628,11 @@ public setVocalTranspose(trackId: string, diffSemitones: number) {
       audio.src = '';
     });
     this.vocalAudioElements.clear();
+
+    this.vocalStemAudioElements.forEach(audios => {
+      audios.forEach(a => { a.pause(); a.src = ''; });
+    });
+    this.vocalStemAudioElements.clear();
 
     // Revoke and clear all blob URLs
     this.vocalBlobUrls.forEach(url => {
