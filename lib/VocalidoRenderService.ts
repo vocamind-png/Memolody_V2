@@ -394,12 +394,13 @@ class VocalidoRenderService {
       const elapsed = (Date.now() - startTime) / 1000;
       let simulatedProgress = 0;
       if (elapsed < estimatedDuration) {
-        simulatedProgress = (elapsed / estimatedDuration) * 95;
+        simulatedProgress = (elapsed / estimatedDuration) * 85;
       } else {
         const extra = elapsed - estimatedDuration;
-        simulatedProgress = 95 + (4.9 * (1 - Math.exp(-extra / 30)));
+        // Slow curve approaching 95% maximum while waiting for server response
+        simulatedProgress = 85 + (10 * (1 - Math.exp(-extra / 45)));
       }
-      this.progress = Math.min(99.9, simulatedProgress);
+      this.progress = Math.min(96, simulatedProgress);
       this.timer = Math.round(elapsed);
       this.notify();
     }, 250);
@@ -1324,7 +1325,16 @@ class VocalidoRenderService {
               while ((status === 'IN_QUEUE' || status === 'IN_PROGRESS') && attempts < maxAttempts) {
                 await new Promise(resolve => setTimeout(resolve, 2000));
                 attempts++;
-                this.statusText = `RunPod GPU rendering... (${attempts * 2}s)`;
+                
+                // If it's still in queue after 10 seconds, it's likely waking up a cold GPU
+                if (attempts > 5 && status === 'IN_QUEUE') {
+                  this.statusText = `Waking up RunPod GPU... (${attempts * 2}s)`;
+                } else if (status === 'IN_PROGRESS') {
+                  this.statusText = `RunPod GPU processing... (${attempts * 2}s)`;
+                } else {
+                  this.statusText = `RunPod GPU in queue... (${attempts * 2}s)`;
+                }
+                
                 this.notify();
                 
                 const pollResponse = await fetch(statusUrl, {
