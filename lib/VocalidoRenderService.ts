@@ -1456,11 +1456,11 @@ class VocalidoRenderService {
           }
         }
         
-        this.progress = 100;
-        this.statusText = 'Processing audio...';
+        this.progress = 90;
+        this.statusText = 'Saving audio cache...';
         this.notify();
         cleanup();
-        console.log('[VocalidoRenderService] ✅ Progress 100% — processing result...');
+        console.log('[VocalidoRenderService] ✅ Server finished. Progress 90% — caching result...');
 
         const filenameFromUrl = result.saved_url ? result.saved_url.split('/').pop() || '' : '';
         const voiceNameForHist = activeVoiceName || 'Auto';
@@ -1535,6 +1535,10 @@ class VocalidoRenderService {
             const livePlaying = wasPlaying || musicEngine.transportState === 'started';
             const livePos = savedPos;
 
+            this.progress = 95;
+            this.statusText = 'Decoding audio layer...';
+            this.notify();
+
             console.log('[VocalidoRenderService] 🎵 Loading song into musicEngine...');
             // loadSong FIRST — creates Part/Sampler channels
             await musicEngine.loadSong(parsedData.notes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn);
@@ -1594,8 +1598,16 @@ class VocalidoRenderService {
           localStorage.removeItem('vocalido_rendering_active_song');
         } catch (e) {}
 
-        this.isRendering = false;
+        this.progress = 100;
+        this.statusText = 'Done!';
         this.notify();
+        
+        // Small delay to let user see 100% before closing
+        setTimeout(() => {
+          this.isRendering = false;
+          this.notify();
+        }, 300);
+
       } else {
         throw new Error("Invalid synthesis response: no audio data in result");
       }
