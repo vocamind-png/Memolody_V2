@@ -155,16 +155,7 @@ const getFetchUrl = (path: string) => {
     return `${customBackend}${cleanPath}`;
   }
 
-  // Bypass Vercel 10s timeout on deployed environments
-  if (typeof window !== 'undefined') {
-    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-    if (!isLocal) {
-      let cleanPath = path;
-      if (!cleanPath.startsWith('/')) cleanPath = '/' + cleanPath;
-      return `https://u2txyroyplqko8-8888.proxy.runpod.net${cleanPath}`;
-    }
-  }
-
+  // Use relative paths — Vercel rewrites in vercel.json proxy /studio/* to RunPod
   return path;
 };
 
@@ -1287,107 +1278,9 @@ class VocalidoRenderService {
             }
             result = data;
         } catch (fetchErr: any) {
-          // RunPod Fallback — use absolute URL to bypass any proxy issues
-          const runpodEnvUrl = import.meta.env.VITE_RUNPOD_API_URL;
-          const runpodKey = import.meta.env.VITE_RUNPOD_API_KEY;
-          
-          // Convert relative proxy URL to absolute RunPod API URL
-          let runpodUrl = runpodEnvUrl;
-          if (runpodUrl && runpodUrl.startsWith('/api/runpod/')) {
-            runpodUrl = 'https://api.runpod.ai/v2/' + runpodUrl.replace('/api/runpod/', '');
-          }
-          
-          if (runpodUrl && runpodKey) {
-            console.warn('[VocalidoRenderService] ⚠️ Server synthesis failed. Falling back to RunPod API...', fetchErr);
-            console.log('[VocalidoRenderService] RunPod URL:', runpodUrl);
-            this.statusText = 'Server offline. Rendering via RunPod GPU...';
-            this.notify();
-            
-            const runpodPayload = {
-              input: {
-                notes: notesToSynthesize.map(n => ({
-                  midi: n.midi || n.pitch || 60,
-                  duration: n.duration,
-                  startTime: n.startTime,
-                  lyric: n.lyric
-                })),
-                params: synthParams
-              }
-            };
-            
-            const rpResponse = await fetch(runpodUrl, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${runpodKey}`
-              },
-              body: JSON.stringify(runpodPayload),
-              signal: controller.signal
-            });
-            
-            if (!rpResponse.ok) {
-              const rpErr = await rpResponse.text();
-              throw new Error(`RunPod Serverless Error (${rpResponse.status}): ${rpErr}`);
-            }
-            
-            let rpJson = await rpResponse.json();
-            let status = rpJson.status;
-            const jobId = rpJson.id;
-
-            if (status === 'IN_QUEUE' || status === 'IN_PROGRESS') {
-              // Build absolute status URL from the base RunPod API URL
-              const endpointBase = runpodUrl.replace(/\/(run|runsync)$/, '');
-              const statusUrl = `${endpointBase}/status/${jobId}`;
-              console.log('[VocalidoRenderService] Polling status at:', statusUrl);
-              let attempts = 0;
-              const maxAttempts = 120;
-              
-              while ((status === 'IN_QUEUE' || status === 'IN_PROGRESS') && attempts < maxAttempts) {
-                await new Promise(resolve => setTimeout(resolve, 2000));
-                attempts++;
-                
-                // If it's still in queue after 10 seconds, it's likely waking up a cold GPU
-                if (attempts > 5 && status === 'IN_QUEUE') {
-                  this.statusText = `Waking up RunPod GPU... (${attempts * 2}s)`;
-                } else if (status === 'IN_PROGRESS') {
-                  this.statusText = `RunPod GPU processing... (${attempts * 2}s)`;
-                } else {
-                  this.statusText = `RunPod GPU in queue... (${attempts * 2}s)`;
-                }
-                
-                this.notify();
-                
-                const pollResponse = await fetch(statusUrl, {
-                  method: 'GET',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${runpodKey}`
-                  },
-                  signal: controller.signal
-                });
-                
-                if (!pollResponse.ok) {
-                  throw new Error(`RunPod Status Error (${pollResponse.status})`);
-                }
-                
-                rpJson = await pollResponse.json();
-                status = rpJson.status;
-              }
-            }
-
-            if (status === 'COMPLETED' && rpJson.output) {
-              if (rpJson.output.error) {
-                throw new Error(rpJson.output.error);
-              }
-              result = rpJson.output;
-              usedRunPod = true;
-              useDirectBlobUrl = true;
-            } else {
-              throw new Error(`RunPod job failed with status: ${status}`);
-            }
-          } else {
-            throw fetchErr;
-          }
+          // No silent fallback — let the error propagate so the user sees a clear message
+          console.error('[VocalidoRenderService] Server synthesis failed:', fetchErr);
+          throw fetchErr;
         }
         } // end single-voice else
       }
