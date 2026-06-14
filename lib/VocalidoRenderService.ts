@@ -342,6 +342,15 @@ class VocalidoRenderService {
       userId
     } = params;
 
+    let activeSvsEngine = svsEngine;
+    if (activeSvsEngine === 'browser-ai' && typeof navigator !== 'undefined') {
+      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      if (isMobile) {
+        console.log('[VocalidoRenderService] 📱 Mobile device detected. Forcing Server-side rendering (vocalido) instead of WebGPU/Browser-AI.');
+        activeSvsEngine = 'vocalido';
+      }
+    }
+
     this.isRendering = true;
     this.progress = 0;
     this.timer = 0;
@@ -382,7 +391,7 @@ class VocalidoRenderService {
     
     const selectedVoice = voiceEngines.find(v => v.id === trackEngineId);
 
-    if (svsEngine === 'browser-ai') {
+    if (activeSvsEngine === 'browser-ai') {
       estimatedDuration = hasGpu ? (4 + noteCount * 0.05) : (8 + noteCount * 0.4);
     } else {
       estimatedDuration = 6 + noteCount * 0.08;
@@ -733,6 +742,12 @@ class VocalidoRenderService {
           }
         }
       } catch (e) {}
+
+      let activeSvsEngine = svsEngine;
+      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      if (isMobile && activeSvsEngine === 'browser-ai') {
+        activeSvsEngine = 'vocalido';
+      }
 
       const synthParams = { 
         singer: activeVoiceName, 
