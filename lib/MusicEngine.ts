@@ -887,7 +887,7 @@ export class MusicEngine {
       return;
     }
 
-    if (loadedStems.length > 0) {
+    if (loadedStems.length > 0 || stemAudios.length > 0) {
       this.trackVocalStems.set(trackId, loadedStems.filter(Boolean) as Tone.Player[]);
       this.vocalStemAudioElements.set(trackId, stemAudios);
     }
