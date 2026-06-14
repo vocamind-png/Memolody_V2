@@ -770,6 +770,23 @@ export class MusicEngine {
     // 1. Load Main Mix Player
     if (audioUrl) {
       loadPromises.push(new Promise<void>((resolve) => {
+        let isResolved = false;
+        const doResolve = () => { if (!isResolved) { isResolved = true; resolve(); } };
+        
+        // Timeout to prevent hanging at 95% if fetch/decode stalls
+        setTimeout(() => {
+          if (!isResolved) {
+            console.warn('[MusicEngine] ⚠️ Timeout loading main vocal audio, falling back to HTMLAudioElement');
+            doResolve();
+          }
+        }, 10000);
+
+        if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
+          console.log('[MusicEngine] Skipping Tone.Player for vocals on mobile to avoid decoding crashes.');
+          doResolve();
+          return;
+        }
+
         const player = new Tone.Player({
           url: audioUrl,
           fadeIn: 0,
@@ -784,11 +801,11 @@ export class MusicEngine {
             } else {
               player.dispose();
             }
-            resolve();
+            doResolve();
           },
           onerror: (err) => {
             console.error('[MusicEngine] ❌ Error loading main vocal audio:', err);
-            resolve(); // Resolve anyway so it doesn't hang
+            doResolve(); // Resolve anyway so it doesn't hang
           }
         });
       }));
@@ -799,6 +816,21 @@ export class MusicEngine {
     if (stemUrls && stemUrls.length > 0) {
       stemUrls.forEach((url, index) => {
         loadPromises.push(new Promise<void>((resolve) => {
+          let isResolved = false;
+          const doResolve = () => { if (!isResolved) { isResolved = true; resolve(); } };
+          
+          setTimeout(() => {
+            if (!isResolved) {
+              console.warn(`[MusicEngine] ⚠️ Timeout loading stem audio ${index}`);
+              doResolve();
+            }
+          }, 10000);
+
+          if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
+            doResolve();
+            return;
+          }
+
           const player = new Tone.Player({
             url: url,
             fadeIn: 0,
@@ -811,12 +843,12 @@ export class MusicEngine {
               } else {
                 player.dispose();
               }
-              resolve();
+              doResolve();
             },
             onerror: (err) => {
               console.error(`[MusicEngine] ❌ Error loading stem audio ${index}:`, err);
               loadedStems[index] = null;
-              resolve(); // Resolve anyway so it doesn't hang
+              doResolve(); // Resolve anyway so it doesn't hang
             }
           });
         }));
