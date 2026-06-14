@@ -1565,21 +1565,19 @@ class VocalidoRenderService {
               }
             }
             
-            if (useDirectBlobUrl) {
-              for (const tid of vocalTrackIds) {
-                const trackStems = stemsByTrack[tid] || [];
-                const tAudioUrl = trackStems.length > 0 ? trackStems[0] : (tid === primaryTrackId ? cacheBustedUrl : "");
-                if (tAudioUrl && tAudioUrl.startsWith('blob:')) {
-                  let audioEl = musicEngine.vocalAudioElements.get(tid);
-                  if (!audioEl) {
-                    audioEl = new Audio();
-                    audioEl.crossOrigin = 'anonymous';
-                    audioEl.preservesPitch = true;
-                    musicEngine.vocalAudioElements.set(tid, audioEl);
-                  }
-                  audioEl.src = tAudioUrl;
-                  audioEl.load();
+            for (const tid of vocalTrackIds) {
+              const trackStems = stemsByTrack[tid] || [];
+              const tAudioUrl = trackStems.length > 0 ? trackStems[0] : (tid === primaryTrackId ? cacheBustedUrl : "");
+              if (tAudioUrl) {
+                let audioEl = musicEngine.vocalAudioElements.get(tid);
+                if (!audioEl) {
+                  audioEl = new Audio();
+                  audioEl.crossOrigin = 'anonymous';
+                  audioEl.preservesPitch = true;
+                  musicEngine.vocalAudioElements.set(tid, audioEl);
                 }
+                audioEl.src = tAudioUrl;
+                audioEl.load();
               }
             }
 
