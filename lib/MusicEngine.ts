@@ -669,8 +669,18 @@ export class MusicEngine {
   async ensureInitialized() {
     try {
       if (Tone.getContext().state !== 'running') {
-        await Tone.start();
-        await Tone.getContext().resume();
+        try {
+          await Promise.race([
+            Tone.start(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Tone.start() timeout')), 1000))
+          ]);
+          await Promise.race([
+            Tone.getContext().resume(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Tone.getContext().resume() timeout')), 1000))
+          ]);
+        } catch (e) {
+          console.warn('[MusicEngine] Audio context resume timed out or failed (likely mobile background restriction). Continuing anyway:', e);
+        }
       }
 
       if (!this.isInitialized) {
