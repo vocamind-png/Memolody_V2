@@ -148,19 +148,24 @@ const getFetchUrl = (path: string) => {
     return path;
   }
   const customBackend = getCustomBackendUrl();
-  // If customBackend is empty, use relative paths (Vite proxy will forward)
-  if (!customBackend) return path;
-
-  let cleanPath = path;
-  if (!cleanPath.startsWith('/')) {
-    cleanPath = '/' + cleanPath;
+  if (customBackend) {
+    let cleanPath = path;
+    if (!cleanPath.startsWith('/')) cleanPath = '/' + cleanPath;
+    if (cleanPath.startsWith('/vocalido/')) cleanPath = cleanPath.substring('/vocalido'.length);
+    return `${customBackend}${cleanPath}`;
   }
 
-  if (cleanPath.startsWith('/vocalido/')) {
-    cleanPath = cleanPath.substring('/vocalido'.length);
+  // Bypass Vercel 10s timeout on deployed environments
+  if (typeof window !== 'undefined') {
+    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    if (!isLocal) {
+      let cleanPath = path;
+      if (!cleanPath.startsWith('/')) cleanPath = '/' + cleanPath;
+      return `https://u2txyroyplqko8-8888.proxy.runpod.net${cleanPath}`;
+    }
   }
 
-  return `${customBackend}${cleanPath}`;
+  return path;
 };
 
 const svsFetch = (url: string, options?: RequestInit) => {
