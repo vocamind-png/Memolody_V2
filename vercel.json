@@ -1,46 +1,13 @@
 {
-  "buildCommand": "npx vite build",
-  "outputDirectory": "dist",
+  "version": 2,
+  "buildCommand": "vite build",
   "framework": "vite",
   "rewrites": [
     { "source": "/vocalido/voicebanks/:path*", "destination": "https://storage.googleapis.com/memolody-vault/voicebanks/:path*" },
-    { "source": "/vocalido/:path*", "destination": "https://u2txyroyplqko8-5001.proxy.runpod.net/:path*" },
-    { "source": "/studio/:path*", "destination": "https://u2txyroyplqko8-5001.proxy.runpod.net/studio/:path*" },
+    { "source": "/vocalido/:path*", "destination": "https://u2txyroyplqko8-8888.proxy.runpod.net/:path*" },
+    { "source": "/studio/:path*", "destination": "https://u2txyroyplqko8-8888.proxy.runpod.net/studio/:path*" },
     { "source": "/api/manifest", "destination": "https://storage.googleapis.com/memolody-vault/manifest.json" },
     { "source": "/api/runpod/:path*", "destination": "https://api.runpod.ai/v2/:path*" },
     { "source": "/(.*)", "destination": "/index.html" }
-  ],
-  "headers": [
-    {
-      "source": "/(.*)",
-      "headers": [
-        { "key": "Cross-Origin-Opener-Policy", "value": "same-origin" },
-        { "key": "Cross-Origin-Embedder-Policy", "value": "credentialless" }
-      ]
-    },
-    {
-      "source": "/index.html",
-      "headers": [
-        { "key": "Cache-Control", "value": "no-store, no-cache, must-revalidate, max-age=0" }
-      ]
-    },
-    {
-      "source": "/",
-      "headers": [
-        { "key": "Cache-Control", "value": "no-store, no-cache, must-revalidate, max-age=0" }
-      ]
-    },
-    {
-      "source": "/verovio-toolkit.js",
-      "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
-      ]
-    },
-    {
-      "source": "/assets/(.*)",
-      "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
-      ]
-    }
   ]
 }
