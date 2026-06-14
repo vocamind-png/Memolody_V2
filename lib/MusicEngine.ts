@@ -1227,8 +1227,10 @@ public setVocalTranspose(trackId: string, diffSemitones: number) {
     const triggerTime = time !== undefined ? time : Tone.now();
 
     const currentBpm = Tone.Transport.bpm.value;
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 
     const processPlayers = (players: Tone.Player[], trackId: string) => {
+      if (isMobile) return; // Completely disable Tone.Player playback on mobile to prevent echo and rely on HTMLAudioElement
       const diffSemitones = this.vocalPitchShiftSemitones.get(trackId) || 0;
       players.forEach((player) => {
         if (!player || !player.buffer || !player.buffer.loaded) return;
@@ -1433,7 +1435,8 @@ public setVocalTranspose(trackId: string, diffSemitones: number) {
             const isVocalPlaying = track && track.mode === 'vocal' && !track.isMuted;
             
             // Check if Tone.GrainPlayer is loaded
-            const hasTonePlayer = this.trackVocalLayers.has(trackId) && 
+            const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+            const hasTonePlayer = !isMobile && this.trackVocalLayers.has(trackId) && 
               this.trackVocalLayers.get(trackId)!.some(p => p.buffer && p.buffer.loaded);
 
             if (isVocalPlaying && !hasTonePlayer && audio.src && !audio.src.startsWith('data:')) {
@@ -1451,7 +1454,8 @@ public setVocalTranspose(trackId: string, diffSemitones: number) {
           try {
             const track = this.tracks.find(t => t.id === trackId);
             const isVocalPlaying = track && track.mode === 'vocal' && !track.isMuted;
-            const hasToneStems = this.trackVocalStems.has(trackId) && 
+            const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+            const hasToneStems = !isMobile && this.trackVocalStems.has(trackId) && 
               this.trackVocalStems.get(trackId)!.some(p => p.buffer && p.buffer.loaded);
 
             if (isVocalPlaying && !hasToneStems) {
@@ -1503,7 +1507,8 @@ public setVocalTranspose(trackId: string, diffSemitones: number) {
           const isVocalPlaying = track && track.mode === 'vocal' && !track.isMuted;
           
           // Check if Tone.GrainPlayer is loaded
-          const hasTonePlayer = this.trackVocalLayers.has(trackId) && 
+          const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+          const hasTonePlayer = !isMobile && this.trackVocalLayers.has(trackId) && 
             this.trackVocalLayers.get(trackId)!.some(p => p.buffer && p.buffer.loaded);
 
           if (isVocalPlaying && !hasTonePlayer && audio.src && !audio.src.startsWith('data:')) {
@@ -1520,7 +1525,8 @@ public setVocalTranspose(trackId: string, diffSemitones: number) {
         try {
           const track = this.tracks.find(t => t.id === trackId);
           const isVocalPlaying = track && track.mode === 'vocal' && !track.isMuted;
-          const hasToneStems = this.trackVocalStems.has(trackId) && 
+          const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+          const hasToneStems = !isMobile && this.trackVocalStems.has(trackId) && 
             this.trackVocalStems.get(trackId)!.some(p => p.buffer && p.buffer.loaded);
 
           if (isVocalPlaying && !hasToneStems) {
