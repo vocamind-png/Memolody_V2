@@ -159,6 +159,20 @@ const getFetchUrl = (path: string) => {
   return path;
 };
 
+// For server-side synthesis, use direct RunPod URL to bypass Vercel timeout limits
+const getDirectServerUrl = (path: string) => {
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname;
+    const isLocal = hostname === 'localhost' || hostname === '127.0.0.1' || hostname.endsWith('.local');
+    if (!isLocal) {
+      let cleanPath = path;
+      if (!cleanPath.startsWith('/')) cleanPath = '/' + cleanPath;
+      return `https://u2txyroyplqko8-8888.proxy.runpod.net${cleanPath}`;
+    }
+  }
+  return getFetchUrl(path);
+};
+
 const svsFetch = (url: string, options?: RequestInit) => {
   const headers = new Headers(options?.headers || {});
   headers.set('serveo-skip-browser-warning', 'true');
@@ -1024,7 +1038,7 @@ class VocalidoRenderService {
           // ─── Multi-pass polyphony: render each voice line separately, then stereo mix ───
           console.log(`[VocalidoRenderService] 🎹 Multi-pass polyphony: rendering ${voiceLines.length} voice lines via server...`);
           
-          const targetUrl = getFetchUrl('/studio/preview');
+          const targetUrl = getDirectServerUrl('/studio/preview');
           const audioBlobs: Blob[] = [];
           const renderedPan: number[] = [];
           
@@ -1050,7 +1064,8 @@ class VocalidoRenderService {
             
             try {
               console.log(`[VocalidoRenderService] 📤 Sending voice ${vIdx + 1} (${vl.label}) → ${vlSongId}, ${vl.notes.length} notes`);
-              const response = await svsFetch(targetUrl, {
+              // Use plain fetch (no custom headers) to avoid Samsung CORS preflight issues
+              const response = await fetch(targetUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
@@ -1256,11 +1271,12 @@ class VocalidoRenderService {
             params: synthParams
           };
 
-          const targetUrl = getFetchUrl('/studio/preview');
+          const targetUrl = getDirectServerUrl('/studio/preview');
           
           let response: Response;
           try {
-            response = await svsFetch(targetUrl, {
+            // Use plain fetch (no custom headers) to avoid Samsung CORS preflight issues
+            response = await fetch(targetUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(payload),
@@ -1278,7 +1294,6 @@ class VocalidoRenderService {
             }
             result = data;
         } catch (fetchErr: any) {
-          // No silent fallback — let the error propagate so the user sees a clear message
           console.error('[VocalidoRenderService] Server synthesis failed:', fetchErr);
           throw fetchErr;
         }
