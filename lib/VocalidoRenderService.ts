@@ -1295,6 +1295,7 @@ class VocalidoRenderService {
             result = data;
         } catch (fetchErr: any) {
           console.error('[VocalidoRenderService] Server synthesis failed:', fetchErr);
+          fetchErr.url = targetUrl;
           throw fetchErr;
         }
         } // end single-voice else
@@ -1550,7 +1551,8 @@ class VocalidoRenderService {
         return;
       }
       console.error('[VocalidoRenderService] Synthesis Error:', err);
-      this.error = err.message || "Synthesis Failed";
+      const errDetail = `${err.name || 'Error'}: ${err.message || 'Unknown'} | URL: ${err.url || 'N/A'}`;
+      this.error = errDetail;
       this.isRendering = false;
       this.notify();
     }
