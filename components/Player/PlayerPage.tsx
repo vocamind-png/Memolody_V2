@@ -2173,15 +2173,7 @@ const PlayerPage: React.FC<{
     })) as typeof tracks;
     setTracks(renderTracks);
 
-    // Clear cache whenever vocal track set changes (prevents stale mono-render from being reused)
-    if (prevVocalIds !== newVocalIds) {
-      console.log(`[PlayerPage] 🗑️ Vocal tracks changed (${prevVocalIds} → ${newVocalIds}), clearing render cache`);
-      try {
-        localStorage.removeItem(`memo_render_history_${song?.id}`);
-        tracks.forEach(t => localStorage.removeItem(`memo_render_history_${song?.id}_${t.id}`));
-        setRenderHistory([]);
-      } catch (e) {}
-    }
+    // Removed: Do not clear history on track changes, history supports multiple track sets
 
     const primaryTrackId = renderTracks.find(t => t.mode === 'vocal')?.id || renderTracks[0]?.id || 'P1';
     let trackEngineId = renderTracks.find(t => t.id === primaryTrackId)?.engineId || activeEngineId;
