@@ -669,6 +669,7 @@ export class MusicEngine {
               const newTrackId = `${originalTrackId}_V${targetVoice + 1}`;
               n.trackId = newTrackId;
               n.voiceIdx = targetVoice; // Store for ProScoreEditor lyric colorizing
+              n.voice = targetVoice + 1; // Assign explicitly to prevent stems merging
               finalNotes.push(n);
             }
           }

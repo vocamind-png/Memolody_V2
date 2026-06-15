@@ -820,7 +820,7 @@ class VocalidoRenderService {
              label = `Voice ${idx + 1}`;
           }
           
-          const actualTrackId = (mt.length > 0 && mt[0].trackId) ? mt[0].trackId : primaryVocalTrackId;
+          const actualTrackId = (idx < vocalTrackIds.length) ? vocalTrackIds[idx] : primaryVocalTrackId;
           voiceLines.push({ notes: mt, pan, label, trackId: actualTrackId });
         });
       }
