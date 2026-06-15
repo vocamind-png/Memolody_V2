@@ -76,7 +76,9 @@ const saveRenderToLocalCache = async (
 const restoreCachedBlobs = async (songId: string, history: any[]): Promise<any[]> => {
   try {
     const updatedHistory = await Promise.all(history.map(async (entry) => {
-      const entryKey = `${entry.bpmPercent}_${entry.songKey}_${entry.engineId || 'default'}_${entry.lyricMode || ''}_${entry.voiceName || 'Auto'}`;
+      const tfStr = entry.timingFeel !== undefined ? `_tf${entry.timingFeel}` : '';
+      const v2Str = entry.version >= 2 ? '_v2' : '';
+      const entryKey = `${entry.bpmPercent}_${entry.songKey}_${entry.engineId || 'default'}_${entry.lyricMode || ''}_${entry.voiceName || 'Auto'}${tfStr}${v2Str}`;
       const cacheKey = `vocal_render_${songId}_${entryKey}`;
       
       const mainBlob = await AudioBlobCache.get(cacheKey);
@@ -100,10 +102,28 @@ const restoreCachedBlobs = async (songId: string, history: any[]): Promise<any[]
         updatedStemUrls = restoredStems;
       }
 
+      // Also update stemsByTrack to use the fresh blob URLs from IndexedDB
+      let updatedStemsByTrack = entry.stemsByTrack || {};
+      if (updatedStemUrls.length > 0 && Object.keys(updatedStemsByTrack).length > 0) {
+        updatedStemsByTrack = { ...updatedStemsByTrack };
+        for (const tid of Object.keys(updatedStemsByTrack)) {
+          const trackStems = updatedStemsByTrack[tid];
+          if (Array.isArray(trackStems)) {
+            updatedStemsByTrack[tid] = trackStems.map((oldUrl: string) => {
+              // Find the exact stem index from the original saved URLs array
+              const stemIdx = (entry.savedStemUrls || []).indexOf(oldUrl);
+              return stemIdx >= 0 && stemIdx < updatedStemUrls.length ? updatedStemUrls[stemIdx] : oldUrl;
+            });
+          }
+        }
+        console.log(`[AudioBlobCache] Updated stemsByTrack with ${updatedStemUrls.length} restored URLs`);
+      }
+
       return {
         ...entry,
         audioUrl: updatedAudioUrl,
-        savedStemUrls: updatedStemUrls
+        savedStemUrls: updatedStemUrls,
+        stemsByTrack: updatedStemsByTrack
       };
     }));
     return updatedHistory;
@@ -1485,9 +1505,11 @@ const PlayerPage: React.FC<{
     const savedKey = localStorage.getItem(`active_render_key_${song.id}`);
     if (!savedKey) return;
 
-    const cached = renderHistory.find(
-      h => `${h.bpmPercent}_${h.songKey}_${h.engineId||'default'}_${h.lyricMode||''}_${h.voiceName||'Auto'}` === savedKey
-    );
+    const cached = renderHistory.find(h => {
+      const tfStr = h.timingFeel !== undefined ? `_tf${h.timingFeel}` : '';
+      const v2Str = h.version >= 2 ? '_v2' : '';
+      return `${h.bpmPercent}_${h.songKey}_${h.engineId||'default'}_${h.lyricMode||''}_${h.voiceName||'Auto'}${tfStr}${v2Str}` === savedKey;
+    });
 
     if (cached) {
       autoRestoredRef.current = song.id;
@@ -1529,20 +1551,20 @@ const PlayerPage: React.FC<{
       
       const vocalTracksArr = cached.vocalTracks ? cached.vocalTracks.split(',') : [primaryTrackId];
       
+      const allStemsByTrack = cached.stemsByTrack || {};
+      
       Promise.all(vocalTracksArr.map(async (tid: string) => {
-        const trackStems = (cached.stemsByTrack && cached.stemsByTrack[tid]) ? cached.stemsByTrack[tid].map((s: string) => fixAudioUrl(s)) : [];
         let trackAudioUrl = "";
         let stemsToPass: string[] = [];
         
+        // Use track-specific stems if available
+        const trackStems = allStemsByTrack[tid] ? allStemsByTrack[tid].map((s: string) => fixAudioUrl(s)) : [];
         if (trackStems.length > 0) {
-          if (vocalTracksArr.length === 1 && trackStems.length > 1) {
-            trackAudioUrl = fixedUrl;
-            stemsToPass = trackStems;
-          } else {
-            trackAudioUrl = trackStems[0];
-            stemsToPass = trackStems.length > 1 ? trackStems : [];
-          }
+          trackAudioUrl = trackStems[0];
+          // We don't use 'stemsToPass' sub-stems anymore, each UI track is a single mono stem
+          stemsToPass = [];
         } else if (tid === primaryTrackId) {
+          // Fallback for older caches where everything is dumped into the primary track
           trackAudioUrl = fixedUrl;
           stemsToPass = stemsWithBust;
         }
@@ -1562,8 +1584,10 @@ const PlayerPage: React.FC<{
         }
       }))
         .then(() => {
-          setAvailableStems(prev => ({ ...prev, [primaryTrackId]: musicEngine.getAvailableStems(primaryTrackId) }));
-          setSoloedStems(prev => ({ ...prev, [primaryTrackId]: null }));
+          // Remove availableStems dependency on a single primary track.
+          // Since stems are now correctly routed to individual UI tracks, we don't need to load S1..S6 buttons inside a single track.
+          setAvailableStems({});
+          setSoloedStems({});
           setActiveRenderKey(savedKey);
           setTranspose(tVal);
           setRenderedTranspose(tVal);
@@ -2576,10 +2600,14 @@ const PlayerPage: React.FC<{
                                   audioEl = new Audio();
                                   audioEl.crossOrigin = 'anonymous';
                                   audioEl.preservesPitch = true;
+                                  audioEl.preload = 'auto'; // Force buffer for Android
                                   musicEngine.vocalAudioElements.set(tid, audioEl);
                                 }
                                 audioEl.src = trackAudioUrl;
                                 audioEl.load();
+                                
+                                // Unlock immediately inside the user gesture
+                                audioEl.play().then(() => audioEl.pause()).catch(e => console.warn('Main vocal unlock failed:', e));
                               }
                             }));
   
@@ -2590,7 +2618,6 @@ const PlayerPage: React.FC<{
                             setTracks(updatedTracks);
   
                             vocalTracksArr.forEach((tid: string) => {
-                              setAvailableStems(prev => ({ ...prev, [tid]: musicEngine.getAvailableStems(tid) }));
                               setSoloedStems(prev => ({ ...prev, [tid]: null }));
                             });
   
