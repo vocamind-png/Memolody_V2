@@ -2968,7 +2968,7 @@ const PlayerPage: React.FC<{
               
               const tracksInSameStaff = tracks.filter((t: any) => t.id.startsWith(sId));
               const subIndex = tracksInSameStaff.findIndex((t: any) => t.id === track.id);
-              const yOffset = subIndex * 18; // Slightly more spacing for grouped buttons
+              const yOffset = subIndex * 24; // Increased spacing to 24px so the 22px containers don't overlap vertically
               const yPos = baseStaffY + yOffset;
 
               return (
