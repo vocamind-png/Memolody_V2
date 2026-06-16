@@ -599,11 +599,18 @@ export class MusicEngine {
 
         const times = Object.keys(timeGroups).map(Number).sort((a, b) => a - b);
         
-        // Find max concurrent notes to determine how many sub-tracks we need
+        const STEP_SEMI = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+        const toMidi = (n: ParsedNote) => n.octave * 12 + STEP_SEMI.indexOf(n.step.toUpperCase()) + n.alter;
+        
+        // Find max concurrent unique notes to determine how many sub-tracks we really need
         let maxVoices = 1;
         for (const t of times) {
-          if (timeGroups[t].length > maxVoices) {
-            maxVoices = timeGroups[t].length;
+          const seenPitches = new Set<number>();
+          for (const n of timeGroups[t]) {
+            seenPitches.add(toMidi(n));
+          }
+          if (seenPitches.size > maxVoices) {
+            maxVoices = seenPitches.size;
           }
         }
 
@@ -612,9 +619,6 @@ export class MusicEngine {
           // To prevent missing notes in the Melody track (Voice 0),
           // we always assign the highest note of any chord (or the only note) to Voice 0.
           // Remaining notes are assigned to Voice 1, Voice 2, etc. in descending pitch order.
-          
-          const STEP_SEMI = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
-          const toMidi = (n: ParsedNote) => n.octave * 12 + STEP_SEMI.indexOf(n.step.toUpperCase()) + n.alter;
           
           // Ensure all voice track names exist upfront
           for (let v = 0; v < maxVoices; v++) {
