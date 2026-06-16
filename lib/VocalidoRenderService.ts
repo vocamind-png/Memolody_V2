@@ -797,13 +797,6 @@ class VocalidoRenderService {
           filledTracks = filledTracks.filter(mt => {
             if (mt.length < 2) return false; // less than 2 notes = skip
             
-            // Explicitly filter out tracks that have ZERO lyrics (instrumental or breath only)
-            const hasLyrics = mt.some(n => n.lyric && n.lyric.trim() !== '' && !n.lyric.toLowerCase().includes('breath') && !n.lyric.includes('หายใจ'));
-            if (!hasLyrics) {
-              console.log(`[VocalidoRenderService] 🌬️ Filtered track with no valid lyrics`);
-              return false;
-            }
-            
             // Keep if note count >= 20% of the busiest track
             if (mt.length < maxNotes * 0.20) {
               console.log(`[VocalidoRenderService] 🌬️ Filtered breath/auxiliary track: ${mt.length} notes (max=${maxNotes})`);
