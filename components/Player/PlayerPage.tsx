@@ -2958,87 +2958,88 @@ const PlayerPage: React.FC<{
               );
             })()}
 
-            {tracks.map((track, i) => {
-              const isMuted = mutedVocalTracks.has(track.id);
-              const baseTop = staffYPositions.length > 0 ? staffYPositions[0] : 60;
-              const sId = track.id.split('_')[0];
-              const uniqueSids = Array.from(new Set(tracks.map((t: any) => t.id.split('_')[0])));
-              const staffIdx = uniqueSids.indexOf(sId) >= 0 ? uniqueSids.indexOf(sId) : 0;
-              const baseStaffY = staffYPositions[staffIdx] ?? (baseTop + staffIdx * 100);
-              
-              const tracksInSameStaff = tracks.filter((t: any) => t.id.startsWith(sId));
-              const subIndex = tracksInSameStaff.findIndex((t: any) => t.id === track.id);
-              const yOffset = subIndex * 18; // Slightly more spacing for grouped buttons
-              const yPos = baseStaffY + yOffset;
-
-              return (
-                <div 
-                  key={track.id} 
-                  className="absolute left-1 z-50 flex flex-col gap-1 pointer-events-auto"
-                  style={{ top: `${yPos - 2}px` }}
-                >
-                  {/* Layout: [icon] [S1/S2/.../ALL] side-by-side in a horizontal panel */}
-                  <div className="flex flex-row gap-1 items-center bg-black/40 border border-white/10 p-0.5 rounded-lg backdrop-blur-sm pointer-events-auto w-fit">
-                    
-                    {/* Toggle between Vocal and Instrument */}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setTracks((prev: any) => prev.map((t: any) => 
-                          t.id === track.id ? { ...t, mode: t.mode === 'vocal' ? 'instrument' : 'vocal' } : t
-                        ));
-                      }}
-                      className={`w-4 h-4 rounded-md flex items-center justify-center transition-all border shadow-lg flex-shrink-0 ${
-                        track.mode === 'vocal'
-                          ? 'bg-cyan-600 border-cyan-400 text-white shadow-[0_0_10px_rgba(34,211,238,0.4)]'
-                          : 'bg-[#1a1a1e] border-zinc-700 text-zinc-400 hover:text-cyan-400 hover:border-cyan-400/60'
-                      }`}
-                      title={track.mode === 'vocal' ? `Switch "${track.name}" to Instrument` : `Switch "${track.name}" to Vocal`}
-                    >
-                      {track.mode === 'vocal' ? <Mic2 size={8} /> : <span className="text-[8px]">🎹</span>}
-                    </button>
-
-                    {/* Stem Solo buttons — vertical stack */}
-                    {showStemControls && availableStems[track.id] > 0 && (() => {
-                      const stemTrackId = track.id;
-                      const stemCount = availableStems[stemTrackId];
-                      return (
-                        <div className="flex flex-row gap-0.5">
-                          {Array.from({ length: stemCount }).map((_, idx) => {
-                            const isSoloed = soloedStems[stemTrackId]?.has(idx);
-                            return (
-                              <button
-                                key={idx}
-                                onClick={() => handleSoloStem(stemTrackId, idx)}
-                                className={`w-4 h-4 rounded-md border flex items-center justify-center transition-all shadow-lg ${
-                                  isSoloed
-                                    ? 'bg-cyan-500 border-cyan-300 text-white shadow-[0_0_8px_rgba(6,182,212,0.5)]'
-                                    : 'bg-[#1a1a1e] border-zinc-700 text-zinc-400 hover:text-cyan-300 hover:border-cyan-500/60'
-                                }`}
-                                title={isSoloed ? `Remove voice ${idx + 1} from solo` : `Add voice ${idx + 1} to solo`}
-                              >
-                                <span className="text-[6px] font-black">S{idx + 1}</span>
-                              </button>
-                            );
-                          })}
-                          <button
-                            onClick={() => handleSoloStem(stemTrackId, null)}
-                            className={`w-4 h-4 rounded-md border flex items-center justify-center transition-all shadow-lg ${
-                              !soloedStems[stemTrackId] || soloedStems[stemTrackId].size === 0
-                                ? 'bg-rose-600 border-rose-400 text-white shadow-[0_0_6px_rgba(239,68,68,0.4)]'
-                                : 'bg-[#1a1a1e] border-zinc-700 text-zinc-400 hover:text-rose-300 hover:border-rose-500/60'
-                            }`}
-                            title="Play all voices together"
-                          >
-                            <span className="text-[5.5px] font-black">ALL</span>
-                          </button>
-                        </div>
-                      );
-                    })()}
-                  </div>
+            {/* Floating Vocal Mixer Panel */}
+            {tracks.length > 0 && (
+              <div className="absolute left-2 top-20 z-50 flex flex-col gap-2 pointer-events-auto bg-black/80 p-3 rounded-xl border border-white/10 backdrop-blur-md shadow-2xl max-h-[70vh] overflow-y-auto">
+                <div className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider mb-1 px-1 flex items-center justify-between">
+                  <span>Vocal Mixer</span>
+                  <span className="text-[8px] bg-white/10 px-1.5 py-0.5 rounded-full">{tracks.length}</span>
                 </div>
-              );
-            })}
+                {tracks.map((track, i) => {
+                  return (
+                    <div 
+                      key={track.id} 
+                      className="flex flex-row items-center gap-2"
+                    >
+                      {/* Track Name Label */}
+                      <div className="w-16 truncate text-[10px] text-zinc-300 font-medium text-right" title={track.name}>
+                        {track.name.replace('Part', 'P')}
+                      </div>
+
+                      {/* Layout: [icon] [S1/S2/.../ALL] side-by-side in a horizontal panel */}
+                      <div className="flex flex-row gap-1 items-center bg-white/5 border border-white/10 p-1 rounded-lg">
+                        
+                        {/* Toggle between Vocal and Instrument */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setTracks((prev: any) => prev.map((t: any) => 
+                              t.id === track.id ? { ...t, mode: t.mode === 'vocal' ? 'instrument' : 'vocal' } : t
+                            ));
+                          }}
+                          className={`w-6 h-6 rounded-md flex items-center justify-center transition-all border shadow-lg flex-shrink-0 ${
+                            track.mode === 'vocal'
+                              ? 'bg-cyan-600 border-cyan-400 text-white shadow-[0_0_10px_rgba(34,211,238,0.4)]'
+                              : 'bg-[#1a1a1e] border-zinc-700 text-zinc-400 hover:text-cyan-400 hover:border-cyan-400/60'
+                          }`}
+                          title={track.mode === 'vocal' ? `Switch "${track.name}" to Instrument` : `Switch "${track.name}" to Vocal`}
+                        >
+                          {track.mode === 'vocal' ? <Mic2 size={12} /> : <span className="text-[12px]">🎹</span>}
+                        </button>
+
+                        {/* Stem Solo buttons — horizontal row */}
+                        {showStemControls && availableStems[track.id] > 0 && (() => {
+                          const stemTrackId = track.id;
+                          const stemCount = availableStems[stemTrackId];
+                          return (
+                            <div className="flex flex-row gap-1">
+                              {Array.from({ length: stemCount }).map((_, idx) => {
+                                const isSoloed = soloedStems[stemTrackId]?.has(idx);
+                                return (
+                                  <button
+                                    key={idx}
+                                    onClick={() => handleSoloStem(stemTrackId, idx)}
+                                    className={`w-6 h-6 rounded-md border flex items-center justify-center transition-all shadow-lg ${
+                                      isSoloed
+                                        ? 'bg-cyan-500 border-cyan-300 text-white shadow-[0_0_8px_rgba(6,182,212,0.5)]'
+                                        : 'bg-[#1a1a1e] border-zinc-700 text-zinc-400 hover:text-cyan-300 hover:border-cyan-500/60'
+                                    }`}
+                                    title={isSoloed ? `Remove voice ${idx + 1} from solo` : `Add voice ${idx + 1} to solo`}
+                                  >
+                                    <span className="text-[9px] font-black">S{idx + 1}</span>
+                                  </button>
+                                );
+                              })}
+                              <button
+                                onClick={() => handleSoloStem(stemTrackId, null)}
+                                className={`w-6 h-6 rounded-md border flex items-center justify-center transition-all shadow-lg ${
+                                  !soloedStems[stemTrackId] || soloedStems[stemTrackId].size === 0
+                                    ? 'bg-rose-600 border-rose-400 text-white shadow-[0_0_6px_rgba(239,68,68,0.4)]'
+                                    : 'bg-[#1a1a1e] border-zinc-700 text-zinc-400 hover:text-rose-300 hover:border-rose-500/60'
+                                }`}
+                                title="Play all voices together"
+                              >
+                                <span className="text-[8px] font-black">ALL</span>
+                              </button>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
