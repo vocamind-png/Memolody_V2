@@ -968,6 +968,22 @@ export class MusicEngine {
       if (indices.size > 0) isAnySoloedGlobally = true;
     });
 
+    // Mute/Unmute instrument channels based on global solo state
+    this.trackChannels.forEach((channel, tId) => {
+      if (isAnySoloedGlobally) {
+        const activeStems = this.trackActiveStem.get(tId);
+        channel.mute = !(activeStems && activeStems.size > 0);
+      } else {
+        const t = this.tracks.find(x => x.id === tId);
+        const hasLegacySolo = this.tracks.some(tr => tr.isSolo);
+        if (t) {
+          channel.mute = t.isMuted || (hasLegacySolo && !t.isSolo);
+        } else {
+          channel.mute = false;
+        }
+      }
+    });
+
     // 2. Mute ALL main mixes globally if anything is soloed
     this.trackVocalLayers.forEach((layers, tId) => {
       layers.forEach(p => {
@@ -1220,7 +1236,13 @@ export class MusicEngine {
         const db = vol <= 0 ? -100 : 20 * Math.log10(vol);
         channel.volume.rampTo(db, 0.1);
         channel.pan.rampTo(pan, 0.1);
-        channel.mute = t.isMuted || (hasSolo && !t.isSolo);
+        
+        if (isAnyStemSoloedGlobally) {
+          const activeStems = this.trackActiveStem.get(t.id);
+          channel.mute = !(activeStems && activeStems.size > 0);
+        } else {
+          channel.mute = t.isMuted || (hasSolo && !t.isSolo);
+        }
 
         // If in vocal mode, the instrument sampler should be completely silent (strict separation)
         const sampler = this.trackSamplers.get(t.id);

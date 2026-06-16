@@ -2999,7 +2999,7 @@ const PlayerPage: React.FC<{
                     </button>
 
                     {/* Stem Solo buttons */}
-                    {showStemControls && availableStems[track.id] > 0 && (() => {
+                    {showStemControls && (() => {
                       const stemTrackId = track.id;
                       const isSoloed = soloedStems[stemTrackId]?.has(0);
                       const isAnySoloed = Object.values(soloedStems).some(set => set.size > 0);
