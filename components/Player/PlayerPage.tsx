@@ -121,6 +121,9 @@ const restoreCachedBlobs = async (songId: string, history: any[]): Promise<any[]
 
       return {
         ...entry,
+        originalAudioUrl: entry.originalAudioUrl || entry.audioUrl,
+        originalStemUrls: entry.originalStemUrls || entry.savedStemUrls,
+        originalStemsByTrack: entry.originalStemsByTrack || entry.stemsByTrack,
         audioUrl: updatedAudioUrl,
         savedStemUrls: updatedStemUrls,
         stemsByTrack: updatedStemsByTrack
@@ -876,12 +879,30 @@ const PlayerPage: React.FC<{
   }, [svsEngine, isServerOnline, song?.id]);
 
   // Stem Solo/Mute State for polyphonic choral lines
-  const [soloedStems, setSoloedStems] = useState<Record<string, number | null>>({});
+  const [soloedStems, setSoloedStems] = useState<Record<string, Set<number>>>({});
   const [availableStems, setAvailableStems] = useState<Record<string, number>>({});
 
   const handleSoloStem = (trackId: string, stemIndex: number | null) => {
-    musicEngine.soloStem(trackId, stemIndex);
-    setSoloedStems(prev => ({ ...prev, [trackId]: stemIndex }));
+    setSoloedStems(prev => {
+      const currentSet = prev[trackId] ? new Set(prev[trackId]) : new Set<number>();
+      
+      if (stemIndex === null) {
+        // Clear all solos for this track (Play All)
+        currentSet.clear();
+      } else {
+        // Toggle this specific stem
+        if (currentSet.has(stemIndex)) {
+          currentSet.delete(stemIndex);
+        } else {
+          currentSet.add(stemIndex);
+        }
+      }
+      
+      const newStems = { ...prev, [trackId]: currentSet };
+      // Call engine with the new set
+      musicEngine.soloStem(trackId, currentSet);
+      return newStems;
+    });
   };
 
   // MemoSongRender: history of rendered speeds
@@ -909,7 +930,13 @@ const PlayerPage: React.FC<{
     // Only save after history has been restored (prevents wiping existing data on mount)
     if (!isHistoryRestoredRef.current) return;
     try {
-      localStorage.setItem(`memo_render_history_${songId}`, JSON.stringify(renderHistory));
+      const sanitized = renderHistory.map((h: any) => ({
+        ...h,
+        audioUrl: h.originalAudioUrl || h.audioUrl,
+        savedStemUrls: h.originalStemUrls || h.savedStemUrls,
+        stemsByTrack: h.originalStemsByTrack || h.stemsByTrack,
+      }));
+      localStorage.setItem(`memo_render_history_${songId}`, JSON.stringify(sanitized));
     } catch (e) {}
   }, [renderHistory, song?.id]);
 
@@ -2934,14 +2961,14 @@ const PlayerPage: React.FC<{
             {tracks.map((track, i) => {
               const isMuted = mutedVocalTracks.has(track.id);
               const baseTop = staffYPositions.length > 0 ? staffYPositions[0] : 60;
-              const staffMatch = track.id.match(/-S(\d+)/);
-              const staffIdx = staffMatch ? parseInt(staffMatch[1]) - 1 : 0;
+              const sId = track.id.split('_')[0];
+              const uniqueSids = Array.from(new Set(tracks.map((t: any) => t.id.split('_')[0])));
+              const staffIdx = uniqueSids.indexOf(sId) >= 0 ? uniqueSids.indexOf(sId) : 0;
               const baseStaffY = staffYPositions[staffIdx] ?? (baseTop + staffIdx * 100);
               
-              const sId = track.id.split('_')[0];
               const tracksInSameStaff = tracks.filter((t: any) => t.id.startsWith(sId));
               const subIndex = tracksInSameStaff.findIndex((t: any) => t.id === track.id);
-              const yOffset = subIndex * 14; // offset each track on the same staff (tighter grouping)
+              const yOffset = subIndex * 18; // Slightly more spacing for grouped buttons
               const yPos = baseStaffY + yOffset;
 
               return (
@@ -2951,7 +2978,8 @@ const PlayerPage: React.FC<{
                   style={{ top: `${yPos - 2}px` }}
                 >
                   {/* Layout: [icon] [S1/S2/.../ALL vertical stack] side by side */}
-                  <div className="flex flex-row gap-0.5 items-start">
+                  {/* Layout: [icon] [S1/S2/.../ALL] stacked vertically in a panel */}
+                  <div className="flex flex-col gap-0.5 items-center bg-black/40 border border-white/10 p-0.5 rounded-lg backdrop-blur-sm pointer-events-auto">
                     
                     {/* Toggle between Vocal and Instrument */}
                     <button
@@ -2971,24 +2999,24 @@ const PlayerPage: React.FC<{
                       {track.mode === 'vocal' ? <Mic2 size={8} /> : <span className="text-[8px]">🎹</span>}
                     </button>
 
-                    {/* Stem Solo buttons — vertical stack to the RIGHT of the icon */}
+                    {/* Stem Solo buttons — vertical stack */}
                     {showStemControls && availableStems[track.id] > 0 && (() => {
                       const stemTrackId = track.id;
                       const stemCount = availableStems[stemTrackId];
                       return (
                         <div className="flex flex-col gap-0.5">
                           {Array.from({ length: stemCount }).map((_, idx) => {
-                            const isSoloed = soloedStems[stemTrackId] === idx;
+                            const isSoloed = soloedStems[stemTrackId]?.has(idx);
                             return (
                               <button
                                 key={idx}
-                                onClick={() => handleSoloStem(stemTrackId, isSoloed ? null : idx)}
+                                onClick={() => handleSoloStem(stemTrackId, idx)}
                                 className={`w-4 h-4 rounded-md border flex items-center justify-center transition-all shadow-lg ${
                                   isSoloed
                                     ? 'bg-cyan-500 border-cyan-300 text-white shadow-[0_0_8px_rgba(6,182,212,0.5)]'
                                     : 'bg-[#1a1a1e] border-zinc-700 text-zinc-400 hover:text-cyan-300 hover:border-cyan-500/60'
                                 }`}
-                                title={isSoloed ? `Play all voices` : `Solo voice ${idx + 1}`}
+                                title={isSoloed ? `Remove voice ${idx + 1} from solo` : `Add voice ${idx + 1} to solo`}
                               >
                                 <span className="text-[6px] font-black">S{idx + 1}</span>
                               </button>
@@ -2997,7 +3025,7 @@ const PlayerPage: React.FC<{
                           <button
                             onClick={() => handleSoloStem(stemTrackId, null)}
                             className={`w-4 h-4 rounded-md border flex items-center justify-center transition-all shadow-lg ${
-                              soloedStems[stemTrackId] === null
+                              !soloedStems[stemTrackId] || soloedStems[stemTrackId].size === 0
                                 ? 'bg-rose-600 border-rose-400 text-white shadow-[0_0_6px_rgba(239,68,68,0.4)]'
                                 : 'bg-[#1a1a1e] border-zinc-700 text-zinc-400 hover:text-rose-300 hover:border-rose-500/60'
                             }`}

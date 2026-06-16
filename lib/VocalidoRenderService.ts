@@ -676,7 +676,9 @@ class VocalidoRenderService {
         
         let filledTracks: (typeof notesToSynthesize)[];
         
-        if (hasMultipleVoices) {
+        // Disabled Strategy 1 (MusicXML staff/voice) based on user request to strictly use 
+        // vertical chords (max simultaneous notes) for detecting channels.
+        if (false) {
           // Sort voice groups by average pitch (highest first = Soprano → Bass)
           const sortedGroups = [...voiceGroups.entries()]
             .map(([key, notes]) => {
@@ -785,6 +787,37 @@ class VocalidoRenderService {
             
             filledTracks = monoTracks.filter(mt => mt.length > 0);
           }
+        }
+
+        // ── Filter out "breath" / auxiliary voice lines ──────────────────────────
+        // A breath track typically has very few notes and/or extremely short durations
+        // compared to the main voice lines. Filter it out before building stems.
+        if (filledTracks.length > 1) {
+          const maxNotes = Math.max(...filledTracks.map(mt => mt.length));
+          filledTracks = filledTracks.filter(mt => {
+            if (mt.length < 2) return false; // less than 2 notes = skip
+            
+            // Explicitly filter out tracks that have ZERO lyrics (instrumental or breath only)
+            const hasLyrics = mt.some(n => n.lyric && n.lyric.trim() !== '' && !n.lyric.toLowerCase().includes('breath') && !n.lyric.includes('หายใจ'));
+            if (!hasLyrics) {
+              console.log(`[VocalidoRenderService] 🌬️ Filtered track with no valid lyrics`);
+              return false;
+            }
+            
+            // Keep if note count >= 20% of the busiest track
+            if (mt.length < maxNotes * 0.20) {
+              console.log(`[VocalidoRenderService] 🌬️ Filtered breath/auxiliary track: ${mt.length} notes (max=${maxNotes})`);
+              return false;
+            }
+            // Also filter if average note duration is very short (< 0.08s = ~32nd note at 120bpm)
+            const avgDur = mt.reduce((s, n) => s + n.duration, 0) / mt.length;
+            if (avgDur < 0.08) {
+              console.log(`[VocalidoRenderService] 🌬️ Filtered short-duration track: avgDur=${avgDur.toFixed(3)}s`);
+              return false;
+            }
+            return true;
+          });
+          console.log(`[VocalidoRenderService] 🎼 After breath filter: ${filledTracks.length} voice line(s) remain`);
         }
 
         const collapseChords = localStorage.getItem('vocalido_collapse_chords') === 'true';
@@ -1495,7 +1528,8 @@ class VocalidoRenderService {
           for (let i = 0; i < voiceLines.length; i++) {
             const vTrackId = voiceLines[i].trackId;
             if (i < stemsWithBust.length) {
-              stemsByTrack[vTrackId] = [stemsWithBust[i]];
+              if (!stemsByTrack[vTrackId]) stemsByTrack[vTrackId] = [];
+              stemsByTrack[vTrackId].push(stemsWithBust[i]);
             }
           }
           console.log(`[VocalidoRenderService] 🎵 Polyphonic stemsByTrack mapped individually for ${voiceLines.length} tracks`);
@@ -1590,26 +1624,26 @@ class VocalidoRenderService {
             console.log('[VocalidoRenderService] ✅ musicEngine.loadSong done');
             
             // addVocalLayer AFTER — so initSampler doesn't overwrite the vocal layer
-            // For polyphonic mode: primary track = stereo mix + individual voice stems (for ◆ Solo buttons)
-            // Other voice tracks = their individual stem URL as main audio (for Track S Solo)
             const isPolyMode = polyStemUrls.length > 0;
             for (const tid of vocalTrackIds) {
               const trackStems = stemsByTrack[tid] || [];
               let trackAudioUrl = "";
               let stemsToPass: string[] = [];
               
-              if (isPolyMode && tid === primaryVocalTrackId) {
-                // Polyphonic: primary track gets stereo mix + all individual voice stems
-                trackAudioUrl = cacheBustedUrl;
-                stemsToPass = stemsWithBust; // All individual voice line URLs for ◆ buttons
-                console.log(`[VocalidoRenderService] 🎤 Poly mode: primary track main=stereoMix, stems=${stemsToPass.length} voice lines`);
-              } else if (trackStems.length > 0) {
-                // Each non-primary vocal track gets its own individual stem URL
-                trackAudioUrl = trackStems[0];
-                stemsToPass = [];
-              } else if (tid === primaryVocalTrackId) {
-                trackAudioUrl = cacheBustedUrl;
-                stemsToPass = [];
+              if (isPolyMode) {
+                // If it has specific stems assigned to it, use them
+                if (trackStems.length > 0) {
+                  trackAudioUrl = trackStems[0]; // first stem as main audio
+                  stemsToPass = trackStems;
+                } else if (tid === primaryVocalTrackId && trackStems.length === 0 && stemsWithBust.length === 0) {
+                  // Fallback
+                  trackAudioUrl = cacheBustedUrl;
+                  stemsToPass = [cacheBustedUrl];
+                }
+                console.log(`[VocalidoRenderService] 🎤 Poly mode track ${tid}: main=${trackAudioUrl ? 'YES' : 'NO'}, stems=${stemsToPass.length}`);
+              } else {
+                trackAudioUrl = trackStems.length > 0 ? trackStems[0] : cacheBustedUrl;
+                stemsToPass = trackStems.length > 0 ? trackStems : [cacheBustedUrl];
               }
               
               if (trackAudioUrl) {

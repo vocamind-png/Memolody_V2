@@ -15,7 +15,7 @@ export class MusicEngine {
   private trackMeters: Map<string, Tone.Meter> = new Map();
   private trackVocalLayers: Map<string, Tone.Player[]> = new Map();
   private trackVocalStems: Map<string, Tone.Player[]> = new Map();
-  private trackActiveStem: Map<string, number | null> = new Map();
+  private trackActiveStem: Map<string, Set<number>> = new Map();
   private trackVocalRenderBpm: Map<string, number> = new Map();
   private trackModes: Map<string, 'instrument' | 'vocal'> = new Map();
   // Vocal pitch shifting states
@@ -933,7 +933,7 @@ export class MusicEngine {
       this.trackVocalStems.delete(trackId);
     }
     
-    this.trackActiveStem.set(trackId, null);
+    this.trackActiveStem.set(trackId, new Set());
     
     // Revoke and clear blob URLs
     const oldUrl = this.vocalBlobUrls.get(trackId);
@@ -951,17 +951,17 @@ export class MusicEngine {
     }
   }
 
-  public soloStem(trackId: string, stemIndex: number | null) {
-    this.trackActiveStem.set(trackId, stemIndex);
+  public soloStem(trackId: string, stemIndices: Set<number>) {
+    this.trackActiveStem.set(trackId, stemIndices);
     const toneStems = this.trackVocalStems.get(trackId)?.length || 0;
     const htmlStems = this.vocalStemAudioElements.get(trackId)?.length || 0;
     const transportState = Tone.Transport.state;
-    debugOverlay(`🎯 soloStem(${trackId}, ${stemIndex}) — ToneStems: ${toneStems}, HTMLStems: ${htmlStems}, Transport: ${transportState}`);
+    debugOverlay(`🎯 soloStem(${trackId}, count=${stemIndices.size}) — ToneStems: ${toneStems}, HTMLStems: ${htmlStems}, Transport: ${transportState}`);
 
     // 1. Check if ANY stem is soloed globally across all tracks
     let isAnySoloedGlobally = false;
-    this.trackActiveStem.forEach((idx) => {
-      if (idx !== null) isAnySoloedGlobally = true;
+    this.trackActiveStem.forEach((indices) => {
+      if (indices.size > 0) isAnySoloedGlobally = true;
     });
 
     // 2. Mute ALL main mixes globally if anything is soloed
@@ -980,46 +980,19 @@ export class MusicEngine {
         const isMainLayerActive = !isAnySoloedGlobally;
         audio.volume = isMainLayerActive && !hasTonePlayer ? 1 : 0;
         audio.muted = !(isMainLayerActive && !hasTonePlayer);
-
-        if (isMainLayerActive && !hasTonePlayer && Tone.Transport.state === 'started' && audio.paused) {
-          const currentBpm = Tone.Transport.bpm.value;
-          const ratio = currentBpm / ((audio as any).renderBpm || currentBpm);
-          const songTime = Tone.Transport.seconds - this.countInDuration;
-          
-          // TIMING FIX: Seek BEFORE play() + 30ms lookahead
-          const LOOKAHEAD = 0.03;
-          const targetTime = Math.max(0, songTime * ratio + LOOKAHEAD);
-          try {
-            if (isFinite(audio.duration) && audio.duration > 0) {
-              audio.currentTime = Math.min(targetTime, audio.duration - 0.1);
-            } else {
-              audio.currentTime = targetTime;
-            }
-          } catch (e) {
-            console.warn('[MusicEngine] main mix seek failed:', e);
-          }
-          
-          // Play AFTER seek
-          audio.play().catch(e => console.warn('[MusicEngine] main mix play failed:', e));
-        } else if (!(isMainLayerActive && !hasTonePlayer) && !audio.paused) {
-          audio.pause();
-        }
       }
     });
 
     // 3. Handle stems for ALL tracks based on their individual activeStem
     const isMobileSolo = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     
-    // On desktop: use Tone.Player stems (they get started via updateVocalPlaybackState)
-    // On mobile: Tone.Player stems are never started (blocked by isMobile in updateVocalPlaybackState),
-    //            so we must use HTMLAudioElement stems instead.
     if (!isMobileSolo) {
       this.trackVocalStems.forEach((stems, tId) => {
-        const activeIdx = this.trackActiveStem.get(tId) ?? null;
+        const activeIndices = this.trackActiveStem.get(tId) || new Set();
         if (stems) {
           stems.forEach((p, i) => {
             if (p) {
-              p.volume.value = (activeIdx !== null && i === activeIdx) ? 0 : -100;
+              p.volume.value = (activeIndices.size > 0 && activeIndices.has(i)) ? 0 : -100;
             }
           });
         }
@@ -1028,55 +1001,30 @@ export class MusicEngine {
 
     // HTMLAudioElement stems — used as primary on mobile, fallback on desktop
     this.vocalStemAudioElements.forEach((audios, tId) => {
-      // On mobile, always use HTMLAudioElement (Tone.Player stems are never started)
-      // On desktop, only use HTMLAudioElement if Tone stems didn't load
       const hasToneStems = !isMobileSolo && this.trackVocalStems.has(tId) && 
         this.trackVocalStems.get(tId)!.some(p => p.buffer && p.buffer.loaded);
 
-      const activeIdx = this.trackActiveStem.get(tId) ?? null;
-      debugOverlay(`🔊 tId=${tId}: activeIdx=${activeIdx}, hasToneStems=${hasToneStems}, stems=${audios.length}`);
+      const activeIndices = this.trackActiveStem.get(tId) || new Set();
+      debugOverlay(`🔊 tId=${tId}: activeIndices=${Array.from(activeIndices)}, hasToneStems=${hasToneStems}, stems=${audios.length}`);
       
       audios.forEach((audio, i) => {
         if (audio) {
-          const isStemActive = (activeIdx !== null && i === activeIdx);
+          const isStemActive = (activeIndices.size > 0 && activeIndices.has(i));
           
           if (isStemActive && !hasToneStems) {
-            // ACTIVE STEM: force play regardless of transport state
+            // ACTIVE STEM: force unmute, but do NOT auto-play. Let updateVocalPlaybackState or transport handle playing.
             audio.volume = 1.0;
             audio.muted = false;
-            
-            // Sync position
-            const currentBpm = Tone.Transport.bpm.value;
-            const ratio = currentBpm / ((audio as any).renderBpm || currentBpm);
-            const songTime = Tone.Transport.seconds - this.countInDuration;
-            
-            debugOverlay(`▶️ stem${i}: paused=${audio.paused}, ready=${audio.readyState}, dur=${audio.duration?.toFixed(1)}, src=${audio.src?.substring(0, 30)}`);
-            
-            // Always try to play — the user gesture from the Solo button click should allow it
-            audio.play()
-              .then(() => debugOverlay(`✅ Stem ${i} play() OK`))
-              .catch(e => debugOverlay(`❌ Stem ${i} play() FAIL: ${e}`));
-            
-            try {
-              if (isFinite(audio.duration) && audio.duration > 0) {
-                audio.currentTime = Math.max(0, Math.min(songTime * ratio, audio.duration - 0.1));
-              }
-            } catch (e) {
-              console.warn(`[MusicEngine] stem ${i} currentTime seek failed:`, e);
-            }
           } else {
-            // INACTIVE STEM: mute and pause
+            // INACTIVE STEM: mute, but keep it playing silently so it stays synced
             audio.volume = 0.0;
             audio.muted = true;
-            if (!audio.paused) {
-              audio.pause();
-            }
           }
         }
       });
     });
 
-    // Refresh playback state so Tone.Player stems (desktop) also start
+    // Refresh playback state to ensure everything is correctly synced
     this.updateVocalPlaybackState();
   }
   
@@ -1086,8 +1034,8 @@ export class MusicEngine {
     return Math.max(toneStems, audioStems);
   }
   
-  public getActiveStem(trackId: string): number | null {
-    return this.trackActiveStem.get(trackId) ?? null;
+  public getSoloStem(trackId: string): Set<number> {
+    return this.trackActiveStem.get(trackId) || new Set();
   }
 
   async initSampler(trackId: string, trackName: string = "Piano", pluginSettings?: any, trackMode?: 'instrument' | 'vocal'): Promise<void> {
@@ -1256,8 +1204,8 @@ export class MusicEngine {
     
     // Check if any stem is soloed globally
     let isAnyStemSoloedGlobally = false;
-    this.trackActiveStem.forEach((idx) => {
-      if (idx !== null) isAnyStemSoloedGlobally = true;
+    this.trackActiveStem.forEach((indices) => {
+      if (indices.size > 0) isAnyStemSoloedGlobally = true;
     });
 
     tracks.forEach(t => {
@@ -1277,14 +1225,14 @@ export class MusicEngine {
         }
       }
 
-      const activeStemIdx = this.trackActiveStem.get(t.id) ?? null;
+      const activeStemIndices = this.trackActiveStem.get(t.id) || new Set();
       const isVocalPlaying = t.mode === 'vocal' && !t.isMuted && (!hasSolo || t.isSolo);
 
       // Sync vocal layer volume and mute states dynamically
       const vocalPlayers = this.trackVocalLayers.get(t.id);
       if (vocalPlayers) {
         vocalPlayers.forEach(p => {
-          const isMainLayerActive = isVocalPlaying && (activeStemIdx === null) && !isAnyStemSoloedGlobally;
+          const isMainLayerActive = isVocalPlaying && (activeStemIndices.size === 0) && !isAnyStemSoloedGlobally;
           p.volume.value = isMainLayerActive ? 0 : -100;
         });
       }
@@ -1296,7 +1244,7 @@ export class MusicEngine {
         const hasTonePlayer = !isMobile && this.trackVocalLayers.has(t.id) && 
           this.trackVocalLayers.get(t.id)!.some(p => p.buffer && p.buffer.loaded);
 
-        const isMainLayerActive = isVocalPlaying && (activeStemIdx === null) && !isAnyStemSoloedGlobally;
+        const isMainLayerActive = isVocalPlaying && (activeStemIndices.size === 0) && !isAnyStemSoloedGlobally;
         const vol = typeof t.volume === 'number' ? t.volume : 0.8;
         audio.volume = isMainLayerActive && !hasTonePlayer ? vol : 0.0;
         audio.muted = !(isMainLayerActive && !hasTonePlayer);
@@ -1327,7 +1275,7 @@ export class MusicEngine {
       if (vocalStems && !isMobileTrack) {
         vocalStems.forEach((p, i) => {
           if (p) {
-            const isStemActive = isVocalPlaying && (activeStemIdx === i);
+            const isStemActive = isVocalPlaying && activeStemIndices.has(i);
             p.volume.value = isStemActive ? 0 : -100;
           }
         });
@@ -1340,7 +1288,7 @@ export class MusicEngine {
           this.trackVocalStems.get(t.id)!.some(p => p.buffer && p.buffer.loaded);
 
         stemAudios.forEach((audio, i) => {
-          const isStemActive = isVocalPlaying && (activeStemIdx === i);
+          const isStemActive = isVocalPlaying && activeStemIndices.has(i);
           const vol = typeof t.volume === 'number' ? t.volume : 0.8;
           audio.volume = isStemActive && !hasToneStems ? vol : 0.0;
           audio.muted = !(isStemActive && !hasToneStems);
