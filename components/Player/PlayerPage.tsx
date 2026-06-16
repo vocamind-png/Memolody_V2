@@ -2998,40 +2998,49 @@ const PlayerPage: React.FC<{
                       {track.mode === 'vocal' ? <Mic2 size={8} /> : <span className="text-[8px]">🎹</span>}
                     </button>
 
-                    {/* Stem Solo buttons — vertical stack */}
+                    {/* Stem Solo buttons */}
                     {showStemControls && availableStems[track.id] > 0 && (() => {
                       const stemTrackId = track.id;
-                      const stemCount = availableStems[stemTrackId];
+                      const isSoloed = soloedStems[stemTrackId]?.has(0);
+                      const isAnySoloed = Object.values(soloedStems).some(set => set.size > 0);
+
                       return (
                         <div className="flex flex-row gap-0.5">
-                          {Array.from({ length: stemCount }).map((_, idx) => {
-                            const isSoloed = soloedStems[stemTrackId]?.has(idx);
-                            return (
-                              <button
-                                key={idx}
-                                onClick={() => handleSoloStem(stemTrackId, idx)}
-                                className={`w-4 h-4 rounded-md border flex items-center justify-center transition-all shadow-lg ${
-                                  isSoloed
-                                    ? 'bg-cyan-500 border-cyan-300 text-white shadow-[0_0_8px_rgba(6,182,212,0.5)]'
-                                    : 'bg-[#1a1a1e] border-zinc-700 text-zinc-400 hover:text-cyan-300 hover:border-cyan-500/60'
-                                }`}
-                                title={isSoloed ? `Remove voice ${idx + 1} from solo` : `Add voice ${idx + 1} to solo`}
-                              >
-                                <span className="text-[6px] font-black">S{idx + 1}</span>
-                              </button>
-                            );
-                          })}
+                          {/* Individual Solo Button for this track */}
                           <button
-                            onClick={() => handleSoloStem(stemTrackId, null)}
+                            onClick={() => handleSoloStem(stemTrackId, 0)}
                             className={`w-4 h-4 rounded-md border flex items-center justify-center transition-all shadow-lg ${
-                              !soloedStems[stemTrackId] || soloedStems[stemTrackId].size === 0
-                                ? 'bg-rose-600 border-rose-400 text-white shadow-[0_0_6px_rgba(239,68,68,0.4)]'
-                                : 'bg-[#1a1a1e] border-zinc-700 text-zinc-400 hover:text-rose-300 hover:border-rose-500/60'
+                              isSoloed
+                                ? 'bg-cyan-500 border-cyan-300 text-white shadow-[0_0_8px_rgba(6,182,212,0.5)]'
+                                : 'bg-[#1a1a1e] border-zinc-700 text-zinc-400 hover:text-cyan-300 hover:border-cyan-500/60'
                             }`}
-                            title="Play all voices together"
+                            title={isSoloed ? `Remove voice ${i + 1} from solo` : `Add voice ${i + 1} to solo`}
                           >
-                            <span className="text-[5.5px] font-black">ALL</span>
+                            <span className="text-[6px] font-black">S{i + 1}</span>
                           </button>
+
+                          {/* Global ALL Button (only rendered on the very first track) */}
+                          {i === 0 && (
+                            <button
+                              onClick={() => {
+                                setSoloedStems({});
+                                if (window.vocalidoRenderService) {
+                                  tracks.forEach(t => {
+                                    window.vocalidoRenderService.setTrackMute(t.id, false);
+                                  });
+                                }
+                                musicEngine.soloStem('ALL', new Set()); // Clear all stems
+                              }}
+                              className={`w-4 h-4 rounded-md border flex items-center justify-center transition-all shadow-lg ${
+                                !isAnySoloed
+                                  ? 'bg-rose-600 border-rose-400 text-white shadow-[0_0_6px_rgba(239,68,68,0.4)]'
+                                  : 'bg-[#1a1a1e] border-zinc-700 text-zinc-400 hover:text-rose-300 hover:border-rose-500/60'
+                              }`}
+                              title="Play all voices together"
+                            >
+                              <span className="text-[5.5px] font-black">ALL</span>
+                            </button>
+                          )}
                         </div>
                       );
                     })()}
