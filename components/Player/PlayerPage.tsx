@@ -1559,7 +1559,17 @@ const PlayerPage: React.FC<{
         
         // Use track-specific stems if available
         const trackStems = allStemsByTrack[tid] ? allStemsByTrack[tid].map((s: string) => fixAudioUrl(s)) : [];
-        if (trackStems.length > 0) {
+        
+        // Legacy Polyphony Cache Fix: if stemsWithBust has multiple stems and track is missing mapping or track has all of them
+        const isLegacyPolyphony = stemsWithBust.length > 1 && vocalTracksArr.length > 1 && 
+          (!allStemsByTrack[tid] || (tid === primaryTrackId && allStemsByTrack[primaryTrackId]?.length > 1));
+
+        if (isLegacyPolyphony) {
+          const idx = vocalTracksArr.indexOf(tid);
+          if (idx >= 0 && idx < stemsWithBust.length) {
+            trackAudioUrl = stemsWithBust[idx];
+          }
+        } else if (trackStems.length > 0) {
           trackAudioUrl = trackStems[0];
           // We don't use 'stemsToPass' sub-stems anymore, each UI track is a single mono stem
           stemsToPass = [];
@@ -2582,6 +2592,18 @@ const PlayerPage: React.FC<{
                               } else if (tid === primaryTrackId) {
                                 trackAudioUrl = cacheBusted;
                                 stemsToPass = stemsWithBust;
+                              }
+                              
+                              // Legacy Polyphony Cache Fix
+                              const isLegacyPolyphony = stemsWithBust.length > 1 && vocalTracksArr.length > 1 && 
+                                (!h.stemsByTrack || !h.stemsByTrack[tid] || (tid === primaryTrackId && h.stemsByTrack[primaryTrackId]?.length > 1));
+
+                              if (isLegacyPolyphony) {
+                                const idx = vocalTracksArr.indexOf(tid);
+                                if (idx >= 0 && idx < stemsWithBust.length) {
+                                  trackAudioUrl = stemsWithBust[idx];
+                                  stemsToPass = []; // Force reset stems to pass
+                                }
                               }
                               
                               if (trackAudioUrl) {
