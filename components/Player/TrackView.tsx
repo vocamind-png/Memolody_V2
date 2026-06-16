@@ -447,8 +447,22 @@ const TrackView: React.FC<TrackViewProps> = ({ song, musicXml, tracks, setTracks
 
                     <div className="flex-1 flex flex-col gap-1.5">
                       <div className="flex gap-1">
-                        <button onClick={() => setTracks(prev => prev.map(t => t.id === track.id ? { ...t, isMuted: !t.isMuted, isSolo: !t.isMuted ? false : t.isSolo } : t))} className={`flex-1 h-6 rounded-lg text-[8px] font-black border transition-all ${track.isMuted ? 'bg-rose-600 border-rose-400 text-white shadow-lg' : 'bg-zinc-900 border-white/5 text-zinc-600'}`}>M</button>
-                        <button onClick={() => setTracks(prev => prev.map(t => t.id === track.id ? { ...t, isSolo: !t.isSolo, isMuted: !t.isSolo ? false : t.isMuted } : t))} className={`flex-1 h-6 rounded-lg text-[8px] font-black border transition-all ${track.isSolo ? 'bg-amber-400 border-amber-300 text-black shadow-lg' : 'bg-zinc-900 border-white/5 text-zinc-600'}`}>S</button>
+                        <button 
+                          onClick={() => {
+                            const newTracks = tracks.map(t => t.id === track.id ? { ...t, isMuted: !t.isMuted, isSolo: !t.isMuted ? false : t.isSolo } : t);
+                            musicEngine.updateTrackStates(newTracks);
+                            setTracks(newTracks as any);
+                          }} 
+                          className={`flex-1 h-6 rounded-lg text-[8px] font-black border transition-all ${track.isMuted ? 'bg-rose-600 border-rose-400 text-white shadow-lg' : 'bg-zinc-900 border-white/5 text-zinc-600'}`}
+                        >M</button>
+                        <button 
+                          onClick={() => {
+                            const newTracks = tracks.map(t => t.id === track.id ? { ...t, isSolo: !t.isSolo, isMuted: !t.isSolo ? false : t.isMuted } : t);
+                            musicEngine.updateTrackStates(newTracks);
+                            setTracks(newTracks as any);
+                          }} 
+                          className={`flex-1 h-6 rounded-lg text-[8px] font-black border transition-all ${track.isSolo ? 'bg-amber-400 border-amber-300 text-black shadow-lg shadow-amber-400/20' : 'bg-zinc-900 border-white/5 text-zinc-600'}`}
+                        >S</button>
                       </div>
                       
                       {(() => {

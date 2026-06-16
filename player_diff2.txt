@@ -1,0 +1,167 @@
+diff --git a/components/Player/PlayerPage.tsx b/components/Player/PlayerPage.tsx
+index 116c1dd..ed9bfa3 100644
+--- a/components/Player/PlayerPage.tsx
++++ b/components/Player/PlayerPage.tsx
+@@ -76,7 +76,7 @@ const saveRenderToLocalCache = async (
+ const restoreCachedBlobs = async (songId: string, history: any[]): Promise<any[]> => {
+   try {
+     const updatedHistory = await Promise.all(history.map(async (entry) => {
+-      const entryKey = `${entry.bpmPercent}_${entry.songKey}_${entry.engineId || 'default'}_${entry.lyricMode || ''}_${entry.voiceName || 'Auto'}`;
++      const entryKey = `${entry.bpmPercent}_${entry.songKey}_${entry.engineId || 'default'}_${entry.lyricMode || ''}_${entry.voiceName || 'Auto'}_tf${entry.timingFeel ?? 1.0}_v2`;
+       const cacheKey = `vocal_render_${songId}_${entryKey}`;
+       
+       const mainBlob = await AudioBlobCache.get(cacheKey);
+@@ -1261,7 +1261,19 @@ const PlayerPage: React.FC<{
+     }
+   }, [activeRenderKey, song?.id]);
+ 
+-  // ── SONG CHANGE → Full engine reset (ONLY on song change) ─────────────────
++  const lastXmlRef = useRef<string>(musicXml || '');
++
++  // Detect XML changes while keeping the same song ID
++  useEffect(() => {
++    if (musicXml && lastXmlRef.current !== musicXml) {
++      lastXmlRef.current = musicXml;
++      autoRestoredRef.current = ''; 
++      musicEngine.stopAndClear(); 
++      console.log(`[PlayerPage] 🎵 XML changed for current song → resetting music engine state.`);
++    }
++  }, [musicXml]);
++
++  // ── SONG CHANGE → Full UI reset (ONLY on song change) ─────────────────
+   useEffect(() => {
+     musicEngine.stopAndClear();
+     setIsPlaying(false);
+@@ -1275,8 +1287,8 @@ const PlayerPage: React.FC<{
+     setRenderProgress(0);
+     lastRenderedKeyRef.current = ''; 
+     setIsRenderingVocal(false);
+-    setTracks([]); // <-- ADD THIS: clear tracks so auto-assign runs for the new song
+-    autoRestoredRef.current = ''; // Reset restoration guard
++    setTracks([]); 
++    autoRestoredRef.current = ''; 
+     console.log(`[PlayerPage] 🎵 Song changed → engine cleared.`);
+ 
+     // Load active render key from localStorage
+@@ -1329,10 +1341,23 @@ const PlayerPage: React.FC<{
+                 voiceName: r.engine_id || 'Auto',
+                 savedStemUrls: (r.saved_stem_urls || []).map((sUrl: string) => fixAudioUrl(sUrl)),
+               }));
+-              restoreCachedBlobs(song.id, mapped).then(setRenderHistory);
+-            } else {
+-              setRenderHistory([]);
++              restoreCachedBlobs(song.id, mapped).then(newRenders => {
++                setRenderHistory(prev => {
++                  const merged = [...prev];
++                  newRenders.forEach(nr => {
++                    const hKey = `${nr.bpmPercent}_${nr.songKey}_${nr.engineId||'default'}_${nr.lyricMode||''}_${nr.voiceName||'Auto'}_tf${nr.timingFeel ?? 1.0}_v2`;
++                    const exists = merged.findIndex(m => `${m.bpmPercent}_${m.songKey}_${m.engineId||'default'}_${m.lyricMode||''}_${m.voiceName||'Auto'}_tf${m.timingFeel ?? 1.0}_v2` === hKey);
++                    if (exists >= 0) {
++                      merged[exists] = nr; // Update with server data if matches
++                    } else {
++                      merged.push(nr);
++                    }
++                  });
++                  return merged;
++                });
++              });
+             }
++            // Do NOT call setRenderHistory([]) if length is 0, because it will wipe out local browser renders.
+           }
+         })
+         .catch(() => {});
+@@ -1444,7 +1469,7 @@ const PlayerPage: React.FC<{
+     if (!savedKey) return;
+ 
+     const cached = renderHistory.find(
+-      h => `${h.bpmPercent}_${h.songKey}_${h.engineId||'default'}_${h.lyricMode||''}_${h.voiceName||'Auto'}` === savedKey
++      h => `${h.bpmPercent}_${h.songKey}_${h.engineId||'default'}_${h.lyricMode||''}_${h.voiceName||'Auto'}_tf${h.timingFeel ?? 1.0}_v2` === savedKey
+     );
+ 
+     if (cached) {
+@@ -1988,7 +2013,8 @@ const PlayerPage: React.FC<{
+ 
+       if (e.code === 'Space') {
+         e.preventDefault();
+-        handleTogglePlay();
++        e.stopPropagation();
++        handleTogglePlayRef.current();
+       } else if (e.code === 'Enter' || e.code === 'Return') {
+         e.preventDefault();
+         musicEngine.pause();
+@@ -2015,9 +2041,9 @@ const PlayerPage: React.FC<{
+         triggerVocalSynthesis(true);
+       }
+     };
+-    window.addEventListener('keydown', handleKeyDown);
+-    return () => window.removeEventListener('keydown', handleKeyDown);
+-  }, [isPlaying, currentBpm, tracks, song]); // Added dependencies to capture latest state for handlePlayPause
++    window.addEventListener('keydown', handleKeyDown, { capture: true });
++    return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
++  }, []); // Empty deps because we use refs for actions
+ 
+   const cancelVocalSynthesis = () => {
+     vocalidoRenderService.cancelRender();
+@@ -2429,7 +2455,7 @@ const PlayerPage: React.FC<{
+                   </button>
+                 </div>
+                 {renderHistory.map((h) => {
+-                  const hKey = `${h.bpmPercent}_${h.songKey}_${h.engineId||'default'}_${h.lyricMode||''}_${h.voiceName||'Auto'}`;
++                  const hKey = `${h.bpmPercent}_${h.songKey}_${h.engineId||'default'}_${h.lyricMode||''}_${h.voiceName||'Auto'}_tf${h.timingFeel ?? 1.0}_v2`;
+                   const isActive = activeRenderKey === hKey;
+                   const isInfoOpen = memoInfoOpenKey === hKey;
+                   const shortDate = h.renderedAt ? new Date(h.renderedAt).toLocaleDateString('th-TH', { day:'2-digit', month:'2-digit' }) : null;
+@@ -2582,7 +2608,7 @@ const PlayerPage: React.FC<{
+                           const confirmed = window.confirm(`ลบ Render "${formatRenderLabel(h.label, h.bpmPercent)}" สำหรับเพลงนี้ออกใช่ไหม?`);
+                           if (!confirmed) return;
+                           if (h.filename) svsFetch(getFetchUrl(`/studio/renders/${encodeURIComponent(h.filename)}?owner_id=${encodeURIComponent(authUser?.id || '')}&song_id=${encodeURIComponent(localSong.id)}`), { method: 'DELETE' }).catch(() => {});
+-                          setRenderHistory(prev => prev.filter(x => `${x.bpmPercent}_${x.songKey}_${x.engineId||'default'}_${x.lyricMode||''}_${x.voiceName||'Auto'}` !== hKey));
++                          setRenderHistory(prev => prev.filter(x => `${x.bpmPercent}_${x.songKey}_${x.engineId||'default'}_${x.lyricMode||''}_${x.voiceName||'Auto'}_tf${x.timingFeel ?? 1.0}_v2` !== hKey));
+                           if (activeRenderKey === hKey) {
+                             setActiveRenderKey(null);
+                             // ── Reset playback and clear vocal layer ──
+diff --git a/components/Player/ProScoreEditor.tsx b/components/Player/ProScoreEditor.tsx
+index f86df53..6a5e853 100644
+--- a/components/Player/ProScoreEditor.tsx
++++ b/components/Player/ProScoreEditor.tsx
+@@ -1133,8 +1133,7 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
+         barLineWidth: barlineThickness,
+         staffLineWidth: stafflineThickness,
+         svgViewBox: true,
+-        breaks: 'auto',
+-        ignoreLayout: true,
++        breaks: 'auto'
+       });
+ 
+       // Yield before Verovio parse (heavy WASM call)
+@@ -1492,20 +1491,27 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
+ 
+   // Automatically re-build coordmap when the container dimensions change (e.g. after SVG layouts finish, orientation rotates, or user scales)
+   const lastSizeRef = useRef({ width: 0, height: 0 });
++  const coordMapTimerRef = useRef<any>(null);
+   useEffect(() => {
+     if (!containerRef.current) return;
+     const observer = new ResizeObserver(entries => {
+       for (const entry of entries) {
+         const { width, height } = entry.contentRect;
+-        if (Math.abs(width - lastSizeRef.current.width) > 0.5 || Math.abs(height - lastSizeRef.current.height) > 0.5) {
++        if (Math.abs(width - lastSizeRef.current.width) > 5 || Math.abs(height - lastSizeRef.current.height) > 5) {
+           lastSizeRef.current = { width, height };
+           console.log('[ProScoreEditor] 📐 Container size changed, rebuilding coordmap:', width, 'x', height);
+-          createCoordMap();
++          if (coordMapTimerRef.current) clearTimeout(coordMapTimerRef.current);
++          coordMapTimerRef.current = setTimeout(() => {
++            createCoordMap();
++          }, 300);
+         }
+       }
+     });
+     observer.observe(containerRef.current);
+-    return () => observer.disconnect();
++    return () => {
++      observer.disconnect();
++      if (coordMapTimerRef.current) clearTimeout(coordMapTimerRef.current);
++    };
+   }, [createCoordMap]);
+ 
+ 

@@ -1,0 +1,475 @@
+726:       if (svsEngine === 'browser-ai') {
+727:         if (!selectedVoice?.model_files) {
+728:           throw new Error(`The selected voice "${selectedVoice?.name || 'Unknown'}" does not support browser-side SVS rendering.`);
+729:         }
+730:         this.statusText = 'Loading models...';
+731:         this.notify();
+732: 
+733:         console.log('[VocalidoRenderService] 🔍 selectedVoice.model_files:', JSON.stringify(Object.keys(selectedVoice.model_files || {})));
+734:         console.log('[VocalidoRenderService] 🔍 neural fields:', {
+735:           linguistic: !!selectedVoice.model_files?.linguistic,
+736:           dur: !!selectedVoice.model_files?.dur,
+737:           pitch: !!selectedVoice.model_files?.pitch,
+738:           pitchLinguistic: !!selectedVoice.model_files?.pitchLinguistic,
+739:         });
+740:         const modelFiles = {
+741:           acoustic: getVoiceModelUrl(selectedVoice.model_files.acoustic),
+742:           vocoder: getVoiceModelUrl(selectedVoice.model_files.vocoder),
+743:           dictionary: selectedVoice.model_files.dictionary ? getVoiceModelUrl(selectedVoice.model_files.dictionary) : undefined,
+744:           phonemes: selectedVoice.model_files.phonemes ? getVoiceModelUrl(selectedVoice.model_files.phonemes) : undefined,
+745:           embeds: selectedVoice.model_files.embeds ? Object.keys(selectedVoice.model_files.embeds).reduce((acc, key) => {
+746:             if (selectedVoice.model_files?.embeds?.[key]) {
+747:               acc[key] = getVoiceModelUrl(selectedVoice.model_files.embeds[key]);
+748:             }
+749:             return acc;
+750:           }, {} as Record<string, string>) : undefined,
+751:           // Neural sub-models for full DiffSinger pipeline (linguistic → dur → pitch → acoustic → vocoder)
+752:           linguistic: selectedVoice.model_files.linguistic ? getVoiceModelUrl(selectedVoice.model_files.linguistic) : undefined,
+753:           dur: selectedVoice.model_files.dur ? getVoiceModelUrl(selectedVoice.model_files.dur) : undefined,
+754:           pitch: selectedVoice.model_files.pitch ? getVoiceModelUrl(selectedVoice.model_files.pitch) : undefined,
+755:           pitchLinguistic: selectedVoice.model_files.pitchLinguistic ? getVoiceModelUrl(selectedVoice.model_files.pitchLinguistic) : undefined,
+756:         };
+757: 
+758:         await clientSvsEngine.loadVoice(selectedVoice.id, modelFiles, (prog) => {
+759:           this.statusText = prog.message;
+760:           this.progress = Math.min(99.9, prog.progress);
+761:           this.notify();
+762:         });
+763: 
+764:         if (isPolyphonic && voiceLines.length > 1) {
+765:           console.log(`[VocalidoRenderService] [Browser-AI] 🎹 Polyphony detected: rendering ${voiceLines.length} voice lines on-device...`);
+766:           const audioBlobs: Blob[] = [];
+767:           const renderedPan: number[] = [];
+768:           
+769:           for (let vIdx = 0; vIdx < voiceLines.length; vIdx++) {
+770:             const vl = voiceLines[vIdx];
+771:             this.statusText = `Generating ${vl.label}... (${vl.notes.length} notes)`;
+772:             this.notify();
+773:             
+774:             try {
+775:               const wavBlob = await clientSvsEngine.synthesize(vl.notes, {
+776:                 bpm: actualBpm,
+777:                 formant_shift: 0,
+778:                 speed: 1.0,
+779:                 breathiness: 0,
+780:                 vocal_mode: 'root',
+781:                 steps: svsSteps,
+782:                 timing_feel: svsTimingFeel,
+783:                 portamento: svsPortamento,
+784:                 vibrato_start: svsVibratoStart,
+785:                 vibrato_depth: svsVibratoDepth,
+786:                 vibrato_speed: svsVibratoSpeed,
+787:               });
+788:               audioBlobs.push(wavBlob);
+789:               renderedPan.push(vl.pan);
+790:               console.log(`[VocalidoRenderService] [Browser-AI] ✅ Voice ${vIdx + 1} (${vl.label}) blob ready: ${(wavBlob.size / 1024).toFixed(0)} KB`);
+791:             } catch (voiceErr) {
+792:               console.warn(`[VocalidoRenderService] [Browser-AI] ❌ Voice ${vIdx + 1} (${vl.label}) failed:`, voiceErr);
+793:             }
+794:           }
+795: 
+796:           if (audioBlobs.length === 0) {
+797:             throw new Error('All voice lines failed to render');
+798:           }
+799: 
+800:           // Mix all voice audio blobs together using AudioContext
+801:           this.statusText = `Mixing ${audioBlobs.length} voice lines (Stereo)...`;
+802:           this.notify();
+803: 
+804:           const decodeCtx = new AudioContext();
+805:           const decodedBuffers: AudioBuffer[] = [];
+806:           const decodedPans: number[] = [];
+807:           for (let bIdx = 0; bIdx < audioBlobs.length; bIdx++) {
+808:             const blob = audioBlobs[bIdx];
+809:             try {
+810:               const arrayBuffer = await blob.arrayBuffer();
+811:               const decoded = await decodeCtx.decodeAudioData(arrayBuffer);
+812:               decodedBuffers.push(decoded);
+813:               decodedPans.push(renderedPan[bIdx]);
+814:             } catch (decErr) {
+815:               console.warn(`[VocalidoRenderService] [Browser-AI] ❌ Failed to decode voice ${bIdx + 1} audio:`, decErr);
+816:             }
+817:           }
+818:           decodeCtx.close().catch(() => {});
+819: 
+820:           if (decodedBuffers.length === 0) {
+821:             throw new Error('Failed to decode any voice audio');
+822:           }
+823: 
+824:           // Mix: Stereo mix based on pan values
+825:           const sampleRate = decodedBuffers[0].sampleRate;
+826:           let maxLen = 0;
+827:           for (const buf of decodedBuffers) {
+828:             if (buf.length > maxLen) maxLen = buf.length;
+829:           }
+830: 
+831:           const mixedL = new Float32Array(maxLen);
+832:           const mixedR = new Float32Array(maxLen);
+833: 
+834:           for (let vIdx = 0; vIdx < decodedBuffers.length; vIdx++) {
+835:             const buf = decodedBuffers[vIdx];
+836:             const pan = decodedPans[vIdx] ?? 0;
+837: 
+838:             const angle = ((pan + 1) / 2) * (Math.PI / 2);
+839:             const gainL = Math.cos(angle);
+840:             const gainR = Math.sin(angle);
+841: 
+842:             if (buf.numberOfChannels === 1) {
+843:               const ch = buf.getChannelData(0);
+844:               for (let i = 0; i < ch.length; i++) {
+845:                 mixedL[i] += ch[i] * gainL;
+846:                 mixedR[i] += ch[i] * gainR;
+847:               }
+848:             } else if (buf.numberOfChannels >= 2) {
+849:               const chL = buf.getChannelData(0);
+850:               const chR = buf.getChannelData(1);
+851:               for (let i = 0; i < chL.length; i++) {
+852:                 mixedL[i] += chL[i] * gainL;
+853:                 mixedR[i] += chR[i] * gainR;
+854:               }
+855:             }
+856:           }
+857: 
+858:           // Normalize Stereo Mix
+859:           let peak = 0;
+860:           for (let i = 0; i < maxLen; i++) {
+861:             const absL = Math.abs(mixedL[i]);
+862:             const absR = Math.abs(mixedR[i]);
+863:             if (absL > peak) peak = absL;
+864:             if (absR > peak) peak = absR;
+865:           }
+866:           if (peak > 0.001) {
+867:             for (let i = 0; i < maxLen; i++) {
+868:               mixedL[i] = (mixedL[i] / peak) * 0.92;
+869:               mixedR[i] = (mixedR[i] / peak) * 0.92;
+870:             }
+871:           }
+872: 
+873:           // Encode to Stereo WAV blob
+874:           const wavHeader = new ArrayBuffer(44);
+875:           const view = new DataView(wavHeader);
+876:           const numSamples = maxLen;
+877:           const numChannels = 2;
+878:           const byteRate = sampleRate * numChannels * 2;
+879:           view.setUint32(0, 0x52494646, false); // "RIFF"
+880:           view.setUint32(4, 36 + numSamples * numChannels * 2, true);
+881:           view.setUint32(8, 0x57415645, false); // "WAVE"
+882:           view.setUint32(12, 0x666d7420, false); // "fmt "
+883:           view.setUint32(16, 16, true);
+884:           view.setUint16(20, 1, true); // PCM
+885:           view.setUint16(22, numChannels, true); // stereo
+886:           view.setUint32(24, sampleRate, true);
+887:           view.setUint32(28, byteRate, true);
+888:           view.setUint16(32, numChannels * 2, true);
+889:           view.setUint16(34, 16, true);
+890:           view.setUint32(36, 0x64617461, false); // "data"
+891:           view.setUint32(40, numSamples * numChannels * 2, true);
+892: 
+893:           const pcm = new Int16Array(numSamples * numChannels);
+894:           for (let i = 0; i < numSamples; i++) {
+895:             let sL = Math.max(-1, Math.min(1, mixedL[i]));
+896:             let sR = Math.max(-1, Math.min(1, mixedR[i]));
+897:             pcm[i * 2] = sL < 0 ? sL * 0x8000 : sL * 0x7FFF;
+898:             pcm[i * 2 + 1] = sR < 0 ? sR * 0x8000 : sR * 0x7FFF;
+899:           }
+900: 
+901:           const mixedBlob = new Blob([wavHeader, pcm.buffer], { type: 'audio/wav' });
+902:           const mixedUrl = URL.createObjectURL(mixedBlob);
+903: 
+904:           const voiceStemUrls: string[] = [];
+905:           for (const blob of audioBlobs) {
+906:             voiceStemUrls.push(URL.createObjectURL(blob));
+907:             stemBlobs.push(blob);
+908:           }
+909: 
+910:           polyStemUrls = voiceStemUrls;
+911:           result = {
+912:             audio_url: mixedUrl,
+913:             audio_b64: null,
+914:             saved_url: null,
+915:             engine: 'browser_ai_polyphony',
+916:             stems_b64: [],
+917:             mime_type: 'audio/wav'
+918:           };
+919:           useDirectBlobUrl = true;
+920:           mainAudioBlob = mixedBlob;
+921: 
+922:         } else {
+923:           this.statusText = `Generating vocals... (${notesToSynthesize.length} notes)`;
+924:           this.notify();
+925: 
+926:           const wavBlob = await clientSvsEngine.synthesize(notesToSynthesize, {
+927:             bpm: actualBpm,
+928:             formant_shift: 0,
+929:             speed: 1.0,
+930:             breathiness: 0,
+931:             vocal_mode: 'root',
+932:             steps: svsSteps,
+933:             timing_feel: svsTimingFeel,
+934:             portamento: svsPortamento,
+935:             vibrato_start: svsVibratoStart,
+936:             vibrato_depth: svsVibratoDepth,
+937:             vibrato_speed: svsVibratoSpeed,
+938:           });
+939: 
+940:           const localBlobUrl = URL.createObjectURL(wavBlob);
+941:           result = {
+942:             audio_url: localBlobUrl,
+943:             engine: 'browser_ai_webgpu',
+944:             stems_b64: []
+945:           };
+946:           useDirectBlobUrl = true;
+947:           mainAudioBlob = wavBlob;
+948:         }
+949:       } else {
+950:         // server-side vocalido SVS engine
+951:         if (isPolyphonic && voiceLines.length > 1) {
+952:           // ─── Multi-pass polyphony: render each voice line separately, then stereo mix ───
+953:           console.log(`[VocalidoRenderService] 🎹 Multi-pass polyphony: rendering ${voiceLines.length} voice lines via server...`);
+954:           
+955:           const targetUrl = getFetchUrl('/studio/preview');
+956:           const audioBlobs: Blob[] = [];
+957:           const renderedPan: number[] = [];
+958:           
+959:           for (let vIdx = 0; vIdx < voiceLines.length; vIdx++) {
+960:             const vl = voiceLines[vIdx];
+961:             this.statusText = `Rendering ${vl.label}... (${vl.notes.length} notes)`;
+962:             this.notify();
+963:             
+964:             // Append voice-line index to song_id so server cache is unique per voice line
+965:             const vlSongId = `${song.id}_vl${vIdx}`;
+966:             const vlParams = { ...synthParams, collapse_chords: false, voice_line: vIdx };
+967:             
+968:             const payload = {
+969:               notes: vl.notes,
+970:               song_id: vlSongId,
+971:               song_key: songKey,
+972:               bpm_pct: bpmPct,
+973:               lyric_mode: activeLyricMode,
+974:               is_public: true,
+975:               owner_id: userId || '',
+976:               params: vlParams
+977:             };
+978:             
+979:             try {
+980:               console.log(`[VocalidoRenderService] 📤 Sending voice ${vIdx + 1} (${vl.label}) → ${vlSongId}, ${vl.notes.length} notes`);
+981:               const response = await svsFetch(targetUrl, {
+982:                 method: 'POST',
+983:                 headers: { 'Content-Type': 'application/json' },
+984:                 body: JSON.stringify(payload),
+985:                 signal: controller.signal
+986:               });
+987:               
+988:               console.log(`[VocalidoRenderService] 📥 Voice ${vIdx + 1} HTTP ${response.status}`);
+989:               if (!response.ok) {
+990:                 const errText = await response.text();
+991:                 console.warn(`[VocalidoRenderService] ❌ Voice ${vIdx + 1} (${vl.label}) HTTP error: ${errText}`);
+992:                 continue;
+993:               }
+994:               
+995:               const data = await response.json();
+996:               console.log(`[VocalidoRenderService] 📦 Voice ${vIdx + 1} response: engine=${data.engine}, saved_url=${data.saved_url}, audio_b64=${data.audio_b64 ? 'YES' : 'null'}, error=${data.error || 'none'}`);
+997:               if (data.error) {
+998:                 console.warn(`[VocalidoRenderService] ❌ Voice ${vIdx + 1} (${vl.label}) server error: ${data.error}`);
+999:                 continue;
+1000:               }
+1001:               
+1002:               // Decode audio to blob
+1003:               let audioBlob: Blob | null = null;
+1004:               if (data.audio_b64) {
+1005:                 const binary = atob(data.audio_b64);
+1006:                 const array = new Uint8Array(binary.length);
+1007:                 for (let i = 0; i < binary.length; i++) array[i] = binary.charCodeAt(i);
+1008:                 audioBlob = new Blob([array], { type: data.mime_type || 'audio/mpeg' });
+1009:               } else if (data.audio_url || data.saved_url) {
+1010:                 const audioUrl = fixAudioUrl(data.saved_url || data.audio_url);
+1011:                 console.log(`[VocalidoRenderService] 🔗 Voice ${vIdx + 1} fetching audio: ${audioUrl}`);
+1012:                 const audioResp = await fetch(audioUrl, { signal: controller.signal });
+1013:                 console.log(`[VocalidoRenderService] 🔗 Voice ${vIdx + 1} audio HTTP ${audioResp.status}, type=${audioResp.headers.get('content-type')}`);
+1014:                 if (audioResp.ok) {
+1015:                   audioBlob = await audioResp.blob();
+1016:                 } else {
+1017:                   console.warn(`[VocalidoRenderService] ❌ Voice ${vIdx + 1} audio fetch failed: HTTP ${audioResp.status}`);
+1018:                 }
+1019:               } else {
+1020:                 console.warn(`[VocalidoRenderService] ❌ Voice ${vIdx + 1} no audio_b64 and no saved_url/audio_url in response`);
+1021:               }
+1022:               
+1023:               if (audioBlob) {
+1024:                 audioBlobs.push(audioBlob);
+1025:                 renderedPan.push(vl.pan);
+1026:                 console.log(`[VocalidoRenderService] ✅ Voice ${vIdx + 1} (${vl.label}) blob ready: ${(audioBlob.size / 1024).toFixed(0)} KB, type=${audioBlob.type}`);
+1027:               } else {
+1028:                 console.warn(`[VocalidoRenderService] ⚠️ Voice ${vIdx + 1} (${vl.label}) audioBlob is null — skipping`);
+1029:               }
+1030:             } catch (voiceErr: any) {
+1031:               if (voiceErr.name === 'AbortError') throw voiceErr;
+1032:               console.warn(`[VocalidoRenderService] ❌ Voice ${vIdx + 1} (${vl.label}) exception:`, voiceErr);
+1033:             }
+1034:           }
+1035:           
+1036:           if (audioBlobs.length === 0) {
+1037:             throw new Error('All voice lines failed to render');
+1038:           }
+1039:           
+1040:           // Mix all voice audio blobs together using AudioContext
+1041:           this.statusText = `Mixing ${audioBlobs.length} voice lines (Stereo)...`;
+1042:           this.notify();
+1043:           
+1044:           // Use a standard AudioContext for reliable decoding (OfflineAudioContext with 1 sample is not suitable)
+1045:           const decodeCtx = new AudioContext();
+1046:           const decodedBuffers: AudioBuffer[] = [];
+1047:           const decodedPans: number[] = [];
+1048:           for (let bIdx = 0; bIdx < audioBlobs.length; bIdx++) {
+1049:             const blob = audioBlobs[bIdx];
+1050:             try {
+1051:               const arrayBuffer = await blob.arrayBuffer();
+1052:               console.log(`[VocalidoRenderService] 🔊 Decoding voice ${bIdx + 1}: ${(blob.size/1024).toFixed(0)}KB, type=${blob.type}`);
+1053:               const decoded = await decodeCtx.decodeAudioData(arrayBuffer);
+1054:               decodedBuffers.push(decoded);
+1055:               decodedPans.push(renderedPan[bIdx]);
+1056:               console.log(`[VocalidoRenderService] ✅ Decoded voice ${bIdx + 1}: ${decoded.length} samples @ ${decoded.sampleRate}Hz, ${decoded.numberOfChannels}ch`);
+1057:             } catch (decErr) {
+1058:               console.warn(`[VocalidoRenderService] ❌ Failed to decode voice ${bIdx + 1} audio:`, decErr);
+1059:             }
+1060:           }
+1061:           // Close decode context to free resources
+1062:           decodeCtx.close().catch(() => {});
+1063:           
+1064:           if (decodedBuffers.length === 0) {
+1065:             throw new Error('Failed to decode any voice audio');
+1066:           }
+1067:           
+1068:           // Mix: Stereo mix based on pan values
+1069:           const sampleRate = decodedBuffers[0].sampleRate;
+1070:           let maxLen = 0;
+1071:           for (const buf of decodedBuffers) {
+1072:             if (buf.length > maxLen) maxLen = buf.length;
+1073:           }
+1074:           
+1075:           const mixedL = new Float32Array(maxLen);
+1076:           const mixedR = new Float32Array(maxLen);
+1077:           
+1078:           for (let vIdx = 0; vIdx < decodedBuffers.length; vIdx++) {
+1079:             const buf = decodedBuffers[vIdx];
+1080:             const pan = decodedPans[vIdx] ?? 0;
+1081:             
+1082:             // Equal power panning: angle from 0 (Left) to PI/2 (Right)
+1083:             const angle = ((pan + 1) / 2) * (Math.PI / 2);
+1084:             const gainL = Math.cos(angle);
+1085:             const gainR = Math.sin(angle);
+1086:             
+1087:             if (buf.numberOfChannels === 1) {
+1088:               const ch = buf.getChannelData(0);
+1089:               for (let i = 0; i < ch.length; i++) {
+1090:                 mixedL[i] += ch[i] * gainL;
+1091:                 mixedR[i] += ch[i] * gainR;
+1092:               }
+1093:             } else if (buf.numberOfChannels >= 2) {
+1094:               const chL = buf.getChannelData(0);
+1095:               const chR = buf.getChannelData(1);
+1096:               for (let i = 0; i < chL.length; i++) {
+1097:                 mixedL[i] += chL[i] * gainL;
+1098:                 mixedR[i] += chR[i] * gainR;
+1099:               }
+1100:             }
+1101:           }
+1102:           
+1103:           // Normalize Stereo Mix
+1104:           let peak = 0;
+1105:           for (let i = 0; i < maxLen; i++) {
+1106:             const absL = Math.abs(mixedL[i]);
+1107:             const absR = Math.abs(mixedR[i]);
+1108:             if (absL > peak) peak = absL;
+1109:             if (absR > peak) peak = absR;
+1110:           }
+1111:           if (peak > 0.001) {
+1112:             for (let i = 0; i < maxLen; i++) {
+1113:               mixedL[i] = (mixedL[i] / peak) * 0.92;
+1114:               mixedR[i] = (mixedR[i] / peak) * 0.92;
+1115:             }
+1116:           }
+1117:           
+1118:           // Encode to Stereo WAV blob
+1119:           const wavHeader = new ArrayBuffer(44);
+1120:           const view = new DataView(wavHeader);
+1121:           const numSamples = maxLen;
+1122:           const numChannels = 2;
+1123:           const byteRate = sampleRate * numChannels * 2;
+1124:           view.setUint32(0, 0x52494646, false); // "RIFF"
+1125:           view.setUint32(4, 36 + numSamples * numChannels * 2, true);
+1126:           view.setUint32(8, 0x57415645, false); // "WAVE"
+1127:           view.setUint32(12, 0x666d7420, false); // "fmt "
+1128:           view.setUint32(16, 16, true);
+1129:           view.setUint16(20, 1, true); // PCM
+1130:           view.setUint16(22, numChannels, true); // stereo
+1131:           view.setUint32(24, sampleRate, true);
+1132:           view.setUint32(28, byteRate, true);
+1133:           view.setUint16(32, numChannels * 2, true); // block align
+1134:           view.setUint16(34, 16, true); // bits per sample
+1135:           view.setUint32(36, 0x64617461, false); // "data"
+1136:           view.setUint32(40, numSamples * numChannels * 2, true);
+1137:           
+1138:           const pcm = new Int16Array(numSamples * numChannels);
+1139:           for (let i = 0; i < numSamples; i++) {
+1140:             let sL = Math.max(-1, Math.min(1, mixedL[i]));
+1141:             let sR = Math.max(-1, Math.min(1, mixedR[i]));
+1142:             pcm[i * 2] = sL < 0 ? sL * 0x8000 : sL * 0x7FFF;
+1143:             pcm[i * 2 + 1] = sR < 0 ? sR * 0x8000 : sR * 0x7FFF;
+1144:           }
+1145:           
+1146:           const mixedBlob = new Blob([wavHeader, pcm.buffer], { type: 'audio/wav' });
+1147:           const mixedUrl = URL.createObjectURL(mixedBlob);
+1148:           
+1149:           console.log(`[VocalidoRenderService] 🎹 Polyphony mix complete: ${decodedBuffers.length} voices, ${(mixedBlob.size / 1024).toFixed(0)} KB (STEREO)`);
+1150:           
+1151:           // Create individual voice stem URLs for Solo/Mute functionality
+1152:           const voiceStemUrls: string[] = [];
+1153:           for (const blob of audioBlobs) {
+1154:             voiceStemUrls.push(URL.createObjectURL(blob));
+1155:             stemBlobs.push(blob);
+1156:           }
+1157:           console.log(`[VocalidoRenderService] 🎵 Created ${voiceStemUrls.length} stem URLs for Solo/Mute: ${voiceLines.map(vl => vl.label).join(', ')}`);
+1158:           
+1159:           // Store at outer scope so they're available when processing the result
+1160:           polyStemUrls = voiceStemUrls;
+1161:           result = {
+1162:             audio_url: mixedUrl,
+1163:             audio_b64: null,
+1164:             saved_url: null,
+1165:             engine: 'vocalido_polyphony',
+1166:             stems_b64: [],
+1167:             mime_type: 'audio/wav'
+1168:           };
+1169:           useDirectBlobUrl = true;
+1170:           mainAudioBlob = mixedBlob;
+1171:         } else {
+1172:           // Single voice (no polyphony) — standard server request
+1173:           this.statusText = 'Sending synthesis request to server...';
+1174:           this.notify();
+1175: 
+1176:           const payload = {
+1177:             notes: notesToSynthesize,
+1178:             song_id: song.id,
+1179:             song_key: songKey,
+1180:             bpm_pct: bpmPct,
+1181:             lyric_mode: activeLyricMode,
+1182:             is_public: true,
+1183:             owner_id: userId || '',
+1184:             params: synthParams
+1185:           };
+1186: 
+1187:           const targetUrl = getFetchUrl('/studio/preview');
+1188:           
+1189:           let response: Response;
+1190:           try {
+1191:             response = await svsFetch(targetUrl, {
+1192:               method: 'POST',
+1193:               headers: { 'Content-Type': 'application/json' },
+1194:               body: JSON.stringify(payload),
+1195:               signal: controller.signal
+1196:             });
+1197:             
+1198:             if (!response.ok) {
+1199:               const errText = await response.text();
+1200:               throw new Error(`HTTP ${response.status}: ${errText}`);

@@ -329,6 +329,102 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, on
                                     </div>
                                 </div>
                             </div>
+                            <div className="h-[1px] w-full bg-gradient-to-r from-transparent via-white/10 to-transparent my-8" />
+
+                            <h2 className="text-lg font-black uppercase tracking-widest text-zinc-300 flex items-center gap-3 mb-4">
+                                <Zap size={20} className="text-orange-400" /> Cache & Data Management
+                            </h2>
+                            <p className="text-[10px] text-zinc-500 uppercase tracking-widest mb-6 leading-relaxed">
+                                Clear cached data to ensure you're using the latest version. Use after app updates or if audio sounds incorrect.
+                            </p>
+
+                            <div className="space-y-4">
+                                {/* Clear Render History */}
+                                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-5 bg-black/40 border border-white/5 rounded-2xl">
+                                    <div className="flex-1">
+                                        <h3 className="text-xs font-bold text-white mb-1">Clear Vocal Render Cache</h3>
+                                        <p className="text-[9px] text-zinc-500 leading-relaxed">Remove all cached vocal renders. You'll need to re-render songs after clearing.</p>
+                                    </div>
+                                    <button
+                                        onClick={() => {
+                                            const keys = Object.keys(localStorage);
+                                            let count = 0;
+                                            keys.forEach(k => {
+                                                if (k.startsWith('memo_render_history_') || 
+                                                    k.startsWith('active_render_key_') ||
+                                                    k.startsWith('vocalido_render_cache_') ||
+                                                    k.startsWith('audio_blob_cache_')) {
+                                                    localStorage.removeItem(k);
+                                                    count++;
+                                                }
+                                            });
+                                            // Clear IndexedDB audio cache
+                                            try {
+                                                indexedDB.deleteDatabase('memolody_audio_cache');
+                                            } catch (e) {}
+                                            alert(`✅ Cleared ${count} render cache entries + audio blob cache`);
+                                        }}
+                                        className="px-5 py-2.5 bg-orange-500/10 border border-orange-500/30 text-orange-400 text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-orange-500/20 transition-all active:scale-95 whitespace-nowrap"
+                                    >
+                                        Clear Renders
+                                    </button>
+                                </div>
+
+                                {/* Clear All App Data */}
+                                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-5 bg-black/40 border border-white/5 rounded-2xl">
+                                    <div className="flex-1">
+                                        <h3 className="text-xs font-bold text-white mb-1">Clear All App Data & Reload</h3>
+                                        <p className="text-[9px] text-zinc-500 leading-relaxed">
+                                            Full reset: clears ALL localStorage, IndexedDB, and browser cache. The app will reload with a clean state.
+                                        </p>
+                                    </div>
+                                    <button
+                                        onClick={() => {
+                                            if (!confirm('⚠️ This will clear ALL app data including settings, render history, and cached audio. The app will reload.\n\nContinue?')) return;
+                                            
+                                            // 1. Clear localStorage
+                                            localStorage.clear();
+                                            
+                                            // 2. Clear all IndexedDB databases
+                                            try {
+                                                indexedDB.deleteDatabase('memolody_audio_cache');
+                                                indexedDB.deleteDatabase('keyval-store');
+                                            } catch (e) {}
+                                            
+                                            // 3. Unregister service workers
+                                            if ('serviceWorker' in navigator) {
+                                                navigator.serviceWorker.getRegistrations().then(regs => {
+                                                    regs.forEach(reg => reg.unregister());
+                                                });
+                                            }
+                                            
+                                            // 4. Clear caches API
+                                            if ('caches' in window) {
+                                                caches.keys().then(names => {
+                                                    names.forEach(name => caches.delete(name));
+                                                });
+                                            }
+                                            
+                                            // 5. Force hard reload after short delay
+                                            setTimeout(() => {
+                                                window.location.href = window.location.origin + '?cache_bust=' + Date.now();
+                                            }, 500);
+                                        }}
+                                        className="px-5 py-2.5 bg-red-500/10 border border-red-500/30 text-red-400 text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-red-500/20 transition-all active:scale-95 whitespace-nowrap"
+                                    >
+                                        Full Reset & Reload
+                                    </button>
+                                </div>
+
+                                {/* App Version Info */}
+                                <div className="p-4 bg-black/20 border border-white/5 rounded-2xl flex items-center justify-between">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+                                        <span className="text-[9px] text-zinc-500 uppercase tracking-widest font-bold">App Build</span>
+                                    </div>
+                                    <span className="text-[10px] text-zinc-400 font-mono">{new Date().toISOString().split('T')[0]} · v2.4</span>
+                                </div>
+                            </div>
                         </div>
                     )}
 

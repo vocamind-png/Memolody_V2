@@ -1,0 +1,304 @@
+import React, { useState } from 'react';
+import { Bot, Wand2, Music, Loader2, Play } from 'lucide-react';
+import { TrackState } from '../../types';
+import { musicEngine } from '../../lib/MusicEngine';
+
+interface ComposerPageProps {
+  parsedData: any | null;
+  tracks: TrackState[];
+  setTracks: React.Dispatch<React.SetStateAction<TrackState[]>>;
+  onTrackCreated: (trackId: string) => void;
+}
+
+const ComposerPage: React.FC<ComposerPageProps> = ({ parsedData, tracks, setTracks, onTrackCreated }) => {
+  const [lyriaPrompt, setLyriaPrompt] = useState('Epic Cinematic Symphony Orchestra');
+  const [lyrics, setLyrics] = useState('');
+  const [isLyriaGenerating, setIsLyriaGenerating] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  
+  // Stem extraction state
+  const [extractMode, setExtractMode] = useState<{[key: string]: string}>({});
+  const [extractedStems, setExtractedStems] = useState<{[key: string]: any[]}>({});
+  const [isExtracting, setIsExtracting] = useState<{[key: string]: boolean}>({});
+
+  const handleLyriaGenerate = async () => {
+    if (!parsedData || !parsedData.notes || parsedData.notes.length === 0) {
+      setErrorMsg("No notes found in the current song to send to AI.");
+      return;
+    }
+    setErrorMsg(null);
+    setIsLyriaGenerating(true);
+    
+    try {
+      const response = await fetch('/vocalido/api/ai/lyria-render', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          notes: parsedData.notes, 
+          prompt: lyriaPrompt,
+          lyrics: lyrics,
+          key: parsedData.keySignature || 'C',
+          bpm: parsedData.tempo || 120,
+          style: 'auto'
+        })
+      });
+      
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || 'Failed to request composition');
+      }
+      
+      let audioSrc = '';
+      if (data.task_id) {
+        let isComplete = false;
+        while (!isComplete) {
+          await new Promise(r => setTimeout(r, 3000));
+          const pollRes = await fetch('/vocalido/api/ai/lyria-poll', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ task_id: data.task_id })
+          });
+          const pollData = await pollRes.json();
+          if (pollData.status === 'completed') {
+            isComplete = true;
+            audioSrc = pollData.data.base64 ? `data:audio/mp3;base64,${pollData.data.base64}` : pollData.data.url;
+          } else if (pollData.status === 'failed' || pollData.error) {
+            throw new Error(pollData.message || pollData.error || 'Composition failed during generation');
+          }
+        }
+      } else if (data.data) {
+        audioSrc = data.data.base64 ? `data:audio/mp3;base64,${data.data.base64}` : data.data.url;
+      } else {
+        throw new Error('Invalid response from AI Composer');
+      }
+      
+      const newTrackId = `composer-${Date.now()}`;
+      const newTrack: TrackState = {
+        id: newTrackId,
+        name: 'AI Composer Track (Lyria)',
+        isMuted: false,
+        isSolo: false,
+        lyricMode: 'phoneme' as any,
+        volume: 0,
+        pan: 0,
+        mode: 'vocal',
+        audioSrc: audioSrc,
+        effects: []
+      };
+      
+      setTracks(prev => [...prev, newTrack]);
+      
+      try {
+        const lyriaBpm = data.data.detectedBpm || (parsedData.tempo || 120);
+        await musicEngine.addVocalLayer(newTrackId, audioSrc, undefined, lyriaBpm);
+        onTrackCreated(newTrackId);
+      } catch (e) {
+        console.error('Failed to load AI audio layer:', e);
+      }
+    } catch (e: any) {
+      setErrorMsg(e.message || "Failed to generate track.");
+    } finally {
+      setIsLyriaGenerating(false);
+    }
+  };
+
+  return (
+    <div className="absolute inset-0 z-10 overflow-y-auto overflow-x-hidden bg-[#050507] pb-[160px] custom-scrollbar">
+      {/* Background aesthetics */}
+      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-cyan-500/10 rounded-full blur-[150px] pointer-events-none" />
+      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-indigo-500/10 rounded-full blur-[100px] pointer-events-none" />
+
+      <div className="min-h-full w-full flex p-4 sm:p-8">
+        <div className="relative z-10 max-w-2xl w-full m-auto bg-[#0c0c0e]/80 backdrop-blur-2xl border border-white/10 rounded-[32px] p-6 sm:p-10 shadow-2xl">
+          <div className="flex flex-col items-center text-center mb-10">
+          <div className="w-16 h-16 bg-gradient-to-br from-cyan-400 to-indigo-600 rounded-2xl flex items-center justify-center mb-6 shadow-[0_0_30px_rgba(34,211,238,0.4)]">
+            <Wand2 size={32} className="text-white" />
+          </div>
+          <h1 className="text-3xl font-black text-white uppercase tracking-widest mb-3 drop-shadow-lg">
+            AI COMPOSER
+          </h1>
+          <p className="text-sm text-zinc-400 max-w-lg leading-relaxed">
+            Let the AI compose a full backing track for your melody. Describe the musical style, mood, and instrumentation.
+          </p>
+        </div>
+
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="group relative">
+              <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Musical Style Prompt</label>
+              <div className="absolute -inset-1 bg-gradient-to-r from-cyan-500 to-indigo-500 rounded-[20px] blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200 mt-6" />
+              <textarea
+                className="relative w-full bg-black/50 border border-white/10 rounded-2xl p-6 text-white text-base focus:border-cyan-400 focus:outline-none focus:ring-1 focus:ring-cyan-400 min-h-[160px] resize-none"
+                placeholder='e.g., "Epic Cinematic Symphony Orchestra with dramatic strings and brass..."'
+                value={lyriaPrompt}
+                onChange={e => setLyriaPrompt(e.target.value)}
+              />
+            </div>
+            
+            <div className="group relative">
+              <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Lyrics (Optional)</label>
+              <div className="absolute -inset-1 bg-gradient-to-r from-pink-500 to-purple-500 rounded-[20px] blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200 mt-6" />
+              <textarea
+                className="relative w-full bg-black/50 border border-white/10 rounded-2xl p-6 text-white text-base focus:border-pink-400 focus:outline-none focus:ring-1 focus:ring-pink-400 min-h-[160px] resize-none"
+                placeholder="Enter lyrics for the AI to sing... (Leave empty for an instrumental arrangement)"
+                value={lyrics}
+                onChange={e => setLyrics(e.target.value)}
+              />
+            </div>
+          </div>
+
+          {errorMsg && (
+            <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm text-center">
+              {errorMsg}
+            </div>
+          )}
+
+          <button
+            onClick={handleLyriaGenerate}
+            disabled={isLyriaGenerating}
+            className="relative w-full h-16 rounded-2xl text-sm font-black uppercase tracking-[0.2em] transition-all group overflow-hidden bg-[#111] border border-white/10 disabled:opacity-50 disabled:pointer-events-none"
+          >
+            {/* Hover Effects */}
+            <div className="absolute inset-0 bg-gradient-to-r from-cyan-500 to-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+            
+            <div className="relative z-10 flex items-center justify-center gap-3">
+              {isLyriaGenerating ? (
+                <>
+                  <div className="w-5 h-5 rounded-full border-2 border-white/20 border-t-white animate-spin" />
+                  <span className="text-white drop-shadow-md">COMPOSING MUSIC...</span>
+                </>
+              ) : (
+                <>
+                  <Bot size={20} className="text-cyan-400 group-hover:text-white transition-colors" />
+                  <span className="text-zinc-300 group-hover:text-white transition-colors">GENERATE COMPOSITION</span>
+                </>
+              )}
+            </div>
+          </button>
+
+          {/* Generated Tracks Preview */}
+          {tracks.filter(t => t.id.startsWith('composer-')).length > 0 && (
+            <div className="mt-8 space-y-4">
+              <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Generated Compositions</h3>
+              <div className="space-y-3">
+                {tracks.filter(t => t.id.startsWith('composer-')).map(track => (
+                  <div key={track.id} className="bg-black/40 border border-white/10 rounded-xl p-4 flex flex-col gap-3">
+                    <div className="flex items-center gap-2">
+                      <Music size={16} className="text-cyan-400" />
+                      <span className="text-sm font-bold text-white">{track.name}</span>
+                    </div>
+                    {track.audioSrc ? (
+                      <audio controls className="w-full h-10" src={track.audioSrc}>
+                        Your browser does not support the audio element.
+                      </audio>
+                    ) : (
+                      <div className="text-xs text-zinc-500 italic">No audio source available</div>
+                    )}
+                    <div className="flex flex-col gap-2 mt-2 bg-black/20 p-3 rounded-xl border border-white/5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-zinc-400 uppercase">Separation Mode:</span>
+                        <select 
+                          value={extractMode[track.id] || '2stems'} 
+                          onChange={(e) => setExtractMode(prev => ({...prev, [track.id]: e.target.value}))}
+                          className="bg-black/50 border border-white/10 rounded-lg text-xs text-white px-2 py-1 outline-none focus:border-cyan-400"
+                        >
+                          <option value="2stems">2 Tracks (Vocals + Music)</option>
+                          <option value="4stems">4 Tracks (Vocals, Drums, Bass, Other)</option>
+                        </select>
+                      </div>
+                      
+                      <button
+                        disabled={isExtracting[track.id]}
+                        onClick={async () => {
+                          if (!track.audioSrc || !track.audioSrc.includes('base64,')) {
+                            alert("Requires full audio data to extract stems.");
+                            return;
+                          }
+                          try {
+                            setIsExtracting(prev => ({...prev, [track.id]: true}));
+                            const mode = extractMode[track.id] || '2stems';
+                            const b64 = track.audioSrc.split(',')[1];
+                            const res = await fetch('/vocalido/api/ai/extract-stems-midi', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ audio_base64: b64, mode })
+                            });
+                            const data = await res.json();
+                            if (!data.success) throw new Error(data.message);
+                            
+                            // Decode XML and create objects
+                            const atobUTF8 = (b64: string) => decodeURIComponent(escape(atob(b64)));
+                            const results: any[] = [];
+                            
+                            for (const [stemName, stemData] of Object.entries(data.data as Record<string, any>)) {
+                                if (stemData?.xml) {
+                                  const xmlStr = atobUTF8(stemData.xml);
+                                  const parsed = (await import('../../lib/MusicEngine')).musicEngine.parseMusicXml(xmlStr);
+                                  results.push({
+                                    id: `${stemName}-${Date.now()}`,
+                                    name: `${track.name} (${stemName.toUpperCase()})`,
+                                    instrument: stemName === 'vocals' ? 'vocal' : stemName === 'drums' ? 'drums' : stemName === 'bass' ? 'bass' : 'piano',
+                                    mode: stemName === 'vocals' ? 'vocal' : 'piano',
+                                    _generatedNotes: parsed.notes
+                                  });
+                                }
+                            }
+                            
+                            setExtractedStems(prev => ({...prev, [track.id]: results}));
+                          } catch (e: any) {
+                            alert("Extraction Failed: " + e.message);
+                          } finally {
+                            setIsExtracting(prev => ({...prev, [track.id]: false}));
+                          }
+                        }}
+                        className={`w-full h-10 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${isExtracting[track.id] ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed' : 'bg-gradient-to-r from-purple-500/20 to-pink-500/20 hover:from-purple-500/40 hover:to-pink-500/40 border border-purple-500/30 text-purple-200'}`}
+                      >
+                        {isExtracting[track.id] ? (
+                           <><div className="w-3 h-3 border-2 border-zinc-500 border-t-transparent rounded-full animate-spin"/> EXTRACTING...</>
+                        ) : (
+                           <><Scissors size={14} /> Extract Stems & Notes</>
+                        )}
+                      </button>
+                    </div>
+
+                    {/* Extracted Folder UI */}
+                    {extractedStems[track.id] && extractedStems[track.id].length > 0 && (
+                      <div className="mt-2 bg-indigo-900/20 border border-indigo-500/30 rounded-xl p-3">
+                        <div className="text-xs font-bold text-indigo-300 uppercase mb-2 flex justify-between items-center">
+                          <span>Extracted MIDI Tracks</span>
+                          <span className="text-[10px] bg-indigo-500/20 px-2 py-0.5 rounded-full">{extractedStems[track.id].length} Items</span>
+                        </div>
+                        <div className="space-y-2">
+                          {extractedStems[track.id].map(stem => (
+                            <div key={stem.id} className="flex items-center justify-between bg-black/40 p-2 rounded-lg border border-white/5">
+                               <div className="flex items-center gap-2 text-xs text-white">
+                                 <Music size={12} className="text-pink-400" />
+                                 {stem.name}
+                               </div>
+                               <button 
+                                 onClick={() => {
+                                   setTracks(prev => [...prev, stem]);
+                                   alert(`${stem.name} imported to Arranger!`);
+                                 }}
+                                 className="text-[10px] font-bold uppercase bg-white/10 hover:bg-white/20 px-3 py-1 rounded text-white transition-colors"
+                               >
+                                 Import
+                               </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+    </div>
+  );
+};
+
+export default ComposerPage;

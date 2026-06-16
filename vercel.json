@@ -9,5 +9,19 @@
     { "source": "/api/manifest", "destination": "https://storage.googleapis.com/memolody-vault/manifest.json" },
     { "source": "/api/runpod/:path*", "destination": "https://api.runpod.ai/v2/:path*" },
     { "source": "/(.*)", "destination": "/index.html" }
+  ],
+  "headers": [
+    {
+      "source": "/assets/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+      ]
+    },
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
+      ]
+    }
   ]
 }

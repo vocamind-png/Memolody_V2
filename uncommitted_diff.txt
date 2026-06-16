@@ -1,0 +1,100 @@
+diff --git a/components/Player/PlayerPage.tsx b/components/Player/PlayerPage.tsx
+index 8fe2e1d..892ae61 100644
+--- a/components/Player/PlayerPage.tsx
++++ b/components/Player/PlayerPage.tsx
+@@ -1289,7 +1289,7 @@ const PlayerPage: React.FC<{
+           }
+           
+           // Break once we've found all tracks for the first system
+-          if (pos.length === tracks.length) break;
++          if (pos.length === Math.max(tracks.length, staffToTrackMap.length)) break;
+         }
+         
+         if (pos.length > 0) {
+@@ -1509,9 +1509,14 @@ const PlayerPage: React.FC<{
+           const low = name.toLowerCase();
+           const clef = parsedData.clefs[id] || '';
+ 
++          // Check if this track actually contains any lyrics
++          const hasLyrics = parsedData.notes.some((n: any) => n.trackId === id && n.solfege && n.solfege.trim() !== '');
++
+           // Auto-logic for vocal tracks:
+           let isVocal = false;
+-          if (partIds.length === 1) {
++          if (hasLyrics) {
++            isVocal = true;
++          } else if (partIds.length === 1) {
+             isVocal = true;
+           } else if (/soprano|alto|tenor|bass|voice|vocal|choir|lead|harmony|melody|singer/.test(low)) {
+             isVocal = true;
+@@ -1523,6 +1528,14 @@ const PlayerPage: React.FC<{
+             vocalTrackSelected = true;
+           }
+ 
++          let defaultVoice = activeVoiceName || 'Alto Female';
++          if (isVocal) {
++            if (/soprano/.test(low)) defaultVoice = 'Vocalido Soprano';
++            else if (/alto/.test(low)) defaultVoice = 'Alto Female';
++            else if (/tenor/.test(low)) defaultVoice = 'Tenor Male';
++            else if (/bass/.test(low)) defaultVoice = 'Bass Male';
++          }
++
+           return {
+             id,
+             name,
+@@ -1531,7 +1544,7 @@ const PlayerPage: React.FC<{
+             isMuted: false,
+             isSolo: false,
+             mode: isVocal ? 'vocal' : 'instrument',
+-            instrument: isVocal ? (activeVoiceName || 'Alto Female') : 'Piano',
++            instrument: isVocal ? defaultVoice : 'Piano',
+           lyricMode: (savedLyricMode || activeLyricMode || 'British Fixed Doh') as LyricMode,
+           engineId: activeEngineId,
+           effects: Array(6).fill(null)
+@@ -3025,10 +3038,7 @@ const PlayerPage: React.FC<{
+                     return effectivePositions.map((pos, staffIndex) => {
+                       const trackIndex = currentStaffMap[staffIndex] ?? (tracks.length - 1);
+                       
+-                      // Only render track controls for the FIRST occurrence of this track (prevents duplicates on wrapped lines)
+-                      if (currentStaffMap.indexOf(trackIndex) !== staffIndex) {
+-                        return null;
+-                      }
++                      // Render track controls for every staff line, even if they belong to the same track (e.g. Grand Piano)
+ 
+                       const track = tracks[trackIndex];
+                       if (!track) return null;
+@@ -3047,7 +3057,7 @@ const PlayerPage: React.FC<{
+                                 ...t, mode: t.id === track.id ? 'vocal' : t.mode
+                               })));
+                               setActiveRenderTrackId(track.id);
+-                              triggerVocalSynthesis(true);
++                              setShowRenderPrompt(true);
+                             }}
+                             className={`h-[11px] px-0.5 rounded-sm flex items-center justify-center text-[6.5px] font-black uppercase transition-all border shadow-sm ${
+                               track.mode === 'vocal'
+@@ -4100,12 +4110,19 @@ const PlayerPage: React.FC<{
+                 </div>
+               </div>
+ 
+-              {/* Open Voice Studio */}
+-              <button
+-                onClick={() => { setShowVocalidoSetup(false); setActiveCard('vocalido'); }}
+-                className="w-full py-3 rounded-2xl bg-gradient-to-r from-cyan-500 to-blue-500 text-white text-[11px] font-black uppercase tracking-widest shadow-lg hover:opacity-90 transition-all">
+-                Open Voice Studio →
+-              </button>
++              {/* Action Buttons */}
++              <div className="flex gap-2">
++                <button
++                  onClick={() => { setShowVocalidoSetup(false); setActiveCard('vocalido'); }}
++                  className="flex-1 py-3 rounded-2xl bg-white/10 text-white text-[10px] font-black uppercase tracking-widest shadow-lg hover:bg-white/20 transition-all">
++                  Studio
++                </button>
++                <button
++                  onClick={() => { setShowVocalidoSetup(false); setShowRenderPrompt(true); }}
++                  className="flex-[2] py-3 rounded-2xl bg-gradient-to-r from-cyan-500 to-blue-500 text-white text-[11px] font-black uppercase tracking-widest shadow-lg hover:opacity-90 transition-all">
++                  Render Now 🎙️
++                </button>
++              </div>
+             </div>
+           </div>
+         </div>

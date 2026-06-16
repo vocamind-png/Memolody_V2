@@ -5,28 +5,9 @@ import { TrackState, ParsedNote } from '../types';
 
 import { SoundBankEngine } from '../plugins/soundbank';
 
-// On-screen debug overlay for mobile testing (no DevTools)
-const debugOverlay = (msg: string) => {
-  console.log(msg);
-  if (typeof document === 'undefined') return;
-  let el = document.getElementById('__solo_debug');
-  if (!el) {
-    el = document.createElement('div');
-    el.id = '__solo_debug';
-    el.style.cssText = 'position:fixed;bottom:0;left:0;right:0;max-height:35vh;overflow-y:auto;background:rgba(0,0,0,0.92);color:#0f0;font:10px monospace;padding:6px;z-index:99999;pointer-events:auto;';
-    const closeBtn = document.createElement('button');
-    closeBtn.textContent = '✕ Close';
-    closeBtn.style.cssText = 'position:sticky;top:0;right:0;float:right;background:#f00;color:#fff;border:none;padding:2px 8px;font:bold 11px sans-serif;border-radius:3px;cursor:pointer;z-index:1;';
-    closeBtn.onclick = () => el!.remove();
-    el.appendChild(closeBtn);
-    document.body.appendChild(el);
-  }
-  const line = document.createElement('div');
-  line.style.cssText = 'border-bottom:1px solid #333;padding:2px 0;word-break:break-all;';
-  line.textContent = `${new Date().toLocaleTimeString()} ${msg}`;
-  el.appendChild(line);
-  el.scrollTop = el.scrollHeight;
-};
+// Debug overlay disabled for production
+const debugOverlay = (_msg: string) => { /* no-op */ };
+
 
 export class MusicEngine {
   private trackSamplers: Map<string, Tone.Sampler> = new Map();
@@ -827,7 +808,7 @@ export class MusicEngine {
             console.warn('[MusicEngine] ⚠️ Timeout loading main vocal audio, falling back to HTMLAudioElement');
             doResolve();
           }
-        }, 10000);
+        }, 8000);
 
         const player = new Tone.Player({
           url: audioUrl,
@@ -876,12 +857,14 @@ export class MusicEngine {
           let isResolved = false;
           const doResolve = () => { if (!isResolved) { isResolved = true; resolve(); } };
           
+          // Shorter timeout for stems — they are optional, don't block the main flow
+          const stemTimeout = url.startsWith('blob:') ? 8000 : 5000;
           setTimeout(() => {
             if (!isResolved) {
-              console.warn(`[MusicEngine] ⚠️ Timeout loading stem audio ${index}`);
+              console.warn(`[MusicEngine] ⚠️ Timeout loading stem audio ${index} (${stemTimeout}ms)`);
               doResolve();
             }
-          }, 10000);
+          }, stemTimeout);
 
           const player = new Tone.Player({
             url: url,
@@ -1003,15 +986,21 @@ export class MusicEngine {
           const ratio = currentBpm / ((audio as any).renderBpm || currentBpm);
           const songTime = Tone.Transport.seconds - this.countInDuration;
           
-          // Android User Gesture Fix: Call play() BEFORE setting currentTime to ensure the browser 
-          // doesn't lose the user gesture context associated with the tap event
-          const playPromise = audio.play().catch(e => console.warn('[MusicEngine] main mix play failed:', e));
-          
+          // TIMING FIX: Seek BEFORE play() + 30ms lookahead
+          const LOOKAHEAD = 0.03;
+          const targetTime = Math.max(0, songTime * ratio + LOOKAHEAD);
           try {
-            audio.currentTime = Math.max(0, songTime * ratio);
+            if (isFinite(audio.duration) && audio.duration > 0) {
+              audio.currentTime = Math.min(targetTime, audio.duration - 0.1);
+            } else {
+              audio.currentTime = targetTime;
+            }
           } catch (e) {
-            console.warn('[MusicEngine] main mix audio.currentTime seek failed:', e);
+            console.warn('[MusicEngine] main mix seek failed:', e);
           }
+          
+          // Play AFTER seek
+          audio.play().catch(e => console.warn('[MusicEngine] main mix play failed:', e));
         } else if (!(isMainLayerActive && !hasTonePlayer) && !audio.paused) {
           audio.pause();
         }
@@ -1344,7 +1333,6 @@ export class MusicEngine {
         });
       }
 
-      // Sync HTMLAudio vocal stems dynamically
       const stemAudios = this.vocalStemAudioElements.get(t.id);
       if (stemAudios) {
         // On mobile, always use HTMLAudioElement (Tone.Player stems are never started)
@@ -1362,14 +1350,22 @@ export class MusicEngine {
              const ratio = currentBpm / ((audio as any).renderBpm || currentBpm);
              const songTime = Tone.Transport.seconds - this.countInDuration;
              
-             // Android User Gesture Fix: Call play() on ALL tracks, relying purely on mute/volume
-             const playPromise = audio.play().catch(e => console.warn(`[MusicEngine] stem ${i} play failed:`, e));
-             
+             // TIMING FIX: Seek BEFORE play() to avoid jitter.
+             // Add 30ms lookahead to compensate for JS→audio scheduling delay.
+             const LOOKAHEAD = 0.03;
+             const targetTime = Math.max(0, songTime * ratio + LOOKAHEAD);
              try {
-               audio.currentTime = Math.max(0, songTime * ratio);
+               if (isFinite(audio.duration) && audio.duration > 0) {
+                 audio.currentTime = Math.min(targetTime, audio.duration - 0.1);
+               } else {
+                 audio.currentTime = targetTime;
+               }
              } catch(e) {
-               console.warn(`[MusicEngine] stem ${i} sync audio.currentTime seek failed:`, e);
+               console.warn(`[MusicEngine] stem ${i} seek failed:`, e);
              }
+             
+             // Play AFTER seek
+             audio.play().catch(e => console.warn(`[MusicEngine] stem ${i} play failed:`, e));
           }
           // Removed else if audio.pause() so it plays silently in sync
         });
@@ -1391,7 +1387,9 @@ public setVocalTranspose(trackId: string, diffSemitones: number) {
     const transportSeconds = Tone.Transport.seconds;
     const countIn = this.countInDuration || 0;
     const songTime = transportSeconds - countIn;
-    const triggerTime = time !== undefined ? time : Tone.now();
+    // Use 50ms lookahead: gives the audio scheduler time between JS scheduling and actual playback
+    const SCHED_LOOKAHEAD = 0.05;
+    const triggerTime = time !== undefined ? time : Tone.now() + SCHED_LOOKAHEAD;
 
     const currentBpm = Tone.Transport.bpm.value;
     const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
@@ -1407,7 +1405,8 @@ public setVocalTranspose(trackId: string, diffSemitones: number) {
         const renderBpm = (player as any).renderBpm || currentBpm;
         const ratio = currentBpm / renderBpm;
         const duration = player.buffer.duration;
-        const offsetInAudio = Math.max(0, songTime * ratio);
+        // Adjust offset to account for the scheduling lookahead
+        const offsetInAudio = Math.max(0, songTime * ratio + SCHED_LOOKAHEAD);
         if (offsetInAudio >= duration) return;
 
         player.playbackRate = ratio * Math.pow(2, diffSemitones / 12);
@@ -1454,6 +1453,10 @@ public setVocalTranspose(trackId: string, diffSemitones: number) {
   }
 
   setTransportSeconds(s: number) {
+    if (!isFinite(s) || s < 0) {
+      console.warn('[MusicEngine] setTransportSeconds: invalid value', s);
+      return;
+    }
     this.baseStartTime = Math.max(0, s);
     Tone.Transport.seconds = this.baseStartTime + this.countInDuration;
     // 🎤 Sync HTMLAudio vocal elements to new position
@@ -1467,9 +1470,10 @@ public setVocalTranspose(trackId: string, diffSemitones: number) {
         return;
       }
 
-      const isMainLayerActive = true; // wait, we don't know the state here without iterating tracks. We should just pause it and rely on updateVocalPlaybackState or updateTrackStates.
-      // But updateTrackStates handles play/pause. Let's just seek here, and let updateTrackStates handle play/pause!
-      audio.currentTime = s;
+      // Guard against NaN/Infinity from failed renders
+      if (isFinite(s) && s >= 0) {
+        try { audio.currentTime = s; } catch (e) {}
+      }
     });
     
     // Sync stems too
@@ -1483,7 +1487,9 @@ public setVocalTranspose(trackId: string, diffSemitones: number) {
       }
       
       stemAudios.forEach(audio => {
-        audio.currentTime = s;
+        if (isFinite(s) && s >= 0) {
+          try { audio.currentTime = s; } catch (e) {}
+        }
       });
     });
 

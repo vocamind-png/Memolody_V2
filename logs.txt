@@ -1,0 +1,24 @@
+
+> memolody-play-by-ear-hear-by-eye@2.2.0 dev
+> concurrently --kill-others-on-fail -n "vite,omr" -c "cyan,yellow" "vite" "node scripts/omr-server.mjs"
+
+[vite] ✅ GEMINI_API_KEY loaded, length: 39
+[vite] 🎤 Vocalido target: http://127.0.0.1:5001 (LOCAL_VOCALIDO=true)
+[vite] Port 3100 is in use, trying another one...
+[omr] [Setup] Loaded .env configuration
+[vite] 
+[vite]   VITE v6.4.1  ready in 94 ms
+[vite] 
+[vite]   ➜  Local:   http://localhost:3101/
+[vite]   ➜  Network: http://192.168.1.58:3101/
+[omr] 
+[omr] 🎵 Memolody OMR Server v3.0 — http://localhost:3003
+[omr]    Engine:     Oemer Deep Learning (MIT License) ✅
+[omr]    Validator:  Music Theory Auto-Check ✅
+[omr]    Cloud Proxy: ✅ ACTIVE
+[omr]    Commercial: ✅ All engines are MIT/Apache licensed
+[omr] 
+[omr]    Ready for ScoreLens scan requests...
+[omr] 
+[omr] node scripts/omr-server.mjs exited with code 0
+[vite] vite exited with code SIGTERM

@@ -1,0 +1,36 @@
+FROM node:20-slim
+
+# Install system dependencies:
+# - python3, pip, python3-venv (for oemer)
+# - poppler-utils (for pdftoppm)
+# - libgl1-mesa-glx, libglib2.0-0 (for opencv-python inside oemer)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    python3-venv \
+    poppler-utils \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Create a python virtual environment and install oemer
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+RUN pip install --no-cache-dir oemer
+
+# Copy package.json and install Node dependencies
+COPY package*.json ./
+RUN npm install
+
+# Copy application scripts
+COPY scripts/omr-server.mjs ./scripts/omr-server.mjs
+
+# Expose port 3003 for Cloud Run
+ENV PORT=3003
+EXPOSE 3003
+
+# Command to run the OMR server
+CMD ["node", "scripts/omr-server.mjs"]

@@ -512,6 +512,7 @@ const PlayerPage: React.FC<{
 
   const [showRenderPrompt, setShowRenderPrompt] = useState(false);
   const [modalSelectedTracks, setModalSelectedTracks] = useState<string[]>([]);
+  const [showAdvancedRenderSettings, setShowAdvancedRenderSettings] = useState(false);
   const hasPromptedRenderRef = useRef(false);
 
   useEffect(() => {
@@ -574,6 +575,18 @@ const PlayerPage: React.FC<{
           }
           
           setActiveCard('score');
+          
+          // Update availableStems so the ◆ Stem Solo buttons appear if needed
+          const newAvailableStems: Record<string, number> = {};
+          // Check all vocal tracks that have audio elements loaded (public API)
+          musicEngine.vocalAudioElements.forEach((_, tid) => {
+            const count = musicEngine.getAvailableStems(tid);
+            if (count > 0) newAvailableStems[tid] = count;
+          });
+          if (Object.keys(newAvailableStems).length > 0) {
+            setAvailableStems(newAvailableStems);
+            setSoloedStems({});
+          }
         } catch (e) {
           console.warn('[PlayerPage] Failed to sync completed render state:', e);
         }
@@ -635,6 +648,8 @@ const PlayerPage: React.FC<{
       isSending = true;
       const batchToSend = [...logQueue];
       logQueue = [];
+
+
 
       svsFetch(getFetchUrl('/studio/api/client-log'), {
         method: 'POST',
@@ -1556,27 +1571,27 @@ const PlayerPage: React.FC<{
       Promise.all(vocalTracksArr.map(async (tid: string) => {
         let trackAudioUrl = "";
         let stemsToPass: string[] = [];
-        
-        // Use track-specific stems if available
-        const trackStems = allStemsByTrack[tid] ? allStemsByTrack[tid].map((s: string) => fixAudioUrl(s)) : [];
-        
-        // Legacy Polyphony Cache Fix: if stemsWithBust has multiple stems and track is missing mapping or track has all of them
-        const isLegacyPolyphony = stemsWithBust.length > 1 && vocalTracksArr.length > 1 && 
-          (!allStemsByTrack[tid] || (tid === primaryTrackId && allStemsByTrack[primaryTrackId]?.length > 1));
 
-        if (isLegacyPolyphony) {
-          const idx = vocalTracksArr.indexOf(tid);
-          if (idx >= 0 && idx < stemsWithBust.length) {
-            trackAudioUrl = stemsWithBust[idx];
-          }
-        } else if (trackStems.length > 0) {
-          trackAudioUrl = trackStems[0];
-          // We don't use 'stemsToPass' sub-stems anymore, each UI track is a single mono stem
-          stemsToPass = [];
-        } else if (tid === primaryTrackId) {
-          // Fallback for older caches where everything is dumped into the primary track
+        if (tid === primaryTrackId) {
+          // Primary track: always use the stereo mix blob as main audio.
+          // Sub-stems (S1/S2/S3...) from savedStemUrls for ◆ Solo buttons.
           trackAudioUrl = fixedUrl;
           stemsToPass = stemsWithBust;
+        } else {
+          // Non-primary vocal tracks in polyphonic mode:
+          // Try stemsByTrack mapping first, then fall back to savedStemUrls by index.
+          const trackStems = allStemsByTrack[tid]
+            ? allStemsByTrack[tid].map((s: string) => fixAudioUrl(s))
+            : [];
+          if (trackStems.length > 0) {
+            trackAudioUrl = trackStems[0];
+          } else {
+            // Legacy fallback: assign stem by track order index
+            const idx = vocalTracksArr.indexOf(tid);
+            if (idx > 0 && idx < stemsWithBust.length) {
+              trackAudioUrl = stemsWithBust[idx];
+            }
+          }
         }
         
         if (trackAudioUrl) {
@@ -1594,9 +1609,9 @@ const PlayerPage: React.FC<{
         }
       }))
         .then(() => {
-          // Remove availableStems dependency on a single primary track.
-          // Since stems are now correctly routed to individual UI tracks, we don't need to load S1..S6 buttons inside a single track.
-          setAvailableStems({});
+          // Update availableStems — only for the primary track which has sub-stems loaded
+          const stemCount = musicEngine.getAvailableStems(primaryTrackId);
+          setAvailableStems(stemCount > 0 ? { [primaryTrackId]: stemCount } : {});
           setSoloedStems({});
           setActiveRenderKey(savedKey);
           setTranspose(tVal);
@@ -1866,7 +1881,14 @@ const PlayerPage: React.FC<{
         console.warn("Could not fetch voice engines, using defaults", err);
         if (active) {
           setIsServerOnline(false);
-          setSvsEngine('browser-ai'); // Automatically fallback to Browser AI if server is unreachable
+          // Stay on 'vocalido' — do NOT auto-fallback to browser-ai.
+          // User will see the server is offline and can manually switch if needed.
+          // This prevents unintentionally slow browser-side rendering.
+          const savedEngine = localStorage.getItem('vocalido_svs_engine');
+          if (savedEngine === 'browser-ai') {
+            setSvsEngine('browser-ai'); // respect explicit user preference
+          }
+          // Otherwise keep current mode (vocalido) so user is aware server is down
           
           // Fallback: hardcode default Lotte V voice when server unreachable
           setVoiceEngines([{ 
@@ -1999,10 +2021,20 @@ const PlayerPage: React.FC<{
     const syncTracks = async () => {
       const hasAnySolo = tracks.some(tr => tr.isSolo) || soloedTracks.size > 0;
 
+      // Determine if the solo context is "vocal-only" — i.e., all soloed tracks are vocal.
+      // In this case, instrument tracks (piano) should NOT be muted so they remain audible as accompaniment.
+      const soloedTrackModes = tracks
+        .filter(tr => tr.isSolo || soloedTracks.has(tr.id))
+        .map(tr => tr.mode);
+      const isSoloVocalOnly = soloedTrackModes.length > 0 && soloedTrackModes.every(m => m === 'vocal');
+
       const updatedTracks = tracks.map(t => {
         const isVocalMuted = t.isMuted || mutedVocalTracks.has(t.id);
         const isTrackSoloed = t.isSolo || soloedTracks.has(t.id);
-        const isMutedBySolo = hasAnySolo && !isTrackSoloed;
+        // When soloing vocal tracks, instrument tracks stay audible (piano reference).
+        // Only mute non-soloed vocal tracks.
+        const isMutedBySolo = hasAnySolo && !isTrackSoloed &&
+          !(isSoloVocalOnly && t.mode === 'instrument');
         
         return {
           ...t,
@@ -2574,35 +2606,26 @@ const PlayerPage: React.FC<{
                             const vocalTracksArr = h.vocalTracks ? h.vocalTracks.split(',') : [primaryTrackId];
                             
                             await Promise.all(vocalTracksArr.map(async (tid: string) => {
-                              const trackStems = (h.stemsByTrack && h.stemsByTrack[tid]) ? h.stemsByTrack[tid].map((s: string) => {
-                                const fs = fixAudioUrl(s);
-                                return fs.startsWith('blob:') ? fs : (fs.includes('?t=') ? fs.replace(/\?t=\d+/, `?t=${Date.now()}`) : `${fs}?t=${Date.now()}`);
-                              }) : [];
                               let trackAudioUrl = "";
                               let stemsToPass: string[] = [];
-                              
-                              if (trackStems.length > 0) {
-                                if (vocalTracksArr.length === 1 && trackStems.length > 1) {
-                                  trackAudioUrl = cacheBusted;
-                                  stemsToPass = trackStems;
-                                } else {
-                                  trackAudioUrl = trackStems[0];
-                                  stemsToPass = trackStems.length > 1 ? trackStems : [];
-                                }
-                              } else if (tid === primaryTrackId) {
+
+                              if (tid === primaryTrackId) {
+                                // Primary track: always use the stereo mix blob + savedStemUrls as ◆ sub-stems
                                 trackAudioUrl = cacheBusted;
                                 stemsToPass = stemsWithBust;
-                              }
-                              
-                              // Legacy Polyphony Cache Fix
-                              const isLegacyPolyphony = stemsWithBust.length > 1 && vocalTracksArr.length > 1 && 
-                                (!h.stemsByTrack || !h.stemsByTrack[tid] || (tid === primaryTrackId && h.stemsByTrack[primaryTrackId]?.length > 1));
-
-                              if (isLegacyPolyphony) {
-                                const idx = vocalTracksArr.indexOf(tid);
-                                if (idx >= 0 && idx < stemsWithBust.length) {
-                                  trackAudioUrl = stemsWithBust[idx];
-                                  stemsToPass = []; // Force reset stems to pass
+                              } else {
+                                // Non-primary: try stemsByTrack mapping, then savedStemUrls by index
+                                const trackStems = (h.stemsByTrack && h.stemsByTrack[tid]) ? h.stemsByTrack[tid].map((s: string) => {
+                                  const fs = fixAudioUrl(s);
+                                  return fs.startsWith('blob:') ? fs : (fs.includes('?t=') ? fs.replace(/\?t=\d+/, `?t=${Date.now()}`) : `${fs}?t=${Date.now()}`);
+                                }) : [];
+                                if (trackStems.length > 0) {
+                                  trackAudioUrl = trackStems[0];
+                                } else {
+                                  const idx = vocalTracksArr.indexOf(tid);
+                                  if (idx > 0 && idx < stemsWithBust.length) {
+                                    trackAudioUrl = stemsWithBust[idx];
+                                  }
                                 }
                               }
                               
@@ -2631,9 +2654,10 @@ const PlayerPage: React.FC<{
                             );
                             setTracks(updatedTracks);
   
-                            vocalTracksArr.forEach((tid: string) => {
-                              setSoloedStems(prev => ({ ...prev, [tid]: null }));
-                            });
+                            // Update availableStems — only primary track has sub-stems
+                            const stemCount = musicEngine.getAvailableStems(primaryTrackId);
+                            setAvailableStems(stemCount > 0 ? { [primaryTrackId]: stemCount } : {});
+                            setSoloedStems({});
   
                             setActiveRenderKey(hKey);
                             setMemoInfoOpenKey(null);
@@ -2926,8 +2950,8 @@ const PlayerPage: React.FC<{
                   className="absolute left-1 z-50 flex flex-col gap-1 pointer-events-auto"
                   style={{ top: `${yPos - 2}px` }}
                 >
-                  {/* Button Row */}
-                  <div className="flex flex-row gap-0.5 items-center">
+                  {/* Layout: [icon] [S1/S2/.../ALL vertical stack] side by side */}
+                  <div className="flex flex-row gap-0.5 items-start">
                     
                     {/* Toggle between Vocal and Instrument */}
                     <button
@@ -2937,7 +2961,7 @@ const PlayerPage: React.FC<{
                           t.id === track.id ? { ...t, mode: t.mode === 'vocal' ? 'instrument' : 'vocal' } : t
                         ));
                       }}
-                      className={`w-4 h-4 rounded-md flex items-center justify-center transition-all border shadow-lg ${
+                      className={`w-4 h-4 rounded-md flex items-center justify-center transition-all border shadow-lg flex-shrink-0 ${
                         track.mode === 'vocal'
                           ? 'bg-cyan-600 border-cyan-400 text-white shadow-[0_0_10px_rgba(34,211,238,0.4)]'
                           : 'bg-[#1a1a1e] border-zinc-700 text-zinc-400 hover:text-cyan-400 hover:border-cyan-400/60'
@@ -2947,80 +2971,40 @@ const PlayerPage: React.FC<{
                       {track.mode === 'vocal' ? <Mic2 size={8} /> : <span className="text-[8px]">🎹</span>}
                     </button>
 
-                    <button
-                      onClick={() => setSoloedTracks(prev => {
-                        const next = new Set(prev);
-                        if (next.has(track.id)) {
-                          next.delete(track.id);
-                        } else {
-                          next.add(track.id);
-                        }
-                        return next;
-                      })}
-                      className={`w-4 h-4 rounded-md border flex items-center justify-center transition-all shadow-lg ${
-                        soloedTracks.has(track.id)
-                          ? 'bg-amber-500 border-amber-400 text-white shadow-[0_0_10px_rgba(245,158,11,0.5)]'
-                          : 'bg-[#1a1a1e] border-zinc-700 text-zinc-500 hover:text-amber-400 hover:border-amber-400/60'
-                      }`}
-                      title={soloedTracks.has(track.id) ? 'Unsolo track' : 'Solo track (mute others)'}
-                    >
-                      <span className="text-[6.5px] font-black">S</span>
-                    </button>
-
-                    {/* Render button removed per user request */}
-
-                    {/* Stem Solo — hidden behind toggle to prevent accidental clicks */}
+                    {/* Stem Solo buttons — vertical stack to the RIGHT of the icon */}
                     {showStemControls && availableStems[track.id] > 0 && (() => {
                       const stemTrackId = track.id;
-                      const isOpen = expandedStemTrack === stemTrackId;
+                      const stemCount = availableStems[stemTrackId];
                       return (
-                        <div className="relative pointer-events-auto">
-                          {/* Tiny toggle: only shows a small diamond icon */}
+                        <div className="flex flex-col gap-0.5">
+                          {Array.from({ length: stemCount }).map((_, idx) => {
+                            const isSoloed = soloedStems[stemTrackId] === idx;
+                            return (
+                              <button
+                                key={idx}
+                                onClick={() => handleSoloStem(stemTrackId, isSoloed ? null : idx)}
+                                className={`w-4 h-4 rounded-md border flex items-center justify-center transition-all shadow-lg ${
+                                  isSoloed
+                                    ? 'bg-cyan-500 border-cyan-300 text-white shadow-[0_0_8px_rgba(6,182,212,0.5)]'
+                                    : 'bg-[#1a1a1e] border-zinc-700 text-zinc-400 hover:text-cyan-300 hover:border-cyan-500/60'
+                                }`}
+                                title={isSoloed ? `Play all voices` : `Solo voice ${idx + 1}`}
+                              >
+                                <span className="text-[6px] font-black">S{idx + 1}</span>
+                              </button>
+                            );
+                          })}
                           <button
-                            onClick={(e) => { e.stopPropagation(); setExpandedStemTrack(isOpen ? null : stemTrackId); }}
-                            className={`w-3 h-3 rounded-sm flex items-center justify-center transition-all border text-[5px] font-black ${
-                              isOpen 
-                                ? 'bg-cyan-600 border-cyan-400 text-white shadow-[0_0_6px_rgba(6,182,212,0.5)]' 
-                                : soloedStems[stemTrackId] !== null
-                                  ? 'bg-amber-600 border-amber-400 text-white animate-pulse'
-                                  : 'bg-zinc-900/60 border-zinc-700/50 text-zinc-500 hover:text-cyan-400 hover:border-cyan-500/50'
+                            onClick={() => handleSoloStem(stemTrackId, null)}
+                            className={`w-4 h-4 rounded-md border flex items-center justify-center transition-all shadow-lg ${
+                              soloedStems[stemTrackId] === null
+                                ? 'bg-rose-600 border-rose-400 text-white shadow-[0_0_6px_rgba(239,68,68,0.4)]'
+                                : 'bg-[#1a1a1e] border-zinc-700 text-zinc-400 hover:text-rose-300 hover:border-rose-500/60'
                             }`}
-                            title={isOpen ? 'Close stem panel' : `Stem Solo (${availableStems[stemTrackId]} parts)`}
+                            title="Play all voices together"
                           >
-                            ◆
+                            <span className="text-[5.5px] font-black">ALL</span>
                           </button>
-                          {/* Expandable panel — only shows when toggled open */}
-                          {isOpen && (
-                            <div className="absolute left-5 top-0 flex flex-row gap-0.5 items-center bg-black/80 p-1 rounded-md border border-cyan-500/30 backdrop-blur-xl shadow-xl select-none z-[9000] animate-in fade-in duration-150">
-                              <span className="text-[5.5px] font-black text-cyan-400/80 uppercase px-0.5 whitespace-nowrap">Solo:</span>
-                              {Array.from({ length: availableStems[stemTrackId] }).map((_, idx) => {
-                                const isSoloed = soloedStems[stemTrackId] === idx;
-                                return (
-                                  <button
-                                    key={idx}
-                                    onClick={() => handleSoloStem(stemTrackId, isSoloed ? null : idx)}
-                                    className={`w-4 h-4 rounded text-[6.5px] font-black flex items-center justify-center transition-all border ${
-                                      isSoloed
-                                        ? 'bg-cyan-500 border-cyan-300 text-white shadow-[0_0_5px_rgba(6,182,212,0.4)]'
-                                        : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700 hover:border-zinc-500 hover:text-white'
-                                    }`}
-                                    title={isSoloed ? `Mute voice part ${idx + 1} and play all` : `Solo voice part ${idx + 1}`}
-                                  >
-                                    S{idx + 1}
-                                  </button>
-                                );
-                              })}
-                              {soloedStems[stemTrackId] !== null && (
-                                <button
-                                  onClick={() => handleSoloStem(stemTrackId, null)}
-                                  className="px-1 py-0.5 bg-rose-600 border border-rose-500 rounded text-[5px] font-black uppercase text-white hover:bg-rose-500 transition-all"
-                                  title="Play all voices together"
-                                >
-                                  All
-                                </button>
-                              )}
-                            </div>
-                          )}
                         </div>
                       );
                     })()}
@@ -3199,9 +3183,114 @@ const PlayerPage: React.FC<{
                 </div>
               )}
 
+              {/* ── Advanced Settings (Manual/On-Demand) ── */}
+              <div className="w-full mt-4 border-t border-white/10 pt-3">
+                <button
+                  onClick={() => setShowAdvancedRenderSettings(v => !v)}
+                  className="w-full flex items-center justify-between text-[9px] font-black uppercase tracking-widest text-zinc-400 hover:text-cyan-400 transition-colors"
+                >
+                  <span>⚙️ Manual Settings</span>
+                  <span className={`transition-transform duration-200 ${showAdvancedRenderSettings ? 'rotate-180' : ''}`}>▼</span>
+                </button>
+
+                {showAdvancedRenderSettings && (
+                  <div className="mt-3 flex flex-col gap-3">
+
+                    {/* Engine Selection */}
+                    <div>
+                      <span className="text-[8px] font-black uppercase tracking-widest text-zinc-500 mb-1 block">Engine</span>
+                      <div className="flex gap-1.5">
+                        <button
+                          onClick={() => handleSvsEngineChange('vocalido')}
+                          className={`flex-1 py-1.5 px-2 rounded-lg text-[9px] font-bold uppercase tracking-wide transition-all border ${
+                            svsEngine === 'vocalido'
+                              ? 'bg-cyan-500/20 border-cyan-400 text-cyan-400'
+                              : 'bg-zinc-900 border-zinc-700 text-zinc-400 hover:border-zinc-500'
+                          }`}
+                        >
+                          🖥️ GPU Server
+                        </button>
+                        <button
+                          onClick={() => handleSvsEngineChange('browser-ai')}
+                          className={`flex-1 py-1.5 px-2 rounded-lg text-[9px] font-bold uppercase tracking-wide transition-all border ${
+                            svsEngine === 'browser-ai'
+                              ? 'bg-purple-500/20 border-purple-400 text-purple-400'
+                              : 'bg-zinc-900 border-zinc-700 text-zinc-400 hover:border-zinc-500'
+                          }`}
+                        >
+                          💻 Browser AI
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Quality Steps */}
+                    <div>
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="text-[8px] font-black uppercase tracking-widest text-zinc-500">Quality</span>
+                        <span className="text-[9px] font-bold text-cyan-400">
+                          {svsSteps === 6 ? '6 — Draft' : svsSteps === 10 ? '10 — Fast' : svsSteps === 20 ? '20 — HD' : svsSteps === 40 ? '40 — Studio' : svsSteps === 50 ? '50 — Pro' : `${svsSteps} — Ultra`}
+                        </span>
+                      </div>
+                      <div className="flex gap-1">
+                        {[6, 10, 20, 40, 50].map(step => (
+                          <button
+                            key={step}
+                            onClick={() => handleSvsStepsChange(step)}
+                            className={`flex-1 py-1 rounded text-[8px] font-bold transition-all border ${
+                              svsSteps === step
+                                ? 'bg-cyan-500/20 border-cyan-400 text-cyan-400'
+                                : 'bg-zinc-900 border-zinc-800 text-zinc-500 hover:border-zinc-600'
+                            }`}
+                          >
+                            {step}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Timing Feel */}
+                    <div>
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="text-[8px] font-black uppercase tracking-widest text-zinc-500">Timing Feel</span>
+                        <span className="text-[9px] font-bold text-cyan-400">
+                          {svsTimingFeel < 30 ? 'Strict' : svsTimingFeel < 70 ? 'Balanced' : 'Expressive'} ({svsTimingFeel})
+                        </span>
+                      </div>
+                      <input
+                        type="range" min={0} max={100} step={5}
+                        value={svsTimingFeel}
+                        onChange={e => handleSvsTimingFeelChange(Number(e.target.value))}
+                        className="w-full h-1.5 appearance-none bg-zinc-800 rounded-full accent-cyan-400 cursor-pointer"
+                      />
+                      <div className="flex justify-between text-[7px] text-zinc-600 mt-0.5">
+                        <span>Strict</span><span>Balanced</span><span>Expressive</span>
+                      </div>
+                    </div>
+
+                    {/* Portamento */}
+                    <div>
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="text-[8px] font-black uppercase tracking-widest text-zinc-500">Portamento</span>
+                        <span className="text-[9px] font-bold text-cyan-400">{svsPortamento}ms</span>
+                      </div>
+                      <input
+                        type="range" min={0} max={300} step={10}
+                        value={svsPortamento}
+                        onChange={e => handleSvsPortamentoChange(Number(e.target.value))}
+                        className="w-full h-1.5 appearance-none bg-zinc-800 rounded-full accent-indigo-400 cursor-pointer"
+                      />
+                      <div className="flex justify-between text-[7px] text-zinc-600 mt-0.5">
+                        <span>None</span><span>Smooth</span><span>Glide</span>
+                      </div>
+                    </div>
+
+                  </div>
+                )}
+              </div>
+
               <button
                 onClick={() => { setShowRenderPrompt(false); triggerVocalSynthesis(false, modalSelectedTracks.length > 0 ? modalSelectedTracks : tracks.map(t => t.id)); }}
-                className="w-full py-3 px-4 bg-gradient-to-r from-cyan-400 to-indigo-500 text-black font-black text-xs uppercase tracking-widest rounded-xl hover:shadow-[0_0_20px_rgba(6,182,212,0.4)] active:scale-98 transition-all duration-200 mt-2"
+                className="w-full py-3 px-4 bg-gradient-to-r from-cyan-400 to-indigo-500 text-black font-black text-xs uppercase tracking-widest rounded-xl hover:shadow-[0_0_20px_rgba(6,182,212,0.4)] active:scale-98 transition-all duration-200 mt-3"
               >
                 Render Now
               </button>

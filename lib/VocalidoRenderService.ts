@@ -1,26 +1,19 @@
 import * as Tone from 'tone';
 import { musicEngine } from './MusicEngine';
-import { clientSvsEngine } from './ClientSvsEngine';
+import { clientSvsEngine, ClientSvsEngineProxy } from './ClientSvsEngine';
 import { AudioBlobCache } from './AudioBlobCache';
 import { getChromaticSolfege } from './SolfegeLogic';
 import { ParsedNote, TrackState, Song, LyricMode } from '../types';
 
 // ── ONE-TIME CACHE BUST FOR NEW F0 PITCH FIX ─────────────────────────────────
 if (typeof window !== 'undefined') {
-  const BUST_KEY = 'vocalido_cache_bust_v15_measure_sync';
+  const BUST_KEY = 'vocalido_cache_bust_v16_force_server';
   if (!localStorage.getItem(BUST_KEY)) {
-    console.log('[Vocalido] ⚡ Cache bust v15: Enforce global measure start time alignment and sync...');
+    console.log('[Vocalido] ⚡ Cache bust v16: Force server-side (Vocalido) rendering as default...');
     try {
-      // Force default SVS engine based on platform: Server-side on localhost/LAN for dev, browser-ai on Vercel
-      const hostname = window.location.hostname;
-      const isLocal = hostname === 'localhost' || 
-                      hostname === '127.0.0.1' || 
-                      hostname.endsWith('.local') || 
-                      !hostname.includes('.') ||
-                      /^192\.168\./.test(hostname) ||
-                      /^10\./.test(hostname) ||
-                      /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(hostname);
-      localStorage.setItem('vocalido_svs_engine', isLocal ? 'vocalido' : 'browser-ai');
+      // Always default to server-side Vocalido (RunPod GPU) — never auto-set browser-ai
+      // User can still manually switch to Browser-AI from settings if needed
+      localStorage.setItem('vocalido_svs_engine', 'vocalido');
       localStorage.setItem('vocalido_svs_steps', '10');
       localStorage.setItem('vocalido_active_engine', 'lotte_v_ai_dol');
 
@@ -159,18 +152,14 @@ const getFetchUrl = (path: string) => {
   return path;
 };
 
-// For server-side synthesis, use direct RunPod URL to bypass Vercel timeout limits
+// For server-side synthesis, route through Vercel /studio/* proxy
+// (vercel.json proxies /studio/* → RunPod). Do NOT call RunPod directly
+// from the browser — that causes CORS errors and ERR_NETWORK_CHANGED.
 const getDirectServerUrl = (path: string) => {
-  if (typeof window !== 'undefined') {
-    const hostname = window.location.hostname;
-    const isLocal = hostname === 'localhost' || hostname === '127.0.0.1' || hostname.endsWith('.local');
-    if (!isLocal) {
-      let cleanPath = path;
-      if (!cleanPath.startsWith('/')) cleanPath = '/' + cleanPath;
-      return `https://u2txyroyplqko8-8888.proxy.runpod.net${cleanPath}`;
-    }
-  }
-  return getFetchUrl(path);
+  let cleanPath = path;
+  if (!cleanPath.startsWith('/')) cleanPath = '/' + cleanPath;
+  // Always use relative path → goes through Vercel → RunPod proxy
+  return cleanPath;
 };
 
 const svsFetch = (url: string, options?: RequestInit) => {
@@ -512,6 +501,10 @@ class VocalidoRenderService {
       
       console.log(`[VocalidoRenderService] SVS rendering initialization... bpm=${currentBpm}, vocalTracks=${vocalTrackIds.length} (${vocalTrackIds.join(', ')}), sourceNotes=${sourceNotes.length}, notesToSynthesize=${notesToSynthesize.length}`);
       console.log(`[VocalidoRenderService] Track summary: ${trackSummary}`);
+      // Show first 5 notes to verify pitch data correctness
+      console.log('[VocalidoRenderService] 🎵 Sample notes (first 5):', notesToSynthesize.slice(0, 5).map(n => 
+        `midi=${n.midi} lyric=${n.lyric} t=${n.startTime?.toFixed(2)} dur=${n.duration?.toFixed(2)}`
+      ).join(' | '));
       
       // Show debug info on the render card so user can see without console
       this.statusText = `Preparing ${notesToSynthesize.length} notes from ${vocalTrackIds.length} tracks... [${trackSummary}]`;
@@ -908,31 +901,45 @@ class VocalidoRenderService {
             }
             return acc;
           }, {} as Record<string, string>) : undefined,
-          // Neural sub-models for full DiffSinger pipeline (linguistic → dur → pitch → acoustic → vocoder)
+          // Neural sub-models for full DiffSinger pipeline
           linguistic: selectedVoice.model_files.linguistic ? getVoiceModelUrl(selectedVoice.model_files.linguistic) : undefined,
           dur: selectedVoice.model_files.dur ? getVoiceModelUrl(selectedVoice.model_files.dur) : undefined,
           pitch: selectedVoice.model_files.pitch ? getVoiceModelUrl(selectedVoice.model_files.pitch) : undefined,
           pitchLinguistic: selectedVoice.model_files.pitchLinguistic ? getVoiceModelUrl(selectedVoice.model_files.pitchLinguistic) : undefined,
         };
 
+        // Pre-load the main voice once (for single-voice or progress reporting)
         await clientSvsEngine.loadVoice(selectedVoice.id, modelFiles, (prog) => {
           this.statusText = prog.message;
-          this.progress = Math.min(99.9, prog.progress);
+          this.progress = Math.min(40, prog.progress * 0.4);
           this.notify();
         });
 
         if (isPolyphonic && voiceLines.length > 1) {
-          console.log(`[VocalidoRenderService] [Browser-AI] 🎹 Polyphony detected: rendering ${voiceLines.length} voice lines on-device...`);
+          console.log(`[VocalidoRenderService] [Browser-AI] 🎹 Polyphony: ${voiceLines.length} voice lines — spawning parallel workers...`);
           const audioBlobs: Blob[] = [];
           const renderedPan: number[] = [];
-          
-          for (let vIdx = 0; vIdx < voiceLines.length; vIdx++) {
-            const vl = voiceLines[vIdx];
-            this.statusText = `Generating ${vl.label}... (${vl.notes.length} notes)`;
-            this.notify();
-            
+
+          // Spawn one Worker proxy per voice line for true parallel rendering
+          const perVoiceWorkers = voiceLines.map(() => new ClientSvsEngineProxy());
+
+          // Load voice model into each worker in parallel, then synthesize
+          const voiceResults = await Promise.all(voiceLines.map(async (vl, vIdx) => {
+            const workerProxy = perVoiceWorkers[vIdx];
             try {
-              const wavBlob = await clientSvsEngine.synthesize(vl.notes, {
+              // Each worker loads its own copy of the voice model
+              await workerProxy.loadVoice(selectedVoice.id, modelFiles, (prog) => {
+                // Only report progress from voice 0 to avoid spamming
+                if (vIdx === 0) {
+                  this.progress = Math.min(50, prog.progress * 0.5);
+                  this.notify();
+                }
+              });
+
+              this.statusText = `Generating ${vl.label}... (${vl.notes.length} notes) [Parallel]`;
+              this.notify();
+
+              const wavBlob = await workerProxy.synthesize(vl.notes, {
                 bpm: actualBpm,
                 formant_shift: 0,
                 speed: 1.0,
@@ -945,43 +952,29 @@ class VocalidoRenderService {
                 vibrato_depth: svsVibratoDepth,
                 vibrato_speed: svsVibratoSpeed,
               });
-              audioBlobs.push(wavBlob);
-              renderedPan.push(vl.pan);
-              console.log(`[VocalidoRenderService] [Browser-AI] ✅ Voice ${vIdx + 1} (${vl.label}) blob ready: ${(wavBlob.size / 1024).toFixed(0)} KB`);
+
+              console.log(`[VocalidoRenderService] [Browser-AI] ✅ Voice ${vIdx + 1} (${vl.label}) ready: ${(wavBlob.size / 1024).toFixed(0)} KB`);
+              return { blob: wavBlob, pan: vl.pan };
             } catch (voiceErr: any) {
               console.warn(`[VocalidoRenderService] [Browser-AI] ❌ Voice ${vIdx + 1} (${vl.label}) failed:`, voiceErr);
-              if (voiceErr.message?.includes('timeout') && clientSvsEngine.forceWasm) {
-                console.log(`[VocalidoRenderService] Retrying Voice ${vIdx + 1} with CPU/WASM Fallback...`);
-                this.statusText = `Retrying ${vl.label} (CPU Fallback)...`;
-                this.notify();
-                try {
-                  // Reload voice to spawn new worker with WASM forced
-                  await clientSvsEngine.loadVoice(selectedVoice.id, selectedVoice.files, (p) => {
-                    this.progress = Math.min(99.9, p.progress);
-                    this.notify();
-                  });
-                  const retryBlob = await clientSvsEngine.synthesize(vl.notes, {
-                    bpm: actualBpm,
-                    formant_shift: 0,
-                    speed: 1.0,
-                    breathiness: 0,
-                    vocal_mode: 'root',
-                    steps: svsSteps,
-                    timing_feel: svsTimingFeel,
-                    portamento: svsPortamento,
-                    vibrato_start: svsVibratoStart,
-                    vibrato_depth: svsVibratoDepth,
-                    vibrato_speed: svsVibratoSpeed,
-                  });
-                  audioBlobs.push(retryBlob);
-                  renderedPan.push(vl.pan);
-                  console.log(`[VocalidoRenderService] [Browser-AI] ✅ Voice ${vIdx + 1} (${vl.label}) retry successful`);
-                } catch (retryErr) {
-                  console.warn(`[VocalidoRenderService] [Browser-AI] ❌ Retry failed for Voice ${vIdx + 1}:`, retryErr);
-                }
-              }
+              return null;
+            }
+          }));
+
+          // Terminate all per-voice workers to free GPU/WASM memory
+          perVoiceWorkers.forEach((w, i) => {
+            try { (w as any).worker?.terminate(); } catch (e) {}
+          });
+
+          // Collect successful results in order
+          for (const res of voiceResults) {
+            if (res) {
+              audioBlobs.push(res.blob);
+              renderedPan.push(res.pan);
             }
           }
+          console.log(`[VocalidoRenderService] [Browser-AI] 🎯 Parallel done: ${audioBlobs.length}/${voiceLines.length} voices OK`);
+
 
           if (audioBlobs.length === 0) {
             throw new Error('All voice lines failed to render');
@@ -1141,20 +1134,18 @@ class VocalidoRenderService {
         if (isPolyphonic && voiceLines.length > 1) {
           // ─── Multi-pass polyphony: render each voice line separately, then stereo mix ───
           console.log(`[VocalidoRenderService] 🎹 Multi-pass polyphony: rendering ${voiceLines.length} voice lines via server...`);
-          
+
           const targetUrl = getDirectServerUrl('/studio/preview');
           const audioBlobs: Blob[] = [];
           const renderedPan: number[] = [];
-          
-          this.statusText = `Rendering 1 of ${voiceLines.length} voice lines...`;
-          this.notify();
-          
-          for (let vIdx = 0; vIdx < voiceLines.length; vIdx++) {
-            const vl = voiceLines[vIdx];
-            // Append voice-line index to song_id so server cache is unique per voice line
-            const vlSongId = `${song.id}_vl${vIdx}`;
+
+          // ── SEQUENTIAL render: one voice at a time (single-worker DiffSinger) ──
+          console.log(`[VocalidoRenderService] 🎶 Sequential render: ${voiceLines.length} voices one by one`);
+
+          const renderOneVoice = async (vl: typeof voiceLines[0], vIdx: number): Promise<{ blob: Blob; pan: number } | null> => {
+            const noteHash = vl.notes.slice(0, 8).map((n: any) => n.midi).join('-');
+            const vlSongId = `${song.id}_vl${vIdx}_bpm${Math.round(actualBpm)}_${noteHash}`;
             const vlParams = { ...synthParams, collapse_chords: false, voice_line: vIdx };
-            
             const payload = {
               notes: vl.notes,
               song_id: vlSongId,
@@ -1165,39 +1156,33 @@ class VocalidoRenderService {
               owner_id: userId || '',
               params: vlParams
             };
-            
-            this.statusText = `Rendering voice ${vIdx + 1} of ${voiceLines.length}...`;
-            this.notify();
-            
+
             try {
-              // ─── DIAGNOSTIC: Log note data being sent ───
-              const midiValues = vl.notes.slice(0, 10).map((n: any) => n.midi || n.pitch);
-              const lyrics = vl.notes.slice(0, 10).map((n: any) => n.lyric);
-              console.log(`[VocalidoRenderService] 📤 Voice ${vIdx + 1} (${vl.label}) → ${vlSongId}, ${vl.notes.length} notes`);
-              console.log(`[VocalidoRenderService] 📊 First 10 MIDI: [${midiValues.join(', ')}]`);
-              console.log(`[VocalidoRenderService] 📊 First 10 Lyrics: [${lyrics.join(', ')}]`);
-              console.log(`[VocalidoRenderService] 📊 BPM: ${vlParams.bpm}, Voice: ${vlParams.voice || vlParams.singer}, collapse_chords: ${vlParams.collapse_chords}`);
+              console.log(`[VocalidoRenderService] 📤 Voice ${vIdx + 1}/${voiceLines.length} (${vl.label}) → ${vl.notes.length} notes`);
+              this.statusText = `Rendering voice ${vIdx + 1}/${voiceLines.length} (${vl.label}) on GPU...`;
+              this.notify();
+
               const response = await fetch(targetUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
                 signal: controller.signal
               });
-              
+
               console.log(`[VocalidoRenderService] 📥 Voice ${vIdx + 1} HTTP ${response.status}`);
               if (!response.ok) {
                 const errText = await response.text();
-                console.warn(`[VocalidoRenderService] ❌ Voice ${vIdx + 1} (${vl.label}) HTTP error: ${errText}`);
-                continue;
+                console.warn(`[VocalidoRenderService] ❌ Voice ${vIdx + 1} HTTP ${response.status}: ${errText}`);
+                return null;
               }
-              
+
               const data = await response.json();
-              console.log(`[VocalidoRenderService] 📥 Voice ${vIdx + 1} response: engine=${data.engine}, cached=${data.cached}, notes=${data.notes}, saved_url=${data.saved_url || 'N/A'}`);
+              console.log(`[VocalidoRenderService] 📥 Voice ${vIdx + 1} engine=${data.engine}, errors=${(data.debug_engine_errors||[]).length}`);
               if (data.error) {
-                console.warn(`[VocalidoRenderService] ❌ Voice ${vIdx + 1} (${vl.label}) server error: ${data.error}`);
-                continue;
+                console.warn(`[VocalidoRenderService] ❌ Voice ${vIdx + 1} server error: ${data.error}`);
+                return null;
               }
-              
+
               let audioBlob: Blob | null = null;
               if (data.audio_b64) {
                 const binary = atob(data.audio_b64);
@@ -1209,24 +1194,40 @@ class VocalidoRenderService {
                 const audioResp = await fetch(audioUrl, { signal: controller.signal });
                 if (audioResp.ok) {
                   audioBlob = await audioResp.blob();
+                } else {
+                  console.warn(`[VocalidoRenderService] ❌ Voice ${vIdx + 1} audio fetch ${audioResp.status} for ${audioUrl}`);
                 }
               }
-              
-              if (audioBlob) {
-                console.log(`[VocalidoRenderService] ✅ Voice ${vIdx + 1} (${vl.label}) blob ready: ${(audioBlob.size / 1024).toFixed(0)} KB`);
-                audioBlobs.push(audioBlob);
-                renderedPan.push(vl.pan);
+
+              if (audioBlob && audioBlob.size > 0) {
+                console.log(`[VocalidoRenderService] ✅ Voice ${vIdx + 1} (${vl.label}) ready: ${(audioBlob.size / 1024).toFixed(0)} KB`);
+                return { blob: audioBlob, pan: vl.pan };
+              } else {
+                console.warn(`[VocalidoRenderService] ❌ Voice ${vIdx + 1} got 0KB audio`);
               }
             } catch (voiceErr: any) {
               if (voiceErr.name === 'AbortError') throw voiceErr;
-              console.warn(`[VocalidoRenderService] ❌ Voice ${vIdx + 1} (${vl.label}) exception:`, voiceErr);
+              console.warn(`[VocalidoRenderService] ❌ Voice ${vIdx + 1} exception:`, voiceErr);
+            }
+            return null;
+          };
+
+          // Run voices sequentially
+          for (let vIdx = 0; vIdx < voiceLines.length; vIdx++) {
+            if (controller.signal.aborted) break;
+            const res = await renderOneVoice(voiceLines[vIdx], vIdx);
+            if (res) {
+              audioBlobs.push(res.blob);
+              renderedPan.push(res.pan);
             }
           }
-          
+
+          console.log(`[VocalidoRenderService] 🎯 Sequential render done: ${audioBlobs.length}/${voiceLines.length} voices OK`);
+
           if (audioBlobs.length === 0) {
             throw new Error('All voice lines failed to render');
           }
-          
+
           // Mix all voice audio blobs together using AudioContext
           this.statusText = `Mixing ${audioBlobs.length} voice lines (Stereo)...`;
           this.notify();
@@ -1363,9 +1364,13 @@ class VocalidoRenderService {
           this.statusText = 'Sending synthesis request to server...';
           this.notify();
 
+          // Include a note-content hash in song_id to prevent stale server cache
+          const noteHash = notesToSynthesize.slice(0, 8).map((n: any) => n.midi).join('-');
+          const cacheKey = `${song.id}_bpm${Math.round(actualBpm)}_${noteHash}_${activeLyricMode}`;
+
           const payload = {
             notes: notesToSynthesize,
-            song_id: song.id,
+            song_id: cacheKey,
             song_key: songKey,
             bpm_pct: bpmPct,
             lyric_mode: activeLyricMode,
@@ -1585,7 +1590,8 @@ class VocalidoRenderService {
             console.log('[VocalidoRenderService] ✅ musicEngine.loadSong done');
             
             // addVocalLayer AFTER — so initSampler doesn't overwrite the vocal layer
-            // For polyphonic mode: main audio = stereo mix, stems = individual voice lines
+            // For polyphonic mode: primary track = stereo mix + individual voice stems (for ◆ Solo buttons)
+            // Other voice tracks = their individual stem URL as main audio (for Track S Solo)
             const isPolyMode = polyStemUrls.length > 0;
             for (const tid of vocalTrackIds) {
               const trackStems = stemsByTrack[tid] || [];
@@ -1593,13 +1599,14 @@ class VocalidoRenderService {
               let stemsToPass: string[] = [];
               
               if (isPolyMode && tid === primaryVocalTrackId) {
-                // Polyphonic: use the stereo mix as main audio, and individual voices as stems
+                // Polyphonic: primary track gets stereo mix + all individual voice stems
                 trackAudioUrl = cacheBustedUrl;
-                stemsToPass = trackStems; // These are the individual voice stem URLs
-                console.log(`[VocalidoRenderService] 🎤 Poly mode: main=stereoMix, stems=${stemsToPass.length} voice lines`);
+                stemsToPass = stemsWithBust; // All individual voice line URLs for ◆ buttons
+                console.log(`[VocalidoRenderService] 🎤 Poly mode: primary track main=stereoMix, stems=${stemsToPass.length} voice lines`);
               } else if (trackStems.length > 0) {
+                // Each non-primary vocal track gets its own individual stem URL
                 trackAudioUrl = trackStems[0];
-                stemsToPass = trackStems.length > 1 ? trackStems.slice(1) : [];
+                stemsToPass = [];
               } else if (tid === primaryVocalTrackId) {
                 trackAudioUrl = cacheBustedUrl;
                 stemsToPass = [];
@@ -1613,7 +1620,7 @@ class VocalidoRenderService {
             }
             
             for (const tid of vocalTrackIds) {
-              // For polyphonic mode: always use the stereo mix as the main HTMLAudioElement source
+              // For polyphonic mode: primary track uses stereo mix, others use individual stems
               const tAudioUrl = (isPolyMode && tid === primaryVocalTrackId)
                 ? cacheBustedUrl
                 : ((stemsByTrack[tid] || []).length > 0 ? (stemsByTrack[tid] || [])[0] : (tid === primaryVocalTrackId ? cacheBustedUrl : ""));
