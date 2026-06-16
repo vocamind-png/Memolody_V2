@@ -2977,9 +2977,8 @@ const PlayerPage: React.FC<{
                   className="absolute left-1 z-50 flex flex-col gap-1 pointer-events-auto"
                   style={{ top: `${yPos - 2}px` }}
                 >
-                  {/* Layout: [icon] [S1/S2/.../ALL vertical stack] side by side */}
-                  {/* Layout: [icon] [S1/S2/.../ALL] stacked vertically in a panel */}
-                  <div className="flex flex-col gap-0.5 items-center bg-black/40 border border-white/10 p-0.5 rounded-lg backdrop-blur-sm pointer-events-auto">
+                  {/* Layout: [icon] [S1/S2/.../ALL] side-by-side in a horizontal panel */}
+                  <div className="flex flex-row gap-1 items-center bg-black/40 border border-white/10 p-0.5 rounded-lg backdrop-blur-sm pointer-events-auto w-fit">
                     
                     {/* Toggle between Vocal and Instrument */}
                     <button
@@ -3004,7 +3003,7 @@ const PlayerPage: React.FC<{
                       const stemTrackId = track.id;
                       const stemCount = availableStems[stemTrackId];
                       return (
-                        <div className="flex flex-col gap-0.5">
+                        <div className="flex flex-row gap-0.5">
                           {Array.from({ length: stemCount }).map((_, idx) => {
                             const isSoloed = soloedStems[stemTrackId]?.has(idx);
                             return (
