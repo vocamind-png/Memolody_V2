@@ -578,18 +578,91 @@ export class MusicEngine {
         }
       });
 
-      // Post-processing: Use MusicXML staff/voice tracks directly — NO chord re-splitting.
-      // Each unique (Part × Staff × Voice) from the MusicXML is already one clean track.
-      // Chord notes within the same staff/voice stay together in the same track.
+      // ── Post-processing: Split polyphonic chords into monophonic voice sub-tracks ──
+      // Rules:
+      //  1. First group notes by MusicXML staff/voice (P × S × V) — already done above.
+      //  2. For each staff/voice group, scan the ENTIRE song to find max simultaneous notes.
+      //  3. Exclude grace notes (duration < 0.05s) from the count — they are ornamental.
+      //  4. Split the group into that many sub-tracks (highest pitch → sub-track 0, etc.)
+      //  5. Chord notes within a single sub-track still get assigned to it; don't create more
+      //     sub-tracks than the actual max chord density found anywhere in the song.
+      const trackGroups: Record<string, ParsedNote[]> = {};
+      for (const n of notes) {
+        if (!trackGroups[n.trackId]) trackGroups[n.trackId] = [];
+        trackGroups[n.trackId].push(n);
+      }
+
       const finalNotes: ParsedNote[] = [];
       const finalPartNames: Record<string, string> = {};
 
-      for (const n of notes) {
-        n.voiceIdx = 0;
-        finalNotes.push(n);
+      const STEP_SEMI = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+      const toMidi = (n: ParsedNote) =>
+        n.octave * 12 + Math.max(0, STEP_SEMI.indexOf(n.step.toUpperCase())) + n.alter;
+
+      for (const [origId, trackNotes] of Object.entries(trackGroups)) {
+        // ── Scan ENTIRE song for max simultaneous real notes (skip grace notes) ──
+        const realNotes = trackNotes.filter(n => n.duration >= 0.05); // exclude grace/ornamental
+
+        // Build time-buckets (group by startTime with 10ms tolerance)
+        const timeBuckets = new Map<number, ParsedNote[]>();
+        for (const n of realNotes) {
+          const roundedT = Math.round(n.startTime * 100) / 100; // 10ms resolution
+          if (!timeBuckets.has(roundedT)) timeBuckets.set(roundedT, []);
+          timeBuckets.get(roundedT)!.push(n);
+        }
+
+        // Find max unique pitches at any single moment in the song
+        let maxVoices = 1;
+        for (const bucket of timeBuckets.values()) {
+          const uniquePitches = new Set(bucket.map(toMidi));
+          if (uniquePitches.size > maxVoices) maxVoices = uniquePitches.size;
+        }
+
+        if (maxVoices <= 1) {
+          // Pure monophonic — keep as-is
+          finalPartNames[origId] = partNames[origId] || origId;
+          for (const n of trackNotes) { n.voiceIdx = 0; finalNotes.push(n); }
+          continue;
+        }
+
+        // ── Split into maxVoices sub-tracks ──
+        // Pre-register sub-track names
+        for (let v = 0; v < maxVoices; v++) {
+          const tid = `${origId}_V${v + 1}`;
+          finalPartNames[tid] = `${partNames[origId] || origId} (Voice ${v + 1})`;
+        }
+
+        // Assign each chord moment top-down: highest pitch → V1, next → V2, etc.
+        // Group all notes (including grace) by startTime for assignment
+        const allBuckets = new Map<number, ParsedNote[]>();
+        for (const n of trackNotes) {
+          const roundedT = Math.round(n.startTime * 100) / 100;
+          if (!allBuckets.has(roundedT)) allBuckets.set(roundedT, []);
+          allBuckets.get(roundedT)!.push(n);
+        }
+
+        for (const bucket of allBuckets.values()) {
+          // Deduplicate by pitch
+          const seen = new Set<number>();
+          const unique: ParsedNote[] = [];
+          for (const n of bucket) {
+            const m = toMidi(n);
+            if (!seen.has(m)) { seen.add(m); unique.push(n); }
+          }
+          unique.sort((a, b) => toMidi(b) - toMidi(a)); // highest first → V1
+
+          for (let i = 0; i < unique.length; i++) {
+            const vIdx = Math.min(i, maxVoices - 1);
+            const n = { ...unique[i] };
+            n.trackId = `${origId}_V${vIdx + 1}`;
+            n.voiceIdx = vIdx;
+            n.voice = vIdx + 1;
+            finalNotes.push(n);
+          }
+        }
+
+        delete partNames[origId];
       }
-      // Copy partNames as-is — they were already built per (P × S × V) above
-      Object.assign(finalPartNames, partNames);
 
       notes = finalNotes;
       partNames = finalPartNames;
