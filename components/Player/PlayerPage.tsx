@@ -1612,11 +1612,13 @@ const PlayerPage: React.FC<{
             : [];
           if (trackStems.length > 0) {
             trackAudioUrl = trackStems[0];
+            stemsToPass = trackStems;
           } else {
             // Legacy fallback: assign stem by track order index
             const idx = vocalTracksArr.indexOf(tid);
             if (idx > 0 && idx < stemsWithBust.length) {
               trackAudioUrl = stemsWithBust[idx];
+              stemsToPass = [stemsWithBust[idx]]; // Fix: Pass the stem
             }
           }
         }
@@ -2648,10 +2650,12 @@ const PlayerPage: React.FC<{
                                 }) : [];
                                 if (trackStems.length > 0) {
                                   trackAudioUrl = trackStems[0];
+                                  stemsToPass = trackStems;
                                 } else {
                                   const idx = vocalTracksArr.indexOf(tid);
                                   if (idx > 0 && idx < stemsWithBust.length) {
                                     trackAudioUrl = stemsWithBust[idx];
+                                    stemsToPass = [stemsWithBust[idx]];
                                   }
                                 }
                               }
@@ -2977,8 +2981,8 @@ const PlayerPage: React.FC<{
                   className="absolute left-1 z-50 flex flex-col gap-1 pointer-events-auto"
                   style={{ top: `${yPos - 2}px` }}
                 >
-                  {/* Layout: [icon] [S1/S2/.../ALL] side-by-side in a horizontal panel */}
-                  <div className="flex flex-row gap-1 items-center bg-black/40 border border-white/10 p-0.5 rounded-lg backdrop-blur-sm pointer-events-auto w-fit">
+                  {/* Layout: [icon] on top, [S] on bottom to reduce width and avoid covering notes */}
+                  <div className="flex flex-col gap-0.5 items-center bg-black/40 border border-white/10 p-0.5 rounded-lg backdrop-blur-sm pointer-events-auto w-fit">
                     
                     {/* Toggle between Vocal and Instrument */}
                     <button
@@ -3017,7 +3021,7 @@ const PlayerPage: React.FC<{
                           }`}
                           title={`Solo ${track.name}`}
                         >
-                          <span className="text-[6px] font-black">S</span>
+                          <span className="text-[8px] font-black leading-none pb-[1px]">S</span>
                         </button>
                       );
                     })()}
