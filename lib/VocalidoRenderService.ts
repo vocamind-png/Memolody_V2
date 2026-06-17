@@ -7,7 +7,7 @@ import { ParsedNote, TrackState, Song, LyricMode } from '../types';
 
 // ── ONE-TIME CACHE BUST FOR TRACK COUNT FIX (v17) ───────────────────────────
 if (typeof window !== 'undefined') {
-  const BUST_KEY = 'vocalido_cache_bust_v19_track_count_fix';
+  const BUST_KEY = 'vocalido_cache_bust_v20_interval_coloring_fix';
   if (!localStorage.getItem(BUST_KEY)) {
     console.log('[Vocalido] ⚡ Cache bust v16: Force server-side (Vocalido) rendering as default...');
     try {

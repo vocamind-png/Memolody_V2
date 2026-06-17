@@ -600,68 +600,67 @@ export class MusicEngine {
         n.octave * 12 + Math.max(0, STEP_SEMI.indexOf(n.step.toUpperCase())) + n.alter;
 
       for (const [origId, trackNotes] of Object.entries(trackGroups)) {
-        // ── Scan ENTIRE song for max simultaneous real notes (skip grace notes) ──
-        const realNotes = trackNotes.filter(n => n.duration >= 0.05); // exclude grace/ornamental
+        // ── Assign notes to pure monophonic tracks via Interval Coloring ──
+        // Sort all notes by startTime ascending. If times are very close, sort by pitch descending.
+        const sortedStaffNotes = [...trackNotes].sort((a, b) => {
+          if (Math.abs(a.startTime - b.startTime) > 0.005) {
+            return a.startTime - b.startTime;
+          }
+          return toMidi(b) - toMidi(a); // highest pitch first
+        });
 
-        // Build time-buckets (group by startTime with 10ms tolerance)
-        const timeBuckets = new Map<number, ParsedNote[]>();
-        for (const n of realNotes) {
-          const roundedT = Math.round(n.startTime * 100) / 100; // 10ms resolution
-          if (!timeBuckets.has(roundedT)) timeBuckets.set(roundedT, []);
-          timeBuckets.get(roundedT)!.push(n);
+        const trackEndTimes: number[] = [];
+        
+        for (const n of sortedStaffNotes) {
+          // Find the first track that is free (endTime <= n.startTime)
+          let assignedIdx = -1;
+          for (let i = 0; i < trackEndTimes.length; i++) {
+            // Give a tiny tolerance of 0.01s for floating point issues
+            if (trackEndTimes[i] - 0.01 <= n.startTime) {
+              assignedIdx = i;
+              break;
+            }
+          }
+
+          if (assignedIdx === -1) {
+            // No free track found, create a new one
+            assignedIdx = trackEndTimes.length;
+            trackEndTimes.push(0);
+          }
+
+          // If note is a grace note, it shouldn't excessively block the track
+          const effectiveDuration = n.duration < 0.05 ? 0 : n.duration;
+          
+          n.voiceIdx = assignedIdx;
+          n.voice = assignedIdx + 1;
+          n.trackId = `${origId}_V${assignedIdx + 1}`;
+          
+          // Extend the busy time of this track
+          const noteEnd = n.startTime + effectiveDuration;
+          if (noteEnd > trackEndTimes[assignedIdx]) {
+             trackEndTimes[assignedIdx] = noteEnd;
+          }
+          
+          finalNotes.push(n);
         }
 
-        // Find max unique pitches at any single moment in the song
-        let maxVoices = 1;
-        for (const bucket of timeBuckets.values()) {
-          const uniquePitches = new Set(bucket.map(toMidi));
-          if (uniquePitches.size > maxVoices) maxVoices = uniquePitches.size;
-        }
+        const maxVoices = trackEndTimes.length;
 
-        if (maxVoices <= 1) {
-          // Pure monophonic — keep as-is
+        if (maxVoices === 1) {
+          // Pure monophonic — keep original ID
           finalPartNames[origId] = partNames[origId] || origId;
-          for (const n of trackNotes) { n.voiceIdx = 0; finalNotes.push(n); }
-          continue;
-        }
-
-        // ── Split into maxVoices sub-tracks ──
-        // Pre-register sub-track names
-        for (let v = 0; v < maxVoices; v++) {
-          const tid = `${origId}_V${v + 1}`;
-          finalPartNames[tid] = `${partNames[origId] || origId} (Voice ${v + 1})`;
-        }
-
-        // Assign each chord moment top-down: highest pitch → V1, next → V2, etc.
-        // Group all notes (including grace) by startTime for assignment
-        const allBuckets = new Map<number, ParsedNote[]>();
-        for (const n of trackNotes) {
-          const roundedT = Math.round(n.startTime * 100) / 100;
-          if (!allBuckets.has(roundedT)) allBuckets.set(roundedT, []);
-          allBuckets.get(roundedT)!.push(n);
-        }
-
-        for (const bucket of allBuckets.values()) {
-          // Deduplicate by pitch
-          const seen = new Set<number>();
-          const unique: ParsedNote[] = [];
-          for (const n of bucket) {
-            const m = toMidi(n);
-            if (!seen.has(m)) { seen.add(m); unique.push(n); }
+          // Revert the trackId suffix that was added above
+          finalNotes.forEach(n => {
+            if (n.trackId === `${origId}_V1`) n.trackId = origId;
+          });
+        } else {
+          // Pre-register sub-track names
+          for (let v = 0; v < maxVoices; v++) {
+            const tid = `${origId}_V${v + 1}`;
+            finalPartNames[tid] = `${partNames[origId] || origId} (Voice ${v + 1})`;
           }
-          unique.sort((a, b) => toMidi(b) - toMidi(a)); // highest first → V1
-
-          for (let i = 0; i < unique.length; i++) {
-            const vIdx = Math.min(i, maxVoices - 1);
-            const n = { ...unique[i] };
-            n.trackId = `${origId}_V${vIdx + 1}`;
-            n.voiceIdx = vIdx;
-            n.voice = vIdx + 1;
-            finalNotes.push(n);
-          }
+          delete partNames[origId];
         }
-
-        delete partNames[origId];
       }
 
       notes = finalNotes;
