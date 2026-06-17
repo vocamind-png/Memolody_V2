@@ -2972,61 +2972,86 @@ const PlayerPage: React.FC<{
               
               const tracksInSameStaff = tracks.filter((t: any) => t.id.startsWith(sId));
               const subIndex = tracksInSameStaff.findIndex((t: any) => t.id === track.id);
-              const yOffset = subIndex * 24; // Increased spacing to 24px so the 22px containers don't overlap vertically
+              const yOffset = subIndex * 40; // Increased spacing to 40px so the 38px containers don't overlap vertically
               const yPos = baseStaffY + yOffset;
 
+              const isAnySoloed = Object.values(soloedStems).some(set => set.size > 0);
+
               return (
-                <div 
-                  key={track.id} 
-                  className="absolute left-1 z-50 flex flex-col gap-1 pointer-events-auto"
-                  style={{ top: `${yPos - 2}px` }}
-                >
-                  {/* Layout: [icon] on top, [S] on bottom to reduce width and avoid covering notes */}
-                  <div className="flex flex-col gap-0.5 items-center bg-black/40 border border-white/10 p-0.5 rounded-lg backdrop-blur-sm pointer-events-auto w-fit">
-                    
-                    {/* Toggle between Vocal and Instrument */}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setTracks((prev: any) => prev.map((t: any) => 
-                          t.id === track.id ? { ...t, mode: t.mode === 'vocal' ? 'instrument' : 'vocal' } : t
-                        ));
-                      }}
-                      className={`w-4 h-4 rounded-md flex items-center justify-center transition-all border shadow-lg flex-shrink-0 ${
-                        track.mode === 'vocal'
-                          ? 'bg-cyan-600 border-cyan-400 text-white shadow-[0_0_10px_rgba(34,211,238,0.4)]'
-                          : 'bg-[#1a1a1e] border-zinc-700 text-zinc-400 hover:text-cyan-400 hover:border-cyan-400/60'
-                      }`}
-                      title={track.mode === 'vocal' ? `Switch "${track.name}" to Instrument` : `Switch "${track.name}" to Vocal`}
-                    >
-                      {track.mode === 'vocal' ? <Mic2 size={8} /> : <span className="text-[8px]">🎹</span>}
-                    </button>
+                <React.Fragment key={track.id}>
+                  <div 
+                    className="absolute left-1 z-50 flex flex-col gap-1 pointer-events-auto"
+                    style={{ top: `${yPos - 2}px` }}
+                  >
+                    {/* Layout: [icon] on top, [S] on bottom to reduce width and avoid covering notes */}
+                    <div className="flex flex-col gap-0.5 items-center bg-black/40 border border-white/10 p-0.5 rounded-lg backdrop-blur-sm pointer-events-auto w-fit">
+                      
+                      {/* Toggle between Vocal and Instrument */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setTracks((prev: any) => prev.map((t: any) => 
+                            t.id === track.id ? { ...t, mode: t.mode === 'vocal' ? 'instrument' : 'vocal' } : t
+                          ));
+                        }}
+                        className={`w-4 h-4 rounded-md flex items-center justify-center transition-all border shadow-lg flex-shrink-0 ${
+                          track.mode === 'vocal'
+                            ? 'bg-cyan-600 border-cyan-400 text-white shadow-[0_0_10px_rgba(34,211,238,0.4)]'
+                            : 'bg-[#1a1a1e] border-zinc-700 text-zinc-400 hover:text-cyan-400 hover:border-cyan-400/60'
+                        }`}
+                        title={track.mode === 'vocal' ? `Switch "${track.name}" to Instrument` : `Switch "${track.name}" to Vocal`}
+                      >
+                        {track.mode === 'vocal' ? <Mic2 size={8} /> : <span className="text-[8px]">🎹</span>}
+                      </button>
 
-                    {/* Stem Solo buttons */}
-                    {showStemControls && (() => {
-                      const stemTrackId = track.id;
-                      const isSoloed = soloedStems[stemTrackId]?.has(0);
-                      const isAnySoloed = Object.values(soloedStems).some(set => set.size > 0);
+                      {/* Stem Solo buttons */}
+                      {showStemControls && (() => {
+                        const stemTrackId = track.id;
+                        const isSoloed = soloedStems[stemTrackId]?.has(0);
 
-                      return (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleSoloStem(stemTrackId, 0);
-                          }}
-                          className={`w-4 h-4 rounded-md border flex items-center justify-center transition-all shadow-lg ${
-                            isSoloed
-                              ? 'bg-cyan-500 border-cyan-300 text-white shadow-[0_0_8px_rgba(6,182,212,0.5)]'
-                              : 'bg-[#1a1a1e] border-zinc-700 text-zinc-400 hover:text-cyan-300 hover:border-cyan-500/60'
-                          }`}
-                          title={`Solo ${track.name}`}
-                        >
-                          <span className="text-[8px] font-black leading-none pb-[1px]">S</span>
-                        </button>
-                      );
-                    })()}
+                        return (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleSoloStem(stemTrackId, 0);
+                            }}
+                            className={`w-4 h-4 rounded-md border flex items-center justify-center transition-all shadow-lg ${
+                              isSoloed
+                                ? 'bg-yellow-500 border-yellow-300 text-black shadow-[0_0_8px_rgba(234,179,8,0.5)]'
+                                : 'bg-[#1a1a1e] border-zinc-700 text-zinc-400 hover:text-yellow-400 hover:border-yellow-500/60'
+                            }`}
+                            title={`Solo ${track.name}`}
+                          >
+                            <span className="text-[8px] font-black leading-none pb-[1px]">S</span>
+                          </button>
+                        );
+                      })()}
+                    </div>
                   </div>
-                </div>
+
+                  {/* ALL Button below the last track of this staff */}
+                  {showStemControls && subIndex === tracksInSameStaff.length - 1 && (
+                    <div 
+                      className="absolute left-1 z-50 pointer-events-auto"
+                      style={{ top: `${yPos + 40}px` }}
+                    >
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSoloedStems({}); // Clear all solos = play ALL
+                        }}
+                        className={`w-5 h-4 rounded-md border flex items-center justify-center transition-all shadow-lg ${
+                          !isAnySoloed
+                            ? 'bg-yellow-500 border-yellow-300 text-black shadow-[0_0_8px_rgba(234,179,8,0.5)]'
+                            : 'bg-[#1a1a1e] border-zinc-700 text-zinc-400 hover:text-yellow-400 hover:border-yellow-500/60'
+                        }`}
+                        title="Play ALL voices"
+                      >
+                        <span className="text-[6px] font-black">ALL</span>
+                      </button>
+                    </div>
+                  )}
+                </React.Fragment>
               );
             })}
           </div>
