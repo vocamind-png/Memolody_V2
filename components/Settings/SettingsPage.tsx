@@ -385,17 +385,25 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, on
                                             } catch (e) {}
 
                                             // Attempt to delete files on the remote GPU server
-                                            if (filesToDelete.length > 0) {
-                                                let base = localStorage.getItem('vocalido_runpod_url') || '';
-                                                if (base) {
-                                                    if (base.endsWith('/')) base = base.slice(0, -1);
-                                                    // In the future, we can add owner_id here for user-specific deletion
-                                                    const authUserId = localStorage.getItem('auth_user_id') || ''; 
-                                                    
-                                                    // Fire and forget delete requests
+                                            let base = localStorage.getItem('vocalido_runpod_url') || '';
+                                            if (base) {
+                                                if (base.endsWith('/')) base = base.slice(0, -1);
+                                                const authUserId = localStorage.getItem('auth_user_id') || ''; 
+                                                const headers = new Headers();
+                                                headers.set('serveo-skip-browser-warning', 'true');
+                                                headers.set('bypass-tunnel-reminder', 'true');
+                                                
+                                                // Always send a global clear command just in case the backend supports it
+                                                // This handles the case where the user already cleared localStorage
+                                                fetch(`${base}/studio/renders/clear_all?owner_id=${encodeURIComponent(authUserId)}`, { method: 'DELETE', headers }).catch(() => {});
+                                                fetch(`${base}/studio/renders/all?owner_id=${encodeURIComponent(authUserId)}`, { method: 'DELETE', headers }).catch(() => {});
+                                                fetch(`${base}/studio/renders?owner_id=${encodeURIComponent(authUserId)}`, { method: 'DELETE', headers }).catch(() => {});
+                                                
+                                                // Fire and forget individual delete requests if we have any known files
+                                                if (filesToDelete.length > 0) {
                                                     Promise.allSettled(
                                                         filesToDelete.map(filename => 
-                                                            fetch(`${base}/studio/renders/${encodeURIComponent(filename)}?owner_id=${encodeURIComponent(authUserId)}`, { method: 'DELETE' })
+                                                            fetch(`${base}/studio/renders/${encodeURIComponent(filename)}?owner_id=${encodeURIComponent(authUserId)}`, { method: 'DELETE', headers })
                                                         )
                                                     ).then(() => {
                                                         console.log(`[Cache Clear] Sent DELETE requests for ${filesToDelete.length} files to free up GPU disk space.`);
