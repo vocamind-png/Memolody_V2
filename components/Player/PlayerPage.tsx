@@ -2872,32 +2872,34 @@ const PlayerPage: React.FC<{
                     )}
                   </div>
 
-                  <button
-                    onClick={() => { setModalSelectedTracks(tracks.map(t => t.id)); setShowRenderPrompt(true); }}
-                    className="h-4 px-1.5 rounded-md flex items-center gap-1 text-[7px] font-black uppercase tracking-wider transition-all border shadow-md bg-zinc-900 border-zinc-700 text-[#00e5ff] hover:text-white hover:border-[#00e5ff] hover:shadow-[0_0_8px_rgba(0,229,255,0.4)] active:scale-95 animate-pulse"
-                    title="Render AI Vocals"
-                  >
-                    <Sparkles size={6.5} className="text-[#00e5ff]" />
-                    Render
-                  </button>
+                  {/* Row 3: RENDER and ALL horizontally to save vertical space and prevent overlapping with tracks */}
+                  <div className="flex flex-row gap-1">
+                    <button
+                      onClick={() => { setModalSelectedTracks(tracks.map(t => t.id)); setShowRenderPrompt(true); }}
+                      className="h-4 px-1.5 rounded-md flex items-center gap-1 text-[7px] font-black uppercase tracking-wider transition-all border shadow-md bg-zinc-900 border-zinc-700 text-[#00e5ff] hover:text-white hover:border-[#00e5ff] hover:shadow-[0_0_8px_rgba(0,229,255,0.4)] active:scale-95 animate-pulse"
+                      title="Render AI Vocals"
+                    >
+                      <Sparkles size={6.5} className="text-[#00e5ff]" />
+                      Render
+                    </button>
 
-                  {/* ALL button — always below RENDER, never overlapping */}
-                  {showStemControls && (() => {
-                    const isAnySoloed = Object.values(soloedStems).some(set => set.size > 0);
-                    return (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setSoloedStems({}); setMutedVocalTracks(new Set()); }}
-                        className={`h-4 px-2 rounded-md border flex items-center justify-center transition-all shadow-md active:scale-95 flex-shrink-0 ${
-                          (isAnySoloed || mutedVocalTracks.size > 0)
-                            ? 'bg-yellow-500 border-yellow-300 text-black shadow-[0_0_8px_rgba(234,179,8,0.4)] hover:bg-yellow-400'
-                            : 'bg-[#1a1a1e] border-zinc-700 text-zinc-500 hover:text-yellow-400 hover:border-yellow-500/40'
-                        }`}
-                        title="Reset All Solo & Mute (Play All)"
-                      >
-                        <span className="text-[6.5px] font-black uppercase tracking-wider leading-none">ALL</span>
-                      </button>
-                    );
-                  })()}
+                    {showStemControls && (() => {
+                      const isAnySoloed = Object.values(soloedStems).some(set => set.size > 0);
+                      return (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setSoloedStems({}); setMutedVocalTracks(new Set()); }}
+                          className={`h-4 px-2 rounded-md border flex items-center justify-center transition-all shadow-md active:scale-95 flex-shrink-0 ${
+                            (isAnySoloed || mutedVocalTracks.size > 0)
+                              ? 'bg-yellow-500 border-yellow-300 text-black shadow-[0_0_8px_rgba(234,179,8,0.4)] hover:bg-yellow-400'
+                              : 'bg-[#1a1a1e] border-zinc-700 text-zinc-500 hover:text-yellow-400 hover:border-yellow-500/40'
+                          }`}
+                          title="Reset All Solo & Mute (Play All)"
+                        >
+                          <span className="text-[6.5px] font-black uppercase tracking-wider leading-none">ALL</span>
+                        </button>
+                      );
+                    })()}
+                  </div>
 
                 </div>
               );
