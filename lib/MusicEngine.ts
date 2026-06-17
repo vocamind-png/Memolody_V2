@@ -1245,9 +1245,11 @@ export class MusicEngine {
         }
 
         // If in vocal mode, the instrument sampler should be completely silent (strict separation)
+        // EXCEPT if no vocal audio exists for this track at all (fallback to instrument so the track isn't dead)
         const sampler = this.trackSamplers.get(t.id);
         if (sampler && sampler.volume) {
-          sampler.volume.value = (t.mode === 'vocal') ? -100 : 4;
+          const hasVocalAudio = (this.trackVocalLayers.get(t.id)?.length || 0) > 0 || this.vocalAudioElements.has(t.id);
+          sampler.volume.value = (t.mode === 'vocal' && hasVocalAudio) ? -100 : 4;
         }
       }
 
