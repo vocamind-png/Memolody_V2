@@ -346,14 +346,35 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, on
                                         <p className="text-[9px] text-zinc-500 leading-relaxed">Remove all cached vocal renders. You'll need to re-render songs after clearing.</p>
                                     </div>
                                     <button
-                                        onClick={() => {
+                                        onClick={async () => {
+                                            const confirmClear = window.confirm('Are you sure you want to clear all renders? This will also attempt to free up space on the GPU server.');
+                                            if (!confirmClear) return;
+
                                             const keys = Object.keys(localStorage);
                                             let count = 0;
+                                            const filesToDelete: string[] = [];
+
                                             keys.forEach(k => {
-                                                if (k.startsWith('memo_render_history_') || 
+                                                if (k.startsWith('memo_render_history_')) {
+                                                    try {
+                                                        const raw = localStorage.getItem(k);
+                                                        if (raw) {
+                                                            const history = JSON.parse(raw);
+                                                            history.forEach((h: any) => {
+                                                                // If the user hasn't saved it to Memorender, add to delete list
+                                                                if (h.filename && !h.saved) {
+                                                                    filesToDelete.push(h.filename);
+                                                                }
+                                                            });
+                                                        }
+                                                    } catch(e) {}
+                                                    localStorage.removeItem(k);
+                                                    count++;
+                                                } else if (
                                                     k.startsWith('active_render_key_') ||
                                                     k.startsWith('vocalido_render_cache_') ||
-                                                    k.startsWith('audio_blob_cache_')) {
+                                                    k.startsWith('audio_blob_cache_')
+                                                ) {
                                                     localStorage.removeItem(k);
                                                     count++;
                                                 }
@@ -362,7 +383,27 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, on
                                             try {
                                                 indexedDB.deleteDatabase('memolody_audio_cache');
                                             } catch (e) {}
-                                            alert(`✅ Cleared ${count} render cache entries + audio blob cache`);
+
+                                            // Attempt to delete files on the remote GPU server
+                                            if (filesToDelete.length > 0) {
+                                                let base = localStorage.getItem('vocalido_runpod_url') || '';
+                                                if (base) {
+                                                    if (base.endsWith('/')) base = base.slice(0, -1);
+                                                    // In the future, we can add owner_id here for user-specific deletion
+                                                    const authUserId = localStorage.getItem('auth_user_id') || ''; 
+                                                    
+                                                    // Fire and forget delete requests
+                                                    Promise.allSettled(
+                                                        filesToDelete.map(filename => 
+                                                            fetch(`${base}/studio/renders/${encodeURIComponent(filename)}?owner_id=${encodeURIComponent(authUserId)}`, { method: 'DELETE' })
+                                                        )
+                                                    ).then(() => {
+                                                        console.log(`[Cache Clear] Sent DELETE requests for ${filesToDelete.length} files to free up GPU disk space.`);
+                                                    });
+                                                }
+                                            }
+
+                                            alert(`✅ Cleared ${count} render cache entries + audio blob cache.\nSent commands to free up GPU disk space for ${filesToDelete.length} files.`);
                                         }}
                                         className="px-5 py-2.5 bg-orange-500/10 border border-orange-500/30 text-orange-400 text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-orange-500/20 transition-all active:scale-95 whitespace-nowrap"
                                     >
