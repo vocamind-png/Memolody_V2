@@ -2881,6 +2881,24 @@ const PlayerPage: React.FC<{
                     Render
                   </button>
 
+                  {/* ALL button — always below RENDER, never overlapping */}
+                  {showStemControls && (() => {
+                    const isAnySoloed = Object.values(soloedStems).some(set => set.size > 0);
+                    return (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setSoloedStems({}); setMutedVocalTracks(new Set()); }}
+                        className={`h-4 px-2 rounded-md border flex items-center justify-center transition-all shadow-md active:scale-95 flex-shrink-0 ${
+                          (isAnySoloed || mutedVocalTracks.size > 0)
+                            ? 'bg-yellow-500 border-yellow-300 text-black shadow-[0_0_8px_rgba(234,179,8,0.4)] hover:bg-yellow-400'
+                            : 'bg-[#1a1a1e] border-zinc-700 text-zinc-500 hover:text-yellow-400 hover:border-yellow-500/40'
+                        }`}
+                        title="Reset All Solo & Mute (Play All)"
+                      >
+                        <span className="text-[6.5px] font-black uppercase tracking-wider leading-none">ALL</span>
+                      </button>
+                    );
+                  })()}
+
                 </div>
               );
             })()}
@@ -2931,28 +2949,7 @@ const PlayerPage: React.FC<{
 
                 return (
                   <React.Fragment key={track.id}>
-                    {showStemControls && visualNumber === 1 && (
-                      <div 
-                        className="absolute left-1 z-50 flex flex-row flex-nowrap items-center pointer-events-auto"
-                        style={{ top: `${yPos - 20}px` }}
-                      >
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSoloedStems({});
-                            setMutedVocalTracks(new Set());
-                          }}
-                          className={`h-[14px] px-2 rounded-md border flex items-center justify-center transition-all shadow-md active:scale-95 flex-shrink-0 ${
-                            (isAnySoloed || mutedVocalTracks.size > 0)
-                              ? 'bg-yellow-500 border-yellow-300 text-black shadow-[0_0_8px_rgba(234,179,8,0.4)] hover:bg-yellow-400'
-                              : 'bg-[#1a1a1e] border-zinc-700 text-zinc-500 hover:text-yellow-400 hover:border-yellow-500/40'
-                          }`}
-                          title="Reset All Solo & Mute (Play All)"
-                        >
-                          <span className="text-[6.5px] font-black uppercase tracking-wider leading-none">ALL</span>
-                        </button>
-                      </div>
-                    )}
+                    {/* ALL button moved to sidebar — no longer here */}
 
 
                     <div 
