@@ -492,11 +492,11 @@ export class MusicEngine {
                 graceOffset = 0;
               }
 
-              const currentTrackId = `${partId}-S${staff}-V${voice}`;
+              // Group purely by staff to find true vertical chord density. Ignore erratic MusicXML voices.
+              const currentTrackId = `${partId}-S${staff}`;
               if (!partNames[currentTrackId]) {
                 const staffSuffix = staff === 1 ? ' (Treble)' : staff === 2 ? ' (Bass)' : ` (Staff ${staff})`;
-                const voiceSuffix = ` V${voice}`;
-                partNames[currentTrackId] = `${basePartName}${staffSuffix}${voiceSuffix}`;
+                partNames[currentTrackId] = `${basePartName}${staffSuffix}`;
               }
 
               if (!isRest) {
