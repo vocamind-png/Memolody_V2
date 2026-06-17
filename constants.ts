@@ -42,7 +42,7 @@ const createStandardXml = (title: string, composer: string) => `<?xml version="1
 </score-partwise>`.trim();
 
 export const MUSICXML_TEMPLATES = [
-  { name: "Ode to Joy", composer: "Beethoven", era: "Classical", bpm: 120, cover: "https://images.unsplash.com/photo-1507838153414-b4b713384a76?w=400", xml: createStandardXml("Ode to Joy", "Beethoven") },
-  { name: "Canon in D", composer: "Pachelbel", era: "Baroque", bpm: 80, cover: "https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=400", xml: createStandardXml("Canon in D", "Pachelbel") },
-  { name: "Clair de Lune", composer: "Debussy", era: "Impressionist", bpm: 72, cover: "https://images.unsplash.com/photo-1520529611471-3cb3c20c0211?w=400", xml: createStandardXml("Clair de Lune", "Debussy") }
+  { name: "Ode to Joy", composer: "Beethoven", era: "Classic", bpm: 120, cover: "https://images.unsplash.com/photo-1507838153414-b4b713384a76?w=400", xml: createStandardXml("Ode to Joy", "Beethoven") },
+  { name: "Canon in D", composer: "Pachelbel", era: "Classic", bpm: 80, cover: "https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=400", xml: createStandardXml("Canon in D", "Pachelbel") },
+  { name: "Clair de Lune", composer: "Debussy", era: "Classic", bpm: 72, cover: "https://images.unsplash.com/photo-1520529611471-3cb3c20c0211?w=400", xml: createStandardXml("Clair de Lune", "Debussy") }
 ];

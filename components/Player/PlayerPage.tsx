@@ -73,12 +73,19 @@ const saveRenderToLocalCache = async (
   }
 };
 
+export const getRenderKey = (entry: any) => {
+  const tfStr = entry.timingFeel !== undefined ? `_tf${entry.timingFeel}` : '';
+  const tpStr = entry.transpose !== undefined ? `_tp${entry.transpose}` : '_tp0';
+  const trStr = entry.vocalTracks ? `_tr${entry.vocalTracks}` : '_trP1';
+  // Note: For version >= 3 we use the full signature. For older versions we keep backwards compatibility.
+  const v2Str = entry.version >= 3 ? `${trStr}_v2` : (entry.version >= 2 ? '_v2' : '');
+  return `${entry.bpmPercent}_${entry.songKey}_${entry.engineId || 'default'}_${entry.lyricMode || ''}_${entry.voiceName || 'Auto'}${tfStr}${tpStr}${v2Str}`;
+};
+
 const restoreCachedBlobs = async (songId: string, history: any[]): Promise<any[]> => {
   try {
     const updatedHistory = await Promise.all(history.map(async (entry) => {
-      const tfStr = entry.timingFeel !== undefined ? `_tf${entry.timingFeel}` : '';
-      const v2Str = entry.version >= 2 ? '_v2' : '';
-      const entryKey = `${entry.bpmPercent}_${entry.songKey}_${entry.engineId || 'default'}_${entry.lyricMode || ''}_${entry.voiceName || 'Auto'}${tfStr}${v2Str}`;
+      const entryKey = getRenderKey(entry);
       const cacheKey = `vocal_render_${songId}_${entryKey}`;
       
       const mainBlob = await AudioBlobCache.get(cacheKey);
@@ -619,18 +626,19 @@ const PlayerPage: React.FC<{
     return () => clearTimeout(timeoutId);
   }, [isAudioLoading]);
 
-  // Safety watchdog: Force reset isRenderingVocal to false if it remains true for more than 5 minutes
+  // Safety watchdog: Force reset isRenderingVocal to false if it remains true for more than 30 minutes
+  // (async polling renders can take much longer than 5 min for polyphonic songs)
   useEffect(() => {
     if (!isRenderingVocal) return;
     const timeoutId = setTimeout(() => {
       setIsRenderingVocal(prev => {
         if (prev) {
-          console.warn("[PlayerPage] ⚠️ Global watchdog: force-resetting isRenderingVocal after 300s");
+          console.warn("[PlayerPage] ⚠️ Global watchdog: force-resetting isRenderingVocal after 1800s");
           return false;
         }
         return prev;
       });
-    }, 300000);
+    }, 1800000); // 30 minutes
     return () => clearTimeout(timeoutId);
   }, [isRenderingVocal]);
 
@@ -884,7 +892,7 @@ const PlayerPage: React.FC<{
 
   const handleSoloStem = (trackId: string, stemIndex: number | null) => {
     setSoloedStems(prev => {
-      const currentSet = prev[trackId] ? new Set(prev[trackId]) : new Set<number>();
+      const currentSet = new Set<number>(prev[trackId] || []);
       
       if (stemIndex === null) {
         // Clear all solos for this track (Play All)
@@ -1120,7 +1128,7 @@ const PlayerPage: React.FC<{
 
       // Step C: Load song
       console.log("[PlayerPage] Step C: Loading song...", { notes: allPlayableNotes.length, tracks: updatedTracks.length, transpose, isMetronomeOn });
-      await musicEngine.loadSong(allPlayableNotes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn);
+      await musicEngine.loadSong(allPlayableNotes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn, true);
       console.log("[PlayerPage] Step C done. isSongLoaded:", musicEngine.isSongLoaded, "currentPart exists:", !!musicEngine.isSongLoaded);
 
       // Step D: Start playback
@@ -1551,9 +1559,7 @@ const PlayerPage: React.FC<{
     if (!savedKey) return;
 
     const cached = renderHistory.find(h => {
-      const tfStr = h.timingFeel !== undefined ? `_tf${h.timingFeel}` : '';
-      const v2Str = h.version >= 2 ? '_v2' : '';
-      return `${h.bpmPercent}_${h.songKey}_${h.engineId||'default'}_${h.lyricMode||''}_${h.voiceName||'Auto'}${tfStr}${v2Str}` === savedKey;
+      return getRenderKey(h) === savedKey;
     });
 
     if (cached) {
@@ -1588,6 +1594,7 @@ const PlayerPage: React.FC<{
           vocalTracksArr.includes(t.id) ? { ...t, mode: 'vocal' } as TrackState : t
         );
         setTracks(updatedTracks);
+        musicEngine.loadSong(allPlayableNotes, updatedTracks, tVal, parsedData.timeSignature, isMetronomeOn, true).catch(() => {});
         return;
       }
 
@@ -1628,16 +1635,6 @@ const PlayerPage: React.FC<{
         
         if (trackAudioUrl) {
           await musicEngine.addVocalLayer(tid, trackAudioUrl, stemsToPass, renderBpm);
-          
-          let audioEl = musicEngine.vocalAudioElements.get(tid);
-          if (!audioEl) {
-            audioEl = new Audio();
-            audioEl.crossOrigin = 'anonymous';
-            audioEl.preservesPitch = true;
-            musicEngine.vocalAudioElements.set(tid, audioEl);
-          }
-          audioEl.src = trackAudioUrl;
-          audioEl.load();
         }
       }))
         .then(() => {
@@ -1661,7 +1658,7 @@ const PlayerPage: React.FC<{
           );
           setTracks(updatedTracks);
           
-          return musicEngine.loadSong(allPlayableNotes, updatedTracks, tVal, parsedData.timeSignature, isMetronomeOn);
+          return musicEngine.loadSong(allPlayableNotes, updatedTracks, tVal, parsedData.timeSignature, isMetronomeOn, true);
         })
         .catch(err => console.warn('[PlayerPage] Auto-restore render failed:', err))
         .finally(() => setIsAudioLoading(false));
@@ -1682,9 +1679,8 @@ const PlayerPage: React.FC<{
     if (!parsedData.notes.length) return;
     if (tracks.length === 0) return; // Wait for tracks to populate
     
-    // NOTE: We REMOVED 'transpose' from currentKey and dependencies here.
-    // Changing transpose will instantly pitch-shift via SoundTouchJS instead of forcing a re-render.
-    const currentKey = `${song.id}_${activeLyricMode}_${activeEngineId}_${activeVoiceName}`;
+    // Added 'transpose' back to dependencies so that Auto-Render catches key changes!
+    const currentKey = `${song.id}_${activeLyricMode}_${activeEngineId}_${activeVoiceName}_${transpose}`;
     if (currentKey === lastRenderedKeyRef.current) return;
     
     console.log(`[Vocalido] 🚀 Auto-Render triggered: ${activeLyricMode} (${parsedData.notes.length} notes)`);
@@ -1692,7 +1688,7 @@ const PlayerPage: React.FC<{
     
     // Use a microtask to avoid stale closure issues
     autoRenderRef.current = true;
-  }, [vocalidoAutoRender, iframeLoaded, song?.id, musicXml, activeLyricMode, activeVoiceName, activeEngineId, currentBpm, parsedData.notes.length, tracks.length, tracksRep]);
+  }, [vocalidoAutoRender, iframeLoaded, song?.id, musicXml, activeLyricMode, activeVoiceName, activeEngineId, currentBpm, transpose, parsedData.notes.length, tracks.length, tracksRep]);
   
   // Separate effect to actually call the function (avoids stale closure)
   useEffect(() => {
@@ -1866,7 +1862,7 @@ const PlayerPage: React.FC<{
     const fetchEngines = async (manualCheck = false) => {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 3000); // 3-second quick connection check
+        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout — Vercel→RunPod proxy needs more time
         const res = await svsFetch(getFetchUrl('/vocalido/studio/voices'), {
           signal: controller.signal
         });
@@ -1956,6 +1952,11 @@ const PlayerPage: React.FC<{
     };
     fetchEngines();
 
+    // Auto-retry every 30s when server is offline (RunPod proxy can be slow on first connect)
+    const retryInterval = setInterval(() => {
+      if (!isServerOnline) fetchEngines();
+    }, 30000);
+
     const handleBackendChange = () => {
       fetchEngines(true);
     };
@@ -1968,6 +1969,7 @@ const PlayerPage: React.FC<{
 
     return () => {
       active = false;
+      clearInterval(retryInterval);
       window.removeEventListener('vocalido_backend_url_changed', handleBackendChange);
     };
   }, [song?.id]);
@@ -2108,7 +2110,7 @@ const PlayerPage: React.FC<{
         mode: (mutedVocalTracks.has(t.id) ? 'instrument' : t.mode) as 'instrument' | 'vocal'
       }));
       musicEngine.ensureInitialized()
-        .then(() => musicEngine.loadSong(allPlayableNotes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn))
+        .then(() => musicEngine.loadSong(allPlayableNotes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn, true))
         .then(() => {
           musicEngine.setTransportSeconds(savedPos);
           if (wasPlaying) return musicEngine.start();
@@ -2474,14 +2476,17 @@ const PlayerPage: React.FC<{
                 setModalSelectedTracks(tracks.map(t => t.id));
                 setShowRenderPrompt(true);
               }}
-              className={`px-1.5 py-[1px] -m-0.5 rounded-full text-[6.5px] font-black uppercase tracking-widest border transition-all shadow-[0_0_10px_rgba(0,229,255,0.2)] ${
-                isModelLoading 
-                  ? 'bg-zinc-800 border-zinc-700 text-zinc-500 cursor-not-allowed shadow-none' 
-                  : 'bg-white/5 border-white/10 text-[#00e5ff] hover:bg-[#00e5ff] hover:text-black'
+              className={`relative h-[18px] px-2 rounded-full flex items-center text-[7px] font-black uppercase tracking-widest transition-all border-none shadow-[0_0_10px_rgba(0,229,255,0.3)] group overflow-hidden ${
+                isModelLoading ? 'cursor-not-allowed opacity-50' : 'active:scale-95'
               }`}
               title={isModelLoading ? "Loading vocal models..." : "Open AI Render Prompt / Shortcut: Option+R"}
             >
-              {isModelLoading ? "Loading..." : "Render"}
+              <div className="absolute inset-0 bg-black/60 z-0" />
+              {!isModelLoading && <div className="absolute -inset-[100%] bg-[conic-gradient(from_0deg,transparent_0_320deg,rgba(0,229,255,1)_360deg)] animate-[spin_1.5s_linear_infinite] z-0" />}
+              <div className="absolute inset-[1px] rounded-full bg-zinc-900 z-0" />
+              <div className="relative z-10 flex items-center text-[#00e5ff] group-hover:text-white transition-colors">
+                {isModelLoading ? "Loading..." : "Render"}
+              </div>
             </button>
 
             <button
@@ -2496,46 +2501,45 @@ const PlayerPage: React.FC<{
               <SlidersHorizontal size={10} />
             </button>
             
-            {/* Status Dot */}
+            {/* Status Dot: 🔵 WebGPU | 🟣 Server GPU | 🔴 Offline */}
             {(() => {
-              let dotColor = 'bg-rose-500';
-              let shadowColor = 'shadow-[0_0_10px_rgba(239,68,68,0.8)]';
-              let pingColor = '';
-              let statusTitle = 'SVS Server Offline';
+              let dotColor: string;
+              let shadowColor: string;
+              let pingColor: string;
+              let statusTitle: string;
+              let modeLabel: string;
 
               if (svsEngine === 'browser-ai') {
-                dotColor = 'bg-[#00e5ff]';
-                shadowColor = 'shadow-[0_0_10px_rgba(0,229,255,0.8)]';
-                pingColor = 'bg-[#00e5ff]';
-                statusTitle = 'Using On-Device WebGPU Browser SVS (Cyan)';
+                // 🔵 Blue = On-demand WebGPU (client-side)
+                dotColor = 'bg-cyan-400';
+                shadowColor = 'shadow-[0_0_12px_rgba(34,211,238,0.9)]';
+                pingColor = 'bg-cyan-400';
+                statusTitle = 'On-Demand WebGPU (Browser AI)';
+                modeLabel = 'WebGPU';
+              } else if (isServerOnline) {
+                // 🟣 Purple = Server-side GPU connected & working
+                dotColor = 'bg-violet-500';
+                shadowColor = 'shadow-[0_0_12px_rgba(139,92,246,0.9)]';
+                pingColor = 'bg-violet-500';
+                statusTitle = 'Server-side GPU Connected (Vocalido AI)';
+                modeLabel = 'Server GPU';
               } else {
-                if (isServerOnline) {
-                  dotColor = 'bg-emerald-500';
-                  shadowColor = 'shadow-[0_0_10px_rgba(16,185,129,0.8)]';
-                  pingColor = 'bg-emerald-500';
-                  statusTitle = 'Local SVS Server Online (Vocalido VM - Green)';
-                } else {
-                  const hasRunpod = import.meta.env.VITE_RUNPOD_API_URL && import.meta.env.VITE_RUNPOD_API_KEY;
-                  if (hasRunpod) {
-                    dotColor = 'bg-fuchsia-500';
-                    shadowColor = 'shadow-[0_0_10px_rgba(217,70,239,0.8)]';
-                    pingColor = 'bg-fuchsia-500';
-                    statusTitle = 'Local Server Offline (Using RunPod API Fallback - Purple)';
-                  } else {
-                    dotColor = 'bg-rose-500';
-                    shadowColor = 'shadow-[0_0_10px_rgba(239,68,68,0.8)]';
-                    statusTitle = 'SVS Server Offline & RunPod Fallback Offline (Red)';
-                  }
-                }
+                // 🔴 Red = Disconnected / offline
+                dotColor = 'bg-rose-500';
+                shadowColor = 'shadow-[0_0_10px_rgba(239,68,68,0.8)]';
+                pingColor = '';
+                statusTitle = 'Server Disconnected — Render Unavailable';
+                modeLabel = 'Offline';
               }
 
               return (
-                <div className="relative flex items-center justify-center ml-1" title={statusTitle}>
-                  <div className={`w-2.5 h-2.5 rounded-full transition-all duration-300 ${dotColor} ${shadowColor}`} />
+                <div className="relative flex items-center justify-center ml-1 cursor-help" title={statusTitle}>
+                  <div className={`w-2.5 h-2.5 rounded-full transition-all duration-500 ${dotColor} ${shadowColor}`} />
                   {pingColor && <div className={`absolute w-2.5 h-2.5 ${pingColor} rounded-full animate-ping opacity-40`} />}
                 </div>
               );
             })()}
+
           </div>
         </div>
       </div>
@@ -2581,7 +2585,7 @@ const PlayerPage: React.FC<{
                   </button>
                 </div>
                 {renderHistory.map((h) => {
-                  const hKey = `${h.bpmPercent}_${h.songKey}_${h.engineId||'default'}_${h.lyricMode||''}_${h.voiceName||'Auto'}`;
+                  const hKey = getRenderKey(h);
                   const isActive = activeRenderKey === hKey;
                   const isInfoOpen = memoInfoOpenKey === hKey;
                   const shortDate = h.renderedAt ? new Date(h.renderedAt).toLocaleDateString('th-TH', { day:'2-digit', month:'2-digit' }) : null;
@@ -2639,17 +2643,6 @@ const PlayerPage: React.FC<{
                               
                               if (trackAudioUrl) {
                                 await musicEngine.addVocalLayer(tid, trackAudioUrl, stemsToPass, targetBpm);
-                                let audioEl = musicEngine.vocalAudioElements.get(tid);
-                                if (!audioEl) {
-                                  audioEl = new Audio();
-                                  audioEl.crossOrigin = 'anonymous';
-                                  audioEl.preservesPitch = true;
-                                  audioEl.preload = 'auto';
-                                  musicEngine.vocalAudioElements.set(tid, audioEl);
-                                }
-                                audioEl.src = trackAudioUrl;
-                                audioEl.load();
-                                audioEl.play().then(() => audioEl.pause()).catch(e => console.warn('Main vocal unlock failed:', e));
                               }
                             }));
   
@@ -2661,7 +2654,7 @@ const PlayerPage: React.FC<{
                             setMemoInfoOpenKey(null);
                             if (h.engineId) setActiveEngineId(h.engineId);
                             setStoredSinger(h.voiceName && h.voiceName !== 'Auto' ? h.voiceName : null);
-                            await musicEngine.loadSong(allPlayableNotes, updatedTracks, tVal, parsedData.timeSignature, isMetronomeOn);
+                            await musicEngine.loadSong(allPlayableNotes, updatedTracks, tVal, parsedData.timeSignature, isMetronomeOn, true);
                             musicEngine.setTransportSeconds(currentPos);
                             if (wasPlaying) { await musicEngine.start(); setIsPlaying(true); }
                           } catch (err) {
@@ -2686,7 +2679,9 @@ const PlayerPage: React.FC<{
                         title="ดูรายละเอียด / Show details"
                       >ℹ</button>
     
-                      {isInfoOpen && (
+                      {isInfoOpen && (() => {
+                        const filenameFromUrl = h.audioUrl.split('/').pop() || 'audio.wav';
+                        return (
                         <div className="absolute left-14 top-0 w-44 bg-[#0c0c0e]/95 backdrop-blur-2xl border border-white/10 p-3 rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.8)] z-[8999] flex flex-col gap-1.5 text-[8px] animate-in fade-in slide-in-from-left-4 duration-150">
                           <div className="flex justify-between border-b border-white/5 pb-1">
                             <span className="font-black text-cyan-400 uppercase tracking-widest">Render Profile</span>
@@ -2710,7 +2705,7 @@ const PlayerPage: React.FC<{
                                     setActiveRenderKey(null);
                                     const updatedTracks = tracks.map((t: any) => ({ ...t, mode: 'instrument' } as TrackState));
                                     setTracks(updatedTracks);
-                                    musicEngine.loadSong(allPlayableNotes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn).catch(() => {});
+                                    musicEngine.loadSong(allPlayableNotes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn, true).catch(() => {});
                                   }
                                   if (memoInfoOpenKey === hKey) setMemoInfoOpenKey(null);
                                 } catch (delErr) { console.warn('[App] Failed to delete render cache:', delErr); }
@@ -2721,7 +2716,7 @@ const PlayerPage: React.FC<{
                             ลบการตั้งค่า / Delete
                           </button>
                         </div>
-                      )}
+                      )})()}
                     </div>
                   );
                 })}
@@ -2876,18 +2871,30 @@ const PlayerPage: React.FC<{
                   <div className="flex flex-row gap-1">
                     <button
                       onClick={() => { setModalSelectedTracks(tracks.map(t => t.id)); setShowRenderPrompt(true); }}
-                      className="h-4 px-1.5 rounded-md flex items-center gap-1 text-[7px] font-black uppercase tracking-wider transition-all border shadow-md bg-zinc-900 border-zinc-700 text-[#00e5ff] hover:text-white hover:border-[#00e5ff] hover:shadow-[0_0_8px_rgba(0,229,255,0.4)] active:scale-95 animate-pulse"
+                      className="relative h-4 px-1.5 rounded-md flex items-center gap-1 text-[7px] font-black uppercase tracking-wider transition-all border-none shadow-[0_0_10px_rgba(0,229,255,0.3)] active:scale-95 group overflow-hidden"
                       title="Render AI Vocals"
                     >
-                      <Sparkles size={6.5} className="text-[#00e5ff]" />
-                      Render
+                      <div className="absolute inset-0 bg-black/60 z-0" />
+                      <div className="absolute -inset-[100%] bg-[conic-gradient(from_0deg,transparent_0_320deg,rgba(0,229,255,1)_360deg)] animate-[spin_1.5s_linear_infinite] z-0" />
+                      <div className="absolute inset-[1px] rounded-[5px] bg-zinc-900 z-0" />
+                      <div className="relative z-10 flex items-center gap-1 text-[#00e5ff] group-hover:text-white transition-colors">
+                        <Sparkles size={6.5} className="text-[#00e5ff] group-hover:text-white transition-colors" />
+                        Render
+                      </div>
                     </button>
 
                     {showStemControls && (() => {
                       const isAnySoloed = Object.values(soloedStems).some(set => set.size > 0);
                       return (
                         <button
-                          onClick={(e) => { e.stopPropagation(); setSoloedStems({}); setMutedVocalTracks(new Set()); }}
+                          onClick={(e) => { 
+                            e.stopPropagation(); 
+                            setSoloedStems({}); 
+                            setMutedVocalTracks(new Set()); 
+                            setSoloedTracks(new Set());
+                            tracks.forEach(t => musicEngine.soloStem(t.id, new Set()));
+                            setTracks(prev => prev.map(t => ({ ...t, isSolo: false, isMuted: false })));
+                          }}
                           className={`h-4 px-2 rounded-md border flex items-center justify-center transition-all shadow-md active:scale-95 flex-shrink-0 ${
                             (isAnySoloed || mutedVocalTracks.size > 0)
                               ? 'bg-yellow-500 border-yellow-300 text-black shadow-[0_0_8px_rgba(234,179,8,0.4)] hover:bg-yellow-400'
@@ -2990,18 +2997,8 @@ const PlayerPage: React.FC<{
                           </button>
                         )}
 
-                        {/* Track Name (Rightmost) */}
-                        <div className="px-1 rounded flex items-center justify-center max-w-[70px] flex-shrink-0">
-                           <span className="text-[7px] font-bold text-white/90 truncate drop-shadow-md">
-                             {track.mode === 'vocal' 
-                               ? (() => {
-                                   const engineId = track.engineId || activeEngineId;
-                                   const found = voiceEngines.find(v => v.id === engineId);
-                                   return found ? found.name : 'Lotte V';
-                                 })()
-                               : (track.name || 'Instrument')}
-                           </span>
-                        </div>
+
+
                       </div>
                     </div>
                   </React.Fragment>
@@ -3286,9 +3283,15 @@ const PlayerPage: React.FC<{
 
               <button
                 onClick={() => { setShowRenderPrompt(false); triggerVocalSynthesis(false, modalSelectedTracks.length > 0 ? modalSelectedTracks : tracks.map(t => t.id)); }}
-                className="w-full py-3 px-4 bg-gradient-to-r from-cyan-400 to-indigo-500 text-black font-black text-xs uppercase tracking-widest rounded-xl hover:shadow-[0_0_20px_rgba(6,182,212,0.4)] active:scale-98 transition-all duration-200 mt-3"
+                className="relative w-full py-3 px-4 rounded-xl overflow-hidden shadow-[0_0_15px_rgba(0,229,255,0.3)] active:scale-98 transition-all duration-200 mt-3 group"
               >
-                Render Now
+                <div className="absolute inset-0 bg-black/60 z-0" />
+                <div className="absolute -inset-[100%] bg-[conic-gradient(from_0deg,transparent_0_320deg,rgba(0,229,255,1)_360deg)] animate-[spin_1.5s_linear_infinite] z-0" />
+                <div className="absolute inset-[1.5px] rounded-[10.5px] bg-gradient-to-r from-cyan-600 to-indigo-600 z-0" />
+                
+                <div className="relative z-10 flex items-center justify-center font-black text-xs uppercase tracking-widest text-white group-hover:drop-shadow-[0_0_8px_rgba(255,255,255,0.8)] transition-all">
+                  Render Now
+                </div>
               </button>
               <button onClick={() => setShowRenderPrompt(false)} className="w-full mt-2.5 py-3 px-4 bg-transparent border border-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-white font-black text-[10px] uppercase tracking-widest rounded-xl active:scale-98 transition-all duration-200">
                 Close
@@ -3787,24 +3790,19 @@ const PlayerPage: React.FC<{
                     On-Device (Browser AI)
                   </button>
                   <button
-                    disabled={!isServerOnline}
                     onClick={() => handleSvsEngineChange('vocalido')}
                     className={`flex-1 py-2 text-[9px] font-black uppercase rounded-xl border transition-all flex items-center justify-center gap-1.5 ${
-                      !isServerOnline
-                        ? 'bg-[#0c0c0e]/60 text-zinc-600 border-white/5 cursor-not-allowed opacity-50'
-                        : svsEngine === 'vocalido'
+                      svsEngine === 'vocalido'
                         ? 'bg-[#00e5ff]/20 text-[#00e5ff] border-[#00e5ff]/40 shadow-[0_0_12px_rgba(0,229,255,0.15)]'
                         : 'bg-transparent text-zinc-400 border-white/5 hover:bg-white/5 hover:text-white'
                     }`}
                   >
                     <span className={`w-1.5 h-1.5 rounded-full ${
-                      !isServerOnline 
-                        ? 'bg-zinc-700 shadow-none' 
-                        : svsEngine === 'vocalido' 
+                      svsEngine === 'vocalido' 
                         ? 'bg-[#00e5ff] shadow-[0_0_6px_rgba(0,229,255,0.6)]' 
                         : 'bg-zinc-500 shadow-none'
                     }`} />
-                    Server-Side {isServerOnline ? '(Vocalido)' : '(Offline)'}
+                    Server-Side (Cloud GPU)
                   </button>
                 </div>
               </div>
@@ -3919,7 +3917,7 @@ const PlayerPage: React.FC<{
                         t.id === primaryTrackId ? { ...t, mode: 'instrument' } as TrackState : t
                       );
                       setTracks(updatedTracks);
-                      musicEngine.loadSong(allPlayableNotes, updatedTracks, transpose, parsedData?.timeSignature, isMetronomeOn).catch(() => {});
+                      musicEngine.loadSong(allPlayableNotes, updatedTracks, transpose, parsedData?.timeSignature, isMetronomeOn, true).catch(() => {});
                     }
                   }}
                     className="text-[8px] text-zinc-600 underline text-right">Clear History</button>

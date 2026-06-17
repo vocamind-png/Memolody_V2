@@ -197,7 +197,23 @@ export class SongStorage {
     const db = await this.init();
     return new Promise((resolve) => {
       const request = db.transaction([this.storeName], 'readonly').objectStore(this.storeName).getAll();
-      request.onsuccess = () => resolve(request.result || []);
+      request.onsuccess = () => {
+        const results = request.result || [];
+        // Group legacy eras into 'Classic'
+        results.forEach((song: StoredSong) => {
+          if (song.metadata) {
+            const era = song.metadata.era || song.metadata.category;
+            if (era) {
+              const lowerEra = era.toLowerCase();
+              if (['baroque', 'classical', 'classic', 'romantic', 'impressionist'].includes(lowerEra)) {
+                song.metadata.era = 'Classic';
+                song.metadata.category = 'Classic';
+              }
+            }
+          }
+        });
+        resolve(results);
+      };
     });
   }
 

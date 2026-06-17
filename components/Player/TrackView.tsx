@@ -115,8 +115,9 @@ const TrackView: React.FC<TrackViewProps> = ({ song, musicXml, tracks, setTracks
   const [pluginBrowserTarget, setPluginBrowserTarget] = useState<{ trackId: string; slotIndex: number } | null>(null);
   const [editingPlugin, setEditingPlugin] = useState<{ trackId: string; slotIndex: number; plugin: EffectInstance } | null>(null);
 
-  const [isMixerOpen, setIsMixerOpen] = useState(true);
-  const [mixerWidth, setMixerWidth] = useState(200);
+  const [isMixerOpen, setIsMixerOpen] = useState(false);
+  const [mixerWidth, setMixerWidth] = useState(0);
+  const [channelExpandedMap, setChannelExpandedMap] = useState<Record<string, boolean>>({});
 
   const requestRef = useRef<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -273,7 +274,7 @@ const TrackView: React.FC<TrackViewProps> = ({ song, musicXml, tracks, setTracks
       musicEngine.pause();
     } else {
       await musicEngine.ensureInitialized();
-      await musicEngine.loadSong(parsedData.notes, tracks, transpose, parsedData.timeSignature, false);
+      await musicEngine.loadSong(parsedData.notes, tracks, transpose, parsedData.timeSignature, true);
       musicEngine.start();
     }
   };
@@ -421,115 +422,96 @@ const TrackView: React.FC<TrackViewProps> = ({ song, musicXml, tracks, setTracks
               const currentCfg = modeConfig[track.lyricMode] || modeConfig['Ju Solfege Movable Doh'];
 
               return (
-                <div key={track.id} className="border-b border-white/5 flex flex-col px-3 py-3 gap-2 transition-all overflow-hidden relative group/strip" style={{ height: trackHeight }}>
-                  <div className="flex items-center justify-between shrink-0">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <button
-                        onClick={() => setTracks(prev => prev.map(t => t.id === track.id ? { ...t, isArmed: !t.isArmed } : t))}
-                        className={`w-5 h-5 rounded-full flex items-center justify-center transition-all ${track.isArmed ? 'bg-rose-600 text-white shadow-[0_0_10px_#ef4444]' : 'bg-zinc-900 border border-white/10 text-zinc-700 hover:text-zinc-400'}`}
-                      >
-                        <Circle size={10} fill={track.isArmed ? "currentColor" : "none"} />
-                      </button>
-                      <div className="flex flex-col min-w-0">
-                        <h4 className="text-[8px] font-bold text-white uppercase truncate leading-none">{track.name || 'STEMME'}</h4>
-                      </div>
-                    </div>
-                    <div className="shrink-0 h-4 flex items-center"><LEDMeter trackId={track.id} /></div>
+                <div key={track.id} className="border-b border-white/5 flex flex-col px-2 py-2 gap-1.5 transition-all overflow-hidden relative group/strip" style={{ height: trackHeight }}>
+                  {/* ── COMPACT ROW (always visible) ── */}
+                  <div className="flex items-center gap-1 shrink-0">
+                    {/* Mute */}
+                    <button
+                      onClick={() => {
+                        const newTracks = tracks.map(t => t.id === track.id ? { ...t, isMuted: !t.isMuted, isSolo: !t.isMuted ? false : t.isSolo } : t);
+                        musicEngine.updateTrackStates(newTracks);
+                        setTracks(newTracks as any);
+                      }}
+                      className={`w-6 h-6 rounded-md text-[8px] font-black border transition-all ${track.isMuted ? 'bg-rose-600 border-rose-400 text-white shadow-lg' : 'bg-zinc-900 border-white/10 text-zinc-500 hover:text-rose-400'}`}
+                    >M</button>
+                    {/* Solo */}
+                    <button
+                      onClick={() => {
+                        const newTracks = tracks.map(t => t.id === track.id ? { ...t, isSolo: !t.isSolo, isMuted: !t.isSolo ? false : t.isMuted } : t);
+                        musicEngine.updateTrackStates(newTracks);
+                        setTracks(newTracks as any);
+                      }}
+                      className={`w-6 h-6 rounded-md text-[8px] font-black border transition-all ${track.isSolo ? 'bg-amber-400 border-amber-300 text-black shadow-lg' : 'bg-zinc-900 border-white/10 text-zinc-500 hover:text-amber-400'}`}
+                    >S</button>
+                    {/* Stem Solo buttons */}
+                    {(() => {
+                      const availableStems = musicEngine.getAvailableStems(track.id);
+                      const activeStems = soloedStems && soloedStems[track.id] instanceof Set 
+                        ? soloedStems[track.id] 
+                        : musicEngine.getSoloStem(track.id);
+                      if (showStemControls && availableStems > 1) {
+                        return Array.from({ length: availableStems }).map((_, i) => (
+                          <button
+                            key={i}
+                            onClick={() => {
+                              if (onSoloStem) onSoloStem(track.id, i);
+                            }}
+                            title={`Solo Stem ${i+1}`}
+                            className={`w-5 h-5 rounded flex items-center justify-center text-[6px] font-bold border transition-all ${activeStems.has(i) ? 'bg-cyan-500 border-cyan-400 text-black' : 'bg-black/40 border-white/10 text-cyan-500/70'}`}
+                          >
+                            {i+1}
+                          </button>
+                        ));
+                      }
+                      return null;
+                    })()}
+                    {/* Expand toggle */}
+                    <button
+                      onClick={() => setChannelExpandedMap(prev => ({ ...prev, [track.id]: !prev[track.id] }))}
+                      className="ml-auto w-5 h-5 rounded flex items-center justify-center text-zinc-600 hover:text-cyan-400 hover:bg-white/5 transition-all"
+                      title={channelExpandedMap[track.id] ? 'Hide controls' : 'Show controls'}
+                    >
+                      <span className="text-[8px] font-black leading-none">{channelExpandedMap[track.id] ? '✕' : '⋮'}</span>
+                    </button>
                   </div>
 
-                  <div className="flex-1 flex gap-3 min-h-0 overflow-hidden">
-                    <div className="w-10 flex flex-col items-center bg-black/40 rounded-2xl border border-white/5 py-2">
-                      <div className="flex-1 w-full px-1.5">
-                        <VerticalFader value={track.volume} onChange={v => setTracks(prev => prev.map(t => t.id === track.id ? { ...t, volume: v } : t))} />
+                  {/* ── EXPANDED PANEL (hidden by default) ── */}
+                  {channelExpandedMap[track.id] && (
+                    <div className="flex-1 flex gap-2 min-h-0 overflow-hidden">
+                      <div className="w-8 flex flex-col items-center bg-black/40 rounded-xl border border-white/5 py-1.5">
+                        <div className="flex-1 w-full px-1">
+                          <VerticalFader value={track.volume} onChange={v => setTracks(prev => prev.map(t => t.id === track.id ? { ...t, volume: v } : t))} />
+                        </div>
+                        <span className="text-[6px] font-black text-cyan-400 lcd-font mt-0.5">{Math.round(track.volume * 100)}</span>
                       </div>
-                      <span className="text-[7px] font-black text-cyan-400 lcd-font mt-1">{Math.round(track.volume * 100)}</span>
+                      <div className="flex-1 flex flex-col gap-1">
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => { setTracks(prev => prev.map(t => { if (t.id === track.id) { const defaultId = t.mode === 'vocal' ? 'svs-vocal' : 'memolody-sampler'; return { ...t, pluginId: t.pluginId || defaultId }; } return t; })); setEditingPlugin({ trackId: track.id, slotIndex: -1, plugin: { definition: null as any, isBypassed: false } }); }}
+                            className={`flex-1 h-5 rounded-lg border flex items-center justify-center gap-1 transition-all ${track.pluginId ? 'bg-indigo-500 border-indigo-400' : 'bg-black/40 border-white/10 hover:bg-white/5'}`}
+                          >
+                            <Sliders size={8} className={track.pluginId ? 'text-white' : 'text-indigo-400'} />
+                            <span className={`text-[5px] font-black uppercase truncate ${track.pluginId ? 'text-white' : 'text-white/50'}`}>
+                              {track.pluginId === 'memolody-sampler' ? 'SNDBANK' : track.pluginId === 'svs-vocal' ? 'VOCAL' : 'SOURCE'}
+                            </span>
+                          </button>
+                          <button onClick={() => setPluginBrowserTarget({ trackId: track.id, slotIndex: 0 })} className="h-5 px-1.5 rounded-lg bg-black border border-white/5 flex items-center gap-1 hover:bg-white/5 transition-all">
+                            <PlusSquare size={8} className="text-cyan-400/50" />
+                            <span className="text-[5px] font-black text-white/50 uppercase">FX</span>
+                          </button>
+                        </div>
+                        <button onClick={() => cycleTrackMode(track)} className={`flex items-center gap-1.5 px-1.5 h-5 rounded-lg border border-white/10 transition-all active:scale-95 ${currentCfg.color}`}>
+                          <currentCfg.icon size={9} className="text-white/80" />
+                          <span className="text-[6px] font-black text-white uppercase tracking-widest">{currentCfg.label}</span>
+                        </button>
+                        <div className="bg-black/30 rounded-lg border border-white/5 p-1 flex items-center gap-1">
+                          <MiniRotaryPan value={track.pan || 0} onChange={(val) => setTracks(prev => prev.map(t => t.id === track.id ? { ...t, pan: val } : t))} />
+                          <span className="text-[5px] text-zinc-600 flex-1 text-center">PAN</span>
+                        </div>
+                        <h4 className="text-[7px] font-bold text-zinc-500 uppercase truncate">{track.name || 'STEMME'}</h4>
+                      </div>
                     </div>
-
-                    <div className="flex-1 flex flex-col gap-1.5">
-                      <div className="flex gap-1">
-                        <button 
-                          onClick={() => {
-                            const newTracks = tracks.map(t => t.id === track.id ? { ...t, isMuted: !t.isMuted, isSolo: !t.isMuted ? false : t.isSolo } : t);
-                            musicEngine.updateTrackStates(newTracks);
-                            setTracks(newTracks as any);
-                          }} 
-                          className={`flex-1 h-6 rounded-lg text-[8px] font-black border transition-all ${track.isMuted ? 'bg-rose-600 border-rose-400 text-white shadow-lg' : 'bg-zinc-900 border-white/5 text-zinc-600'}`}
-                        >M</button>
-                        <button 
-                          onClick={() => {
-                            const newTracks = tracks.map(t => t.id === track.id ? { ...t, isSolo: !t.isSolo, isMuted: !t.isSolo ? false : t.isMuted } : t);
-                            musicEngine.updateTrackStates(newTracks);
-                            setTracks(newTracks as any);
-                          }} 
-                          className={`flex-1 h-6 rounded-lg text-[8px] font-black border transition-all ${track.isSolo ? 'bg-amber-400 border-amber-300 text-black shadow-lg shadow-amber-400/20' : 'bg-zinc-900 border-white/5 text-zinc-600'}`}
-                        >S</button>
-                      </div>
-                      
-                      {(() => {
-                        const availableStems = musicEngine.getAvailableStems(track.id);
-                        const activeStem = soloedStems ? (soloedStems[track.id] ?? null) : musicEngine.getActiveStem(track.id);
-                        if (showStemControls && availableStems > 1) {
-                          return (
-                            <div className="flex gap-0.5">
-                              {Array.from({ length: availableStems }).map((_, i) => (
-                                <button
-                                  key={i}
-                                  onClick={() => {
-                                    const nextStem = activeStem === i ? null : i;
-                                    if (onSoloStem) {
-                                      onSoloStem(track.id, nextStem);
-                                    } else {
-                                      musicEngine.soloStem(track.id, nextStem);
-                                    }
-                                  }}
-                                  title={`Solo Stem ${i+1}`}
-                                  className={`flex-1 h-5 rounded flex items-center justify-center text-[7px] font-bold border transition-all ${activeStem === i ? 'bg-cyan-500 border-cyan-400 text-black shadow-[0_0_8px_#06b6d4]' : 'bg-black/40 border-white/10 text-cyan-500/70 hover:bg-white/10 hover:text-cyan-400'}`}
-                                >
-                                  S{i + 1}
-                                </button>
-                              ))}
-                            </div>
-                          );
-                        }
-                        return null;
-                      })()}
-                      <button onClick={() => cycleTrackMode(track)} className={`flex items-center gap-2 px-2 h-7 rounded-xl border border-white/10 transition-all active:scale-95 group/mode ${currentCfg.color}`}>
-                        <currentCfg.icon size={12} className="text-white/80" />
-                        <span className="text-[7px] font-black text-white uppercase tracking-widest">{currentCfg.label}</span>
-                      </button>
-                      <div className="bg-black/30 rounded-xl border border-white/5 p-1 flex flex-col items-center gap-0.5">
-                        <MiniRotaryPan value={track.pan || 0} onChange={(val) => setTracks(prev => prev.map(t => t.id === track.id ? { ...t, pan: val } : t))} />
-                        <div className="flex justify-between w-full px-2"><span className="text-[4px] text-zinc-700">L</span><span className="text-[4px] text-zinc-700">R</span></div>
-                      </div>
-                      {/* Instrument / Source Slot */}
-                      <button
-                        onClick={() => {
-                          setTracks(prev => prev.map(t => {
-                            if (t.id === track.id) {
-                              const defaultId = t.mode === 'vocal' ? 'svs-vocal' : 'memolody-sampler';
-                              return { ...t, pluginId: t.pluginId || defaultId };
-                            }
-                            return t;
-                          }));
-                          setEditingPlugin({ trackId: track.id, slotIndex: -1, plugin: { definition: null as any, isBypassed: false } }); // special trigger
-                        }}
-                        className={`h-6 rounded-xl border flex items-center justify-center gap-1.5 transition-all group/inst ${track.pluginId ? 'bg-indigo-500 border-indigo-400 shadow-[0_0_10px_rgba(99,102,241,0.5)]' : 'bg-black/40 border-white/10 hover:bg-white/5'}`}
-                      >
-                        <Sliders size={10} className={track.pluginId ? 'text-white' : 'text-indigo-400 group-hover/inst:scale-110'} />
-                        <span className={`text-[6px] font-black uppercase tracking-widest truncate max-w-[40px] ${track.pluginId ? 'text-white' : 'text-white/50'}`}>
-                          {track.pluginId === 'memolody-sampler' ? 'SNDBANK' : track.pluginId === 'svs-vocal' ? 'VOCAL' : 'SOURCE'}
-                        </span>
-                      </button>
-
-                      {/* FX Insert Slot */}
-                      <button onClick={() => setPluginBrowserTarget({ trackId: track.id, slotIndex: 0 })} className="h-6 rounded-xl bg-[#0c0c0f] border border-white/5 flex items-center justify-center gap-2 hover:bg-white/5 transition-all group/plug">
-                        <PlusSquare size={10} className="text-cyan-400/50 group-hover/plug:scale-110 group-hover/plug:text-cyan-400" />
-                        <span className="text-[6px] font-black text-white/50 uppercase tracking-widest">FX</span>
-                      </button>
-
-
-                    </div>
-                  </div>
+                  )}
                   <div onMouseDown={handleVerticalZoomDrag} onTouchStart={handleVerticalZoomDrag} className="v-resize-handle" />
                 </div>
               );

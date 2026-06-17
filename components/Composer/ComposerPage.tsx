@@ -256,7 +256,7 @@ const ComposerPage: React.FC<ComposerPageProps> = ({ parsedData, tracks, setTrac
                         {isExtracting[track.id] ? (
                            <><div className="w-3 h-3 border-2 border-zinc-500 border-t-transparent rounded-full animate-spin"/> EXTRACTING...</>
                         ) : (
-                           <><Scissors size={14} /> Extract Stems & Notes</>
+                           <><span className="text-[14px]">✂️</span> Extract Stems & Notes</>
                         )}
                       </button>
                     </div>

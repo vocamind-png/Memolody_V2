@@ -152,13 +152,13 @@ const getFetchUrl = (path: string) => {
   return path;
 };
 
-// For server-side synthesis, route through Vercel /studio/* proxy
-// (vercel.json proxies /studio/* → RunPod). Do NOT call RunPod directly
-// from the browser — that causes CORS errors and ERR_NETWORK_CHANGED.
+// For server-side synthesis, route through Vercel /studio/* proxy.
+// Async endpoints (/studio/preview-async, /studio/job/*) return in <1s
+// so they safely fit within Vercel's 10s timeout and gain CORS headers.
 const getDirectServerUrl = (path: string) => {
   let cleanPath = path;
   if (!cleanPath.startsWith('/')) cleanPath = '/' + cleanPath;
-  // Always use relative path → goes through Vercel → RunPod proxy
+  // Use relative path → routed through Vercel → RunPod proxy
   return cleanPath;
 };
 
@@ -167,6 +167,53 @@ const svsFetch = (url: string, options?: RequestInit) => {
   headers.set('serveo-skip-browser-warning', 'true');
   headers.set('bypass-tunnel-reminder', 'true');
   return fetch(url, { ...options, headers });
+};
+
+/**
+ * Submit a render to /studio/preview-async → get job_id → poll /studio/job/{id}
+ * until status === 'done' or 'error'. This bypasses ALL proxy timeouts.
+ */
+const serverFetchWithAsyncPolling = async (
+  payload: object,
+  signal: AbortSignal,
+  onProgress?: (msg: string) => void
+): Promise<any> => {
+  const asyncUrl = getDirectServerUrl('/studio/preview-async');
+  const pollBase = getDirectServerUrl('/studio/job/');
+
+  // 1. Submit job
+  const submitRes = await fetch(asyncUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal
+  });
+  if (!submitRes.ok) {
+    const txt = await submitRes.text().catch(() => String(submitRes.status));
+    throw new Error(`[AsyncJob] Submit failed ${submitRes.status}: ${txt}`);
+  }
+  const { job_id } = await submitRes.json();
+  if (!job_id) throw new Error('[AsyncJob] No job_id returned from server');
+
+  onProgress?.(`Job queued (${job_id.slice(0, 6)}…), waiting for GPU...`);
+
+  // 2. Poll until done (max 10 min)
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 600_000) {
+    if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+    await new Promise(r => setTimeout(r, 3000));
+    if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+
+    const pollRes = await fetch(`${pollBase}${job_id}`, { signal });
+    if (!pollRes.ok) continue;
+    const data = await pollRes.json();
+
+    if (data.status === 'done') return data;
+    if (data.status === 'error') throw new Error(`[AsyncJob] Server error: ${data.error}`);
+    // status is 'pending' or 'running' — keep polling
+    onProgress?.(`GPU rendering... (${Math.round((Date.now() - startedAt) / 1000)}s)`);
+  }
+  throw new Error('[AsyncJob] Timeout waiting for render job');
 };
 
 const fixAudioUrl = (u: string) => {
@@ -547,9 +594,11 @@ class VocalidoRenderService {
         
         const hTimingFeel = typeof h.timingFeel === 'number' ? h.timingFeel : 50;
         const hTracks = (h as any).vocalTracks || 'P1';
+        const hTranspose = typeof h.transpose === 'number' ? h.transpose : 0;
         
         return h.bpmPercent === bpmPct && 
                h.songKey === songKey && 
+               hTranspose === transpose &&
                hLyric === tLyric &&
                hTimingFeel === svsTimingFeel &&
                hTracks === vocalTrackIdsStr &&
@@ -557,7 +606,7 @@ class VocalidoRenderService {
                h.version === 3;
       });
 
-      const cachedKey = cached ? `${cached.bpmPercent}_${cached.songKey}_${cached.engineId || 'default'}_${cached.lyricMode || ''}_${cached.voiceName || 'Auto'}_tf${cached.timingFeel ?? 50}_tr${(cached as any).vocalTracks || 'P1'}` : null;
+      const cachedKey = cached ? `${cached.bpmPercent}_${cached.songKey}_${cached.engineId || 'default'}_${cached.lyricMode || ''}_${cached.voiceName || 'Auto'}_tf${cached.timingFeel ?? 50}_tp${cached.transpose ?? 0}_tr${(cached as any).vocalTracks || 'P1'}_v2` : null;
       if (cached) {
         console.log(`[VocalidoRenderService] [MemoCache] ✅ Found cached render ${cached.label} — skipping SVS render`);
         const renderBpm = Math.round(((origBpm * cached.bpmPercent) / 100) * 10) / 10;
@@ -1005,8 +1054,12 @@ class VocalidoRenderService {
           const audioBlobs: Blob[] = [];
           const renderedPan: number[] = [];
 
-          // ── SEQUENTIAL render: one voice at a time (single-worker DiffSinger) ──
-          console.log(`[VocalidoRenderService] 🎶 Sequential render: ${voiceLines.length} voices one by one`);
+          // ── CONCURRENCY MANAGER (Future-proof for Multi-GPU) ──
+          // Adjust this value when upgrading server hardware to multiple GPUs
+          // or larger VRAM capacity that supports parallel DiffSinger inference.
+          const MAX_CONCURRENT_VOICES = 1;
+
+          console.log(`[VocalidoRenderService] 🎶 Server render: ${voiceLines.length} voices (Concurrency limit: ${MAX_CONCURRENT_VOICES})`);
 
           const renderOneVoice = async (vl: typeof voiceLines[0], vIdx: number): Promise<{ blob: Blob; pan: number } | null> => {
             const noteHash = vl.notes.slice(0, 8).map((n: any) => n.midi).join('-');
@@ -1028,22 +1081,16 @@ class VocalidoRenderService {
               this.statusText = `Rendering voice ${vIdx + 1}/${voiceLines.length} (${vl.label}) on GPU...`;
               this.notify();
 
-              const response = await fetch(targetUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-                signal: controller.signal
-              });
+              const data = await serverFetchWithAsyncPolling(
+                payload,
+                controller.signal,
+                (msg) => {
+                  this.statusText = `Voice ${vIdx + 1}/${voiceLines.length}: ${msg}`;
+                  this.notify();
+                }
+              );
 
-              console.log(`[VocalidoRenderService] 📥 Voice ${vIdx + 1} HTTP ${response.status}`);
-              if (!response.ok) {
-                const errText = await response.text();
-                console.warn(`[VocalidoRenderService] ❌ Voice ${vIdx + 1} HTTP ${response.status}: ${errText}`);
-                return null;
-              }
-
-              const data = await response.json();
-              console.log(`[VocalidoRenderService] 📥 Voice ${vIdx + 1} engine=${data.engine}, errors=${(data.debug_engine_errors||[]).length}`);
+              console.log(`[VocalidoRenderService] 📥 Voice ${vIdx + 1} engine=${data.engine}`);
               if (data.error) {
                 console.warn(`[VocalidoRenderService] ❌ Voice ${vIdx + 1} server error: ${data.error}`);
                 return null;
@@ -1078,17 +1125,30 @@ class VocalidoRenderService {
             return null;
           };
 
-          // Run voices sequentially
-          for (let vIdx = 0; vIdx < voiceLines.length; vIdx++) {
-            if (controller.signal.aborted) break;
-            const res = await renderOneVoice(voiceLines[vIdx], vIdx);
+          // Run voices with concurrency limits
+          const results = new Array(voiceLines.length).fill(null);
+          let currentVoiceIdx = 0;
+
+          const renderWorker = async () => {
+            while (currentVoiceIdx < voiceLines.length) {
+              if (controller.signal.aborted) break;
+              const vIdx = currentVoiceIdx++;
+              results[vIdx] = await renderOneVoice(voiceLines[vIdx], vIdx);
+            }
+          };
+
+          // Spawn up to MAX_CONCURRENT_VOICES workers
+          const workers = Array.from({ length: Math.min(MAX_CONCURRENT_VOICES, voiceLines.length) }, () => renderWorker());
+          await Promise.all(workers);
+
+          for (const res of results) {
             if (res) {
               audioBlobs.push(res.blob);
               renderedPan.push(res.pan);
             }
           }
 
-          console.log(`[VocalidoRenderService] 🎯 Sequential render done: ${audioBlobs.length}/${voiceLines.length} voices OK`);
+          console.log(`[VocalidoRenderService] 🎯 Render pool done: ${audioBlobs.length}/${voiceLines.length} voices OK`);
 
           if (audioBlobs.length === 0) {
             throw new Error('All voice lines failed to render');
@@ -1253,25 +1313,18 @@ class VocalidoRenderService {
           console.log(`[VocalidoRenderService] 📊 First 10 Lyrics: [${lyrics.join(', ')}]`);
           console.log(`[VocalidoRenderService] 📊 BPM: ${synthParams.bpm}, Voice: ${synthParams.voice || synthParams.singer}, collapse_chords: ${synthParams.collapse_chords}`);
 
-          const targetUrl = getDirectServerUrl('/studio/preview');
-          console.log(`[VocalidoRenderService] 📡 Target URL: ${targetUrl}`);
+          console.log(`[VocalidoRenderService] 📡 Using async job polling (bypasses proxy timeouts)`);
           
-          let response: Response;
           try {
-            // Use plain fetch (no custom headers) to avoid Samsung CORS preflight issues
-            response = await fetch(targetUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload),
-              signal: controller.signal
-            });
-            
-            if (!response.ok) {
-              const errText = await response.text();
-              throw new Error(`HTTP ${response.status}: ${errText}`);
-            }
-            
-            const data = await response.json();
+            // Use async polling: submit → poll every 3s → get result when done
+            const data = await serverFetchWithAsyncPolling(
+              payload,
+              controller.signal,
+              (msg) => {
+                this.statusText = msg;
+                this.notify();
+              }
+            );
             console.log(`[VocalidoRenderService] 📥 Server response: engine=${data.engine}, cached=${data.cached}, notes=${data.notes}, saved_url=${data.saved_url || 'N/A'}`);
             if (data.error) {
               throw new Error(data.error);
@@ -1279,7 +1332,6 @@ class VocalidoRenderService {
             result = data;
         } catch (fetchErr: any) {
           console.error('[VocalidoRenderService] Server synthesis failed:', fetchErr);
-          fetchErr.url = targetUrl;
           throw fetchErr;
         }
         } // end single-voice else
@@ -1380,7 +1432,7 @@ class VocalidoRenderService {
         const storedEngineId = collapseChords ? (trackEngineId || 'default') : `${trackEngineId || 'default'}poly`;
         const shortVoice = voiceNameForHist !== 'Auto' ? ` · ${voiceNameForHist.split(/[\s_]/)[0]}${collapseChords ? '' : ' (poly)'}` : '';
         const newLabel = result.label || `${songKey} ${bpmPct}%${shortVoice}`;
-        const newEntryKey = `${bpmPct}_${songKey}_${storedEngineId}_${activeLyricMode}_${storedVoiceName}_tf${svsTimingFeel}_v2`;
+        const newEntryKey = `${bpmPct}_${songKey}_${storedEngineId}_${activeLyricMode}_${storedVoiceName}_tf${svsTimingFeel}_tp${transpose}_tr${vocalTrackIdsStr}_v2`;
         
         console.log('[VocalidoRenderService] 💾 Saving render to local cache...');
         saveRenderToLocalCache(
@@ -1401,9 +1453,11 @@ class VocalidoRenderService {
           const hLyric = mapToLyricMode(h.lyricMode || 'British Fixed Doh');
           const tLyric = mapToLyricMode(activeLyricMode);
           const hTimingFeel = typeof h.timingFeel === 'number' ? h.timingFeel : 50;
+          const hTranspose = typeof h.transpose === 'number' ? h.transpose : 0;
           return !(
             h.bpmPercent === bpmPct && 
             h.songKey === songKey && 
+            hTranspose === transpose &&
             hLyric === tLyric &&
             hTimingFeel === svsTimingFeel &&
             (h.engineId || 'default') === storedEngineId &&

@@ -10,28 +10,28 @@ export const MASTER_SEED_LIST: any[] = [
   { 
     name: "Canon in D", 
     composer: "Johann Pachelbel", 
-    era: "Baroque", 
+    era: "Classic", 
     bpm: 75, 
     key: "D"
   },
   { 
     name: "Moonlight Sonata (1st Mov)", 
     composer: "Ludwig van Beethoven", 
-    era: "Classical", 
+    era: "Classic", 
     bpm: 54, 
     key: "C#m"
   },
   { 
     name: "Für Elise", 
     composer: "Ludwig van Beethoven", 
-    era: "Classical", 
+    era: "Classic", 
     bpm: 126, 
     key: "Am"
   },
   { 
     name: "Minuet in G Major", 
     composer: "J.S. Bach", 
-    era: "Baroque", 
+    era: "Classic", 
     bpm: 100, 
     key: "G"
   }

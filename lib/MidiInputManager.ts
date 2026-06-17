@@ -4,9 +4,9 @@ import { musicEngine } from './MusicEngine';
 export type MidiChannelSetting = 'omni' | number; // 'omni' or 1-16
 
 export class MidiInputManager {
-  private midiAccess: WebMidi.MIDIAccess | null = null;
+  private midiAccess: any | null = null;
   public isSupported: boolean = false;
-  public inputs: WebMidi.MIDIInput[] = [];
+  public inputs: any[] = [];
   
   // Maps a specific MIDI channel (1-16) to a Memolody trackId
   public channelRouting: Map<number, string> = new Map();
@@ -47,7 +47,7 @@ export class MidiInputManager {
     });
   }
 
-  private handleMidiMessage(message: WebMidi.MIDIMessageEvent) {
+  private handleMidiMessage(message: any) {
     if (!message.data) return;
     const [statusByte, data1, data2] = message.data;
     

@@ -11,10 +11,10 @@ import { FileConverter } from './FileConverter';
 
 export const detectEra = (composer: string): string => {
   const c = composer.toLowerCase();
-  if (c.includes("bach") || c.includes("vivaldi") || c.includes("handel") || c.includes("pachelbel")) return "Baroque";
-  if (c.includes("mozart") || c.includes("beethoven") || c.includes("haydn") || c.includes("clementi")) return "Classical";
-  if (c.includes("chopin") || c.includes("liszt") || c.includes("schumann") || c.includes("tchaikovsky") || c.includes("brahms")) return "Romantic";
-  if (c.includes("debussy") || c.includes("stravinsky") || c.includes("ravel")) return "Impressionist/Modern";
+  if (c.includes("bach") || c.includes("vivaldi") || c.includes("handel") || c.includes("pachelbel")) return "Classic";
+  if (c.includes("mozart") || c.includes("beethoven") || c.includes("haydn") || c.includes("clementi")) return "Classic";
+  if (c.includes("chopin") || c.includes("liszt") || c.includes("schumann") || c.includes("tchaikovsky") || c.includes("brahms")) return "Classic";
+  if (c.includes("debussy") || c.includes("stravinsky") || c.includes("ravel")) return "Classic";
   return "Modern";
 };
 
