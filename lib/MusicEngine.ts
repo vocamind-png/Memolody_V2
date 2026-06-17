@@ -578,98 +578,18 @@ export class MusicEngine {
         }
       });
 
-      // Post-processing: Split polyphonic tracks (chords) into completely separate monophonic tracks
-      const trackGroups: Record<string, ParsedNote[]> = {};
-      for (const n of notes) {
-        if (!trackGroups[n.trackId]) trackGroups[n.trackId] = [];
-        trackGroups[n.trackId].push(n);
-      }
-
+      // Post-processing: Use MusicXML staff/voice tracks directly — NO chord re-splitting.
+      // Each unique (Part × Staff × Voice) from the MusicXML is already one clean track.
+      // Chord notes within the same staff/voice stay together in the same track.
       const finalNotes: ParsedNote[] = [];
       const finalPartNames: Record<string, string> = {};
 
-      for (const [originalTrackId, trackNotes] of Object.entries(trackGroups)) {
-        // Group notes by exactly their startTime
-        const timeGroups: Record<number, ParsedNote[]> = {};
-        for (const n of trackNotes) {
-          const t = n.startTime;
-          if (!timeGroups[t]) timeGroups[t] = [];
-          timeGroups[t].push(n);
-        }
-
-        const times = Object.keys(timeGroups).map(Number).sort((a, b) => a - b);
-        
-        const STEP_SEMI = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
-        const toMidi = (n: ParsedNote) => n.octave * 12 + STEP_SEMI.indexOf(n.step.toUpperCase()) + n.alter;
-        
-        // Find max concurrent unique notes to determine how many sub-tracks we really need
-        let maxVoices = 1;
-        for (const t of times) {
-          const seenPitches = new Set<number>();
-          for (const n of timeGroups[t]) {
-            seenPitches.add(toMidi(n));
-          }
-          if (seenPitches.size > maxVoices) {
-            maxVoices = seenPitches.size;
-          }
-        }
-
-        if (maxVoices > 1) {
-          // ── Polyphonic Voice Splitter: Strict Top-Down ──
-          // To prevent missing notes in the Melody track (Voice 0),
-          // we always assign the highest note of any chord (or the only note) to Voice 0.
-          // Remaining notes are assigned to Voice 1, Voice 2, etc. in descending pitch order.
-          
-          // Ensure all voice track names exist upfront
-          for (let v = 0; v < maxVoices; v++) {
-            const tid = `${originalTrackId}_V${v + 1}`;
-            if (!finalPartNames[tid]) {
-              finalPartNames[tid] = `${partNames[originalTrackId] || originalTrackId} (Voice ${v + 1})`;
-            }
-          }
-          
-          for (const t of times) {
-            const concurrentNotes = timeGroups[t];
-            
-            // Deduplicate notes with exact same pitch to avoid phantom duplicate voices
-            const uniqueNotes: typeof concurrentNotes = [];
-            const seenPitches = new Set<number>();
-            for (const n of concurrentNotes) {
-              const midi = toMidi(n);
-              if (!seenPitches.has(midi)) {
-                seenPitches.add(midi);
-                uniqueNotes.push(n);
-              }
-            }
-            
-            // Sort highest to lowest pitch
-            uniqueNotes.sort((a, b) => toMidi(b) - toMidi(a));
-
-            // Assign top-down
-            for (let i = 0; i < uniqueNotes.length; i++) {
-              const targetVoice = Math.min(i, maxVoices - 1);
-              const originalNote = uniqueNotes[i];
-              const n = { ...originalNote }; // Clone to avoid overwriting properties
-              
-              const newTrackId = `${originalTrackId}_V${targetVoice + 1}`;
-              n.trackId = newTrackId;
-              n.voiceIdx = targetVoice; // Store for ProScoreEditor lyric colorizing
-              n.voice = targetVoice + 1; // Assign explicitly to prevent stems merging
-              finalNotes.push(n);
-            }
-          }
-          
-          delete partNames[originalTrackId];
-          
-        } else {
-          // Strictly monophonic already
-          finalPartNames[originalTrackId] = partNames[originalTrackId] || originalTrackId;
-          for (const n of trackNotes) {
-            n.voiceIdx = 0;
-            finalNotes.push(n);
-          }
-        }
+      for (const n of notes) {
+        n.voiceIdx = 0;
+        finalNotes.push(n);
       }
+      // Copy partNames as-is — they were already built per (P × S × V) above
+      Object.assign(finalPartNames, partNames);
 
       notes = finalNotes;
       partNames = finalPartNames;

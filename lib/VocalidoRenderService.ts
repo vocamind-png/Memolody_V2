@@ -5,9 +5,9 @@ import { AudioBlobCache } from './AudioBlobCache';
 import { getChromaticSolfege } from './SolfegeLogic';
 import { ParsedNote, TrackState, Song, LyricMode } from '../types';
 
-// ── ONE-TIME CACHE BUST FOR NEW F0 PITCH FIX ─────────────────────────────────
+// ── ONE-TIME CACHE BUST FOR TRACK COUNT FIX (v17) ───────────────────────────
 if (typeof window !== 'undefined') {
-  const BUST_KEY = 'vocalido_cache_bust_v16_force_server';
+  const BUST_KEY = 'vocalido_cache_bust_v17_track_count_fix';
   if (!localStorage.getItem(BUST_KEY)) {
     console.log('[Vocalido] ⚡ Cache bust v16: Force server-side (Vocalido) rendering as default...');
     try {
