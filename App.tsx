@@ -257,20 +257,23 @@ const App: React.FC = () => {
         await songStorage.permanentDeleteSong('demo-vocal-01'); // User specifically requested deletion
         if (songs.length < 50) { // If there are fewer than 50 songs, assume they need a sync from GCS
           if (songs.length === 0) {
-            setInitStatus('Syncing Songs Library from Cloud');
+            setInitStatus('Syncing Songs Library in Background');
             setInitProgress(80);
-            try {
-              const syncResult = await CloudSyncService.syncWithGlobalCloud((percent) => {
-                setInitProgress(80 + (percent * 0.15));
-              });
+            
+            // 🔥 Non-blocking Sync: Let the app boot instantly, load songs in background
+            CloudSyncService.syncWithGlobalCloud((percent) => {
+              // Can optionally dispatch progress event here if needed
+            }).then(async (syncResult) => {
               if (syncResult && syncResult.total >= 0) {
-                songs = await songStorage.getAllSongs();
+                const updatedSongs = await songStorage.getAllSongs();
+                setUserSongs(updatedSongs);
+                userSongsRef.current = updatedSongs;
               }
-            } catch (syncErr) {
+            }).catch((syncErr) => {
               console.warn('[App] Initial cloud sync failed:', syncErr);
-              setInitStatus('Sync in background');
               setTimeout(() => triggerSync(), 1000); 
-            }
+            });
+            
           } else {
             // Already have some songs, let's load UI fast and sync in background
             CloudSyncService.syncWithGlobalCloud().then(async () => {
