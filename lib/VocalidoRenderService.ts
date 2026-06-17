@@ -644,205 +644,45 @@ class VocalidoRenderService {
         trackGroups[n.trackId].push(n);
       }
       
-      // ─── Polyphony: split into monophonic voice lines using MusicXML staff/voice ───
-      // This preserves the original voice assignment from the score, ensuring each
-      // voice line follows its natural melody without pitch jumps.
-      
-      const allNotes: (typeof notesToSynthesize) = [];
+      // ─── Polyphony: split into monophonic voice lines by track ───
+      // MusicEngine has already split the polyphonic score into clean monophonic tracks.
+      // We map each selected vocal track directly 1-to-1 to its own voice line.
       for (const tid of vocalTrackIds) {
-        allNotes.push(...(trackGroups[tid] || []));
-      }
-
-      if (allNotes.length > 0) {
-        const getPitch = (n: any) => {
-          if (n.midi !== undefined) return n.midi;
-          if (n.pitch !== undefined) return n.pitch;
-          return 60;
-        };
-
-        // ─── Strategy 1: Use staff/voice from MusicXML ───
-        // Group notes by (staff, voice) pair — this is how MusicXML encodes voice parts
-        const voiceGroups = new Map<string, typeof notesToSynthesize>();
-        let hasMultipleVoices = false;
-        
-        for (const n of allNotes) {
-          const key = `${n.staff || 1}_${n.voice || 1}`;
-          if (!voiceGroups.has(key)) voiceGroups.set(key, []);
-          voiceGroups.get(key)!.push(n);
-        }
-        
-        hasMultipleVoices = voiceGroups.size > 1;
-        console.log(`[VocalidoRenderService] 🎼 Voice groups from MusicXML: ${voiceGroups.size} (${[...voiceGroups.keys()].join(', ')})`);
-        
-        let filledTracks: (typeof notesToSynthesize)[];
-        
-        // Disabled Strategy 1 (MusicXML staff/voice) based on user request to strictly use 
-        // vertical chords (max simultaneous notes) for detecting channels.
-        if (false) {
-          // Sort voice groups by average pitch (highest first = Soprano → Bass)
-          const sortedGroups = [...voiceGroups.entries()]
-            .map(([key, notes]) => {
-              const avgPitch = notes.reduce((sum, n) => sum + getPitch(n), 0) / notes.length;
-              // Sort notes within each group by startTime
-              notes.sort((a, b) => a.startTime - b.startTime);
-              return { key, notes, avgPitch };
-            })
-            .sort((a, b) => b.avgPitch - a.avgPitch); // High pitch first
-          
-          filledTracks = sortedGroups.map(g => g.notes);
-          console.log(`[VocalidoRenderService] 🎹 Using MusicXML staff/voice splitting: ${sortedGroups.map(g => `${g.key}(${g.notes.length} notes, avg=${g.avgPitch.toFixed(0)})`).join(', ')}`);
-        } else {
-          // ─── Strategy 2: Single voice group — check for actual polyphony (overlapping notes) ───
-          // Even if all notes have the same staff/voice, there might be chords that need splitting
-          
-          // Sort by startTime asc, then pitch desc
-          allNotes.sort((a, b) => {
-            const timeDiff = a.startTime - b.startTime;
-            if (Math.abs(timeDiff) > 0.005) return timeDiff;
-            return getPitch(b) - getPitch(a);
-          });
-
-          // Find maximum simultaneous notes
-          let maxVertical = 1;
-          const events: { time: number; type: 'start' | 'end' }[] = [];
-          for (const note of allNotes) {
-            events.push({ time: note.startTime, type: 'start' });
-            events.push({ time: note.startTime + note.duration - 0.005, type: 'end' });
-          }
-          events.sort((a, b) => {
-            if (Math.abs(a.time - b.time) < 0.001) return a.type === 'end' ? -1 : 1;
-            return a.time - b.time;
-          });
-          let currentActive = 0;
-          for (const ev of events) {
-            if (ev.type === 'start') {
-              currentActive++;
-              if (currentActive > maxVertical) maxVertical = currentActive;
-            } else {
-              currentActive--;
-            }
-          }
-          
-          if (maxVertical <= 1) {
-            // Truly monophonic — single voice line
-            filledTracks = [allNotes];
-            console.log(`[VocalidoRenderService] 🎹 Single monophonic voice line: ${allNotes.length} notes`);
-          } else {
-            // Has overlapping notes but no staff/voice info — use continuity-based splitting
-            console.log(`[VocalidoRenderService] 🎹 Overlapping notes detected (max ${maxVertical}) but no staff/voice info — using continuity-based splitting`);
-            
-            const monoTracks: (typeof notesToSynthesize)[] = Array.from({ length: maxVertical }, () => []);
-            
-            // Group by time
-            const timeGroups: (typeof notesToSynthesize)[] = [];
-            let currentGroup: typeof notesToSynthesize = [];
-            for (const note of allNotes) {
-              if (currentGroup.length === 0) {
-                currentGroup.push(note);
-              } else {
-                const diff = note.startTime - currentGroup[0].startTime;
-                if (Math.abs(diff) <= 0.01) {
-                  currentGroup.push(note);
-                } else {
-                  timeGroups.push(currentGroup);
-                  currentGroup = [note];
-                }
-              }
-            }
-            if (currentGroup.length > 0) timeGroups.push(currentGroup);
-
-            // Assign notes to tracks using minimum-pitch-distance to maintain continuity
-            for (const group of timeGroups) {
-              group.sort((a, b) => getPitch(b) - getPitch(a)); // Sort high to low
-              const startTime = group[0].startTime;
-              
-              // For each note in the group, find the best available track
-              // (closest in pitch to that track's last note)
-              const assigned = new Set<number>();
-              for (const note of group) {
-                let bestTrack = -1;
-                let bestDist = Infinity;
-                
-                for (let t = 0; t < maxVertical; t++) {
-                  if (assigned.has(t)) continue;
-                  const track = monoTracks[t];
-                  const lastNote = track.length > 0 ? track[track.length - 1] : null;
-                  
-                  // Check if track is free
-                  if (lastNote && startTime < lastNote.startTime + lastNote.duration - 0.005) continue;
-                  
-                  const dist = lastNote ? Math.abs(getPitch(note) - getPitch(lastNote)) : 0;
-                  if (dist < bestDist) {
-                    bestDist = dist;
-                    bestTrack = t;
-                  }
-                }
-                
-                if (bestTrack >= 0) {
-                  monoTracks[bestTrack].push(note);
-                  assigned.add(bestTrack);
-                }
-              }
-            }
-            
-            filledTracks = monoTracks.filter(mt => mt.length > 0);
-          }
-        }
-
-        // ── Filter out "breath" / auxiliary voice lines ──────────────────────────
-        // A breath track typically has very few notes and/or extremely short durations
-        // compared to the main voice lines. Filter it out before building stems.
-        if (filledTracks.length > 1) {
-          const maxNotes = Math.max(...filledTracks.map(mt => mt.length));
-          filledTracks = filledTracks.filter(mt => {
-            if (mt.length < 2) return false; // less than 2 notes = skip
-            
-            // Keep if note count >= 20% of the busiest track
-            if (mt.length < maxNotes * 0.20) {
-              console.log(`[VocalidoRenderService] 🌬️ Filtered breath/auxiliary track: ${mt.length} notes (max=${maxNotes})`);
-              return false;
-            }
-            // Also filter if average note duration is very short (< 0.08s = ~32nd note at 120bpm)
-            const avgDur = mt.reduce((s, n) => s + n.duration, 0) / mt.length;
-            if (avgDur < 0.08) {
-              console.log(`[VocalidoRenderService] 🌬️ Filtered short-duration track: avgDur=${avgDur.toFixed(3)}s`);
-              return false;
-            }
-            return true;
-          });
-          console.log(`[VocalidoRenderService] 🎼 After breath filter: ${filledTracks.length} voice line(s) remain`);
-        }
-
-        const collapseChords = localStorage.getItem('vocalido_collapse_chords') === 'true';
-        if (collapseChords && filledTracks.length > 0) {
-          filledTracks = [filledTracks[0]];
-        }
-
-        filledTracks.forEach((mt, idx) => {
-          let pan = 0;
-          let label = '';
-          const total = filledTracks.length;
-          
-          if (total === 1) {
-             pan = 0; label = 'Melody (C)';
-          } else if (total === 2) {
-             pan = idx === 0 ? -0.5 : 0.5;
-             label = idx === 0 ? 'Top (L)' : 'Bottom (R)';
-          } else if (total === 3) {
-             pan = idx === 0 ? -0.8 : idx === 1 ? 0 : 0.8;
-             label = idx === 0 ? 'Top (L)' : idx === 1 ? 'Mid (C)' : 'Bottom (R)';
-          } else if (total === 4) {
-             pan = idx === 0 ? -1 : idx === 1 ? -0.4 : idx === 2 ? 0.4 : 1;
-             label = idx === 0 ? 'Soprano' : idx === 1 ? 'Alto' : idx === 2 ? 'Tenor' : 'Bass';
-          } else {
-             pan = -1 + (idx * (2 / (total - 1)));
-             label = `Voice ${idx + 1}`;
-          }
-          
-          const actualTrackId = (idx < vocalTrackIds.length) ? vocalTrackIds[idx] : primaryVocalTrackId;
-          voiceLines.push({ notes: mt, pan, label, trackId: actualTrackId });
+        const trNotes = trackGroups[tid] || [];
+        if (trNotes.length === 0) continue;
+        const sortedNotes = [...trNotes].sort((a, b) => a.startTime - b.startTime);
+        voiceLines.push({
+          notes: sortedNotes,
+          pan: 0,
+          label: '',
+          trackId: tid
         });
       }
+
+      voiceLines.forEach((vl, idx) => {
+        let pan = 0;
+        let label = '';
+        const total = voiceLines.length;
+        
+        if (total === 1) {
+           pan = 0; label = 'Melody (C)';
+        } else if (total === 2) {
+           pan = idx === 0 ? -0.5 : 0.5;
+           label = idx === 0 ? 'Top (L)' : 'Bottom (R)';
+        } else if (total === 3) {
+           pan = idx === 0 ? -0.8 : idx === 1 ? 0 : 0.8;
+           label = idx === 0 ? 'Top (L)' : idx === 1 ? 'Mid (C)' : 'Bottom (R)';
+        } else if (total === 4) {
+           pan = idx === 0 ? -1 : idx === 1 ? -0.4 : idx === 2 ? 0.4 : 1;
+           label = idx === 0 ? 'Soprano' : idx === 1 ? 'Alto' : idx === 2 ? 'Tenor' : 'Bass';
+        } else {
+           pan = -1 + (idx * (2 / (total - 1)));
+           label = `Voice ${idx + 1}`;
+        }
+        vl.pan = pan;
+        vl.label = label;
+      });
+
       
       const isPolyphonic = voiceLines.length > 1;
       // Compute maxVertical for display (the maximum number of simultaneous notes found in the score)
@@ -1647,10 +1487,11 @@ class VocalidoRenderService {
             }
             
             for (const tid of vocalTrackIds) {
-              // For polyphonic mode: primary track uses stereo mix, others use individual stems
-              const tAudioUrl = (isPolyMode && tid === primaryVocalTrackId)
-                ? cacheBustedUrl
-                : ((stemsByTrack[tid] || []).length > 0 ? (stemsByTrack[tid] || [])[0] : (tid === primaryVocalTrackId ? cacheBustedUrl : ""));
+              // For polyphonic mode: assign its individual stem url so we get proper separation.
+              // Fall back to cacheBustedUrl only if individual stems are not available.
+              const tAudioUrl = ((stemsByTrack[tid] || []).length > 0)
+                ? (stemsByTrack[tid] || [])[0]
+                : (tid === primaryVocalTrackId ? cacheBustedUrl : "");
               if (tAudioUrl) {
                 let audioEl = musicEngine.vocalAudioElements.get(tid);
                 if (!audioEl) {

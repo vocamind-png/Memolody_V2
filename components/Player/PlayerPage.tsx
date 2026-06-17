@@ -1332,7 +1332,6 @@ const PlayerPage: React.FC<{
     const trackEngineId = vocalTrack?.engineId || activeEngineId;
     const found = voiceEngines.find(v => v.id === trackEngineId);
     if (found) return found.name;
-    if (vocalTrack?.instrument && vocalTrack.instrument !== 'Auto') return vocalTrack.instrument;
     if (storedSinger) return storedSinger;
     return 'Lotte V';
   }, [vocalTrack, activeEngineId, voiceEngines, storedSinger]);
@@ -1463,7 +1462,10 @@ const PlayerPage: React.FC<{
         }
       } catch (e) {}
 
-      if (restoredTracks.length > 0) {
+      const matchesParsed = restoredTracks.length > 0 && 
+                            restoredTracks.length === partIds.length && 
+                            restoredTracks.every(t => partIds.includes(t.id));
+      if (matchesParsed) {
         console.log('[PlayerPage] 🎹 Restored tracks from localStorage:', restoredTracks);
         const hasLotte = voiceEngines.some(v => v.id === 'lotte_v_ai_dol') || 
                           (localStorage.getItem('vocalido_active_engine') === 'lotte_v_ai_dol');
@@ -1477,6 +1479,7 @@ const PlayerPage: React.FC<{
         setTracks(restoredTracks);
         return;
       }
+
 
       console.log('[PlayerPage] 🎹 Auto-assigning track roles based on parsed notes');
       // Restore last-used lyric mode from localStorage
@@ -2468,17 +2471,19 @@ const PlayerPage: React.FC<{
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                triggerVocalSynthesis(true);
+                setModalSelectedTracks(tracks.map(t => t.id));
+                setShowRenderPrompt(true);
               }}
               className={`px-1.5 py-[1px] -m-0.5 rounded-full text-[6.5px] font-black uppercase tracking-widest border transition-all shadow-[0_0_10px_rgba(0,229,255,0.2)] ${
                 isModelLoading 
                   ? 'bg-zinc-800 border-zinc-700 text-zinc-500 cursor-not-allowed shadow-none' 
                   : 'bg-white/5 border-white/10 text-[#00e5ff] hover:bg-[#00e5ff] hover:text-black'
               }`}
-              title={isModelLoading ? "Loading vocal models..." : "Force Fresh AI Render (Clear Cache) / Shortcut: Option+R"}
+              title={isModelLoading ? "Loading vocal models..." : "Open AI Render Prompt / Shortcut: Option+R"}
             >
               {isModelLoading ? "Loading..." : "Render"}
             </button>
+
             <button
               onClick={(e) => {
                 e.preventDefault();
@@ -2551,18 +2556,7 @@ const PlayerPage: React.FC<{
 
         {/* ── MAIN CONTENT AREA (RIGHT SIDE IN SPLIT VIEW) ── */}
         <div className="flex-1 flex flex-col relative overflow-hidden pointer-events-auto pb-[54px]">
-        {renderHistory.length === 0 && activeCard === 'score' && (
-          <div className="absolute left-1 top-1/2 -translate-y-1/2 z-[3000] flex flex-col items-center pointer-events-auto bg-[#0c0c0e]/95 p-1.5 rounded-lg border border-white/10 backdrop-blur-xl shadow-2xl w-[34px]">
-            <button
-              onClick={() => { setModalSelectedTracks(tracks.map(t => t.id)); setShowRenderPrompt(true); }}
-              className="w-6 h-6 rounded-lg flex flex-col items-center justify-center border font-bold uppercase transition-all bg-zinc-900 border-zinc-800 text-[#00e5ff] hover:text-white hover:border-[#00e5ff] hover:shadow-[0_0_10px_rgba(0,229,255,0.4)] animate-pulse"
-              title="Render AI Vocals"
-            >
-              <Sparkles size={12} className="text-[#00e5ff]" />
-              <span className="text-[4px] tracking-tighter leading-none mt-0.5">Render</span>
-            </button>
-          </div>
-        )}
+
         {/* ── MEMO SONG RENDER: Speed Panel (left floating) ── */}
         {renderHistory.length > 0 && activeCard === 'score' && (
           <>
@@ -2620,93 +2614,56 @@ const PlayerPage: React.FC<{
                             setTranspose(tVal);
   
                             // Load audio stem
-                            const fixedUrl = fixAudioUrl(h.audioUrl);
-                            const cacheBusted = fixedUrl.startsWith('blob:') ? fixedUrl
-                              : (fixedUrl.includes('?t=') 
-                                ? fixedUrl.replace(/\?t=\d+/, `?t=${Date.now()}`)
-                                : `${fixedUrl}?t=${Date.now()}`);
-                            const stemsWithBust = (h.savedStemUrls || []).map((sUrl: string) => {
-                              const fixedStem = fixAudioUrl(sUrl);
-                              return fixedStem.startsWith('blob:') ? fixedStem
-                                : (fixedStem.includes('?t=') ? fixedStem.replace(/\?t=\d+/, `?t=${Date.now()}`) : `${fixedStem}?t=${Date.now()}`);
-                            });
-  
+                            const cacheBusted = (url: string) => url.startsWith('blob:') ? url : (url.includes('?t=') ? url.replace(/\?t=\d+/, `?t=${Date.now()}`) : `${url}?t=${Date.now()}`);
+                            const stemsWithBust = (h.savedStemUrls || []).map(cacheBusted);
                             const primaryTrackId = tracks.find(t => t.mode === 'vocal')?.id || tracks[0]?.id || 'P1';
                             const vocalTracksArr = h.vocalTracks ? h.vocalTracks.split(',') : [primaryTrackId];
                             
                             await Promise.all(vocalTracksArr.map(async (tid: string) => {
                               let trackAudioUrl = "";
                               let stemsToPass: string[] = [];
-
-                              if (tid === primaryTrackId) {
-                                // Primary track: always use the stereo mix blob + savedStemUrls as ◆ sub-stems
-                                trackAudioUrl = cacheBusted;
+                              const hasSpecificStems = h.stemsByTrack && h.stemsByTrack[tid] && h.stemsByTrack[tid].length > 0;
+                              if (hasSpecificStems) {
+                                trackAudioUrl = cacheBusted(h.stemsByTrack[tid][0]);
+                                stemsToPass = h.stemsByTrack[tid].map(cacheBusted);
+                              } else if (tid === primaryTrackId) {
+                                trackAudioUrl = cacheBusted(fixAudioUrl(h.audioUrl));
                                 stemsToPass = stemsWithBust;
                               } else {
-                                // Non-primary: try stemsByTrack mapping, then savedStemUrls by index
-                                const trackStems = (h.stemsByTrack && h.stemsByTrack[tid]) ? h.stemsByTrack[tid].map((s: string) => {
-                                  const fs = fixAudioUrl(s);
-                                  return fs.startsWith('blob:') ? fs : (fs.includes('?t=') ? fs.replace(/\?t=\d+/, `?t=${Date.now()}`) : `${fs}?t=${Date.now()}`);
-                                }) : [];
-                                if (trackStems.length > 0) {
-                                  trackAudioUrl = trackStems[0];
-                                  stemsToPass = trackStems;
-                                } else {
-                                  const idx = vocalTracksArr.indexOf(tid);
-                                  if (idx > 0 && idx < stemsWithBust.length) {
-                                    trackAudioUrl = stemsWithBust[idx];
-                                    stemsToPass = [stemsWithBust[idx]];
-                                  }
+                                const idx = vocalTracksArr.indexOf(tid);
+                                if (idx > 0 && idx < stemsWithBust.length) {
+                                  trackAudioUrl = stemsWithBust[idx];
+                                  stemsToPass = [stemsWithBust[idx]];
                                 }
                               }
                               
                               if (trackAudioUrl) {
                                 await musicEngine.addVocalLayer(tid, trackAudioUrl, stemsToPass, targetBpm);
-                                
                                 let audioEl = musicEngine.vocalAudioElements.get(tid);
                                 if (!audioEl) {
                                   audioEl = new Audio();
                                   audioEl.crossOrigin = 'anonymous';
                                   audioEl.preservesPitch = true;
-                                  audioEl.preload = 'auto'; // Force buffer for Android
+                                  audioEl.preload = 'auto';
                                   musicEngine.vocalAudioElements.set(tid, audioEl);
                                 }
                                 audioEl.src = trackAudioUrl;
                                 audioEl.load();
-                                
-                                // Unlock immediately inside the user gesture
                                 audioEl.play().then(() => audioEl.pause()).catch(e => console.warn('Main vocal unlock failed:', e));
                               }
                             }));
   
-                            // Set the track mode to vocal so UI state reflects it
-                            const updatedTracks = tracks.map((t: any) => 
-                              vocalTracksArr.includes(t.id) ? { ...t, mode: 'vocal' } as TrackState : t
-                            );
+                            const updatedTracks = tracks.map((t: any) => vocalTracksArr.includes(t.id) ? { ...t, mode: 'vocal' } as TrackState : t);
                             setTracks(updatedTracks);
-  
-                            // Update availableStems — only primary track has sub-stems
-                            const stemCount = musicEngine.getAvailableStems(primaryTrackId);
-                            setAvailableStems(stemCount > 0 ? { [primaryTrackId]: stemCount } : {});
+                            setAvailableStems(musicEngine.getAvailableStems(primaryTrackId) > 0 ? { [primaryTrackId]: musicEngine.getAvailableStems(primaryTrackId) } : {});
                             setSoloedStems({});
-  
                             setActiveRenderKey(hKey);
                             setMemoInfoOpenKey(null);
                             if (h.engineId) setActiveEngineId(h.engineId);
-                            if (h.voiceName && h.voiceName !== 'Auto') {
-                              setStoredSinger(h.voiceName);
-                            } else {
-                              setStoredSinger(null);
-                            }
-  
-                            // Load song (5 arguments)
+                            setStoredSinger(h.voiceName && h.voiceName !== 'Auto' ? h.voiceName : null);
                             await musicEngine.loadSong(allPlayableNotes, updatedTracks, tVal, parsedData.timeSignature, isMetronomeOn);
-                            
                             musicEngine.setTransportSeconds(currentPos);
-                            if (wasPlaying) {
-                              await musicEngine.start();
-                              setIsPlaying(true);
-                            }
+                            if (wasPlaying) { await musicEngine.start(); setIsPlaying(true); }
                           } catch (err) {
                             console.error('Failed to load render history stem:', err);
                             alert("❌ ไม่สามารถโหลดไฟล์ร้องประสานเสียงนี้ได้");
@@ -2715,10 +2672,7 @@ const PlayerPage: React.FC<{
                           }
                         }}
                         className={`w-6 h-6 rounded-lg flex flex-col items-center justify-center border font-bold uppercase transition-all shadow-md relative leading-none select-none
-                          ${isActive 
-                            ? 'bg-gradient-to-br from-cyan-400 to-indigo-600 text-black border-transparent shadow-[0_0_10px_rgba(0,229,255,0.4)]' 
-                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700'
-                          }`}
+                          ${isActive ? 'bg-gradient-to-br from-cyan-400 to-indigo-600 text-black border-transparent shadow-[0_0_10px_rgba(0,229,255,0.4)]' : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700'}`}
                         title={`เล่นประสานเสียง (${h.voiceName || 'Auto'} • ${h.lyricMode || 'SYS'} • Key ${h.songKey} • BPM ${h.bpmPercent}%)`}
                       >
                         <span className="text-[4.5px] tracking-tighter leading-none mb-0.5">{h.songKey}</span>
@@ -2726,23 +2680,12 @@ const PlayerPage: React.FC<{
                         <span className="text-[2.2px] opacity-60 mt-0.5 tracking-tighter max-w-[22px] truncate leading-none">{h.voiceName || 'Auto'}</span>
                       </button>
     
-                      {/* Info popup toggle — tiny badge */}
                       <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setMemoInfoOpenKey(isInfoOpen ? null : hKey);
-                        }}
-                        className={`absolute top-0 left-0 w-2 h-2 rounded-full flex items-center justify-center text-[3.5px] font-black border transition-all pointer-events-auto
-                          ${isInfoOpen 
-                            ? 'bg-amber-500 border-amber-400 text-white shadow-lg' 
-                            : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-white'
-                          }`}
+                        onClick={(e) => { e.stopPropagation(); setMemoInfoOpenKey(isInfoOpen ? null : hKey); }}
+                        className={`absolute top-0 left-0 w-2 h-2 rounded-full flex items-center justify-center text-[3.5px] font-black border transition-all pointer-events-auto ${isInfoOpen ? 'bg-amber-500 border-amber-400 text-white shadow-lg' : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-white'}`}
                         title="ดูรายละเอียด / Show details"
-                      >
-                        ℹ
-                      </button>
+                      >ℹ</button>
     
-                      {/* Detailed info popup overlay */}
                       {isInfoOpen && (
                         <div className="absolute left-14 top-0 w-44 bg-[#0c0c0e]/95 backdrop-blur-2xl border border-white/10 p-3 rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.8)] z-[8999] flex flex-col gap-1.5 text-[8px] animate-in fade-in slide-in-from-left-4 duration-150">
                           <div className="flex justify-between border-b border-white/5 pb-1">
@@ -2750,66 +2693,35 @@ const PlayerPage: React.FC<{
                             <span className="text-[6.5px] text-zinc-500">{h.voiceName || 'Auto'}</span>
                           </div>
                           <div className="flex flex-col gap-1 text-zinc-300">
-                            <div className="flex justify-between gap-3">
-                              <span className="text-zinc-500">Key Signature</span>
-                              <span className="text-zinc-100 font-black">{h.songKey}</span>
-                            </div>
-                            <div className="flex justify-between gap-3">
-                              <span className="text-zinc-500">Speed Ratio</span>
-                              <span className="text-zinc-100 font-black">{h.bpmPercent}%</span>
-                            </div>
-                            <div className="flex justify-between gap-3">
-                              <span className="text-zinc-500">Singing System</span>
-                              <span className="text-zinc-100 font-black truncate max-w-[100px]">{h.lyricMode || 'British Fixed Doh'}</span>
-                            </div>
-                            <div className="flex justify-between gap-3">
-                              <span className="text-zinc-500">Engine</span>
-                              <span className="text-zinc-100 font-black truncate max-w-[100px]">{h.engineId || 'default'}</span>
-                            </div>
-                            {shortDate && (
-                              <div className="flex justify-between gap-3">
-                                <span className="text-zinc-500">บันทึกเมื่อ</span>
-                                <span className="text-zinc-400">{shortDate}</span>
-                              </div>
-                            )}
-                            {isActive && (
-                              <div className="mt-1 px-2 py-1 bg-cyan-400/20 rounded-lg text-center text-cyan-400 font-black text-[8px] tracking-widest">▶ กำลังใช้งาน</div>
-                            )}
+                            <div className="flex justify-between"><span className="text-zinc-500">Engine:</span> <span>{h.engineId || 'vocalido'}</span></div>
+                            <div className="flex justify-between"><span className="text-zinc-500">Lyric Mode:</span> <span>{h.lyricMode}</span></div>
+                            <div className="flex justify-between"><span className="text-zinc-500">Rendered:</span> <span>{shortDate || 'N/A'}</span></div>
+                            <div className="flex justify-between"><span className="text-zinc-500">File:</span> <span className="truncate max-w-[80px]" title={filenameFromUrl}>{filenameFromUrl || 'N/A'}</span></div>
                           </div>
+                          <button
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              if (confirm('⚠️ ต้องการลบไฟล์ประสานเสียงที่บันทึกไว้นี้หรือไม่?')) {
+                                try {
+                                  const newHistory = renderHistory.filter(x => x.id !== h.id);
+                                  setRenderHistory(newHistory);
+                                  localStorage.setItem(`memo_render_history_${song.id}`, JSON.stringify(newHistory));
+                                  if (isActive) {
+                                    setActiveRenderKey(null);
+                                    const updatedTracks = tracks.map((t: any) => ({ ...t, mode: 'instrument' } as TrackState));
+                                    setTracks(updatedTracks);
+                                    musicEngine.loadSong(allPlayableNotes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn).catch(() => {});
+                                  }
+                                  if (memoInfoOpenKey === hKey) setMemoInfoOpenKey(null);
+                                } catch (delErr) { console.warn('[App] Failed to delete render cache:', delErr); }
+                              }
+                            }}
+                            className="w-full mt-2 py-0.5 bg-rose-950/80 hover:bg-rose-900 border border-rose-500/30 rounded text-rose-300 hover:text-white font-bold transition-all text-[7px]"
+                          >
+                            ลบการตั้งค่า / Delete
+                          </button>
                         </div>
                       )}
-    
-                      {/* Delete button — positioned inside to prevent overflow clipping */}
-                      <button
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          const confirmed = window.confirm(`ลบ Render "${formatRenderLabel(h.label, h.bpmPercent)}" สำหรับเพลงนี้ออกใช่ไหม?`);
-                          if (!confirmed) return;
-                          if (h.filename) svsFetch(getFetchUrl(`/studio/renders/${encodeURIComponent(h.filename)}?owner_id=${encodeURIComponent(authUser?.id || '')}&song_id=${encodeURIComponent(localSong.id)}`), { method: 'DELETE' }).catch(() => {});
-                          setRenderHistory(prev => prev.filter(x => `${x.bpmPercent}_${x.songKey}_${x.engineId||'default'}_${x.lyricMode||''}_${x.voiceName||'Auto'}` !== hKey));
-                          if (activeRenderKey === hKey) {
-                            setActiveRenderKey(null);
-                            // ── Reset playback and clear vocal layer ──
-                            musicEngine.pause();
-                            setIsPlaying(false);
-                            const primaryTrackId = tracks.find(t => t.mode === 'vocal')?.id || tracks[0]?.id || 'P1';
-                            musicEngine.clearVocalLayers(primaryTrackId);
-                            // Set track mode back to instrument
-                            const updatedTracks = tracks.map((t: any) => 
-                              t.id === primaryTrackId ? { ...t, mode: 'instrument' } as TrackState : t
-                            );
-                            setTracks(updatedTracks);
-                            // Reload song to apply instrument sampler
-                            musicEngine.loadSong(allPlayableNotes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn).catch(() => {});
-                          }
-                          if (memoInfoOpenKey === hKey) setMemoInfoOpenKey(null);
-                        }}
-                        className="absolute top-0 right-0 w-2.5 h-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded-full text-[5.5px] font-black flex items-center justify-center transition-all shadow-lg pointer-events-auto z-[3100]"
-                        title="ลบ / Delete"
-                      >
-                        ×
-                      </button>
                     </div>
                   );
                 })}
@@ -2832,35 +2744,36 @@ const PlayerPage: React.FC<{
               return (
                 <div 
                   ref={folderPopoverRef}
-                  className="absolute left-1 z-[6000] flex flex-col gap-0.5 pointer-events-auto items-start opacity-60 hover:opacity-100 transition-opacity duration-200"
-                  style={{ top: `${Math.max(2, baseTop - 42)}px` }}
+                  className="absolute left-1 z-[6000] flex flex-col gap-1 pointer-events-auto items-start opacity-75 hover:opacity-100 transition-opacity duration-200 animate-in fade-in duration-300"
+                  style={{ top: `${Math.max(2, baseTop - 56)}px` }}
                 >
                   <button
                     onClick={handleToggleFavorite}
-                    className={`h-2 px-0.5 rounded-sm flex items-center gap-0.5 text-[3.2px] font-black uppercase tracking-wider transition-all border shadow-sm ${
+                    className={`h-4 px-1.5 rounded-md flex items-center gap-1 text-[7px] font-black uppercase tracking-wider transition-all border shadow-md active:scale-95 ${
                       isFavorite
-                        ? 'bg-rose-600 border-rose-500 text-white'
-                        : 'bg-zinc-800 border-zinc-600 text-zinc-300 hover:text-rose-400 hover:border-rose-400/60'
+                        ? 'bg-rose-600 border-rose-500 text-white shadow-[0_0_8px_rgba(244,63,94,0.3)]'
+                        : 'bg-[#1a1a1e] border-zinc-700 text-zinc-300 hover:text-rose-400 hover:border-rose-500/60'
                     }`}
                     title={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
                   >
-                    <Heart size={3} fill={isFavorite ? 'currentColor' : 'none'} className={isFavorite ? 'text-white' : ''} />
+                    <Heart size={6.5} fill={isFavorite ? 'currentColor' : 'none'} className={isFavorite ? 'text-white' : ''} />
                     {isFavorite ? 'Favorite' : 'Add Fav'}
                   </button>
 
                   <div className="relative">
                     <button
                       onClick={() => setIsFolderPopoverOpen(!isFolderPopoverOpen)}
-                      className={`h-2 px-0.5 rounded-sm flex items-center gap-0.5 text-[3.2px] font-black uppercase tracking-wider transition-all border shadow-sm ${
+                      className={`h-4 px-1.5 rounded-md flex items-center gap-1 text-[7px] font-black uppercase tracking-wider transition-all border shadow-md active:scale-95 ${
                         currentFolderId
-                          ? 'bg-indigo-600 border-indigo-500 text-white'
-                          : 'bg-zinc-800 border-zinc-600 text-zinc-300 hover:text-indigo-400 hover:border-indigo-400/60'
+                          ? 'bg-indigo-600 border-indigo-500 text-white shadow-[0_0_8px_rgba(99,102,241,0.3)]'
+                          : 'bg-[#1a1a1e] border-zinc-700 text-zinc-300 hover:text-indigo-400 hover:border-indigo-400/60'
                       }`}
                       title="Manage Folder"
                     >
-                      <Folder size={3} />
+                      <Folder size={6.5} />
                       {currentFolderId ? (folders.find(f => f.id === currentFolderId)?.name || 'Folder') : 'Add Folder'}
                     </button>
+
 
                     {isFolderPopoverOpen && (
                       <div className="absolute left-0 mt-1 bg-[#0c0c0e]/95 backdrop-blur-xl border border-white/10 p-2 rounded-lg shadow-xl flex flex-col gap-1.5 w-[160px] z-[9000] animate-in fade-in duration-100">
@@ -2958,102 +2871,144 @@ const PlayerPage: React.FC<{
                       </div>
                     )}
                   </div>
+
+                  <button
+                    onClick={() => { setModalSelectedTracks(tracks.map(t => t.id)); setShowRenderPrompt(true); }}
+                    className="h-4 px-1.5 rounded-md flex items-center gap-1 text-[7px] font-black uppercase tracking-wider transition-all border shadow-md bg-zinc-900 border-zinc-700 text-[#00e5ff] hover:text-white hover:border-[#00e5ff] hover:shadow-[0_0_8px_rgba(0,229,255,0.4)] active:scale-95 animate-pulse"
+                    title="Render AI Vocals"
+                  >
+                    <Sparkles size={6.5} className="text-[#00e5ff]" />
+                    Render
+                  </button>
+
                 </div>
               );
             })()}
 
-            {tracks.map((track, i) => {
-              const isMuted = mutedVocalTracks.has(track.id);
-              const baseTop = staffYPositions.length > 0 ? staffYPositions[0] : 60;
-              const sId = track.id.split('_')[0];
-              const uniqueSids = Array.from(new Set(tracks.map((t: any) => t.id.split('_')[0])));
-              const staffIdx = uniqueSids.indexOf(sId) >= 0 ? uniqueSids.indexOf(sId) : 0;
-              const baseStaffY = staffYPositions[staffIdx] ?? (baseTop + staffIdx * 100);
-              
-              const tracksInSameStaff = tracks.filter((t: any) => t.id.startsWith(sId));
-              const subIndex = tracksInSameStaff.findIndex((t: any) => t.id === track.id);
-              const yOffset = subIndex * 40; // Increased spacing to 40px so the 38px containers don't overlap vertically
-              const yPos = baseStaffY + yOffset;
+            {(() => {
+              // 1. Calculate raw Y coordinates
+              const rawTrackYPositions = tracks.map((t, idx) => {
+                const baseTop = staffYPositions.length > 0 ? staffYPositions[0] : 60;
+                const sId = t.id.split('_')[0];
+                const uniqueSids = Array.from(new Set(tracks.map((x: any) => x.id.split('_')[0])));
+                const staffIdx = uniqueSids.indexOf(sId) >= 0 ? uniqueSids.indexOf(sId) : 0;
+                const baseStaffY = staffYPositions[staffIdx] ?? (baseTop + staffIdx * 100);
+                
+                const tracksInSameStaff = tracks.filter((x: any) => x.id.startsWith(sId));
+                const subIndex = tracksInSameStaff.findIndex((x: any) => x.id === t.id);
+                const yOffset = 28 + subIndex * 24;
+                const yPos = baseStaffY + yOffset;
+                return { id: t.id, rawY: yPos, baseStaffY };
+              });
 
-              const isAnySoloed = Object.values(soloedStems).some(set => set.size > 0);
+              // 2. Sort by raw Y position to get top-to-bottom order
+              const sortedTracks = [...rawTrackYPositions].sort((a, b) => a.rawY - b.rawY);
 
-              return (
-                <React.Fragment key={track.id}>
-                  <div 
-                    className="absolute left-1 z-50 flex flex-col gap-1 pointer-events-auto"
-                    style={{ top: `${yPos - 2}px` }}
-                  >
-                    {/* Layout: [icon] on top, [S] on bottom to reduce width and avoid covering notes */}
-                    <div className="flex flex-col gap-0.5 items-center bg-black/40 border border-white/10 p-0.5 rounded-lg backdrop-blur-sm pointer-events-auto w-fit">
-                      
-                      {/* Toggle between Vocal and Instrument */}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setTracks((prev: any) => prev.map((t: any) => 
-                            t.id === track.id ? { ...t, mode: t.mode === 'vocal' ? 'instrument' : 'vocal' } : t
-                          ));
-                        }}
-                        className={`w-4 h-4 rounded-md flex items-center justify-center transition-all border shadow-lg flex-shrink-0 ${
-                          track.mode === 'vocal'
-                            ? 'bg-cyan-600 border-cyan-400 text-white shadow-[0_0_10px_rgba(34,211,238,0.4)]'
-                            : 'bg-[#1a1a1e] border-zinc-700 text-zinc-400 hover:text-cyan-400 hover:border-cyan-400/60'
-                        }`}
-                        title={track.mode === 'vocal' ? `Switch "${track.name}" to Instrument` : `Switch "${track.name}" to Vocal`}
+              // 3. Resolve vertical collisions: ensure each row is at least 26px below the previous one
+              let currentY = 0;
+              const resolvedTracks = sortedTracks.map((item, idx) => {
+                let y = item.rawY;
+                if (idx === 0) {
+                  y = Math.max(y, item.baseStaffY + 28);
+                } else {
+                  y = Math.max(y, currentY + 26); // strict minimum spacing of 26px to prevent overlap
+                }
+                currentY = y;
+                return { ...item, resolvedY: y, visualNumber: idx + 1 };
+              });
+
+              // 4. Create maps for quick lookup during render
+              const trackYMap = new Map(resolvedTracks.map(item => [item.id, item.resolvedY]));
+              const trackVisualIndexMap = new Map(resolvedTracks.map(item => [item.id, item.visualNumber]));
+              const baseStaffYOfFirst = resolvedTracks[0]?.baseStaffY ?? 60;
+
+              return tracks.map((track, i) => {
+                const isMuted = mutedVocalTracks.has(track.id);
+                const yPos = trackYMap.get(track.id) || 60;
+                const visualNumber = trackVisualIndexMap.get(track.id) || (i + 1);
+
+                const isAnySoloed = Object.values(soloedStems).some(set => set.size > 0);
+
+                return (
+                  <React.Fragment key={track.id}>
+                    {showStemControls && visualNumber === 1 && (
+                      <div 
+                        className="absolute left-1 z-50 flex flex-row flex-nowrap items-center pointer-events-auto"
+                        style={{ top: `${yPos - 20}px` }}
                       >
-                        {track.mode === 'vocal' ? <Mic2 size={8} /> : <span className="text-[8px]">🎹</span>}
-                      </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSoloedStems({});
+                            setMutedVocalTracks(new Set());
+                          }}
+                          className={`h-[14px] px-2 rounded-md border flex items-center justify-center transition-all shadow-md active:scale-95 flex-shrink-0 ${
+                            (isAnySoloed || mutedVocalTracks.size > 0)
+                              ? 'bg-yellow-500 border-yellow-300 text-black shadow-[0_0_8px_rgba(234,179,8,0.4)] hover:bg-yellow-400'
+                              : 'bg-[#1a1a1e] border-zinc-700 text-zinc-500 hover:text-yellow-400 hover:border-yellow-500/40'
+                          }`}
+                          title="Reset All Solo & Mute (Play All)"
+                        >
+                          <span className="text-[6.5px] font-black uppercase tracking-wider leading-none">ALL</span>
+                        </button>
+                      </div>
+                    )}
 
-                      {/* Stem Solo buttons */}
-                      {showStemControls && (() => {
-                        const stemTrackId = track.id;
-                        const isSoloed = soloedStems[stemTrackId]?.has(0);
 
-                        return (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleSoloStem(stemTrackId, 0);
-                            }}
-                            className={`w-4 h-4 rounded-md border flex items-center justify-center transition-all shadow-lg ${
-                              isSoloed
-                                ? 'bg-yellow-500 border-yellow-300 text-black shadow-[0_0_8px_rgba(234,179,8,0.5)]'
-                                : 'bg-[#1a1a1e] border-zinc-700 text-zinc-400 hover:text-yellow-400 hover:border-yellow-500/60'
-                            }`}
-                            title={`Solo ${track.name}`}
-                          >
-                            <span className="text-[8px] font-black leading-none pb-[1px]">S</span>
-                          </button>
-                        );
-                      })()}
-                    </div>
-                  </div>
-
-                  {/* ALL Button below the last track of this staff */}
-                  {showStemControls && subIndex === tracksInSameStaff.length - 1 && (
                     <div 
-                      className="absolute left-1 z-50 pointer-events-auto"
-                      style={{ top: `${yPos + 40}px` }}
+                      className="absolute left-1 z-50 flex flex-row flex-nowrap pointer-events-auto"
+                      style={{ top: `${yPos - 2}px` }}
                     >
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSoloedStems({}); // Clear all solos = play ALL
-                        }}
-                        className={`w-5 h-4 rounded-md border flex items-center justify-center transition-all shadow-lg ${
-                          !isAnySoloed
-                            ? 'bg-yellow-500 border-yellow-300 text-black shadow-[0_0_8px_rgba(234,179,8,0.5)]'
-                            : 'bg-[#1a1a1e] border-zinc-700 text-zinc-400 hover:text-yellow-400 hover:border-yellow-500/60'
-                        }`}
-                        title="Play ALL voices"
-                      >
-                        <span className="text-[6px] font-black">ALL</span>
-                      </button>
+                      <div className="flex flex-row flex-nowrap gap-0.5 items-center bg-black/40 border border-white/10 p-0.5 rounded-lg backdrop-blur-sm pointer-events-auto w-fit">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setTracks((prev: any) => prev.map((t: any) => t.id === track.id ? { ...t, mode: t.mode === 'vocal' ? 'instrument' : 'vocal' } : t)); }}
+                          className={`w-4 h-4 rounded-md flex items-center justify-center transition-all border shadow-lg flex-shrink-0 ${track.mode === 'vocal' ? 'bg-cyan-600 border-cyan-400 text-white shadow-[0_0_10px_rgba(34,211,238,0.4)]' : 'bg-[#1a1a1e] border-zinc-700 text-zinc-400 hover:text-cyan-400 hover:border-cyan-400/60'}`}
+                          title={track.mode === 'vocal' ? `Switch "${track.name}" to Instrument` : `Switch "${track.name}" to Vocal`}
+                        >
+                          {track.mode === 'vocal' ? <Mic2 size={8} /> : <span className="text-[8px]">🎹</span>}
+                        </button>
+
+                        {showStemControls && (() => {
+                          const isSoloed = soloedStems[track.id]?.has(0);
+                          return (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleSoloStem(track.id, 0); }}
+                              className={`w-4 h-4 rounded-md border flex items-center justify-center transition-all shadow-lg flex-shrink-0 ${isSoloed ? 'bg-yellow-500 border-yellow-300 text-black shadow-[0_0_8px_rgba(234,179,8,0.5)]' : 'bg-[#1a1a1e] border-zinc-700 text-zinc-400 hover:text-yellow-400 hover:border-yellow-500/60'}`}
+                              title={`Solo ${track.name}`}
+                            >
+                              <span className="text-[8px] font-black leading-none pb-[1px]">S{visualNumber}</span>
+                            </button>
+                          );
+                        })()}
+
+                        {showStemControls && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setMutedVocalTracks(prev => { const next = new Set(prev); if (next.has(track.id)) next.delete(track.id); else next.add(track.id); return next; }); }}
+                            className={`w-4 h-4 rounded-md border flex items-center justify-center transition-all shadow-lg flex-shrink-0 ${isMuted ? 'bg-red-500 border-red-300 text-white shadow-[0_0_8px_rgba(239,68,68,0.5)]' : 'bg-[#1a1a1e] border-zinc-700 text-zinc-400 hover:text-red-400 hover:border-red-500/60'}`}
+                            title={`Mute ${track.name}`}
+                          >
+                            <span className="text-[8px] font-black leading-none pb-[1px]">M</span>
+                          </button>
+                        )}
+
+                        {/* Track Name (Rightmost) */}
+                        <div className="px-1 rounded flex items-center justify-center max-w-[70px] flex-shrink-0">
+                           <span className="text-[7px] font-bold text-white/90 truncate drop-shadow-md">
+                             {track.mode === 'vocal' 
+                               ? (() => {
+                                   const engineId = track.engineId || activeEngineId;
+                                   const found = voiceEngines.find(v => v.id === engineId);
+                                   return found ? found.name : 'Lotte V';
+                                 })()
+                               : (track.name || 'Instrument')}
+                           </span>
+                        </div>
+                      </div>
                     </div>
-                  )}
-                </React.Fragment>
-              );
-            })}
+                  </React.Fragment>
+                );
+              });
+            })()}
           </div>
         )}
 

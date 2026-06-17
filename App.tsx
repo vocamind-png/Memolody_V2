@@ -179,6 +179,17 @@ const App: React.FC = () => {
   }, [selectedSong]);
 
   useEffect(() => {
+    const startTime = Date.now();
+    let hasTransitioned = false;
+
+    const forceTimeout = setTimeout(() => {
+      if (!hasTransitioned) {
+        hasTransitioned = true;
+        console.warn('[App] Initialization took too long (>8s), forcing Home screen entry.');
+        setIsInitializing(false);
+      }
+    }, 8000);
+
     (async () => {
       try {
         setInitProgress(15);
@@ -240,6 +251,8 @@ const App: React.FC = () => {
           sessionStorage.setItem('memo_session_active', 'true');
         }
 
+        // Check if forceTimeout has already fired (isInitializing is already false)
+        // If it did, we should still perform the updates in background but skip UI progress updates if not needed.
         setInitProgress(45);
         setInitStatus('Configuring Audio Plugins');
         await initPlugins(); // Initialize the Plugin System (including Vocalido)
@@ -310,7 +323,16 @@ const App: React.FC = () => {
 
         setInitProgress(100);
         setInitStatus('Workspace Ready');
-        setTimeout(() => setIsInitializing(false), 50);
+
+        const elapsed = Date.now() - startTime;
+        const remainingTime = Math.max(0, 8000 - elapsed);
+        setTimeout(() => {
+          if (!hasTransitioned) {
+            hasTransitioned = true;
+            clearTimeout(forceTimeout);
+            setIsInitializing(false);
+          }
+        }, remainingTime);
 
         // Background sync runs after 5s to grab updates if we already have songs, otherwise we just synced
         if (songs.length > 0) {
@@ -318,7 +340,15 @@ const App: React.FC = () => {
         }
       } catch (e) {
         console.error("Init Error:", e);
-        setIsInitializing(false); // recover even on error
+        const elapsed = Date.now() - startTime;
+        const remainingTime = Math.max(0, 8000 - elapsed);
+        setTimeout(() => {
+          if (!hasTransitioned) {
+            hasTransitioned = true;
+            clearTimeout(forceTimeout);
+            setIsInitializing(false);
+          }
+        }, remainingTime);
       }
     })();
 
@@ -326,7 +356,10 @@ const App: React.FC = () => {
       const isUp = await CloudSyncService.checkUpdateAvailability();
       setOnlineStatus(isUp ? 'online' : 'offline');
     }, 60000);
-    return () => clearInterval(interval);
+    return () => {
+      clearTimeout(forceTimeout);
+      clearInterval(interval);
+    };
   }, []);
 
   const triggerSync = useCallback(async () => {
