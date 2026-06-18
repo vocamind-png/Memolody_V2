@@ -1,7 +1,55 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Send, Mic, MicOff, MessageCircle, Sparkles, Camera, Trash2 } from 'lucide-react';
 import { NIMO_IDENTITY_IMAGE } from '../../constants';
 import { nimoBrain } from '../../lib/NimoBrain';
+
+const WaveformIndicator = ({ isListening, isSpeaking, userLevel }: { isListening: boolean, isSpeaking: boolean, userLevel: number }) => {
+    const [simLevel, setSimLevel] = useState([4, 4, 4]);
+
+    useEffect(() => {
+        if (!isSpeaking) {
+            setSimLevel([4, 4, 4]);
+            return;
+        }
+        const interval = setInterval(() => {
+            setSimLevel([
+                Math.random() * 20 + 8,
+                Math.random() * 30 + 12,
+                Math.random() * 20 + 8
+            ]);
+        }, 100);
+        return () => clearInterval(interval);
+    }, [isSpeaking]);
+
+    if (!isListening && !isSpeaking) return null;
+
+    const bars = [0, 1, 2];
+    
+    return (
+        <div className="flex items-center justify-center gap-[3px] mt-2 h-10">
+            {bars.map(i => {
+                let height = 4;
+                let colorClass = isSpeaking ? 'bg-purple-400' : 'bg-green-400';
+                let shadowClass = isSpeaking ? 'shadow-[0_0_8px_rgba(167,139,250,0.6)]' : 'shadow-[0_0_8px_rgba(74,222,128,0.6)]';
+                
+                if (isListening) {
+                    const boost = i === 1 ? 1.4 : 0.9;
+                    height = Math.max(4, Math.min(32, userLevel * boost * 0.5));
+                } else if (isSpeaking) {
+                    height = simLevel[i];
+                }
+
+                return (
+                    <div 
+                        key={i} 
+                        className={`w-1.5 rounded-full ${colorClass} ${shadowClass} transition-all duration-75`}
+                        style={{ height: `${height}px` }} 
+                    />
+                );
+            })}
+        </div>
+    );
+};
 
 interface Msg { role: 'user' | 'nimo'; text: string; }
 
@@ -25,17 +73,23 @@ export const FloatingNimoContent: React.FC<Props> = ({
     const [busy, setBusy] = useState(false);
     const [listening, setListening] = useState(false);
     const [speaking, setSpeaking] = useState(false);
-    const [handsFree, setHandsFree] = useState(() => localStorage.getItem('nimo_hands_free') === 'true');
+    const [handsFree, setHandsFree] = useState(() => localStorage.getItem('nimo_hands_free') !== 'false');
     const [status, setStatus] = useState('');
     const [permState, setPermState] = useState<'prompt' | 'granted' | 'denied'>('prompt');
+    const [userAudioLevel, setUserAudioLevel] = useState(0);
 
-    const [attachedScreenshot, setAttachedScreenshot] = useState<string | null>(null);
+    const recRef = useRef<any>(null);
+    const audioContextRef = useRef<AudioContext | null>(null);
+    const analyserRef = useRef<AnalyserNode | null>(null);
+    const micStreamRef = useRef<MediaStream | null>(null);
+    const animationFrameRef = useRef<number | null>(null);
+
     const containerDivRef = useRef<HTMLDivElement>(null);
+    const msgsEndRef = useRef<HTMLDivElement>(null);
     
     // usedMic tracks if the last message was voice input
     const usedMic = useRef(false);
     const listRef = useRef<HTMLDivElement>(null);
-    const recRef = useRef<any>(null);
 
     const handsFreeRef = useRef(handsFree);
     const busyRef = useRef(busy);
@@ -45,6 +99,57 @@ export const FloatingNimoContent: React.FC<Props> = ({
     useEffect(() => { busyRef.current = busy; }, [busy]);
     useEffect(() => { speakingRef.current = speaking; }, [speaking]);
 
+    const analyzeAudio = useCallback(() => {
+        if (!analyserRef.current) return;
+        const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
+        analyserRef.current.getByteFrequencyData(dataArray);
+        
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+            sum += dataArray[i];
+        }
+        const average = sum / dataArray.length;
+        const level = Math.min(100, (average / 128) * 100); 
+        setUserAudioLevel(level);
+
+        animationFrameRef.current = requestAnimationFrame(analyzeAudio);
+    }, []);
+
+    useEffect(() => {
+        if (listening) {
+            navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(stream => {
+                    micStreamRef.current = stream;
+                    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+                    audioContextRef.current = ctx;
+                    const source = ctx.createMediaStreamSource(stream);
+                    const analyser = ctx.createAnalyser();
+                    analyser.fftSize = 256;
+                    source.connect(analyser);
+                    analyserRef.current = analyser;
+                    analyzeAudio();
+                })
+                .catch(err => console.error("Mic access failed for analyzer:", err));
+        } else {
+            if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+            if (micStreamRef.current) {
+                micStreamRef.current.getTracks().forEach(t => t.stop());
+                micStreamRef.current = null;
+            }
+            if (audioContextRef.current) {
+                audioContextRef.current.close().catch(() => {});
+                audioContextRef.current = null;
+            }
+            setUserAudioLevel(0);
+        }
+        return () => {
+            if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+            if (micStreamRef.current) {
+                micStreamRef.current.getTracks().forEach(t => t.stop());
+            }
+        }
+    }, [listening, analyzeAudio]);
+
     // Initial permission check
     useEffect(() => {
         if (navigator.permissions && (navigator.permissions as any).query) {
@@ -52,7 +157,6 @@ export const FloatingNimoContent: React.FC<Props> = ({
                 setPermState(p.state);
                 p.onchange = () => setPermState(p.state);
             }).catch(() => {
-                // Fallback for browsers that don't support mic query
                 setPermState('prompt');
             });
         }
@@ -73,7 +177,7 @@ export const FloatingNimoContent: React.FC<Props> = ({
             setStatus(preferredLanguage === 'th' ? '⏳ กำลังเตรียม...' : '⏳ Preparing...');
             if ('speechSynthesis' in window) window.speechSynthesis.cancel();
             
-            setPermState('granted'); // hide banner
+            setPermState('granted');
             recRef.current?.start();
         } catch (e) {
             setPermState('denied');
@@ -81,7 +185,6 @@ export const FloatingNimoContent: React.FC<Props> = ({
         }
     };
 
-    // Welcome message initialization
     useEffect(() => {
         setMsgs([{ 
             role: 'nimo', 
@@ -91,21 +194,19 @@ export const FloatingNimoContent: React.FC<Props> = ({
         }]);
     }, [preferredLanguage]);
 
-    // Force scroll to bottom when messages change
     useEffect(() => {
-        if (listRef.current) {
-            listRef.current.scrollTop = listRef.current.scrollHeight;
+        if (msgsEndRef.current) {
+            msgsEndRef.current.scrollIntoView({ behavior: 'smooth' });
         }
     }, [msgs, busy]);
 
-    // Setup speech recognition
     useEffect(() => {
         const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
         if (!SR) return;
         const r = new SR();
         r.continuous = false;
         r.interimResults = false;
-        r.lang = 'th-TH'; // Always default to Thai for Speech Recognition so users can ask to switch back to Thai
+        r.lang = 'th-TH'; 
 
         r.onstart = () => {
             setListening(true);
@@ -124,7 +225,6 @@ export const FloatingNimoContent: React.FC<Props> = ({
             if (e.error === 'not-allowed') {
                 setStatus(preferredLanguage === 'th' ? '🔴 ไม่ได้รับอนุญาตให้ใช้ไมค์' : '🔴 Mic Permission Denied');
             } else {
-                // If it's a no-speech error, handle quietly if hands-free is enabled
                 if (e.error === 'no-speech') {
                     setStatus('');
                 } else {
@@ -159,7 +259,6 @@ export const FloatingNimoContent: React.FC<Props> = ({
         }
     };
 
-    // Fix Thai/Brand pronunciation for speech synthesis
     const fixPronunciation = (text: string) => 
         text.replace(/Memolody/gi, 'เมมโมโลดี้').replace(/Nimo/gi, 'นิโม่');
 
@@ -206,9 +305,11 @@ export const FloatingNimoContent: React.FC<Props> = ({
         }
     };
 
+    const [attachedScreenshot, setAttachedScreenshot] = useState<string | null>(null);
+
     const executeSendMsg = async (text: string, base64ImageToUse?: string | null) => {
         const wasVoice = usedMic.current;
-        usedMic.current = false; // Reset for next
+        usedMic.current = false; 
 
         setInput('');
         setBusy(true);
@@ -219,7 +320,6 @@ export const FloatingNimoContent: React.FC<Props> = ({
 
         setMsgs(prev => [...prev, { role: 'user', text }]);
 
-        // Check for secret command override
         if (typeof window !== 'undefined' && window.NimoBrain && window.NimoBrain.processSecretCommand(text)) {
             const isMale = voiceType === 'teen_boy' || voiceType === 'adult_man';
             const confirmationText = preferredLanguage === 'th' 
@@ -253,7 +353,6 @@ export const FloatingNimoContent: React.FC<Props> = ({
         }
 
         try {
-            // Check both VITE_ and global injected by vite.config.ts
             // @ts-ignore
             const key = import.meta.env.VITE_GEMINI_API_KEY || (typeof __GEMINI_API_KEY__ !== 'undefined' ? __GEMINI_API_KEY__ : '');
             if (!key) throw new Error('System: API Key missing');
@@ -261,13 +360,11 @@ export const FloatingNimoContent: React.FC<Props> = ({
             const isMale = voiceType === 'teen_boy' || voiceType === 'adult_man';
             const suffix = isMale ? 'ครับ' : 'ค่ะ';
             
-            // Get current app state from registry
             const appState = typeof window !== 'undefined' && window.NimoBrain 
                 ? window.NimoBrain.getState() 
                 : {};
             const appStateStr = JSON.stringify(appState, null, 2);
 
-            // System instructions
             const sys = preferredLanguage === 'th'
                 ? `คุณคือ Nimo ผู้ช่วย Agentic AI สุดอัจฉริยะของแอพพลิเคชัน Memolody V2 (มีความฉลาดระดับเดียวกับ Gemini 1.5 Pro)
 คุณมีบุคลิกที่เป็นธรรมชาติ เป็นมิตร และมีความรู้ลึกซึ้งเหมือนมนุษย์จริงๆ คุณตอบคำถามได้ลื่นไหล ไม่แข็งกระด้างเหมือนหุ่นยนต์
@@ -276,18 +373,6 @@ export const FloatingNimoContent: React.FC<Props> = ({
 
 สถานะปัจจุบันของแอพพลิเคชัน (Application State):
 ${appStateStr}
-
-ภาพหน้าจอปัจจุบัน (ถ้ามี):
-(หากผู้ใช้งานแนบรูปภาพหน้าจอ หรือคุณสั่งถ่ายภาพหน้าจอ ภาพจะส่งเข้ามาในระบบเพื่อให้คุณวิเคราะห์หน้าตา UI หรือความผิดปกติบนหน้าจอได้)
-
-ข้อมูลความรู้เกี่ยวกับฟังก์ชันปรับแต่งเสียงของ Vocalido (Timbre Designer):
-1. Speed: ยืดหรือหดความยาวของไฟล์เสียงทั้งหมด
-2. SVS Timing Feel: ปรับตำแหน่งเวลาในการออกเสียงพยัญชนะ (0 = หุ่นยนต์ตรงจังหวะเป๊ะ, 50 = มนุษย์ทั่วไป, 100 = ร้องคร่อมจังหวะ/เลย์แบ็ค)
-3. Pitch Shift: ปรับระดับเสียงคีย์เพลงให้สูงขึ้นหรือต่ำลง (เหมือนเปลี่ยนคีย์เพลง ทำให้เสียงเหมือนชิปมังค์เมื่อปรับสูง)
-4. Formant: เปลี่ยนคาแรคเตอร์เสียง (เช่น แปลงเสียงผู้ชายเป็นผู้หญิง) โดยไม่เปลี่ยนคีย์เพลง (เปลี่ยนขนาดช่องคอจำลอง)
-5. Portamento (Glide): การลากโน้ต/ดัดเสียง ให้เสียงสไลด์หากันอย่างนุ่มนวลระหว่าง 2 โน้ต
-6. Warmth / Brightness: ปรับ EQ (Warmth เพิ่มความหนา, Brightness เพิ่มความสว่างใส)
-(หมายเหตุ: ไม่มีปุ่มไหนที่ทำงานซ้ำซ้อนกันในทางเทคนิคหรือคณิตศาสตร์)
 
 ฟีเจอร์และคำสั่งที่คุณควบคุมได้ผ่านทาง actions (ห้ามใช้คำสั่งที่ไม่มีในรายการนี้):
 1. 'navigate_to_page': เปลี่ยนหน้าเพจ (params: { view: 'home' | 'player' | 'forge' | 'settings' | 'profile' })
@@ -315,15 +400,6 @@ You also have vision capabilities and can view screenshots of the app to diagnos
 
 Current Application State:
 ${appStateStr}
-
-Knowledge Base - Vocalido Timbre Designer Parameters:
-1. Speed: Time-stretches the entire audio.
-2. SVS Timing Feel: Adjusts consonant borrowing and phoneme timing (0 = robotic, 50 = natural human, 100 = lazy/jazz).
-3. Pitch Shift: Shifts fundamental frequency (chipmunk effect when high).
-4. Formant: Shifts spectral envelope without changing musical key (changes vocal tract size, male to female).
-5. Portamento (Glide): Smooth pitch curve interpolation between two notes.
-6. Warmth / Brightness: EQ adjustments (Warmth boosts low-mids, Brightness boosts high frequencies).
-(Note: None of these parameters are technically redundant mathematically.)
 
 Supported Actions:
 1. 'navigate_to_page': Change page view (params: { view: 'home' | 'player' | 'forge' | 'settings' | 'profile' })
@@ -370,7 +446,7 @@ You must output valid JSON matching the schema. If no actions are needed, return
             });
 
             const res = await fetch(
-                `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${key}`,
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`,
                 {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -381,25 +457,7 @@ You must output valid JSON matching the schema. If no actions are needed, return
                             maxOutputTokens: 1024,
                             temperature: 0.4,
                             topP: 0.95,
-                            responseMimeType: "application/json",
-                            responseSchema: {
-                                type: "OBJECT",
-                                properties: {
-                                    reply: { type: "STRING" },
-                                    actions: {
-                                        type: "ARRAY",
-                                        items: {
-                                            type: "OBJECT",
-                                            properties: {
-                                                type: { type: "STRING" },
-                                                params: { type: "OBJECT" }
-                                            },
-                                            required: ["type"]
-                                        }
-                                    }
-                                },
-                                required: ["reply", "actions"]
-                            }
+                            responseMimeType: "application/json"
                         }
                     })
                 }
@@ -425,7 +483,21 @@ You must output valid JSON matching the schema. If no actions are needed, return
             const cleanReply = parsedRes.reply || reply;
             setMsgs(prev => [...prev, { role: 'nimo', text: cleanReply }]);
 
-            // Execute Actions
+            if (!parsedRes.actions || parsedRes.actions.length === 0) {
+                const lowerReply = cleanReply.toLowerCase();
+                parsedRes.actions = parsedRes.actions || [];
+                
+                if (lowerReply.includes('หน้าแรก') || lowerReply.includes('home')) {
+                    parsedRes.actions.push({ type: 'navigate_to_page', params: { view: 'home' } });
+                } else if (lowerReply.includes('ตั้งค่า') || lowerReply.includes('settings')) {
+                    parsedRes.actions.push({ type: 'navigate_to_page', params: { view: 'settings' } });
+                } else if (lowerReply.includes('เล่นเพลง') || lowerReply.includes('play')) {
+                    parsedRes.actions.push({ type: 'play', params: {} });
+                } else if (lowerReply.includes('หยุด') || lowerReply.includes('pause')) {
+                    parsedRes.actions.push({ type: 'pause', params: {} });
+                }
+            }
+
             if (parsedRes.actions && Array.isArray(parsedRes.actions)) {
                 for (const act of parsedRes.actions) {
                     if (act.type) {
@@ -438,7 +510,6 @@ You must output valid JSON matching the schema. If no actions are needed, return
                 }
             }
 
-            // Speak response if using voice or in hands-free mode
             if ((wasVoice || handsFree) && 'speechSynthesis' in window) {
                 window.speechSynthesis.cancel();
                 setSpeaking(true);
@@ -446,7 +517,6 @@ You must output valid JSON matching the schema. If no actions are needed, return
                 const isThai = /[\\u0E00-\\u0E7F]/.test(cleanReply);
                 u.lang = isThai ? 'th-TH' : 'en-US';
                 
-                // Explicitly find a Thai voice if needed
                 if (isThai) {
                     const voices = window.speechSynthesis.getVoices();
                     const thVoice = voices.find(v => v.lang === 'th-TH' || v.lang.includes('th') || v.lang.includes('TH'));
@@ -493,7 +563,6 @@ You must output valid JSON matching the schema. If no actions are needed, return
         executeSendMsg(text || (preferredLanguage === 'th' ? 'ช่วยวิเคราะห์ภาพหน้าจอนี้ให้หน่อยค่ะ/ครับ' : 'Please analyze this screenshot.'));
     };
 
-    // Register Nimo specific actions
     useEffect(() => {
         const unregTakeScreenshot = nimoBrain.registerAction('take_screenshot', async () => {
             setBusy(true);
