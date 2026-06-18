@@ -696,12 +696,83 @@ const App: React.FC = () => {
       }
     });
 
+    const unregSoloTrack = nimoBrain.registerAction('solo_track', (params) => {
+      const trackName = params?.trackName;
+      const trackIdx = params?.trackIndex;
+      const solo = params?.solo !== false;
+      console.log('[App] Nimo requested solo_track:', { trackName, trackIdx, solo });
+      
+      setTracks(prev => prev.map((t, idx) => {
+        const isTarget = (trackName && t.name.toLowerCase().includes(trackName.toLowerCase())) || 
+                         (trackIdx !== undefined && idx === Number(trackIdx));
+        if (isTarget) {
+          return { ...t, isSolo: solo };
+        }
+        return t;
+      }));
+    });
+
+    const unregMuteTrack = nimoBrain.registerAction('mute_track', (params) => {
+      const trackName = params?.trackName;
+      const trackIdx = params?.trackIndex;
+      const mute = params?.mute !== false;
+      console.log('[App] Nimo requested mute_track:', { trackName, trackIdx, mute });
+      
+      setTracks(prev => prev.map((t, idx) => {
+        const isTarget = (trackName && t.name.toLowerCase().includes(trackName.toLowerCase())) || 
+                         (trackIdx !== undefined && idx === Number(trackIdx));
+        if (isTarget) {
+          return { ...t, isMuted: mute };
+        }
+        return t;
+      }));
+    });
+
+    const unregSetTrackMode = nimoBrain.registerAction('set_track_mode', (params) => {
+      const trackName = params?.trackName;
+      const trackIdx = params?.trackIndex;
+      const mode = params?.mode;
+      console.log('[App] Nimo requested set_track_mode:', { trackName, trackIdx, mode });
+      if (mode !== 'vocal' && mode !== 'instrument') return;
+      
+      setTracks(prev => prev.map((t, idx) => {
+        const isTarget = (trackName && t.name.toLowerCase().includes(trackName.toLowerCase())) || 
+                         (trackIdx !== undefined && idx === Number(trackIdx));
+        if (isTarget) {
+          const defaultInst = mode === 'vocal' ? 'Auto' : 'Piano';
+          return { ...t, mode, instrument: defaultInst };
+        }
+        return t;
+      }));
+    });
+
+    const unregSetTrackInstrument = nimoBrain.registerAction('set_track_instrument', (params) => {
+      const trackName = params?.trackName;
+      const trackIdx = params?.trackIndex;
+      const instrument = params?.instrument;
+      console.log('[App] Nimo requested set_track_instrument:', { trackName, trackIdx, instrument });
+      if (!instrument) return;
+      
+      setTracks(prev => prev.map((t, idx) => {
+        const isTarget = (trackName && t.name.toLowerCase().includes(trackName.toLowerCase())) || 
+                         (trackIdx !== undefined && idx === Number(trackIdx));
+        if (isTarget) {
+          return { ...t, instrument: instrument };
+        }
+        return t;
+      }));
+    });
+
     return () => {
       unregNavigate();
       unregNavigateAlias();
       unregPlaySong();
       unregChangeLang();
       unregChangeInstrument();
+      unregSoloTrack();
+      unregMuteTrack();
+      unregSetTrackMode();
+      unregSetTrackInstrument();
     };
   }, [navigateTo, handleSongSelect]);
 

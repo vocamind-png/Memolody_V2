@@ -384,7 +384,7 @@ ${appStateStr}
 5. 'set_tempo': ปรับความเร็วเพลง BPM (params: { bpm: number [20-400] })
 6. 'set_volume': ปรับความดังเสียงหลัก (params: { level: number [0.0 - 1.0] })
 7. 'change_language': สลับภาษาการแสดงผล (params: { lang: 'th' | 'en' })
-8. 'change_instrument': เปลี่ยนเครื่องดนตรี (params: { instrument: 'piano' | 'violin' | 'voice' | 'guitar' })
+8. 'change_instrument': เปลี่ยนเครื่องดนตรีหลักของเพลง (params: { instrument: 'piano' | 'violin' | 'voice' | 'guitar' })
 9. 'toggle_view_mode': สลับโหมด Score และ Piano Roll (ไม่มี params)
 10. 'toggle_loop': เปิด/ปิดโหมดลูปเสียง (params: { enabled: boolean })
 11. 'toggle_mixer': เปิด/ปิดแผงมิกเซอร์ (Mixer) (ไม่มี params)
@@ -392,6 +392,10 @@ ${appStateStr}
 13. 'set_transpose': ปรับระดับคีย์ Transpose สูงต่ำตามระดับครึ่งเสียง (semitones) (params: { transpose: number })
 14. 'toggle_favorite': กดเพิ่มหรือเอาเพลงปัจจุบันออกจากรายการโปรด (Favorite) (ไม่มี params)
 15. 'take_screenshot': ถ่ายรูปภาพหน้าจอปัจจุบันของแอพพลิเคชันเพื่อตรวจสอบความถูกต้องหรือแก้ไขปัญหาให้ผู้ใช้ (ไม่มี params)
+16. 'solo_track': โซโล่ (Solo) เสียงเฉพาะของแทร็กใดแทร็กหนึ่ง (params: { trackName?: string, trackIndex?: number, solo: boolean })
+17. 'mute_track': ปิดเสียง (Mute) หรือเปิดเสียงของแทร็กใดแทร็กหนึ่ง (params: { trackName?: string, trackIndex?: number, mute: boolean })
+18. 'set_track_mode': สลับโหมดของแทร็กระหว่างเสียงร้อง Vocal และเสียงดนตรี Instrument (params: { trackName?: string, trackIndex?: number, mode: 'vocal' | 'instrument' })
+19. 'set_track_instrument': เลือกเครื่องดนตรีหรือนักร้องเสียงประสาน/Vocalido ของแทร็กนั้นๆ เช่น 'Piano', 'Violin', 'Canary', 'Lotte V', 'Soprano' (params: { trackName?: string, trackIndex?: number, instrument: string })
 
 ข้อสำคัญเกี่ยวกับการตอบกลับ (JSON):
 - 'reply': เป็นข้อความที่ใช้พูดและแสดงผล ต้องมีความเป็นมนุษย์ เป็นมิตร (ลงท้ายด้วย ${suffix} เสมอ) และ **ห้ามขึ้นบรรทัดใหม่ด้วย \n หรือใช้เครื่องหมาย Bullet Point** ให้เขียนเป็นพารากราฟติดกัน
@@ -419,6 +423,10 @@ Supported Actions:
 13. 'set_transpose': Adjust transpose key by semitones (params: { transpose: number })
 14. 'toggle_favorite': Toggle current song favorite status (no params)
 15. 'take_screenshot': Capture a screenshot of the current application screen to inspect or troubleshoot (no params)
+16. 'solo_track': Solo or unsolo a specific track (params: { trackName?: string, trackIndex?: number, solo: boolean })
+17. 'mute_track': Mute or unmute a specific track (params: { trackName?: string, trackIndex?: number, mute: boolean })
+18. 'set_track_mode': Switch track mode between vocal and instrument (params: { trackName?: string, trackIndex?: number, mode: 'vocal' | 'instrument' })
+19. 'set_track_instrument': Choose track voice/instrument like 'Piano', 'Violin', 'Canary', 'Lotte V', 'Soprano' (params: { trackName?: string, trackIndex?: number, instrument: string })
 
 You must output valid JSON matching the schema. If no actions are needed, return an empty array.`;
 
