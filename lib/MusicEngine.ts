@@ -736,15 +736,7 @@ export class MusicEngine {
   private setAudioVolume(audio: HTMLAudioElement, volume: number, muted: boolean) {
     audio.volume = volume;
     audio.muted = muted;
-    if ((audio as any).toneVolume) {
-      const volNode = (audio as any).toneVolume as Tone.Volume;
-      volNode.mute = muted;
-      if (volume <= 0) {
-        volNode.volume.value = -Infinity;
-      } else {
-        volNode.volume.value = 20 * Math.log10(volume);
-      }
-    }
+    // We removed toneVolume since HTMLAudioElement is no longer routed through Tone.js Web Audio nodes.
   }
 
   unlockVocalAudio(trackId: string) {
@@ -827,20 +819,9 @@ export class MusicEngine {
           this.trackVocalRenderTranspose.set(trackId, this.currentTranspose);
           if (renderBpm) (audio as any).renderBpm = renderBpm;
 
-          try {
-            const ctx = Tone.context.rawContext as AudioContext;
-            const source = ctx.createMediaElementSource(audio);
-            const pitchShift = new Tone.PitchShift().toDestination();
-            const volNode = new Tone.Volume().connect(pitchShift);
-            source.connect(volNode as any);
-            
-            (audio as any).toneVolume = volNode;
-            this.vocalAudioSources.set(trackId, source);
-            this.vocalPitchShifts.set(trackId, pitchShift);
-            this.updateVocalPitchShifts();
-          } catch (e) {
-            console.warn("[MusicEngine] Failed to create PitchShift for main vocal:", e);
-          }
+          // Note: We deliberately do NOT use createMediaElementSource() or Tone.PitchShift() here.
+          // Routing HTMLAudioElement through Web Audio API's PitchShift causes severe CPU overload,
+          // phase vocoder artifacts (stuttering), and crashes the Tone.Transport playback head.
         }
 
         audio.oncanplaythrough = () => {
@@ -886,25 +867,9 @@ export class MusicEngine {
             this.trackVocalRenderTranspose.set(trackId, this.currentTranspose);
             if (renderBpm) (audio as any).renderBpm = renderBpm;
 
-            try {
-              const ctx = Tone.context.rawContext as AudioContext;
-              const source = ctx.createMediaElementSource(audio);
-              const pitchShift = new Tone.PitchShift().toDestination();
-              const volNode = new Tone.Volume().connect(pitchShift);
-              source.connect(volNode as any);
-              
-              (audio as any).toneVolume = volNode;
-              
-              if (!this.vocalStemAudioSources.has(trackId)) this.vocalStemAudioSources.set(trackId, []);
-              this.vocalStemAudioSources.get(trackId)![index] = source;
-              
-              if (!this.vocalStemPitchShifts.has(trackId)) this.vocalStemPitchShifts.set(trackId, []);
-              this.vocalStemPitchShifts.get(trackId)![index] = pitchShift;
-              
-              this.updateVocalPitchShifts();
-            } catch (e) {
-              console.warn(`[MusicEngine] Failed to create PitchShift for stem ${index}:`, e);
-            }
+            // Note: We deliberately do NOT use createMediaElementSource() or Tone.PitchShift() here.
+            // Routing HTMLAudioElement through Web Audio API's PitchShift causes severe CPU overload,
+            // phase vocoder artifacts (stuttering), and crashes the Tone.Transport playback head.
           }
 
           audio.oncanplaythrough = () => {
@@ -1339,14 +1304,14 @@ export class MusicEngine {
           const ratio = currentBpm / ((audio as any).renderBpm || currentBpm);
           const songTime = Tone.Transport.seconds - this.countInDuration;
           
-          // Android User Gesture Fix: Call play() on ALL tracks, relying purely on mute/volume to hide inactive ones.
-          const playPromise = audio.play().catch(e => console.warn('[MusicEngine] main mix play failed:', e));
-          
           try {
             audio.currentTime = Math.max(0, songTime * ratio);
           } catch(e) {
             console.warn('[MusicEngine] main sync audio.currentTime seek failed:', e);
           }
+
+          // Android User Gesture Fix: Call play() on ALL tracks, relying purely on mute/volume to hide inactive ones.
+          const playPromise = audio.play().catch(e => console.warn('[MusicEngine] main mix play failed:', e));
         }
         // We removed the 'else if' that pauses the audio when not active.
         // It must keep playing silently so it stays synced and doesn't require a new user gesture to unmute.
@@ -1396,8 +1361,12 @@ export class MusicEngine {
                console.warn(`[MusicEngine] stem ${i} seek failed:`, e);
              }
              
+             try {
+               audio.currentTime = Math.max(0, songTime * ratio);
+             } catch(e) { }
+
              // Play AFTER seek
-             audio.play().catch(e => console.warn(`[MusicEngine] stem ${i} play failed:`, e));
+             const playPromise = audio.play().catch(e => console.warn(`[MusicEngine] stem ${i} play failed:`, e));
           }
           // Removed else if audio.pause() so it plays silently in sync
         });
