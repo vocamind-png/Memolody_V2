@@ -596,7 +596,7 @@ const PlayerPage: React.FC<{
           // Update availableStems so the ◆ Stem Solo buttons appear if needed
           const newAvailableStems: Record<string, number> = {};
           // Check all vocal tracks that have audio elements loaded (public API)
-          musicEngine.vocalAudioElements.forEach((_, tid) => {
+          musicEngine.vocalPlayers.forEach((_, tid) => {
             const count = musicEngine.getAvailableStems(tid);
             if (count > 0) newAvailableStems[tid] = count;
           });

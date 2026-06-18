@@ -1540,25 +1540,7 @@ class VocalidoRenderService {
               }
             }
             
-            for (const tid of vocalTrackIds) {
-              // For polyphonic mode: assign its individual stem url so we get proper separation.
-              // Fall back to cacheBustedUrl only if individual stems are not available.
-              const tAudioUrl = ((stemsByTrack[tid] || []).length > 0)
-                ? (stemsByTrack[tid] || [])[0]
-                : (tid === primaryVocalTrackId ? cacheBustedUrl : "");
-              if (tAudioUrl) {
-                let audioEl = musicEngine.vocalAudioElements.get(tid);
-                if (!audioEl) {
-                  audioEl = new Audio();
-                  audioEl.crossOrigin = 'anonymous';
-                  audioEl.preservesPitch = true;
-                  musicEngine.vocalAudioElements.set(tid, audioEl);
-                }
-                audioEl.src = tAudioUrl;
-                audioEl.load();
-              }
-            }
-
+            // Note: musicEngine.addVocalLayer already created and started the Tone.Player instances.
             musicEngine.setTransportSeconds(livePos);
             if (livePlaying) {
               await musicEngine.start();
