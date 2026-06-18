@@ -2093,8 +2093,9 @@ const PlayerPage: React.FC<{
         localStorage.setItem('memo_recent_history', JSON.stringify(filtered.slice(0, 15)));
       } catch (e) {}
     }
-    
-    musicEngine.addEventListener('tick', handleTick);
+  }, [song?.id]);
+
+  useEffect(() => {
     musicEngine.setMasterVolume(masterVolume);
   }, [masterVolume]);
 
