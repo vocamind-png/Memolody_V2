@@ -802,36 +802,56 @@ export class MusicEngine {
     // 1. Load Main Mix Player (HTMLAudioElement)
     if (audioUrl) {
       loadPromises.push(new Promise<void>((resolve) => {
-        const audio = new Audio();
-        if (!audioUrl.startsWith('blob:')) {
-          audio.crossOrigin = 'anonymous';
-        }
-        audio.preservesPitch = true;
-        audio.preload = 'auto';
-        audio.src = audioUrl;
-        
         let isResolved = false;
         const doResolve = () => { if (!isResolved) { isResolved = true; resolve(); } };
-        
-        // Immediately set the audio element so it's not lost if oncanplaythrough fails to fire
-        if (myGeneration === this._vocalGeneration) {
-          this.vocalAudioElements.set(trackId, audio);
-          // Note: We deliberately do NOT use createMediaElementSource() or Tone.PitchShift() here.
-          // Routing HTMLAudioElement through Web Audio API's PitchShift causes severe CPU overload,
-          // phase vocoder artifacts (stuttering), and crashes the Tone.Transport playback head due to CORS.
-        }
 
-        audio.oncanplaythrough = () => {
-          doResolve();
+        const setupAudio = (finalUrl: string) => {
+          const audio = new Audio();
+          audio.crossOrigin = 'anonymous';
+          audio.preservesPitch = true;
+          audio.preload = 'auto';
+          audio.src = finalUrl;
+          
+          if (myGeneration === this._vocalGeneration) {
+            this.vocalAudioElements.set(trackId, audio);
+            
+            // Add PitchShift back for real-time transposition
+            let pitchShift = this.vocalPitchShifts.get(trackId);
+            if (!pitchShift) {
+              pitchShift = new Tone.PitchShift().toDestination();
+              pitchShift.windowSize = 0.1; // Reduce artifacts
+              this.vocalPitchShifts.set(trackId, pitchShift);
+            }
+            try {
+              const ctx = Tone.getContext().rawContext as AudioContext;
+              const sourceNode = ctx.createMediaElementSource(audio);
+              sourceNode.connect(pitchShift as any);
+            } catch(e) {
+              console.warn("[MusicEngine] Failed to connect vocal pitch shift", e);
+            }
+          }
+
+          audio.oncanplaythrough = () => doResolve();
+          audio.onerror = (err) => {
+            console.error('[MusicEngine] ❌ Error loading main vocal HTMLAudioElement:', err);
+            doResolve();
+          };
+          
+          audio.load();
+          audio.play().then(() => audio.pause()).catch(e => console.warn(`[MusicEngine] Main unlock fallback failed:`, e));
         };
-        
-        audio.onerror = (err) => {
-          console.error('[MusicEngine] ❌ Error loading main vocal HTMLAudioElement:', err);
-          doResolve();
-        };
-        
-        audio.load();
-        audio.play().then(() => audio.pause()).catch(e => console.warn(`[MusicEngine] Main unlock fallback failed:`, e));
+
+        if (!audioUrl.startsWith('blob:')) {
+          fetch(audioUrl)
+            .then(res => res.blob())
+            .then(blob => setupAudio(URL.createObjectURL(blob)))
+            .catch(e => {
+               console.warn('[MusicEngine] Failed to fetch audioUrl as blob, falling back to remote URL', e);
+               setupAudio(audioUrl);
+            });
+        } else {
+          setupAudio(audioUrl);
+        }
         
         setTimeout(() => {
           if (!isResolved) {
@@ -847,37 +867,61 @@ export class MusicEngine {
     if (stemUrls && stemUrls.length > 0) {
       stemUrls.forEach((url, index) => {
         loadPromises.push(new Promise<void>((resolve) => {
-          const audio = new Audio();
-          if (!url.startsWith('blob:')) {
-            audio.crossOrigin = 'anonymous';
-          }
-          audio.preservesPitch = true;
-          audio.preload = 'auto'; // CRITICAL: Force Android Chrome to buffer
-          audio.src = url;
-          
           let isResolved = false;
           const doResolve = () => { if (!isResolved) { isResolved = true; resolve(); } };
-          
-          // Immediately set the stem audio element
-          if (myGeneration === this._vocalGeneration) {
-            stemAudios[index] = audio;
-            // Note: We deliberately do NOT use createMediaElementSource() or Tone.PitchShift() here.
-            // Routing HTMLAudioElement through Web Audio API's PitchShift causes severe CPU overload,
-            // phase vocoder artifacts (stuttering), and crashes the Tone.Transport playback head due to CORS.
-          }
 
-          audio.oncanplaythrough = () => {
-            doResolve();
+          const setupAudio = (finalUrl: string) => {
+            const audio = new Audio();
+            audio.crossOrigin = 'anonymous';
+            audio.preservesPitch = true;
+            audio.preload = 'auto'; // CRITICAL: Force Android Chrome to buffer
+            audio.src = finalUrl;
+            
+            if (myGeneration === this._vocalGeneration) {
+              stemAudios[index] = audio;
+              
+              // Add PitchShift back for stems
+              let shifts = this.vocalStemPitchShifts.get(trackId);
+              if (!shifts) {
+                shifts = [];
+                this.vocalStemPitchShifts.set(trackId, shifts);
+              }
+              let pitchShift = shifts[index];
+              if (!pitchShift) {
+                pitchShift = new Tone.PitchShift().toDestination();
+                pitchShift.windowSize = 0.1;
+                shifts[index] = pitchShift;
+              }
+              try {
+                const ctx = Tone.getContext().rawContext as AudioContext;
+                const sourceNode = ctx.createMediaElementSource(audio);
+                sourceNode.connect(pitchShift as any);
+              } catch(e) {
+                console.warn("[MusicEngine] Failed to connect stem pitch shift", e);
+              }
+            }
+
+            audio.oncanplaythrough = () => doResolve();
+            audio.onerror = (err) => {
+              console.error(`[MusicEngine] ❌ Error loading stem audio ${index}:`, err);
+              doResolve();
+            };
+            audio.load();
+            audio.play().then(() => audio.pause()).catch(e => console.warn(`[MusicEngine] Stem ${index} unlock fallback failed:`, e));
           };
-          
-          audio.onerror = (err) => {
-            console.error(`[MusicEngine] ❌ Error loading stem audio ${index}:`, err);
-            doResolve();
-          };
-          
-          audio.load();
-          // CRITICAL: Unlock the audio element immediately within the current user gesture
-          audio.play().then(() => audio.pause()).catch(e => console.warn(`[MusicEngine] Stem ${index} unlock fallback failed:`, e));
+
+          if (!url.startsWith('blob:')) {
+            fetch(url)
+              .then(res => res.blob())
+              .then(blob => setupAudio(URL.createObjectURL(blob)))
+              .catch(e => {
+                 console.warn(`[MusicEngine] Failed to fetch stem ${index} as blob, falling back to remote URL`, e);
+                 setupAudio(url);
+              });
+          } else {
+            setupAudio(url);
+          }
+          // CRITICAL: Unlock the audio element immediately within the current user gesture (moved inside setupAudio)
           
           const stemTimeout = url.startsWith('blob:') ? 8000 : 5000;
           setTimeout(() => {
@@ -1372,9 +1416,15 @@ export class MusicEngine {
   }
 
   public setVocalTranspose(trackId: string, diffSemitones: number) {
-    // Live vocal transpose is disabled to prevent pitch/tempo coupling and stuttering.
-    // Transposition is handled by the backend when the user clicks 'Render'.
-    console.log(`[MusicEngine] setVocalTranspose ignored for frontend vocal: ${trackId} diff=${diffSemitones}`);
+    // Re-enabled real-time pitch shift
+    const ps = this.vocalPitchShifts.get(trackId);
+    if (ps) {
+      ps.pitch = diffSemitones;
+    }
+    const sps = this.vocalStemPitchShifts.get(trackId);
+    if (sps) {
+      sps.forEach(p => p && (p.pitch = diffSemitones));
+    }
   }
 
   public updateVocalPlaybackState(time?: number) {
