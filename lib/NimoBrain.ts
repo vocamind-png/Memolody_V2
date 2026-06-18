@@ -63,10 +63,31 @@ export class NimoBrainRegistry {
       return;
     }
     console.log(`[NimoBrain] Executing action: ${id}`, params);
+    
+    let displayMsg = `Nimo: กำลังทำงาน... (${id})`;
+    if (id === 'play_song' && params?.songTitle) {
+      displayMsg = `Nimo: กำลังเล่นเพลง ${params.songTitle}`;
+    } else if (id === 'navigate_to_page' && params?.view) {
+      displayMsg = `Nimo: กำลังเปิดหน้า ${params.view}`;
+    } else if (id === 'change_instrument' && params?.instrument) {
+      displayMsg = `Nimo: เปลี่ยนเสียงเป็น ${params.instrument}`;
+    } else if (id === 'set_transpose' && params?.transpose !== undefined) {
+      displayMsg = `Nimo: เปลี่ยนคีย์เป็น ${params.transpose > 0 ? '+'+params.transpose : params.transpose}`;
+    } else if (id === 'set_tempo' && params?.bpm) {
+      displayMsg = `Nimo: ปรับจังหวะเป็น ${params.bpm} BPM`;
+    } else if (id === 'play') {
+      displayMsg = `Nimo: เล่นเพลง`;
+    } else if (id === 'pause') {
+      displayMsg = `Nimo: หยุดเพลง`;
+    }
+    
+    this.showToastNotification(displayMsg, '#8B5CF6'); // Purple Nimo color
+
     try {
       await handler(params);
-    } catch (err) {
+    } catch (err: any) {
       console.error(`[NimoBrain] Error executing action: ${id}`, err);
+      this.showToastNotification(`Nimo: ผิดพลาด (${err.message || 'Error'})`, '#EF4444');
     }
   }
 

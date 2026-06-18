@@ -430,9 +430,7 @@ You must output valid JSON matching the schema. If no actions are needed, return
                 for (const act of parsedRes.actions) {
                     if (act.type) {
                         try {
-                            if (window.NimoBrain) {
-                                await window.NimoBrain.executeAction(act.type, act.params);
-                            }
+                            await nimoBrain.executeAction(act.type, act.params);
                         } catch (err) {
                             console.error(`[NimoAction Error] Failed executing ${act.type}:`, err);
                         }
