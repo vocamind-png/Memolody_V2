@@ -2632,7 +2632,7 @@ const PlayerPage: React.FC<{
                     <ChevronRight size={6} />
                   </button>
                 </div>
-                {renderHistory.map((h) => {
+                {renderHistory.map((h, idx) => {
                   const hKey = getRenderKey(h);
                   const isActive = activeRenderKey === hKey;
                   const isInfoOpen = memoInfoOpenKey === hKey;
@@ -2716,16 +2716,14 @@ const PlayerPage: React.FC<{
                           ${isActive ? 'bg-gradient-to-br from-cyan-400 to-indigo-600 text-black border-transparent shadow-[0_0_10px_rgba(0,229,255,0.4)]' : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700'}`}
                         title={`เล่นประสานเสียง (${h.voiceName || 'Auto'} • ${h.lyricMode || 'SYS'} • Key ${h.songKey} • BPM ${h.bpmPercent}%)`}
                       >
-                        <span className="text-[4.5px] tracking-tighter leading-none mb-0.5">{h.songKey}</span>
-                        <span className="text-[3.2px] opacity-80 leading-none">{diffStr}</span>
-                        <span className="text-[2.2px] opacity-60 mt-0.5 tracking-tighter max-w-[22px] truncate leading-none">{h.voiceName || 'Auto'}</span>
+                        <span className="text-[12px] font-black leading-none mb-0.5">{`R${renderHistory.length - idx}`}</span>
                       </button>
     
                       <button
                         onClick={(e) => { e.stopPropagation(); setMemoInfoOpenKey(isInfoOpen ? null : hKey); }}
-                        className={`absolute top-0 right-0 w-2 h-2 rounded-full flex items-center justify-center text-[3.5px] font-black border transition-all pointer-events-auto ${isInfoOpen ? 'bg-amber-500 border-amber-400 text-white shadow-lg' : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-white'}`}
+                        className={`absolute top-0 right-0 w-2.5 h-2.5 rounded-full flex items-center justify-center text-[5px] font-black border transition-all pointer-events-auto ${isInfoOpen ? 'bg-amber-500 border-amber-400 text-white shadow-lg' : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-white'}`}
                         title="ดูรายละเอียด / Show details"
-                      >ℹ</button>
+                      >&gt;</button>
                       
                       {/* Delete (x) Button */}
                       <button
@@ -2759,8 +2757,10 @@ const PlayerPage: React.FC<{
                             <span className="text-[6.5px] text-zinc-500">{h.voiceName || 'Auto'}</span>
                           </div>
                           <div className="flex flex-col gap-1 text-zinc-300">
+                            <div className="flex justify-between"><span className="text-zinc-500">System:</span> <span>{h.lyricMode}</span></div>
+                            <div className="flex justify-between"><span className="text-zinc-500">Key:</span> <span className="font-bold">{h.songKey}</span></div>
+                            <div className="flex justify-between"><span className="text-zinc-500">Tempo:</span> <span>{h.bpmPercent === 100 ? 'Original' : `${h.bpmPercent}% (${diffStr})`}</span></div>
                             <div className="flex justify-between"><span className="text-zinc-500">Engine:</span> <span>{h.engineId || 'vocalido'}</span></div>
-                            <div className="flex justify-between"><span className="text-zinc-500">Lyric Mode:</span> <span>{h.lyricMode}</span></div>
                             <div className="flex justify-between"><span className="text-zinc-500">Rendered:</span> <span>{shortDate || 'N/A'}</span></div>
                             <div className="flex justify-between"><span className="text-zinc-500">File:</span> <span className="truncate max-w-[80px]" title={filenameFromUrl}>{filenameFromUrl || 'N/A'}</span></div>
                           </div>
