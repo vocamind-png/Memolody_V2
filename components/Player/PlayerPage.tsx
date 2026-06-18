@@ -581,7 +581,14 @@ const PlayerPage: React.FC<{
           
           const savedTracks = localStorage.getItem(`tracks_state_${song?.id}`);
           if (savedTracks) {
-            setTracks(JSON.parse(savedTracks));
+            const parsed = JSON.parse(savedTracks);
+            const savedLyricMode = (() => { try { return localStorage.getItem('memo_lyric_mode') || ''; } catch { return ''; } })();
+            if (savedLyricMode) {
+              setTracks(parsed.map((t: any) => ({ ...t, lyricMode: savedLyricMode })));
+            } else {
+              setTracks(parsed);
+            }
+            return;
           }
           
           setActiveCard('score');
@@ -1203,10 +1210,26 @@ const PlayerPage: React.FC<{
 
   const handleToggleFavorite = async () => {
     if (!song) return;
+    
+    // Check if the song exists in user library
+    const existingSong = await songStorage.getSong(song.id);
+    if (!existingSong) {
+      if (!musicXml) {
+        alert("Cannot favorite this song yet, still loading data.");
+        return;
+      }
+      // Song is built-in or not saved yet. Save it to user library first, then favorite it.
+      const clonedSong = { ...song, metadata: { ...song.metadata, isFavorite: true } };
+      await songStorage.saveSong(clonedSong, musicXml, layoutBundle);
+      setIsFavorite(true);
+      if (onSongUpdate) onSongUpdate(clonedSong);
+      return;
+    }
+
     const newFav = await songStorage.toggleFavorite(song.id);
     setIsFavorite(newFav);
     if (onSongUpdate) {
-      onSongUpdate({ ...song, isFavorite: newFav });
+      onSongUpdate({ ...song, metadata: { ...song.metadata, isFavorite: newFav } });
     }
   };
 
@@ -1490,6 +1513,13 @@ const PlayerPage: React.FC<{
               : t
           );
         }
+        
+        // Ensure lyricMode uses the global persistent mode
+        const savedLyricMode = (() => { try { return localStorage.getItem('memo_lyric_mode') || ''; } catch { return ''; } })();
+        if (savedLyricMode) {
+          restoredTracks = restoredTracks.map((t: any) => ({ ...t, lyricMode: savedLyricMode }));
+        }
+
         setTracks(restoredTracks);
         return;
       }
@@ -2054,6 +2084,17 @@ const PlayerPage: React.FC<{
   }, [activeCard, currentPhraseToSing, parsedData.notes, activeEngineId, tracks]);
 
   useEffect(() => {
+    if (song?.id) {
+      try {
+        const recentJson = localStorage.getItem('memo_recent_history') || '[]';
+        const recentList = JSON.parse(recentJson);
+        const filtered = recentList.filter((s: any) => s.id !== song.id);
+        filtered.unshift(song);
+        localStorage.setItem('memo_recent_history', JSON.stringify(filtered.slice(0, 15)));
+      } catch (e) {}
+    }
+    
+    musicEngine.addEventListener('tick', handleTick);
     musicEngine.setMasterVolume(masterVolume);
   }, [masterVolume]);
 
@@ -2573,13 +2614,13 @@ const PlayerPage: React.FC<{
             {isRenderHistoryHidden ? (
               <button
                 onClick={() => setIsRenderHistoryHidden(false)}
-                className="absolute left-0 top-1/2 -translate-y-1/2 z-[3000] w-3.5 h-10 bg-[#0c0c0e]/90 border border-l-0 border-white/10 hover:bg-zinc-800 rounded-r-md flex items-center justify-center text-zinc-500 hover:text-white pointer-events-auto shadow-md transition-all active:scale-95"
+                className="absolute right-0 top-1/2 -translate-y-1/2 z-[3000] w-3.5 h-10 bg-[#0c0c0e]/90 border border-r-0 border-white/10 hover:bg-zinc-800 rounded-l-md flex items-center justify-center text-zinc-500 hover:text-white pointer-events-auto shadow-md transition-all active:scale-95"
                 title="Show Memo Renders"
               >
-                <ChevronRight size={10} />
+                <ChevronLeft size={10} />
               </button>
             ) : (
-              <div className="absolute left-1 top-1/2 -translate-y-1/2 z-[3000] flex flex-col gap-1 pointer-events-auto bg-[#0c0c0e]/95 p-1 rounded-lg border border-white/10 backdrop-blur-xl shadow-2xl max-h-[70vh] overflow-y-auto scrollbar-hide w-[34px]">
+              <div className="absolute right-1 top-1/2 -translate-y-1/2 z-[3000] flex flex-col gap-1 pointer-events-auto bg-[#0c0c0e]/95 p-1 rounded-lg border border-white/10 backdrop-blur-xl shadow-2xl max-h-[70vh] overflow-y-auto scrollbar-hide w-[34px]">
                 <div className="flex items-center justify-between border-b border-white/5 pb-0.5 mb-0.5 w-full">
                   <span className="text-[4.2px] font-black text-zinc-400 uppercase tracking-widest pl-0.5">Renders</span>
                   <button
@@ -2587,7 +2628,7 @@ const PlayerPage: React.FC<{
                     className="w-2.5 h-2.5 flex items-center justify-center text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 rounded transition-colors"
                     title="Hide Memo Renders"
                   >
-                    <ChevronLeft size={6} />
+                    <ChevronRight size={6} />
                   </button>
                 </div>
                 {renderHistory.map((h) => {
@@ -2681,14 +2722,37 @@ const PlayerPage: React.FC<{
     
                       <button
                         onClick={(e) => { e.stopPropagation(); setMemoInfoOpenKey(isInfoOpen ? null : hKey); }}
-                        className={`absolute top-0 left-0 w-2 h-2 rounded-full flex items-center justify-center text-[3.5px] font-black border transition-all pointer-events-auto ${isInfoOpen ? 'bg-amber-500 border-amber-400 text-white shadow-lg' : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-white'}`}
+                        className={`absolute top-0 right-0 w-2 h-2 rounded-full flex items-center justify-center text-[3.5px] font-black border transition-all pointer-events-auto ${isInfoOpen ? 'bg-amber-500 border-amber-400 text-white shadow-lg' : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-white'}`}
                         title="ดูรายละเอียด / Show details"
                       >ℹ</button>
+                      
+                      {/* Delete (x) Button */}
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          if (confirm('⚠️ ต้องการลบไฟล์ประสานเสียงที่บันทึกไว้นี้หรือไม่?')) {
+                            try {
+                              const newHistory = renderHistory.filter(x => x.id !== h.id);
+                              setRenderHistory(newHistory);
+                              localStorage.setItem(`memo_render_history_${song.id}`, JSON.stringify(newHistory));
+                              if (isActive) {
+                                setActiveRenderKey(null);
+                                const updatedTracks = tracks.map((t: any) => ({ ...t, mode: 'instrument' } as TrackState));
+                                setTracks(updatedTracks);
+                                musicEngine.loadSong(allPlayableNotes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn, true).catch(() => {});
+                              }
+                              if (memoInfoOpenKey === hKey) setMemoInfoOpenKey(null);
+                            } catch (delErr) { console.warn('[App] Failed to delete render cache:', delErr); }
+                          }
+                        }}
+                        className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded-full flex items-center justify-center text-[4px] font-bold shadow-lg pointer-events-auto opacity-0 group-hover:opacity-100 transition-opacity"
+                        title="Delete render"
+                      >✕</button>
     
                       {isInfoOpen && (() => {
                         const filenameFromUrl = h.audioUrl.split('/').pop() || 'audio.wav';
                         return (
-                        <div className="absolute left-14 top-0 w-44 bg-[#0c0c0e]/95 backdrop-blur-2xl border border-white/10 p-3 rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.8)] z-[8999] flex flex-col gap-1.5 text-[8px] animate-in fade-in slide-in-from-left-4 duration-150">
+                        <div className="absolute right-12 top-0 w-44 bg-[#0c0c0e]/95 backdrop-blur-2xl border border-white/10 p-3 rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.8)] z-[8999] flex flex-col gap-1.5 text-[8px] animate-in fade-in slide-in-from-right-4 duration-150">
                           <div className="flex justify-between border-b border-white/5 pb-1">
                             <span className="font-black text-cyan-400 uppercase tracking-widest">Render Profile</span>
                             <span className="text-[6.5px] text-zinc-500">{h.voiceName || 'Auto'}</span>

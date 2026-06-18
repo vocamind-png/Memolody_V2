@@ -596,7 +596,16 @@ const HomePage: React.FC<HomePageProps> = ({
     return list;
   }, [userLibrary, searchQuery, activeTab, sortMode, activeFolder]);
 
-  const recentSongs = useMemo(() => userLibrary.filter(it => !it.metadata.isDeleted).reverse().slice(0, 5), [userLibrary]);
+  const recentSongs = useMemo(() => {
+    try {
+      const stored = localStorage.getItem('memo_recent_history');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed.length > 0) return parsed;
+      }
+    } catch(e) {}
+    return userLibrary.filter(it => !it.metadata.isDeleted).reverse().slice(0, 5);
+  }, [userLibrary]);
   const visibleItems = useMemo(() => filteredLibrary.slice(0, visibleCount), [filteredLibrary, visibleCount]);
   const hasMore = visibleCount < filteredLibrary.length;
 
