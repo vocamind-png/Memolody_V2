@@ -2890,7 +2890,7 @@ const PlayerPage: React.FC<{
                     </button>
 
                     {showStemControls && (() => {
-                      const isAnySoloed = Object.values(soloedStems).some(set => set.size > 0);
+                      const isAnySoloed = Object.values(soloedStems).some((set: any) => set.size > 0);
                       return (
                         <button
                           onClick={(e) => { 
@@ -2960,7 +2960,7 @@ const PlayerPage: React.FC<{
                 const yPos = trackYMap.get(track.id) || 60;
                 const visualNumber = trackVisualIndexMap.get(track.id) || (i + 1);
 
-                const isAnySoloed = Object.values(soloedStems).some(set => set.size > 0);
+                const isAnySoloed = Object.values(soloedStems).some((set: any) => set.size > 0);
 
                 return (
                   <React.Fragment key={track.id}>
