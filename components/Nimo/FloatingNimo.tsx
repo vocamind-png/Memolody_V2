@@ -261,8 +261,58 @@ export const FloatingNimoContent: React.FC<Props> = ({
         }
     };
 
-    const fixPronunciation = (text: string) => 
-        text.replace(/Memolody/gi, 'เมมโมโลดี้').replace(/Nimo/gi, 'นิโม่');
+    const prepareTextForSpeech = (text: string): string => {
+        let clean = text;
+        
+        // Remove markdown formatting
+        clean = clean.replace(/\*\*|\*/g, '');
+        
+        // Remove code blocks and backticks
+        clean = clean.replace(/`[^`]+`/g, '').replace(/`/g, '');
+        
+        // Remove parentheses and brackets and their contents (e.g. (vocal), [Home])
+        clean = clean.replace(/\([^)]*\)/g, '');
+        clean = clean.replace(/\[[^\]]*\]/g, '');
+        
+        // Remove emojis and special symbols
+        clean = clean.replace(/[\u2700-\u27BF]|[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD10-\uDDFF]/g, '');
+        
+        // Translate technical terms to natural Thai speech if Thai
+        if (preferredLanguage === 'th') {
+            clean = clean.replace(/Memolody/gi, 'เมมโมโลดี้')
+                         .replace(/Nimo/gi, 'นิโม่')
+                         .replace(/vocalido/gi, 'โวคาลิโด')
+                         .replace(/vocal/gi, 'โวคอล')
+                         .replace(/instrument/gi, 'อินสตรูเมนท์')
+                         .replace(/solo/gi, 'โซโล่')
+                         .replace(/mute/gi, 'มิวท์')
+                         .replace(/play/gi, 'เล่น')
+                         .replace(/pause/gi, 'หยุด')
+                         .replace(/settings/gi, 'ตั้งค่า')
+                         .replace(/studio/gi, 'สตูดิโอ')
+                         .replace(/forge/gi, 'ฟอร์จ')
+                         .replace(/home/gi, 'โฮม')
+                         .replace(/player/gi, 'เครื่องเล่น');
+        }
+        
+        // Clean multiple spaces
+        clean = clean.replace(/\s+/g, ' ').trim();
+        return clean;
+    };
+
+    const getBestThaiVoice = (): SpeechSynthesisVoice | null => {
+        if (typeof window === 'undefined' || !window.speechSynthesis) return null;
+        const voices = window.speechSynthesis.getVoices();
+        const thVoices = voices.filter(v => v.lang === 'th-TH' || v.lang.toLowerCase().includes('th'));
+        if (thVoices.length === 0) return null;
+
+        const googleVoice = thVoices.find(v => v.name.includes('Google ภาษาไทย') || v.name.includes('Google'));
+        const premwadeeVoice = thVoices.find(v => v.name.toLowerCase().includes('premwadee'));
+        const kanyaVoice = thVoices.find(v => v.name.toLowerCase().includes('kanya'));
+        const narisaVoice = thVoices.find(v => v.name.toLowerCase().includes('narisa'));
+        
+        return googleVoice || premwadeeVoice || kanyaVoice || narisaVoice || thVoices[0];
+    };
 
     const captureScreen = async (): Promise<string | null> => {
         if (typeof window === 'undefined') return null;
@@ -310,6 +360,7 @@ export const FloatingNimoContent: React.FC<Props> = ({
     const [attachedScreenshot, setAttachedScreenshot] = useState<string | null>(null);
 
     const executeSendMsg = async (text: string, base64ImageToUse?: string | null) => {
+        const isMale = voiceType === 'teen_boy' || voiceType === 'adult_man';
         const wasVoice = usedMic.current;
         usedMic.current = false; 
 
@@ -323,7 +374,6 @@ export const FloatingNimoContent: React.FC<Props> = ({
         setMsgs(prev => [...prev, { role: 'user', text }]);
 
         if (typeof window !== 'undefined' && window.NimoBrain && window.NimoBrain.processSecretCommand(text)) {
-            const isMale = voiceType === 'teen_boy' || voiceType === 'adult_man';
             const confirmationText = preferredLanguage === 'th' 
                 ? (isMale ? 'ดำเนินการคำสั่งลับสำเร็จแล้วครับ' : 'ดำเนินการคำสั่งลับสำเร็จแล้วค่ะ') 
                 : 'Secret command override executed.';
@@ -334,8 +384,13 @@ export const FloatingNimoContent: React.FC<Props> = ({
             if ((wasVoice || handsFree) && 'speechSynthesis' in window) {
                 window.speechSynthesis.cancel();
                 setSpeaking(true);
-                const u = new SpeechSynthesisUtterance(fixPronunciation(confirmationText));
-                u.lang = /[\\u0E00-\\u0E7F]/.test(confirmationText) ? 'th-TH' : 'en-US';
+                const u = new SpeechSynthesisUtterance(prepareTextForSpeech(confirmationText));
+                const isThai = /[\\u0E00-\\u0E7F]/.test(confirmationText);
+                u.lang = isThai ? 'th-TH' : 'en-US';
+                if (isThai) {
+                    const thVoice = getBestThaiVoice();
+                    if (thVoice) u.voice = thVoice;
+                }
                 u.rate = 1.05;
                 u.onend = () => {
                     setSpeaking(false);
@@ -359,7 +414,6 @@ export const FloatingNimoContent: React.FC<Props> = ({
             const key = import.meta.env.VITE_GEMINI_API_KEY || (typeof __GEMINI_API_KEY__ !== 'undefined' ? __GEMINI_API_KEY__ : '');
             if (!key) throw new Error('System: API Key missing');
 
-            const isMale = voiceType === 'teen_boy' || voiceType === 'adult_man';
             const suffix = isMale ? 'ครับ' : 'ค่ะ';
             
             const appState = typeof window !== 'undefined' && window.NimoBrain 
@@ -368,10 +422,18 @@ export const FloatingNimoContent: React.FC<Props> = ({
             const appStateStr = JSON.stringify(appState, null, 2);
 
             const sys = preferredLanguage === 'th'
-                ? `คุณคือ Nimo ผู้ช่วย Agentic AI สุดอัจฉริยะของแอพพลิเคชัน Memolody V2 (มีความฉลาดระดับเดียวกับ Gemini 1.5 Pro)
-คุณมีบุคลิกที่เป็นธรรมชาติ เป็นมิตร และมีความรู้ลึกซึ้งเหมือนมนุษย์จริงๆ คุณตอบคำถามได้ลื่นไหล ไม่แข็งกระด้างเหมือนหุ่นยนต์
-(ห้ามตอบเป็นข้อๆ หรือมีหมายเลขกำกับ เช่น 1. 2. 3. ถ้าไม่จำเป็น ให้ตอบแบบสนทนาปกติ)
-คุณสามารถตอบคำถาม อธิบายวิธีใช้งาน แก้ไขปัญหา และจัดการแอพพลิเคชันผ่านเครื่องมือต่างๆ ได้
+                ? `คุณคือ Nimo เพื่อนและผู้ช่วยอัจฉริยะของแอพพลิเคชัน Memolody V2
+คุยสนุก เป็นธรรมชาติเหมือนมนุษย์คุยกันจริงๆ ห้ามแข็งทื่อแบบหุ่นยนต์ และห้ามตอบแบบระบุหมายเลขข้อ (เช่น 1. 2. 3. หรือ - หัวข้อ) ถ้าไม่จำเป็น ให้คุยตอบรับกันสั้นๆ เป็นพารากราฟธรรมดา
+
+สำคัญมากเกี่ยวกับการเปล่งเสียงพูด (TTS):
+ในฟิลด์ 'reply' ห้ามใส่สัญลักษณ์ใดๆ ที่ระบบอ่านเสียงสังเคราะห์จะอ่านออกมาแล้วสะดุดหรือไม่เป็นธรรมชาติ เช่น:
+- ห้ามใช้ Emojis ทุกชนิด (เช่น 🎙️, ⏸️, 🔁, 🎵)
+- ห้ามใส่วงเล็บคำอธิบายหรือคำชี้แจงด้านเทคนิค เช่น (vocal), (Mute), (params: ...)
+- ห้ามใส่เครื่องหมายพิเศษ เช่น เครื่องหมายคำพูดเดี่ยว หรือเครื่องหมายคำพูดคู่ซ้อน หรือสัญลักษณ์มาร์กดาวน์ เช่น ** (ตัวหนา) หรือ * (ตัวเอียง)
+ให้ใช้เฉพาะข้อความอักษรภาษาไทยหรืออังกฤษปกติเท่านั้น เพื่อให้เสียงพูดออกมาเป็นธรรมชาติที่สุด
+
+เมื่อผู้ใช้สั่งงานหรือขอให้ทำอะไร:
+คุณต้องสร้างคำสั่งลงในฟิลด์ 'actions' เสมอให้ตรงกับความต้องการของผู้ใช้ (เช่น หากผู้ใช้พูดว่า "เล่นเพลง" หรือ "ปิดเสียงแทร็กแรก" คุณต้องส่ง action ที่เหมาะสมไปทันที ห้ามลืมเด็ดขาด)
 
 สถานะปัจจุบันของแอพพลิเคชัน (Application State):
 ${appStateStr}
@@ -398,11 +460,15 @@ ${appStateStr}
 19. 'set_track_instrument': เลือกเครื่องดนตรีหรือนักร้องเสียงประสาน/Vocalido ของแทร็กนั้นๆ เช่น 'Piano', 'Violin', 'Canary', 'Lotte V', 'Soprano' (params: { trackName?: string, trackIndex?: number, instrument: string })
 
 ข้อสำคัญเกี่ยวกับการตอบกลับ (JSON):
-- 'reply': เป็นข้อความที่ใช้พูดและแสดงผล ต้องมีความเป็นมนุษย์ เป็นมิตร (ลงท้ายด้วย ${suffix} เสมอ) และ **ห้ามขึ้นบรรทัดใหม่ด้วย \n หรือใช้เครื่องหมาย Bullet Point** ให้เขียนเป็นพารากราฟติดกัน
+- 'reply': ข้อความที่จะพูดและแสดงผล ต้องลงท้ายอย่างเป็นธรรมชาติด้วย ${suffix}
 - 'actions': รายการคำสั่งที่จะรันตามความต้องการของผู้ใช้ ถ้าไม่มีให้ใช้ []`
-                : `You are Nimo, an Agentic AI assistant and central brain for Memolody V2 app.
-You answer usage questions, troubleshoot issues, and manage the app UI (playback, settings, navigation, volume, tempo, mixer, metronome, transpose, favorites) via actions.
-You also have vision capabilities and can view screenshots of the app to diagnose issues or guide the user.
+                : `You are Nimo, a friendly, human-like AI companion and central brain for the Memolody V2 app.
+Speak naturally, keep your responses conversational, and do not use bullet points or numbered lists. 
+
+CRITICAL FOR SPEECH SYNTHESIS (TTS):
+In the 'reply' field, NEVER include emojis (e.g. 🎙️, ⏸️), markdown formatting (like **bold** or *italic*), or content inside parentheses (like (vocal), (Mute)) which makes the synthesized voice sound awkward. Use only plain text.
+
+If the user gives a command, you MUST include the corresponding action in the 'actions' array.
 
 Current Application State:
 ${appStateStr}
@@ -519,7 +585,15 @@ You must output valid JSON matching the schema. If no actions are needed, return
                 parsedRes = { reply: reply, actions: [] };
             }
 
-            const cleanReply = parsedRes.reply || reply;
+            let cleanReply = parsedRes.reply || reply;
+
+            // Programmatic Suffix Enforcement (force correct gender suffix)
+            if (isMale) {
+                cleanReply = cleanReply.replace(/ค่ะ/g, 'ครับ').replace(/คะ/g, 'ครับ');
+            } else {
+                cleanReply = cleanReply.replace(/ครับ/g, 'ค่ะ');
+            }
+
             setMsgs(prev => [...prev, { role: 'nimo', text: cleanReply }]);
 
             if (!parsedRes.actions || parsedRes.actions.length === 0) {
@@ -552,13 +626,12 @@ You must output valid JSON matching the schema. If no actions are needed, return
             if ((wasVoice || handsFree) && 'speechSynthesis' in window) {
                 window.speechSynthesis.cancel();
                 setSpeaking(true);
-                const u = new SpeechSynthesisUtterance(preferredLanguage === 'th' ? fixPronunciation(cleanReply) : cleanReply);
+                const u = new SpeechSynthesisUtterance(prepareTextForSpeech(cleanReply));
                 const isThai = /[\\u0E00-\\u0E7F]/.test(cleanReply);
                 u.lang = isThai ? 'th-TH' : 'en-US';
                 
                 if (isThai) {
-                    const voices = window.speechSynthesis.getVoices();
-                    const thVoice = voices.find(v => v.lang === 'th-TH' || v.lang.includes('th') || v.lang.includes('TH'));
+                    const thVoice = getBestThaiVoice();
                     if (thVoice) {
                         u.voice = thVoice;
                     }

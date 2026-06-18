@@ -21,9 +21,15 @@ interface NimoPageProps {
     onSongSelect?: (song: Song, xml: string, mode?: 'listen' | 'studio') => void;
     onRefresh?: () => void;
     initialFile?: File | null;  // File passed from Home Import → auto-process
+    voiceType?: string;
 }
 
-const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLanguage = 'en', onSongSelect, onRefresh, initialFile }) => {
+const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLanguage = 'en', onSongSelect, onRefresh, initialFile, voiceType = 'teen_girl' }) => {
+    const isMale = voiceType === 'teen_boy' || voiceType === 'adult_man';
+    const suffixKa = isMale ? 'ครับ' : 'ค่ะ';
+    const suffixNaKa = isMale ? 'นะครับ' : 'นะคะ';
+    const helloKa = isMale ? 'สวัสดีครับ' : 'สวัสดีค่ะ';
+
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
 
@@ -160,8 +166,58 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
         }
     };
 
-    const fixPronunciation = (text: string) => 
-        text.replace(/Memolody/gi, 'เมมโมโลดี้').replace(/Nimo/gi, 'นิโม่');
+    const prepareTextForSpeech = (text: string): string => {
+        let clean = text;
+        
+        // Remove markdown formatting
+        clean = clean.replace(/\*\*|\*/g, '');
+        
+        // Remove code blocks and backticks
+        clean = clean.replace(/`[^`]+`/g, '').replace(/`/g, '');
+        
+        // Remove parentheses and brackets and their contents (e.g. (vocal), [Home])
+        clean = clean.replace(/\([^)]*\)/g, '');
+        clean = clean.replace(/\[[^\]]*\]/g, '');
+        
+        // Remove emojis and special symbols
+        clean = clean.replace(/[\u2700-\u27BF]|[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD10-\uDDFF]/g, '');
+        
+        // Translate technical terms to natural Thai speech if Thai
+        if (preferredLanguage === 'th') {
+            clean = clean.replace(/Memolody/gi, 'เมมโมโลดี้')
+                         .replace(/Nimo/gi, 'นิโม่')
+                         .replace(/vocalido/gi, 'โวคาลิโด')
+                         .replace(/vocal/gi, 'โวคอล')
+                         .replace(/instrument/gi, 'อินสตรูเมนท์')
+                         .replace(/solo/gi, 'โซโล่')
+                         .replace(/mute/gi, 'มิวท์')
+                         .replace(/play/gi, 'เล่น')
+                         .replace(/pause/gi, 'หยุด')
+                         .replace(/settings/gi, 'ตั้งค่า')
+                         .replace(/studio/gi, 'สตูดิโอ')
+                         .replace(/forge/gi, 'ฟอร์จ')
+                         .replace(/home/gi, 'โฮม')
+                         .replace(/player/gi, 'เครื่องเล่น');
+        }
+        
+        // Clean multiple spaces
+        clean = clean.replace(/\s+/g, ' ').trim();
+        return clean;
+    };
+
+    const getBestThaiVoice = (): SpeechSynthesisVoice | null => {
+        if (typeof window === 'undefined' || !window.speechSynthesis) return null;
+        const voices = window.speechSynthesis.getVoices();
+        const thVoices = voices.filter(v => v.lang === 'th-TH' || v.lang.toLowerCase().includes('th'));
+        if (thVoices.length === 0) return null;
+
+        const googleVoice = thVoices.find(v => v.name.includes('Google ภาษาไทย') || v.name.includes('Google'));
+        const premwadeeVoice = thVoices.find(v => v.name.toLowerCase().includes('premwadee'));
+        const kanyaVoice = thVoices.find(v => v.name.toLowerCase().includes('kanya'));
+        const narisaVoice = thVoices.find(v => v.name.toLowerCase().includes('narisa'));
+        
+        return googleVoice || premwadeeVoice || kanyaVoice || narisaVoice || thVoices[0];
+    };
 
     useEffect(() => {
         if (scrollRef.current) {
@@ -271,7 +327,7 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
         setMessages(prev => [...prev, {
             role: 'nimo',
             content: preferredLanguage === 'th'
-                ? '🔍 ดิฉันกำลังอ่านโน้ตเพลงในภาพค่ะ... กรุณารอสักครู่นะคะ'
+                ? `🔍 ดิฉันกำลังอ่านโน้ตเพลงในภาพ${suffixKa}... กรุณารอสักครู่นะคะ`
                 : '🔍 Reading the sheet music in your image... Please wait a moment.',
             timestamp: Date.now()
         }]);
@@ -290,7 +346,7 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
             
             // Success — show result and offer to play
             const successContent = preferredLanguage === 'th'
-                ? `✅ แปลงสำเร็จค่ะ! เพลง **"${result.song.title}"** โดย ${result.song.artist} 🎶\n\n📊 Key: ${result.song.key} | BPM: ${result.song.bpm} | โน้ต: ${noteCount} ตัว\n\nระบบจะพาคุณไปหน้า Player โดยอัตโนมัติ หรือกดปุ่มด้านล่างเพื่อฟังได้เลยค่ะ ▶️`
+                ? `✅ แปลงสำเร็จ${suffixKa}! เพลง **"${result.song.title}"** โดย ${result.song.artist} 🎶\n\n📊 Key: ${result.song.key} | BPM: ${result.song.bpm} | โน้ต: ${noteCount} ตัว\n\nระบบจะพาคุณไปหน้า Player โดยอัตโนมัติ หรือกดปุ่มด้านล่างเพื่อฟังได้เลย${suffixKa} ▶️`
                 : `✅ Done! Song **"${result.song.title}"** by ${result.song.artist} 🎶\n\n📊 Key: ${result.song.key} | BPM: ${result.song.bpm} | Notes: ${noteCount}\n\nAuto-navigating to Player, or tap below to listen ▶️`;
 
             setMessages(prev => [...prev, {
@@ -305,10 +361,17 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
                 window.speechSynthesis.cancel();
                 setSpeaking(true);
                 const speechText = preferredLanguage === 'th' 
-                    ? `แปลงสำเร็จแล้วค่ะ เพลง ${result.song.title} โดย ${result.song.artist || 'สโกเลนส์ เอไอ'}`
+                    ? `แปลงสำเร็จแล้ว${suffixKa} เพลง ${result.song.title} โดย ${result.song.artist || 'สโกเลนส์ เอไอ'}`
                     : `Conversion complete. ${result.song.title} by ${result.song.artist || 'ScoreLens AI'}`;
-                const u = new SpeechSynthesisUtterance(preferredLanguage === 'th' ? fixPronunciation(speechText) : speechText);
-                u.lang = /[\\u0E00-\\u0E7F]/.test(speechText) ? 'th-TH' : 'en-US';
+                const u = new SpeechSynthesisUtterance(prepareTextForSpeech(speechText));
+                const isThai = /[\\u0E00-\\u0E7F]/.test(speechText);
+                u.lang = isThai ? 'th-TH' : 'en-US';
+                
+                if (isThai) {
+                    const thVoice = getBestThaiVoice();
+                    if (thVoice) u.voice = thVoice;
+                }
+                
                 u.rate = 1.05;
                 u.onend = () => {
                     setSpeaking(false);
@@ -345,7 +408,7 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
             // Error — get error message directly from result
             const errMsg = result && 'error' in result ? result.error : 'Unknown error';
             const failContent = preferredLanguage === 'th'
-                ? `❌ ไม่สามารถแปลงได้ค่ะ: ${errMsg}\n\nลองถ่ายภาพใหม่ให้ชัดขึ้น หรือใช้ภาพที่มีความละเอียดสูงนะคะ`
+                ? `❌ ไม่สามารถแปลงได้${suffixKa}: ${errMsg}\n\nลองถ่ายภาพใหม่ให้ชัดขึ้น หรือใช้ภาพที่มีความละเอียดสูง${suffixNaKa}`
                 : `❌ Could not convert: ${errMsg}\n\nTry a clearer photo or higher resolution image.`;
 
             setMessages(prev => [...prev, {
@@ -359,10 +422,17 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
                 window.speechSynthesis.cancel();
                 setSpeaking(true);
                 const speechText = preferredLanguage === 'th' 
-                    ? `ขออภัยค่ะ ไม่สามารถแปลงโน้ตได้สำเร็จ กรุณาลองใหม่อีกครั้งนะคะ`
+                    ? `ขออภัย${suffixKa} ไม่สามารถแปลงโน้ตได้สำเร็จ กรุณาลองใหม่อีกครั้ง${suffixNaKa}`
                     : `Sorry, could not convert. Please try again.`;
-                const u = new SpeechSynthesisUtterance(preferredLanguage === 'th' ? fixPronunciation(speechText) : speechText);
-                u.lang = /[\\u0E00-\\u0E7F]/.test(speechText) ? 'th-TH' : 'en-US';
+                const u = new SpeechSynthesisUtterance(prepareTextForSpeech(speechText));
+                const isThai = /[\\u0E00-\\u0E7F]/.test(speechText);
+                u.lang = isThai ? 'th-TH' : 'en-US';
+                
+                if (isThai) {
+                    const thVoice = getBestThaiVoice();
+                    if (thVoice) u.voice = thVoice;
+                }
+                
                 u.rate = 1.05;
                 u.onend = () => {
                     setSpeaking(false);
@@ -420,7 +490,7 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
         // Check for secret command override
         if (typeof window !== 'undefined' && window.NimoBrain && window.NimoBrain.processSecretCommand(text)) {
             const confirmationText = preferredLanguage === 'th' 
-                ? 'ดำเนินการคำสั่งลับสำเร็จแล้วค่ะ'
+                ? `ดำเนินการคำสั่งลับสำเร็จแล้ว${suffixKa}`
                 : 'Secret command override executed.';
                 
             setMessages(prev => [...prev, { role: 'nimo', content: confirmationText, timestamp: Date.now() }]);
@@ -429,8 +499,13 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
             if ((wasVoice || handsFree) && 'speechSynthesis' in window) {
                 window.speechSynthesis.cancel();
                 setSpeaking(true);
-                const u = new SpeechSynthesisUtterance(fixPronunciation(confirmationText));
-                u.lang = /[\\u0E00-\\u0E7F]/.test(confirmationText) ? 'th-TH' : 'en-US';
+                const u = new SpeechSynthesisUtterance(prepareTextForSpeech(confirmationText));
+                const isThai = /[\\u0E00-\\u0E7F]/.test(confirmationText);
+                u.lang = isThai ? 'th-TH' : 'en-US';
+                if (isThai) {
+                    const thVoice = getBestThaiVoice();
+                    if (thVoice) u.voice = thVoice;
+                }
                 u.rate = 1.05;
                 u.onend = () => {
                     setSpeaking(false);
@@ -451,7 +526,6 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
 
         try {
             // @ts-ignore
-            // Check both VITE_ and global injected by vite.config.ts
             const apiKey = import.meta.env.VITE_GEMINI_API_KEY || (typeof __GEMINI_API_KEY__ !== 'undefined' ? __GEMINI_API_KEY__ : '');
             if (!apiKey) throw new Error('System: API Key missing');
 
@@ -460,26 +534,25 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
                 : {};
             const appStateStr = JSON.stringify(appState, null, 2);
 
-            const suffix = preferredLanguage === 'th' ? 'ค่ะ' : '';
+            const suffix = suffixKa;
 
             // System instructions
             const sys = preferredLanguage === 'th'
-                ? `คุณคือ Nimo ผู้ช่วย Agentic AI สุดอัจฉริยะของแอพพลิเคชัน Memolody V2 (มีความฉลาดระดับเดียวกับ Gemini 1.5 Pro)
-คุณทำหน้าที่เป็นแกนสมองหลัก ควบคุม UI ปุ่มกด และการเล่นดนตรีผ่านคำสั่งเสียงของผู้ใช้
-คุณมีบุคลิกที่เป็นธรรมชาติ เป็นมิตร และมีความรู้ลึกซึ้งเหมือนมนุษย์จริงๆ คุณตอบคำถามได้ลื่นไหล ไม่แข็งกระด้างเหมือนหุ่นยนต์
-(ห้ามตอบเป็นข้อๆ หรือมีหมายเลขกำกับ เช่น 1. 2. 3. ถ้าไม่จำเป็น ให้ตอบแบบสนทนาปกติ)
+                ? `คุณคือ Nimo เพื่อนและผู้ช่วยอัจฉริยะของแอพพลิเคชัน Memolody V2
+คุยสนุก เป็นธรรมชาติเหมือนมนุษย์คุยกันจริงๆ ห้ามแข็งทื่อแบบหุ่นยนต์ และห้ามตอบแบบระบุหมายเลขข้อ (เช่น 1. 2. 3. หรือ - หัวข้อ) ถ้าไม่จำเป็น ให้คุยตอบรับกันสั้นๆ เป็นพารากราฟธรรมดา
+
+สำคัญมากเกี่ยวกับการเปล่งเสียงพูด (TTS):
+ในฟิลด์ 'reply' ห้ามใส่สัญลักษณ์ใดๆ ที่ระบบอ่านเสียงสังเคราะห์จะอ่านออกมาแล้วสะดุดหรือไม่เป็นธรรมชาติ เช่น:
+- ห้ามใช้ Emojis ทุกชนิด (เช่น 🎙️, ⏸️, 🔁, 🎵)
+- ห้ามใส่วงเล็บคำอธิบายหรือคำชี้แจงด้านเทคนิค เช่น (vocal), (Mute), (params: ...)
+- ห้ามใส่เครื่องหมายพิเศษ เช่น เครื่องหมายคำพูดเดี่ยว หรือเครื่องหมายคำพูดคู่ซ้อน หรือสัญลักษณ์มาร์กดาวน์ เช่น ** (ตัวหนา) หรือ * (ตัวเอียง)
+ให้ใช้เฉพาะข้อความอักษรภาษาไทยหรืออังกฤษปกติเท่านั้น เพื่อให้เสียงพูดออกมาเป็นธรรมชาติที่สุด
+
+เมื่อผู้ใช้สั่งงานหรือขอให้ทำอะไร:
+คุณต้องสร้างคำสั่งลงในฟิลด์ 'actions' เสมอให้ตรงกับความต้องการของผู้ใช้ (เช่น หากผู้ใช้พูดว่า "เล่นเพลง" หรือ "ปิดเสียงแทร็กแรก" คุณต้องส่ง action ที่เหมาะสมไปทันที ห้ามลืมเด็ดขาด)
 
 สถานะปัจจุบันของแอพพลิเคชัน (Application State):
 ${appStateStr}
-
-ข้อมูลความรู้เกี่ยวกับฟังก์ชันปรับแต่งเสียงของ Vocalido (Timbre Designer):
-1. Speed: ยืดหรือหดความยาวของไฟล์เสียงทั้งหมด
-2. SVS Timing Feel: ปรับตำแหน่งเวลาในการออกเสียงพยัญชนะ (0 = หุ่นยนต์ตรงจังหวะเป๊ะ, 50 = มนุษย์ทั่วไป, 100 = ร้องคร่อมจังหวะ/เลย์แบ็ค)
-3. Pitch Shift: ปรับระดับเสียงคีย์เพลงให้สูงขึ้นหรือต่ำลง (เหมือนเปลี่ยนคีย์เพลง ทำให้เสียงเหมือนชิปมังค์เมื่อปรับสูง)
-4. Formant: เปลี่ยนคาแรคเตอร์เสียง (เช่น แปลงเสียงผู้ชายเป็นผู้หญิง) โดยไม่เปลี่ยนคีย์เพลง (เปลี่ยนขนาดช่องคอจำลอง)
-5. Portamento (Glide): การลากโน้ต/ดัดเสียง ให้เสียงสไลด์หากันอย่างนุ่มนวลระหว่าง 2 โน้ต
-6. Warmth / Brightness: ปรับ EQ (Warmth เพิ่มความหนา, Brightness เพิ่มความสว่างใส)
-(หมายเหตุ: ไม่มีปุ่มไหนที่ทำงานซ้ำซ้อนกันในทางเทคนิคหรือคณิตศาสตร์)
 
 ฟีเจอร์และคำสั่งที่คุณควบคุมได้ผ่านทาง actions (ห้ามใช้คำสั่งที่ไม่มีในรายการนี้):
 1. 'navigate_to_page': เปลี่ยนหน้าเพจ (params: { view: 'home' | 'player' | 'forge' | 'settings' | 'profile' })
@@ -489,27 +562,32 @@ ${appStateStr}
 5. 'set_tempo': ปรับความเร็วเพลง BPM (params: { bpm: number [20-400] })
 6. 'set_volume': ปรับความดังเสียงหลัก (params: { level: number [0.0 - 1.0] })
 7. 'change_language': สลับภาษาการแสดงผล (params: { lang: 'th' | 'en' })
-8. 'change_instrument': เปลี่ยนเครื่องดนตรี (params: { instrument: 'piano' | 'violin' | 'voice' | 'guitar' })
+8. 'change_instrument': เปลี่ยนเครื่องดนตรีหลักของเพลง (params: { instrument: 'piano' | 'violin' | 'voice' | 'guitar' })
 9. 'toggle_view_mode': สลับโหมด Score และ Piano Roll (ไม่มี params)
 10. 'toggle_loop': เปิด/ปิดโหมดลูปเสียง (params: { enabled: boolean })
+11. 'toggle_mixer': เปิด/ปิดแผงมิกเซอร์ (Mixer) (ไม่มี params)
+12. 'toggle_metronome': เปิด/ปิดเครื่องเคาะจังหวะ (Metronome) (ไม่มี params)
+13. 'set_transpose': ปรับระดับคีย์ Transpose สูงต่ำตามระดับครึ่งเสียง (semitones) (params: { transpose: number })
+14. 'toggle_favorite': กดเพิ่มหรือเอาเพลงปัจจุบันออกจากรายการโปรด (Favorite) (ไม่มี params)
+15. 'take_screenshot': ถ่ายรูปภาพหน้าจอปัจจุบันของแอพพลิเคชันเพื่อตรวจสอบความถูกต้องหรือแก้ไขปัญหาให้ผู้ใช้ (ไม่มี params)
+16. 'solo_track': โซโล่ (Solo) เสียงเฉพาะของแทร็กใดแทร็กหนึ่ง (params: { trackName?: string, trackIndex?: number, solo: boolean })
+17. 'mute_track': ปิดเสียง (Mute) หรือเปิดเสียงของแทร็กใดแทร็กหนึ่ง (params: { trackName?: string, trackIndex?: number, mute: boolean })
+18. 'set_track_mode': สลับโหมดของแทร็กระหว่างเสียงร้อง Vocal และเสียงดนตรี Instrument (params: { trackName?: string, trackIndex?: number, mode: 'vocal' | 'instrument' })
+19. 'set_track_instrument': เลือกเครื่องดนตรีหรือนักร้องเสียงประสาน/Vocalido ของแทร็กนั้นๆ เช่น 'Piano', 'Violin', 'Canary', 'Lotte V', 'Soprano' (params: { trackName?: string, trackIndex?: number, instrument: string })
 
 ข้อสำคัญเกี่ยวกับการตอบกลับ (JSON):
-- 'reply': เป็นข้อความที่ใช้พูดและแสดงผล ต้องมีความเป็นมนุษย์ เป็นมิตร (ลงท้ายด้วย ${suffix} เสมอ) และ **ห้ามขึ้นบรรทัดใหม่ด้วย \n หรือใช้เครื่องหมาย Bullet Point** ให้เขียนเป็นพารากราฟติดกัน
+- 'reply': ข้อความที่จะพูดและแสดงผล ต้องลงท้ายอย่างเป็นธรรมชาติด้วย ${suffix}
 - 'actions': รายการคำสั่งที่จะรันตามความต้องการของผู้ใช้ ถ้าไม่มีให้ใช้ []`
-                : `You are Nimo, central AI brain for Memolody app.
-You control the application's limbs (playback, settings, navigation, volume, tempo) via voice commands.
+                : `You are Nimo, a friendly, human-like AI companion and central brain for the Memolody V2 app.
+Speak naturally, keep your responses conversational, and do not use bullet points or numbered lists. 
+
+CRITICAL FOR SPEECH SYNTHESIS (TTS):
+In the 'reply' field, NEVER include emojis (e.g. 🎙️, ⏸️), markdown formatting (like **bold** or *italic*), or content inside parentheses (like (vocal), (Mute)) which makes the synthesized voice sound awkward. Use only plain text.
+
+If the user gives a command, you MUST include the corresponding action in the 'actions' array.
 
 Current Application State:
 ${appStateStr}
-
-Knowledge Base - Vocalido Timbre Designer Parameters:
-1. Speed: Time-stretches the entire audio.
-2. SVS Timing Feel: Adjusts consonant borrowing and phoneme timing (0 = robotic, 50 = natural human, 100 = lazy/jazz).
-3. Pitch Shift: Shifts fundamental frequency (chipmunk effect when high).
-4. Formant: Shifts spectral envelope without changing musical key (changes vocal tract size, male to female).
-5. Portamento (Glide): Smooth pitch curve interpolation between two notes.
-6. Warmth / Brightness: EQ adjustments (Warmth boosts low-mids, Brightness boosts high frequencies).
-(Note: None of these parameters are technically redundant mathematically.)
 
 Supported Actions:
 1. 'navigate_to_page': Change page view (params: { view: 'home' | 'player' | 'forge' | 'settings' | 'profile' })
@@ -522,8 +600,17 @@ Supported Actions:
 8. 'change_instrument': Set main instrument track (params: { instrument: 'piano' | 'violin' | 'voice' | 'guitar' })
 9. 'toggle_view_mode': Switch between Score Sheet and Piano Roll views (no params)
 10. 'toggle_loop': Enable or disable playback looping (params: { enabled: boolean })
+11. 'toggle_mixer': Open or close the Mixer panel (no params)
+12. 'toggle_metronome': Toggle Metronome click track (no params)
+13. 'set_transpose': Adjust transpose key by semitones (params: { transpose: number })
+14. 'toggle_favorite': Toggle current song favorite status (no params)
+15. 'take_screenshot': Capture a screenshot of the current application screen to inspect or troubleshoot (no params)
+16. 'solo_track': Solo or unsolo a specific track (params: { trackName?: string, trackIndex?: number, solo: boolean })
+17. 'mute_track': Mute or unmute a specific track (params: { trackName?: string, trackIndex?: number, mute: boolean })
+18. 'set_track_mode': Switch track mode between vocal and instrument (params: { trackName?: string, trackIndex?: number, mode: 'vocal' | 'instrument' })
+19. 'set_track_instrument': Choose track voice/instrument like 'Piano', 'Violin', 'Canary', 'Lotte V', 'Soprano' (params: { trackName?: string, trackIndex?: number, instrument: string })
 
-You must output valid JSON matching the schema. If no system controls are requested, return an empty array for actions.`;
+You must output valid JSON matching the schema. If no actions are needed, return an empty array.`;
 
             // Direct API call
             const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`;
@@ -577,7 +664,15 @@ You must output valid JSON matching the schema. If no system controls are reques
                 parsedRes = { reply: reply, actions: [] };
             }
 
-            const cleanReply = parsedRes.reply || reply;
+            let cleanReply = parsedRes.reply || reply;
+
+            // Programmatic Suffix Enforcement (force correct gender suffix)
+            if (isMale) {
+                cleanReply = cleanReply.replace(/ค่ะ/g, 'ครับ').replace(/คะ/g, 'ครับ');
+            } else {
+                cleanReply = cleanReply.replace(/ครับ/g, 'ค่ะ');
+            }
+
             setMessages(prev => [...prev, { role: 'nimo', content: cleanReply, timestamp: Date.now() }]);
 
             // Execute Actions
@@ -599,14 +694,12 @@ You must output valid JSON matching the schema. If no system controls are reques
             if ((wasVoice || handsFree) && 'speechSynthesis' in window) {
                 window.speechSynthesis.cancel();
                 setSpeaking(true);
-                const u = new SpeechSynthesisUtterance(preferredLanguage === 'th' ? fixPronunciation(cleanReply) : cleanReply);
+                const u = new SpeechSynthesisUtterance(prepareTextForSpeech(cleanReply));
                 const isThai = /[\\u0E00-\\u0E7F]/.test(cleanReply);
                 u.lang = isThai ? 'th-TH' : 'en-US';
                 
-                // Explicitly find a Thai voice if needed
                 if (isThai) {
-                    const voices = window.speechSynthesis.getVoices();
-                    const thVoice = voices.find(v => v.lang === 'th-TH' || v.lang.includes('th') || v.lang.includes('TH'));
+                    const thVoice = getBestThaiVoice();
                     if (thVoice) {
                         u.voice = thVoice;
                     }
@@ -635,7 +728,7 @@ You must output valid JSON matching the schema. If no system controls are reques
         } catch (error: any) {
             console.error("Gemini Error:", error);
             const errMsg = preferredLanguage === 'th' 
-                ? `ขออภัยค่ะ พอดีขัดข้องนิดหน่อย: ${error.message}` 
+                ? `ขออภัย${suffixKa} พอดีขัดข้องนิดหน่อย: ${error.message}` 
                 : `Sorry, there was an issue: ${error.message}`;
             setMessages(prev => [...prev, { role: 'nimo', content: errMsg, timestamp: Date.now() }]);
             if (handsFree) {

@@ -820,7 +820,7 @@ const App: React.FC = () => {
       case 'distribution':
         return <DistributionPage userLibrary={userSongs} onRefresh={triggerSync} onBack={() => navigateTo('home')} />;
       case 'nimo':
-        return <NimoPage selectedSong={selectedSong} xmlData={uploadedMusicXml} preferredLanguage={preferredLanguage} onSongSelect={handleSongSelect} onRefresh={triggerSync} initialFile={pendingImportFile} />;
+        return <NimoPage selectedSong={selectedSong} xmlData={uploadedMusicXml} preferredLanguage={preferredLanguage} onSongSelect={handleSongSelect} onRefresh={triggerSync} initialFile={pendingImportFile} voiceType={nimoVoice} />;
       case 'presentation':
         return <BrandingPage onEnter={() => navigateTo('home')} backgroundImage="/images/memolody_hero.png" />;
       case 'admin':
