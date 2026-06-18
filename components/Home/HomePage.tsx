@@ -604,7 +604,7 @@ const HomePage: React.FC<HomePageProps> = ({
         if (parsed.length > 0) return parsed;
       }
     } catch(e) {}
-    return userLibrary.filter(it => !it.metadata.isDeleted).reverse().slice(0, 5);
+    return userLibrary.filter(it => !it.metadata.isDeleted).reverse().slice(0, 5).map(it => it.metadata);
   }, [userLibrary]);
   const visibleItems = useMemo(() => filteredLibrary.slice(0, visibleCount), [filteredLibrary, visibleCount]);
   const hasMore = visibleCount < filteredLibrary.length;
@@ -937,17 +937,17 @@ const HomePage: React.FC<HomePageProps> = ({
             </div>
             <div className="flex gap-2 overflow-x-auto no-scrollbar px-1">
               {recentSongs.map(item => (
-                <div key={item.metadata.id} onClick={() => onSongSelect(item.metadata, item.xmlData, 'listen')}
+                <div key={item.id} onClick={() => onSongSelect(item, undefined, 'listen')}
                   className="shrink-0 w-[calc(33.33%-6px)] flex flex-col gap-1.5 group/card cursor-pointer">
                   {/* Cover Image Area */}
                   <div className="w-full aspect-video rounded-xl overflow-hidden relative shadow-md group-hover/card:shadow-lg group-hover/card:shadow-cyan-500/10 border border-white/10 transition-all group-hover/card:-translate-y-1">
-                    <AbstractCover seed={item.metadata.title || item.metadata.id} size={200} />
+                    <AbstractCover seed={item.title || item.id} size={200} />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-50" />
                     
                     {/* Play Button Overlay */}
                     {(() => {
                       try {
-                        const histStr = localStorage.getItem(`memo_render_history_${item.metadata.id}`);
+                        const histStr = localStorage.getItem(`memo_render_history_${item.id}`);
                         const hasRendered = histStr ? (JSON.parse(histStr) || []).length > 0 : false;
                         if (hasRendered) {
                           return (
@@ -956,7 +956,7 @@ const HomePage: React.FC<HomePageProps> = ({
                                 className="w-8 h-8 rounded-full bg-cyan-500/90 backdrop-blur-sm flex items-center justify-center shadow-[0_0_15px_rgba(0,229,255,0.5)] pointer-events-auto cursor-pointer hover:scale-110 active:scale-95 transition-transform"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  onSongSelect(item.metadata, item.xmlData, 'play');
+                                  onSongSelect(item, undefined, 'play');
                                 }}
                               >
                                 <Play size={16} className="text-black fill-black ml-0.5" />
@@ -973,7 +973,7 @@ const HomePage: React.FC<HomePageProps> = ({
                             className="w-6 h-6 rounded-full bg-black/40 backdrop-blur-sm flex items-center justify-center text-white/80 group-hover/card:text-cyan-400 group-hover/card:bg-cyan-500/20 transition-colors pointer-events-auto cursor-pointer"
                             onClick={(e) => {
                               e.stopPropagation();
-                              onSongSelect(item.metadata, item.xmlData, 'play');
+                              onSongSelect(item, undefined, 'play');
                             }}
                           >
                             <Play size={10} fill="currentColor" className="ml-0.5" />
@@ -983,13 +983,13 @@ const HomePage: React.FC<HomePageProps> = ({
                     })()}
                     
                     {/* Favorite Icon */}
-                    {item.metadata.isFavorite && <Heart size={10} className="text-rose-500 fill-rose-500 absolute top-1.5 right-1.5" />}
+                    {item.isFavorite && <Heart size={10} className="text-rose-500 fill-rose-500 absolute top-1.5 right-1.5" />}
                   </div>
                   
                   {/* Title Area (Outside the cover) */}
                   <div className="px-0.5">
-                    <p className="text-[10px] leading-tight font-black text-white uppercase italic truncate">{item.metadata.title || 'Untitled Song'}</p>
-                    <p className="text-[8px] leading-tight text-zinc-500 uppercase tracking-wider truncate mt-0.5">{item.metadata.artist || 'Unknown Artist'}</p>
+                    <p className="text-[10px] leading-tight font-black text-white uppercase italic truncate">{item.title || 'Untitled Song'}</p>
+                    <p className="text-[8px] leading-tight text-zinc-500 uppercase tracking-wider truncate mt-0.5">{item.artist || 'Unknown Artist'}</p>
                   </div>
                 </div>
               ))}
