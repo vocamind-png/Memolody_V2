@@ -20,9 +20,11 @@ interface SettingsPageProps {
     onToggleVocalidoAutoRender: (enabled: boolean) => void;
     renderCardStyle?: 'compact' | 'large';
     onSelectRenderCardStyle?: (style: 'compact' | 'large') => void;
+    nimoModel?: string;
+    onChangeNimoModel?: (model: string) => void;
 }
 
-const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, onTogglePerformanceMode, nimoEnabled, onToggleNimoEnabled, nimoVoice, onChangeNimoVoice, vocalidoAutoRender, onToggleVocalidoAutoRender, renderCardStyle = 'compact', onSelectRenderCardStyle }) => {
+const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, onTogglePerformanceMode, nimoEnabled, onToggleNimoEnabled, nimoVoice, onChangeNimoVoice, vocalidoAutoRender, onToggleVocalidoAutoRender, renderCardStyle = 'compact', onSelectRenderCardStyle, nimoModel = 'gemini-3.5-flash', onChangeNimoModel }) => {
     const [activeTab, setActiveTab] = useState<'audio' | 'midi' | 'shortcuts' | 'visual' | 'ai'>('audio');
 
     // Audio Settings State
@@ -712,7 +714,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, on
                                     <select
                                         value={nimoVoice}
                                         onChange={e => onChangeNimoVoice(e.target.value as any)}
-                                        className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-sm text-zinc-300 focus:outline-none focus:border-cyan-500/50 transition-all appearance-none"
+                                        className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-sm text-zinc-300 focus:outline-none focus:border-cyan-500/50 transition-all appearance-none mb-4"
                                     >
                                         <option value="teen_girl">วัยรุ่นหญิง (Teen Girl - สดใส ร่าเริง)</option>
                                         <option value="adult_woman">ผู้ใหญ่หญิง (Adult Woman - สุขุม มืออาชีพ)</option>

@@ -58,11 +58,13 @@ interface Props {
     setIsOpenProp?: (v: boolean) => void;
     voiceType?: string;
     preferredLanguage?: 'th' | 'en';
+    geminiModel?: string;
 }
 
 export const FloatingNimoContent: React.FC<Props> = ({
     isOpenProp, setIsOpenProp,
-    voiceType = 'teen_girl', preferredLanguage = 'en'
+    voiceType = 'teen_girl', preferredLanguage = 'en',
+    geminiModel = 'gemini-3.5-flash'
 }) => {
     const [open, setOpen] = useState(false);
     const isOpen = isOpenProp !== undefined ? isOpenProp : open;
@@ -445,27 +447,56 @@ You must output valid JSON matching the schema. If no actions are needed, return
                 parts: currentParts
             });
 
-            const res = await fetch(
-                `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`,
-                {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        system_instruction: { parts: [{ text: sys }] },
-                        contents: contentsList,
-                        generationConfig: {
-                            maxOutputTokens: 1024,
-                            temperature: 0.4,
-                            topP: 0.95,
-                            responseMimeType: "application/json"
-                        }
-                    })
-                }
-            );
+            const modelsToTry = [
+                geminiModel,
+                'gemini-3.5-flash',
+                'gemini-3.1-pro',
+                'gemini-2.5-flash',
+                'gemini-2.5-pro',
+                'gemini-1.5-flash'
+            ].filter((v, i, a) => v && a.indexOf(v) === i);
 
-            if (!res.ok) {
-                const errJson = await res.json();
-                throw new Error(errJson?.error?.message || `HTTP ${res.status}`);
+            let res: Response | null = null;
+            let lastError: Error | null = null;
+
+            for (const modelName of modelsToTry) {
+                try {
+                    console.log(`[Nimo AI] Trying model: ${modelName}`);
+                    const response = await fetch(
+                        `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${key}`,
+                        {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                system_instruction: { parts: [{ text: sys }] },
+                                contents: contentsList,
+                                generationConfig: {
+                                    maxOutputTokens: 1024,
+                                    temperature: 0.4,
+                                    topP: 0.95,
+                                    responseMimeType: "application/json"
+                                }
+                            })
+                        }
+                    );
+
+                    if (response.ok) {
+                        res = response;
+                        break;
+                    } else {
+                        const errJson = await response.json().catch(() => ({}));
+                        const errMsg = errJson?.error?.message || `HTTP ${response.status}`;
+                        console.warn(`[Nimo AI] Model ${modelName} failed: ${errMsg}`);
+                        lastError = new Error(errMsg);
+                    }
+                } catch (err: any) {
+                    console.warn(`[Nimo AI] Model ${modelName} request error:`, err);
+                    lastError = err;
+                }
+            }
+
+            if (!res) {
+                throw lastError || new Error('All models failed to respond');
             }
 
             const json = await res.json();
