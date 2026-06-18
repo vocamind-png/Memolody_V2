@@ -3714,10 +3714,14 @@ const PlayerPage: React.FC<{
               <div className="flex-1 flex justify-center px-1">
                 <div className="w-[130px] min-[350px]:w-[148px] min-[380px]:w-[168px] sm:w-[215px] md:w-[250px] h-[34px] min-[360px]:h-[40px] bg-[#0c0c0e] rounded-md flex items-center border border-black shadow-inner overflow-hidden">
                   <div className="flex-1 h-full border-r border-white/[0.03] flex items-center justify-center">
+                  <div data-nimo-target="set_transpose">
                     <KeyTransposeDisplay keySig={parsedData.metadata.key || localSong.key} transpose={transpose} onTransposeChange={setTranspose} />
                   </div>
+                  </div>
                   <div className="flex-1 h-full border-r border-white/[0.03] flex items-center justify-center">
+                  <div data-nimo-target="set_tempo">
                     <BpmDisplay bpm={currentBpm} onBpmChange={(b) => { setCurrentBpm(b); musicEngine.setBpm(b); }} />
+                  </div>
                   </div>
                   <div className="flex-1 h-full flex items-center justify-center">
                     <BarBeatPositionDisplay bar={currentBar} beat={currentBeat} onSeek={(bar) => musicEngine.setTransportSeconds((bar - 1) * beatsPerMeasure * 60 / currentBpm)} />
@@ -3747,6 +3751,7 @@ const PlayerPage: React.FC<{
                 <div className="relative">
                   <div className={`absolute inset-0 bg-[#00e5ff]/20 blur-md rounded-full transition-opacity ${isPlaying ? 'opacity-100' : 'opacity-0'}`} />
                   <button
+                    data-nimo-target={isPlaying ? "pause" : "play"}
                     onClick={handleTogglePlay}
                     disabled={isAudioLoading}
                     className="relative w-10 h-10 min-[360px]:w-11 h-11 sm:w-12 sm:h-12 md:w-[54px] md:h-[54px] rounded-full flex items-center justify-center text-white transition-all active:scale-95 bg-[#00e5ff] hover:bg-[#00c8e0] shadow-[0_4px_25px_rgba(0,229,255,0.5)]"

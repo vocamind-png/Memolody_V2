@@ -551,7 +551,7 @@ You must output valid JSON matching the schema. If no actions are needed, return
             {/* Header */}
             <div className="shrink-0 flex items-center justify-between px-4 py-3 bg-white/[0.03] border-b border-white/5">
                 <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full overflow-hidden border border-cyan-500/30">
+                    <div data-nimo-target="nimo-avatar" className="w-8 h-8 rounded-full overflow-hidden border border-cyan-500/30">
                         <img src={NIMO_IDENTITY_IMAGE} alt="Nimo" className="w-full h-full object-cover" />
                     </div>
                     <div>

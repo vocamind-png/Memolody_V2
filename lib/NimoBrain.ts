@@ -82,6 +82,7 @@ export class NimoBrainRegistry {
     }
     
     this.showToastNotification(displayMsg, '#8B5CF6'); // Purple Nimo color
+    this.triggerMagicEffect(id);
 
     try {
       await handler(params);
@@ -212,6 +213,52 @@ export class NimoBrainRegistry {
       }, 3000);
     }
   }
+
+  triggerMagicEffect(actionId: string) {
+    if (typeof document === 'undefined') return;
+    
+    // First try to find a specific target for this action
+    let targetEl = document.querySelector(`[data-nimo-target="${actionId}"]`) as HTMLElement;
+    
+    // If not found, fall back to Nimo avatar
+    if (!targetEl) {
+      targetEl = document.querySelector('[data-nimo-target="nimo-avatar"]') as HTMLElement;
+    }
+    
+    if (!targetEl) return; // nowhere to cast magic
+
+    const rect = targetEl.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+
+    const magicContainer = document.createElement('div');
+    magicContainer.style.position = 'fixed';
+    magicContainer.style.left = `${centerX}px`;
+    magicContainer.style.top = `${centerY}px`;
+    magicContainer.style.width = '0px';
+    magicContainer.style.height = '0px';
+    magicContainer.style.zIndex = '10000';
+    magicContainer.style.pointerEvents = 'none';
+
+    // Glow Effect
+    const glow = document.createElement('div');
+    glow.className = 'nimo-magic-glow';
+    glow.style.width = `${Math.max(100, rect.width * 2)}px`;
+    glow.style.height = `${Math.max(100, rect.height * 2)}px`;
+    
+    // Sparkle Effect
+    const sparkle = document.createElement('div');
+    sparkle.className = 'nimo-magic-sparkle';
+
+    magicContainer.appendChild(glow);
+    magicContainer.appendChild(sparkle);
+    document.body.appendChild(magicContainer);
+
+    setTimeout(() => {
+      magicContainer.remove();
+    }, 1500); // 1.5s animation duration
+  }
+
 
   startRemotePolling() {
     if (typeof window === 'undefined') return;

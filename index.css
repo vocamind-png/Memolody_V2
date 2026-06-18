@@ -177,3 +177,47 @@ svg { max-width: 100%; height: auto; }
     letter-spacing: -0.5px !important;
 }
 
+/* ═══ NIMO MAGIC EFFECTS ═══ */
+.nimo-magic-glow {
+  position: absolute;
+  pointer-events: none;
+  z-index: 9999;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(168, 85, 247, 0.4) 0%, rgba(139, 92, 246, 0.1) 50%, transparent 70%);
+  animation: nimoGlowIn 1.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  mix-blend-mode: screen;
+}
+
+@keyframes nimoGlowIn {
+  0% { transform: translate(-50%, -50%) scale(0.5); opacity: 0; filter: blur(10px); }
+  20% { opacity: 1; filter: blur(20px); }
+  50% { transform: translate(-50%, -50%) scale(1.5); opacity: 0.8; filter: blur(30px); }
+  100% { transform: translate(-50%, -50%) scale(2); opacity: 0; filter: blur(40px); }
+}
+
+.nimo-magic-sparkle {
+  position: absolute;
+  pointer-events: none;
+  z-index: 10000;
+  width: 100%;
+  height: 100%;
+  top: 0; left: 0;
+}
+.nimo-magic-sparkle::before, .nimo-magic-sparkle::after {
+  content: '';
+  position: absolute;
+  width: 8px; height: 8px;
+  background: #FFF;
+  border-radius: 50%;
+  box-shadow: 0 0 10px 2px rgba(255, 255, 255, 0.8), 0 0 20px 5px rgba(168, 85, 247, 0.6);
+  animation: nimoSparkleTwinkle 1.5s linear forwards;
+}
+.nimo-magic-sparkle::before { top: 10%; left: 20%; animation-delay: 0.1s; }
+.nimo-magic-sparkle::after { top: 80%; left: 80%; animation-delay: 0.3s; }
+
+@keyframes nimoSparkleTwinkle {
+  0% { transform: scale(0) rotate(0deg); opacity: 0; }
+  30% { transform: scale(1.5) rotate(90deg); opacity: 1; }
+  70% { transform: scale(1) rotate(180deg); opacity: 1; }
+  100% { transform: scale(0) rotate(270deg); opacity: 0; }
+}
