@@ -827,7 +827,12 @@ export class MusicEngine {
             try {
               const ctx = Tone.getContext().rawContext as AudioContext;
               const sourceNode = ctx.createMediaElementSource(audio);
-              sourceNode.connect(pitchShift as any);
+              try {
+                sourceNode.connect((pitchShift as any).input || pitchShift);
+              } catch(e2) {
+                console.warn("[MusicEngine] Fallback to native destination", e2);
+                sourceNode.connect(ctx.destination);
+              }
             } catch(e) {
               console.warn("[MusicEngine] Failed to connect vocal pitch shift", e);
             }
@@ -899,7 +904,12 @@ export class MusicEngine {
               try {
                 const ctx = Tone.getContext().rawContext as AudioContext;
                 const sourceNode = ctx.createMediaElementSource(audio);
-                sourceNode.connect(pitchShift as any);
+                try {
+                  sourceNode.connect((pitchShift as any).input || pitchShift);
+                } catch(e2) {
+                  console.warn("[MusicEngine] Fallback stem to native destination", e2);
+                  sourceNode.connect(ctx.destination);
+                }
               } catch(e) {
                 console.warn("[MusicEngine] Failed to connect stem pitch shift", e);
               }
