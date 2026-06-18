@@ -817,25 +817,8 @@ export class MusicEngine {
           if (myGeneration === this._vocalGeneration) {
             this.vocalAudioElements.set(trackId, audio);
             
-            // Add PitchShift back for real-time transposition
-            let pitchShift = this.vocalPitchShifts.get(trackId);
-            if (!pitchShift) {
-              pitchShift = new Tone.PitchShift().toDestination();
-              pitchShift.windowSize = 0.1; // Reduce artifacts
-              this.vocalPitchShifts.set(trackId, pitchShift);
-            }
-            try {
-              const ctx = Tone.getContext().rawContext as AudioContext;
-              const sourceNode = ctx.createMediaElementSource(audio);
-              try {
-                sourceNode.connect((pitchShift as any).input || pitchShift);
-              } catch(e2) {
-                console.warn("[MusicEngine] Fallback to native destination", e2);
-                sourceNode.connect(ctx.destination);
-              }
-            } catch(e) {
-              console.warn("[MusicEngine] Failed to connect vocal pitch shift", e);
-            }
+            // ─── REMOVED Tone.js PitchShift routing ───
+            // We play the HTMLAudioElement directly natively to avoid Tone.js monkey-patch crashes.
           }
 
           audio.oncanplaythrough = () => doResolve();
@@ -860,12 +843,13 @@ export class MusicEngine {
           setupAudio(audioUrl);
         }
         
+        const timeout = audioUrl.startsWith('blob:') ? 1000 : 8000;
         setTimeout(() => {
           if (!isResolved) {
-            console.warn('[MusicEngine] ⚠️ Timeout loading main vocal audio');
+            console.warn(`[MusicEngine] ⚠️ Timeout loading vocal audio for ${trackId}. Safari might have blocked the event. Forcing resolve.`);
             doResolve();
           }
-        }, 8000);
+        }, timeout);
       }));
     }
 
@@ -891,28 +875,6 @@ export class MusicEngine {
               
               // Add PitchShift back for stems
               let shifts = this.vocalStemPitchShifts.get(trackId);
-              if (!shifts) {
-                shifts = [];
-                this.vocalStemPitchShifts.set(trackId, shifts);
-              }
-              let pitchShift = shifts[index];
-              if (!pitchShift) {
-                pitchShift = new Tone.PitchShift().toDestination();
-                pitchShift.windowSize = 0.1;
-                shifts[index] = pitchShift;
-              }
-              try {
-                const ctx = Tone.getContext().rawContext as AudioContext;
-                const sourceNode = ctx.createMediaElementSource(audio);
-                try {
-                  sourceNode.connect((pitchShift as any).input || pitchShift);
-                } catch(e2) {
-                  console.warn("[MusicEngine] Fallback stem to native destination", e2);
-                  sourceNode.connect(ctx.destination);
-                }
-              } catch(e) {
-                console.warn("[MusicEngine] Failed to connect stem pitch shift", e);
-              }
             }
 
             audio.oncanplaythrough = () => doResolve();
@@ -937,10 +899,10 @@ export class MusicEngine {
           }
           // CRITICAL: Unlock the audio element immediately within the current user gesture (moved inside setupAudio)
           
-          const stemTimeout = url.startsWith('blob:') ? 8000 : 5000;
+          const stemTimeout = url.startsWith('blob:') ? 1000 : 5000;
           setTimeout(() => {
             if (!isResolved) {
-              console.warn(`[MusicEngine] ⚠️ Timeout loading stem audio ${index} (${stemTimeout}ms)`);
+              console.warn(`[MusicEngine] ⚠️ Timeout loading stem audio ${index} (${stemTimeout}ms). Safari might have blocked the event. Forcing resolve.`);
               doResolve();
             }
           }, stemTimeout);
