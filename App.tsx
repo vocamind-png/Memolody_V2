@@ -653,7 +653,16 @@ const App: React.FC = () => {
   // Register central NimoBrain actions
   useEffect(() => {
     const unregNavigate = nimoBrain.registerAction('navigate_to_page', (params) => {
-      const view = params?.view;
+      const view = params?.view || params?.page || params?.target || params?.name;
+      console.log('[App] Nimo requested navigation to:', view, params);
+      if (view) {
+        navigateTo(view as any);
+      }
+    });
+
+    const unregNavigateAlias = nimoBrain.registerAction('navigate', (params) => {
+      const view = params?.view || params?.page || params?.target || params?.name;
+      console.log('[App] Nimo requested navigation to (alias):', view, params);
       if (view) {
         navigateTo(view as any);
       }
@@ -688,6 +697,7 @@ const App: React.FC = () => {
 
     return () => {
       unregNavigate();
+      unregNavigateAlias();
       unregPlaySong();
       unregChangeLang();
       unregChangeInstrument();
