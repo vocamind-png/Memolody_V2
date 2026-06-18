@@ -328,6 +328,8 @@ async function callGeminiVision(parts: object[]): Promise<string> {
   }
   const apiKey = getApiKey();
   const modelsToTry = [
+    'gemini-3.5-flash',
+    'gemini-2.5-flash',
     'gemini-2.0-flash-exp',
     'gemini-1.5-flash',
     'gemini-1.5-pro',

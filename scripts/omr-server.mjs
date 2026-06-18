@@ -530,22 +530,50 @@ app.post('/gemini-ocr', upload.single('image'), async (req, res) => {
 
   try {
     const imageData = fs.readFileSync(req.file.path).toString('base64');
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-    
-    console.log(`[CloudProxy] Sending ${req.file.originalname} to Gemini Vision...`);
+    const modelsToTry = [
+      'gemini-3.5-flash',
+      'gemini-2.5-flash',
+      'gemini-1.5-flash'
+    ];
 
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{
-          parts: [
-            { text: "Convert this sheet music image to a valid MusicXML 4.0 string. Output ONLY the XML." },
-            { inline_data: { mime_type: req.file.mimetype, data: imageData } }
-          ]
-        }]
-      })
-    });
+    let response = null;
+    let lastError = null;
+
+    for (const modelName of modelsToTry) {
+      try {
+        console.log(`[CloudProxy] Attempting model: ${modelName}`);
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              parts: [
+                { text: "Convert this sheet music image to a valid MusicXML 4.0 string. Output ONLY the XML." },
+                { inline_data: { mime_type: req.file.mimetype, data: imageData } }
+              ]
+            }]
+          })
+        });
+
+        if (res.ok) {
+          response = res;
+          break;
+        } else {
+          const errJson = await res.json().catch(() => ({}));
+          const errMsg = errJson?.error?.message || `HTTP ${res.status}`;
+          console.warn(`[CloudProxy] Model ${modelName} failed: ${errMsg}`);
+          lastError = new Error(errMsg);
+        }
+      } catch (err) {
+        console.warn(`[CloudProxy] Model ${modelName} request error:`, err.message);
+        lastError = err;
+      }
+    }
+
+    if (!response) {
+      throw lastError || new Error('All OCR models failed to respond');
+    }
 
     const data = await response.json();
     const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
