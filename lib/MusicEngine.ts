@@ -807,7 +807,9 @@ export class MusicEngine {
 
         const setupAudio = (finalUrl: string) => {
           const audio = new Audio();
-          audio.crossOrigin = 'anonymous';
+          if (!finalUrl.startsWith('blob:')) {
+            audio.crossOrigin = 'anonymous';
+          }
           audio.preservesPitch = true;
           audio.preload = 'auto';
           audio.src = finalUrl;
@@ -872,7 +874,9 @@ export class MusicEngine {
 
           const setupAudio = (finalUrl: string) => {
             const audio = new Audio();
-            audio.crossOrigin = 'anonymous';
+            if (!finalUrl.startsWith('blob:')) {
+              audio.crossOrigin = 'anonymous';
+            }
             audio.preservesPitch = true;
             audio.preload = 'auto'; // CRITICAL: Force Android Chrome to buffer
             audio.src = finalUrl;
