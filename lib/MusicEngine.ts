@@ -816,23 +816,9 @@ export class MusicEngine {
         // Immediately set the audio element so it's not lost if oncanplaythrough fails to fire
         if (myGeneration === this._vocalGeneration) {
           this.vocalAudioElements.set(trackId, audio);
-          this.trackVocalRenderTranspose.set(trackId, this.currentTranspose);
-          if (renderBpm) (audio as any).renderBpm = renderBpm;
-
-          // Add PitchShift back to enable real-time transposition
-          let pitchShift = this.vocalPitchShifts.get(trackId);
-          if (!pitchShift) {
-            pitchShift = new Tone.PitchShift().toDestination();
-            pitchShift.windowSize = 0.1; // Reduce artifacts
-            this.vocalPitchShifts.set(trackId, pitchShift);
-          }
-          try {
-            const ctx = Tone.getContext().rawContext as AudioContext;
-            const sourceNode = ctx.createMediaElementSource(audio);
-            sourceNode.connect(pitchShift as any);
-          } catch(e) {
-            console.warn("[MusicEngine] Failed to connect vocal pitch shift", e);
-          }
+          // Note: We deliberately do NOT use createMediaElementSource() or Tone.PitchShift() here.
+          // Routing HTMLAudioElement through Web Audio API's PitchShift causes severe CPU overload,
+          // phase vocoder artifacts (stuttering), and crashes the Tone.Transport playback head due to CORS.
         }
 
         audio.oncanplaythrough = () => {
@@ -875,28 +861,9 @@ export class MusicEngine {
           // Immediately set the stem audio element
           if (myGeneration === this._vocalGeneration) {
             stemAudios[index] = audio;
-            this.trackVocalRenderTranspose.set(trackId, this.currentTranspose);
-            if (renderBpm) (audio as any).renderBpm = renderBpm;
-
-            // Add PitchShift back for stems
-            let shifts = this.vocalStemPitchShifts.get(trackId);
-            if (!shifts) {
-              shifts = [];
-              this.vocalStemPitchShifts.set(trackId, shifts);
-            }
-            let pitchShift = shifts[index];
-            if (!pitchShift) {
-              pitchShift = new Tone.PitchShift().toDestination();
-              pitchShift.windowSize = 0.1;
-              shifts[index] = pitchShift;
-            }
-            try {
-              const ctx = Tone.getContext().rawContext as AudioContext;
-              const sourceNode = ctx.createMediaElementSource(audio);
-              sourceNode.connect(pitchShift as any);
-            } catch(e) {
-              console.warn("[MusicEngine] Failed to connect stem pitch shift", e);
-            }
+            // Note: We deliberately do NOT use createMediaElementSource() or Tone.PitchShift() here.
+            // Routing HTMLAudioElement through Web Audio API's PitchShift causes severe CPU overload,
+            // phase vocoder artifacts (stuttering), and crashes the Tone.Transport playback head due to CORS.
           }
 
           audio.oncanplaythrough = () => {
@@ -1405,15 +1372,9 @@ export class MusicEngine {
   }
 
   public setVocalTranspose(trackId: string, diffSemitones: number) {
-    // Re-enabled real-time pitch shift
-    const ps = this.vocalPitchShifts.get(trackId);
-    if (ps) {
-      ps.pitch = diffSemitones;
-    }
-    const sps = this.vocalStemPitchShifts.get(trackId);
-    if (sps) {
-      sps.forEach(p => p && (p.pitch = diffSemitones));
-    }
+    // Live vocal transpose is disabled to prevent pitch/tempo coupling and stuttering.
+    // Transposition is handled by the backend when the user clicks 'Render'.
+    console.log(`[MusicEngine] setVocalTranspose ignored for frontend vocal: ${trackId} diff=${diffSemitones}`);
   }
 
   public updateVocalPlaybackState(time?: number) {
