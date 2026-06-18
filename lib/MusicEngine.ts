@@ -811,7 +811,9 @@ export class MusicEngine {
     if (audioUrl) {
       loadPromises.push(new Promise<void>((resolve) => {
         const audio = new Audio();
-        audio.crossOrigin = 'anonymous';
+        if (!audioUrl.startsWith('blob:')) {
+          audio.crossOrigin = 'anonymous';
+        }
         audio.preservesPitch = true;
         audio.preload = 'auto';
         audio.src = audioUrl;
@@ -868,7 +870,9 @@ export class MusicEngine {
       stemUrls.forEach((url, index) => {
         loadPromises.push(new Promise<void>((resolve) => {
           const audio = new Audio();
-          audio.crossOrigin = 'anonymous';
+          if (!url.startsWith('blob:')) {
+            audio.crossOrigin = 'anonymous';
+          }
           audio.preservesPitch = true;
           audio.preload = 'auto'; // CRITICAL: Force Android Chrome to buffer
           audio.src = url;

@@ -1432,11 +1432,17 @@ const PlayerPage: React.FC<{
                 savedStemUrls: (r.saved_stem_urls || []).map((sUrl: string) => fixAudioUrl(sUrl)),
               }));
               restoreCachedBlobs(song.id, mapped).then((restored) => {
-                setRenderHistory(restored);
+                setRenderHistory(prev => {
+                  const merged = [...prev];
+                  restored.forEach((r: any) => {
+                    if (!merged.some(m => m.label === r.label)) merged.push(r);
+                  });
+                  return merged;
+                });
                 isHistoryRestoredRef.current = true;
               });
             } else {
-              setRenderHistory([]);
+              setRenderHistory(prev => prev.length > 0 ? prev : []);
               isHistoryRestoredRef.current = true;
             }
           }
