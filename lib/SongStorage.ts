@@ -192,6 +192,14 @@ export class SongStorage {
       transaction.onerror = () => reject(transaction.error);
     });
   }
+  async getSong(id: string): Promise<StoredSong | undefined> {
+    const db = await this.init();
+    return new Promise((resolve, reject) => {
+      const request = db.transaction([this.storeName], 'readonly').objectStore(this.storeName).get(id);
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => resolve(request.result);
+    });
+  }
 
   async getAllSongs(): Promise<StoredSong[]> {
     const db = await this.init();
