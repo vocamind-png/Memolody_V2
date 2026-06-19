@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Send, Music, MessageSquare, Bot, Sparkles, ChevronRight, Music2, Mic, MicOff } from 'lucide-react';
+import { Send, Music, MessageSquare, Bot, Sparkles, ChevronRight, Music2, Mic, MicOff, Volume2, VolumeX, Square, Settings, Sliders } from 'lucide-react';
 import { NIMO_IDENTITY_IMAGE } from '../../constants';
 import { Song } from '../../types';
 import ScoreLensBar from '../ScoreLens/ScoreLensBar';
 import { useScoreLens, ScoreLensResult } from '../ScoreLens/useScoreLens';
 import { nimoBrain } from '../../lib/NimoBrain';
+import { useAuth } from '../../lib/useAuth';
 
 interface Message {
     role: 'user' | 'nimo';
@@ -23,6 +24,76 @@ interface NimoPageProps {
     initialFile?: File | null;  // File passed from Home Import → auto-process
     voiceType?: string;
 }
+
+interface VoiceProfile {
+    avgPitch: number;
+    pitchMin: number;
+    pitchMax: number;
+    name: string;
+}
+
+// Autocorrelation Pitch Detector (F0 estimation)
+const autoCorrelate = (buffer: Float32Array, sampleRate: number): number => {
+    const SIZE = buffer.length;
+    let rms = 0;
+
+    for (let i = 0; i < SIZE; i++) {
+        const val = buffer[i];
+        rms += val * val;
+    }
+    rms = Math.sqrt(rms / SIZE);
+    if (rms < 0.008) return -1; // Too quiet
+
+    let r1 = 0;
+    let r2 = SIZE - 1;
+    const thres = 0.2;
+    for (let i = 0; i < SIZE / 2; i++) {
+        if (Math.abs(buffer[i]) < thres) {
+            r1 = i;
+            break;
+        }
+    }
+    for (let i = SIZE - 1; i >= SIZE / 2; i--) {
+        if (Math.abs(buffer[i]) < thres) {
+            r2 = i;
+            break;
+        }
+    }
+
+    const buf = buffer.subarray(r1, r2);
+    const len = buf.length;
+    if (len === 0) return -1;
+
+    const correlations = new Float32Array(len);
+    for (let i = 0; i < len; i++) {
+        for (let j = 0; j < len - i; j++) {
+            correlations[i] += buf[j] * buf[j + i];
+        }
+    }
+
+    let d = 0;
+    while (d < len - 1 && correlations[d] > correlations[d + 1]) {
+        d++;
+    }
+
+    let maxval = -1;
+    let maxpos = -1;
+    for (let i = d; i < len; i++) {
+        if (correlations[i] > maxval) {
+            maxval = correlations[i];
+            maxpos = i;
+        }
+    }
+
+    const T0 = maxpos;
+    if (T0 > 0) {
+        const pitch = sampleRate / T0;
+        if (pitch >= 65 && pitch <= 450) { // Standard vocal range
+            return pitch;
+        }
+    }
+    return -1;
+};
 
 const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLanguage = 'en', onSongSelect, onRefresh, initialFile, voiceType = 'teen_girl' }) => {
     const isMale = voiceType === 'teen_boy' || voiceType === 'adult_man';
@@ -45,6 +116,131 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
     const [status, setStatus] = useState('');
     const [permState, setPermState] = useState<'prompt' | 'granted' | 'denied'>('prompt');
     const [isTyping, setIsTyping] = useState(false);
+
+    // Speaker & Audio Settings
+    const [speakerMuted, setSpeakerMuted] = useState(() => localStorage.getItem('nimo_speaker_muted') === 'true');
+    const [showNimoSettings, setShowNimoSettings] = useState(false);
+    const [noiseReductionEnabled, setNoiseReductionEnabled] = useState(() => localStorage.getItem('nimo_noise_reduction') === 'true');
+    const [voiceRecognitionEnabled, setVoiceRecognitionEnabled] = useState(() => localStorage.getItem('nimo_voice_recognition') === 'true');
+    const [allowOthers, setAllowOthers] = useState(() => localStorage.getItem('nimo_allow_others') === 'true');
+
+    // Voice Enrollment
+    const [voiceProfile, setVoiceProfile] = useState<VoiceProfile | null>(null);
+    const [enrolling, setEnrolling] = useState(false);
+    const [enrollCountdown, setEnrollCountdown] = useState(0);
+    const [enrollPitchSampleCount, setEnrollPitchSampleCount] = useState(0);
+
+    const enrollingRef = useRef(enrolling);
+    const listeningRef = useRef(listening);
+    const collectedPitchSamplesRef = useRef<number[]>([]);
+    const activePitchSamplesRef = useRef<number[]>([]);
+
+    useEffect(() => { enrollingRef.current = enrolling; }, [enrolling]);
+    useEffect(() => { listeningRef.current = listening; }, [listening]);
+
+    const { authUser } = useAuth();
+    const userId = authUser ? authUser.id : 'guest';
+
+    // Load user-specific voice profile
+    useEffect(() => {
+        const stored = localStorage.getItem(`nimo_voice_profile_${userId}`);
+        if (stored) {
+            try {
+                setVoiceProfile(JSON.parse(stored));
+            } catch (e) {
+                setVoiceProfile(null);
+            }
+        } else {
+            setVoiceProfile(null);
+        }
+    }, [userId]);
+
+    const audioContextRef = useRef<AudioContext | null>(null);
+    const analyserRef = useRef<AnalyserNode | null>(null);
+    const micStreamRef = useRef<MediaStream | null>(null);
+    const animationFrameRef = useRef<number | null>(null);
+
+    const analyzeAudio = useCallback(() => {
+        if (!analyserRef.current || !audioContextRef.current) return;
+        const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
+        analyserRef.current.getByteFrequencyData(dataArray);
+
+        // Real-time pitch tracking for voice identification
+        const buffer = new Float32Array(analyserRef.current.fftSize);
+        analyserRef.current.getFloatTimeDomainData(buffer);
+        const sampleRate = audioContextRef.current.sampleRate;
+        const pitch = autoCorrelate(buffer, sampleRate);
+
+        if (pitch > 0) {
+            if (enrollingRef.current) {
+                collectedPitchSamplesRef.current.push(pitch);
+                setEnrollPitchSampleCount(collectedPitchSamplesRef.current.length);
+            } else if (listeningRef.current) {
+                activePitchSamplesRef.current.push(pitch);
+            }
+        }
+
+        animationFrameRef.current = requestAnimationFrame(analyzeAudio);
+    }, []);
+
+    useEffect(() => {
+        if (listening) {
+            navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(stream => {
+                    micStreamRef.current = stream;
+                    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+                    audioContextRef.current = ctx;
+                    const source = ctx.createMediaStreamSource(stream);
+                    const analyser = ctx.createAnalyser();
+                    analyser.fftSize = 1024; // Better resolution for pitch autocorrelation
+
+                    let lastNode: AudioNode = source;
+                    if (noiseReductionEnabled) {
+                        const hpFilter = ctx.createBiquadFilter();
+                        hpFilter.type = 'highpass';
+                        hpFilter.frequency.setValueAtTime(80, ctx.currentTime);
+                        lastNode.connect(hpFilter);
+                        lastNode = hpFilter;
+
+                        const lpFilter = ctx.createBiquadFilter();
+                        lpFilter.type = 'lowpass';
+                        lpFilter.frequency.setValueAtTime(8000, ctx.currentTime);
+                        lastNode.connect(lpFilter);
+                        lastNode = lpFilter;
+
+                        const compressor = ctx.createDynamicsCompressor();
+                        compressor.threshold.setValueAtTime(-45, ctx.currentTime);
+                        compressor.knee.setValueAtTime(12, ctx.currentTime);
+                        compressor.ratio.setValueAtTime(12, ctx.currentTime);
+                        compressor.attack.setValueAtTime(0.003, ctx.currentTime);
+                        compressor.release.setValueAtTime(0.25, ctx.currentTime);
+                        lastNode.connect(compressor);
+                        lastNode = compressor;
+                    }
+
+                    lastNode.connect(analyser);
+                    analyserRef.current = analyser;
+                    analyzeAudio();
+                })
+                .catch(err => console.error("Mic access failed for analyzer:", err));
+        } else {
+            if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+            if (micStreamRef.current) {
+                micStreamRef.current.getTracks().forEach(t => t.stop());
+                micStreamRef.current = null;
+            }
+            if (audioContextRef.current) {
+                audioContextRef.current.close().catch(() => {});
+                audioContextRef.current = null;
+            }
+        }
+        return () => {
+            if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+            if (micStreamRef.current) {
+                micStreamRef.current.getTracks().forEach(t => t.stop());
+            }
+        }
+    }, [listening, analyzeAudio, noiseReductionEnabled]);
 
     const usedMic = useRef(false);
     const recRef = useRef<any>(null);
@@ -97,7 +293,38 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
             setStatus(preferredLanguage === 'th' ? '🎙️ กำลังฟัง... (พูดได้เลย)' : '🎙️ Listening...');
         };
         r.onresult = (e: any) => {
+            if (enrollingRef.current) {
+                setListening(false);
+                return;
+            }
             const t = Array.from(e.results).map((res: any) => res[0].transcript).join('');
+            
+            // Voice Lock check
+            if (voiceRecognitionEnabled && voiceProfile && !allowOthers) {
+                const samples = activePitchSamplesRef.current.filter(p => p > 50 && p < 450);
+                if (samples.length > 0) {
+                    const avgActivePitch = samples.reduce((a, b) => a + b, 0) / samples.length;
+                    console.log(`[VoiceLock] Detected pitch: ${avgActivePitch}Hz (Target: ${voiceProfile.pitchMin}-${voiceProfile.pitchMax}Hz)`);
+                    
+                    if (avgActivePitch < voiceProfile.pitchMin || avgActivePitch > voiceProfile.pitchMax) {
+                        console.warn(`[VoiceLock] Voice mismatch! Detected ${avgActivePitch}Hz, expected ${voiceProfile.pitchMin}-${voiceProfile.pitchMax}Hz.`);
+                        setListening(false);
+                        setStatus(preferredLanguage === 'th' ? '🔇 กรองเสียงผู้อื่น/เสียงรบกวนออก' : '🔇 Ignored non-user voice');
+                        setTimeout(() => setStatus(''), 3000);
+                        activePitchSamplesRef.current = [];
+                        return; // Discard command
+                    }
+                } else {
+                    console.warn('[VoiceLock] No voice detected in samples.');
+                    setListening(false);
+                    setStatus(preferredLanguage === 'th' ? '🔇 กรองเสียงรบกวนรอบข้างออก' : '🔇 Ignored background noise');
+                    setTimeout(() => setStatus(''), 3000);
+                    activePitchSamplesRef.current = [];
+                    return; // Discard command
+                }
+            }
+
+            activePitchSamplesRef.current = [];
             setInput(t);
             setListening(false);
             usedMic.current = true;
@@ -118,14 +345,14 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
         };
         r.onend = () => {
             setListening(false);
-            if (handsFreeRef.current && !isTypingRef.current && !speakingRef.current) {
+            if (handsFreeRef.current && !isTypingRef.current && !speakingRef.current && !enrollingRef.current) {
                 setTimeout(() => {
                     startListening();
                 }, 500);
             }
         };
         recRef.current = r;
-    }, [preferredLanguage]);
+    }, [preferredLanguage, voiceRecognitionEnabled, voiceProfile, allowOthers]);
 
     const startListening = () => {
         if (listening || speakingRef.current || isTypingRef.current) return;
@@ -145,12 +372,100 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
         }
 
         if (listening) {
+            if (handsFree) {
+                setHandsFree(false);
+                localStorage.setItem('nimo_hands_free', 'false');
+            }
             try { recRef.current?.stop(); } catch(e){}
             setListening(false);
+            setStatus(preferredLanguage === 'th' ? '🎙️ ปิดไมค์แล้ว' : '🎙️ Mic off');
         } else {
             setStatus(preferredLanguage === 'th' ? '⏳ กำลังเปิดไมค์...' : '⏳ Opening...');
             startListening();
         }
+    };
+
+    const stopListeningAndHandsFree = () => {
+        setHandsFree(false);
+        localStorage.setItem('nimo_hands_free', 'false');
+        setListening(false);
+        try { recRef.current?.stop(); } catch(e){}
+        setStatus(preferredLanguage === 'th' ? '🎙️ หยุดรับเสียงแล้ว' : '🎙️ Microphone stopped');
+        setTimeout(() => setStatus(''), 2000);
+    };
+
+    const toggleSpeakerMute = () => {
+        const nextState = !speakerMuted;
+        setSpeakerMuted(nextState);
+        localStorage.setItem('nimo_speaker_muted', String(nextState));
+        if (nextState && 'speechSynthesis' in window) {
+            window.speechSynthesis.cancel();
+            setSpeaking(false);
+        }
+    };
+
+    const toggleNoiseReduction = (val: boolean) => {
+        setNoiseReductionEnabled(val);
+        localStorage.setItem('nimo_noise_reduction', String(val));
+        if (listening) {
+            try { recRef.current?.stop(); } catch(e){}
+            setTimeout(() => startListening(), 200);
+        }
+    };
+
+    const toggleVoiceRecognition = (val: boolean) => {
+        setVoiceRecognitionEnabled(val);
+        localStorage.setItem('nimo_voice_recognition', String(val));
+    };
+
+    const startVoiceEnrollment = () => {
+        if (enrolling) return;
+        if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+        try { recRef.current?.stop(); } catch(e){}
+
+        setEnrolling(true);
+        setEnrollCountdown(4);
+        setEnrollPitchSampleCount(0);
+        collectedPitchSamplesRef.current = [];
+
+        setListening(true);
+        setStatus(preferredLanguage === 'th' ? '🎙️ กรุณาพูดแนะนำตัวอย่างต่อเนื่อง...' : '🎙️ Please speak continuously...');
+
+        const interval = setInterval(() => {
+            setEnrollCountdown(prev => {
+                if (prev <= 1) {
+                    clearInterval(interval);
+                    setEnrolling(false);
+                    setListening(false);
+
+                    const samples = collectedPitchSamplesRef.current.filter(p => p > 50 && p < 450);
+                    if (samples.length >= 8) {
+                        const sum = samples.reduce((a, b) => a + b, 0);
+                        const avg = sum / samples.length;
+                        const pitchMin = Math.max(50, Math.round(avg * 0.75));
+                        const pitchMax = Math.min(450, Math.round(avg * 1.35));
+
+                        const profile = {
+                            avgPitch: avg,
+                            pitchMin,
+                            pitchMax,
+                            name: authUser?.fullName || 'Guest'
+                        };
+
+                        localStorage.setItem(`nimo_voice_profile_${userId}`, JSON.stringify(profile));
+                        setVoiceProfile(profile);
+                        setVoiceRecognitionEnabled(true);
+                        localStorage.setItem('nimo_voice_recognition', 'true');
+                        setStatus(preferredLanguage === 'th' ? '✅ ลงทะเบียนเสียงสำเร็จ!' : '✅ Voice enrolled successfully!');
+                    } else {
+                        setStatus(preferredLanguage === 'th' ? '❌ ลงทะเบียนไม่สำเร็จ ลองพูดดังขึ้น' : '❌ Enrollment failed. Speak louder.');
+                    }
+                    setTimeout(() => setStatus(''), 3000);
+                    return 0;
+                }
+                return prev - 1;
+            });
+        }, 1000);
     };
 
     const toggleHandsFree = () => {
@@ -357,7 +672,7 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
             }]);
 
             // Speak success
-            if ('speechSynthesis' in window) {
+            if (!speakerMuted && 'speechSynthesis' in window) {
                 window.speechSynthesis.cancel();
                 setSpeaking(true);
                 const speechText = preferredLanguage === 'th' 
@@ -418,7 +733,7 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
             }]);
 
             // Speak failure
-            if ('speechSynthesis' in window) {
+            if (!speakerMuted && 'speechSynthesis' in window) {
                 window.speechSynthesis.cancel();
                 setSpeaking(true);
                 const speechText = preferredLanguage === 'th' 
@@ -496,7 +811,7 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
             setMessages(prev => [...prev, { role: 'nimo', content: confirmationText, timestamp: Date.now() }]);
             setIsTyping(false);
 
-            if ((wasVoice || handsFree) && 'speechSynthesis' in window) {
+            if (!speakerMuted && (wasVoice || handsFree) && 'speechSynthesis' in window) {
                 window.speechSynthesis.cancel();
                 setSpeaking(true);
                 const u = new SpeechSynthesisUtterance(prepareTextForSpeech(confirmationText));
@@ -691,7 +1006,7 @@ You must output valid JSON matching the schema. If no actions are needed, return
             }
 
             // Speak response if using voice or in hands-free mode
-            if ((wasVoice || handsFree) && 'speechSynthesis' in window) {
+            if (!speakerMuted && (wasVoice || handsFree) && 'speechSynthesis' in window) {
                 window.speechSynthesis.cancel();
                 setSpeaking(true);
                 const u = new SpeechSynthesisUtterance(prepareTextForSpeech(cleanReply));
@@ -792,7 +1107,7 @@ You must output valid JSON matching the schema. If no actions are needed, return
                 {/* Identity Card */}
                 <div className="bg-cyan-500/5 border border-cyan-500/10 rounded-[32px] p-5 flex items-center justify-between backdrop-blur-xl shrink-0 gap-4">
                     <div className="flex items-center gap-4">
-                        <div className="w-14 h-14 rounded-2xl overflow-hidden border-2 border-cyan-500/30 shadow-[0_0_20px_rgba(0,229,255,0.2)] shrink-0">
+                        <div data-nimo-target="nimo-avatar" className="w-14 h-14 rounded-2xl overflow-hidden border-2 border-cyan-500/30 shadow-[0_0_20px_rgba(0,229,255,0.2)] shrink-0">
                             <img src={NIMO_IDENTITY_IMAGE} className="w-full h-full object-cover object-top scale-125" alt="Nimo" />
                         </div>
                         <div>
@@ -804,26 +1119,183 @@ You must output valid JSON matching the schema. If no actions are needed, return
                         </div>
                     </div>
                     
-                    {/* Hands free switch */}
-                    <button
-                        onClick={toggleHandsFree}
-                        className={`px-3 py-1.5 rounded-full text-[9px] font-black uppercase tracking-wider transition-all border flex items-center gap-1 shrink-0 ${
-                            handsFree 
-                                ? 'bg-cyan-500 border-cyan-400 text-black shadow-[0_0_10px_rgba(0,229,255,0.4)]' 
-                                : 'bg-white/5 border-white/10 text-zinc-400 hover:text-zinc-300'
-                        }`}
-                        title={preferredLanguage === 'th' ? 'โหมดคุยต่อเนื่องแฮนด์ฟรี' : 'Hands-Free Continuous Mode'}
-                    >
-                        <Sparkles size={10} />
-                        {preferredLanguage === 'th' ? 'คุยต่อเนื่อง' : 'Hands-free'}
-                    </button>
+                    <div className="flex items-center gap-2 shrink-0">
+                        {/* Settings Button */}
+                        <button 
+                            onClick={() => setShowNimoSettings(!showNimoSettings)}
+                            className={`px-3 py-1.5 rounded-full text-[9px] font-black uppercase tracking-wider transition-all border flex items-center gap-1 ${
+                                showNimoSettings 
+                                    ? 'bg-cyan-500 border-cyan-400 text-black shadow-[0_0_10px_rgba(0,229,255,0.4)]' 
+                                    : 'bg-white/5 border-white/10 text-zinc-400 hover:text-zinc-300'
+                            }`}
+                            title="Nimo Voice Settings"
+                        >
+                            <Settings size={10} />
+                            {preferredLanguage === 'th' ? 'ตั้งค่าเสียง' : 'Voice Settings'}
+                        </button>
+
+                        {/* Hands free switch */}
+                        <button
+                            onClick={toggleHandsFree}
+                            className={`px-3 py-1.5 rounded-full text-[9px] font-black uppercase tracking-wider transition-all border flex items-center gap-1 ${
+                                handsFree 
+                                    ? 'bg-cyan-500 border-cyan-400 text-black shadow-[0_0_10px_rgba(0,229,255,0.4)]' 
+                                    : 'bg-white/5 border-white/10 text-zinc-400 hover:text-zinc-300'
+                            }`}
+                            title={preferredLanguage === 'th' ? 'โหมดคุยต่อเนื่องแฮนด์ฟรี' : 'Hands-Free Continuous Mode'}
+                        >
+                            <Sparkles size={10} />
+                            {preferredLanguage === 'th' ? 'คุยต่อเนื่อง' : 'Hands-free'}
+                        </button>
+                    </div>
                 </div>
 
                 {/* Chat Container */}
                 <div
                     ref={scrollRef}
-                    className="flex-1 bg-white/[0.02] border border-white/5 rounded-[40px] p-6 overflow-y-auto no-scrollbar flex flex-col gap-4"
+                    className="flex-1 bg-white/[0.02] border border-white/5 rounded-[40px] p-6 overflow-y-auto no-scrollbar flex flex-col gap-4 relative"
                 >
+                    {showNimoSettings && (
+                        <div className="absolute inset-0 bg-[#0d0d0f]/95 backdrop-blur-md z-30 p-6 flex flex-col justify-between overflow-y-auto rounded-[40px]">
+                            <div>
+                                {/* Header of settings */}
+                                <div className="flex items-center justify-between pb-4 border-b border-white/10 mb-4">
+                                    <h3 className="text-white font-black uppercase italic text-xs tracking-wider flex items-center gap-2">
+                                        <Sliders size={14} className="text-cyan-400" />
+                                        {preferredLanguage === 'th' ? 'ตั้งค่าระบบเสียง Nimo' : 'Nimo Voice Settings'}
+                                    </h3>
+                                    <button 
+                                        onClick={() => setShowNimoSettings(false)} 
+                                        className="text-zinc-500 hover:text-white text-xs font-bold"
+                                    >
+                                        {preferredLanguage === 'th' ? 'ปิด' : 'Close'}
+                                    </button>
+                                </div>
+
+                                {/* Settings items */}
+                                <div className="space-y-4">
+                                    {/* Noise Reduction Toggle */}
+                                    <div className="flex items-center justify-between p-3.5 bg-white/[0.02] border border-white/5 rounded-2xl">
+                                        <div>
+                                            <p className="text-xs font-bold text-white">
+                                                {preferredLanguage === 'th' ? 'ลดเสียงรบกวน (Noise Reduction)' : 'Noise Reduction'}
+                                            </p>
+                                            <p className="text-[9px] text-zinc-500 mt-0.5">
+                                                {preferredLanguage === 'th' ? 'กรองเสียงรบกวนรอบข้างด้วยฟิลเตอร์' : 'Filter out ambient background noise'}
+                                            </p>
+                                        </div>
+                                        <input 
+                                            type="checkbox" 
+                                            checked={noiseReductionEnabled} 
+                                            onChange={e => toggleNoiseReduction(e.target.checked)}
+                                            className="w-4 h-4 accent-cyan-500"
+                                        />
+                                    </div>
+
+                                    {/* Voice Recognition / User Speaker ID Toggle */}
+                                    <div className="flex items-center justify-between p-3.5 bg-white/[0.02] border border-white/5 rounded-2xl">
+                                        <div>
+                                            <p className="text-xs font-bold text-white">
+                                                {preferredLanguage === 'th' ? 'จำกัดเสียงผู้ใช้หลัก (User Voice Lock)' : 'User Voice Lock'}
+                                            </p>
+                                            <p className="text-[9px] text-zinc-500 mt-0.5">
+                                                {preferredLanguage === 'th' ? 'ฟังและทำตามคำสั่งเฉพาะเสียงของคุณเท่านั้น' : 'Only process voice commands from your voice'}
+                                            </p>
+                                        </div>
+                                        <input 
+                                            type="checkbox" 
+                                            checked={voiceRecognitionEnabled} 
+                                            onChange={e => toggleVoiceRecognition(e.target.checked)}
+                                            disabled={!voiceProfile}
+                                            className="w-4 h-4 accent-cyan-500 disabled:opacity-30"
+                                        />
+                                    </div>
+
+                                    {/* Voice Enrollment Section */}
+                                    <div className="p-4 bg-cyan-950/20 border border-cyan-500/10 rounded-2xl space-y-3">
+                                        <div className="flex items-center justify-between">
+                                            <p className="text-xs font-black text-white uppercase tracking-tight">
+                                                {preferredLanguage === 'th' ? 'โปรไฟล์เสียงผู้ใช้' : 'Voice Profile'}
+                                            </p>
+                                            <span className={`px-2 py-0.5 rounded text-[8px] font-bold uppercase ${
+                                                voiceProfile 
+                                                    ? 'bg-green-500/20 text-green-400 border border-green-500/30' 
+                                                    : 'bg-red-500/20 text-red-400 border border-red-500/30'
+                                            }`}>
+                                                {voiceProfile 
+                                                    ? (preferredLanguage === 'th' ? 'ลงทะเบียนแล้ว' : 'Enrolled')
+                                                    : (preferredLanguage === 'th' ? 'ยังไม่ได้ลงทะเบียน' : 'Not Enrolled')
+                                                }
+                                            </span>
+                                        </div>
+
+                                        {voiceProfile && (
+                                            <div className="text-[10px] text-zinc-400 space-y-1 bg-black/30 p-2 rounded-lg">
+                                                <p>{preferredLanguage === 'th' ? `บัญชี: ${authUser?.fullName || 'Guest'}` : `Account: ${authUser?.fullName || 'Guest'}`}</p>
+                                                <p>{preferredLanguage === 'th' ? `ความถี่เฉลี่ย: ${Math.round(voiceProfile.avgPitch)} Hz` : `Avg Frequency: ${Math.round(voiceProfile.avgPitch)} Hz`}</p>
+                                                <p>{preferredLanguage === 'th' ? `ช่วงความถี่ที่ยอมรับ: ${Math.round(voiceProfile.pitchMin)} Hz - ${Math.round(voiceProfile.pitchMax)} Hz` : `Range: ${Math.round(voiceProfile.pitchMin)}Hz - ${Math.round(voiceProfile.pitchMax)}Hz`}</p>
+                                            </div>
+                                        )}
+
+                                        {enrolling ? (
+                                            <div className="text-center py-3 bg-cyan-500/15 rounded-xl border border-cyan-500/20 animate-pulse">
+                                                <p className="text-xs font-bold text-cyan-400 animate-bounce">
+                                                    🎙️ {preferredLanguage === 'th' ? 'กรุณาพูดใส่ไมค์อย่างต่อเนื่อง...' : 'Please speak continuously...'}
+                                                </p>
+                                                <p className="text-[10px] text-zinc-400 mt-1">
+                                                    {preferredLanguage === 'th' ? `เหลือเวลาอีก ${enrollCountdown} วินาที` : `${enrollCountdown}s remaining`}
+                                                </p>
+                                                {enrollPitchSampleCount > 0 && (
+                                                    <p className="text-[9px] text-green-400 mt-0.5">
+                                                        {preferredLanguage === 'th' ? `วิเคราะห์สัญญาณแล้ว ${enrollPitchSampleCount} ตัวอย่าง...` : `Analyzed ${enrollPitchSampleCount} samples...`}
+                                                    </p>
+                                                )}
+                                            </div>
+                                        ) : (
+                                            <button
+                                                onClick={startVoiceEnrollment}
+                                                className="w-full py-2.5 bg-cyan-500 hover:bg-cyan-400 text-black text-xs font-black uppercase rounded-xl transition-all active:scale-95 shadow-[0_2px_10px_rgba(0,229,255,0.2)]"
+                                            >
+                                                {voiceProfile 
+                                                    ? (preferredLanguage === 'th' ? '👉 ลงทะเบียนเสียงใหม่ 👈' : '👉 Re-enroll Voice 👈')
+                                                    : (preferredLanguage === 'th' ? '👉 เริ่มลงทะเบียนเสียง 👈' : '👉 Enroll Voice Now 👈')
+                                                }
+                                            </button>
+                                        )}
+                                    </div>
+
+                                    {/* Allow Others Toggle */}
+                                    {voiceRecognitionEnabled && (
+                                        <div className="flex items-center justify-between p-3.5 bg-white/[0.02] border border-white/5 rounded-2xl">
+                                            <div>
+                                                <p className="text-xs font-bold text-white">
+                                                    {preferredLanguage === 'th' ? 'อนุญาตเสียงผู้อื่นที่ได้รับอนุญาต' : 'Allow Authorized Others'}
+                                                </p>
+                                                <p className="text-[9px] text-zinc-500 mt-0.5">
+                                                    {preferredLanguage === 'th' ? 'ยอมรับคำสั่งเสียงจากบุคคลอื่นด้วย' : 'Accept commands from other voices as well'}
+                                                </p>
+                                            </div>
+                                            <input 
+                                                type="checkbox" 
+                                                checked={allowOthers} 
+                                                onChange={e => setAllowOthers(e.target.checked)}
+                                                className="w-4 h-4 accent-cyan-500"
+                                            />
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="pt-4 border-t border-white/5">
+                                <p className="text-[9px] text-zinc-500 leading-relaxed text-center">
+                                    {preferredLanguage === 'th' 
+                                        ? 'ระบบ Voice Lock ใช้การวิเคราะห์ความถี่เสียงหลัก (Fundamental Frequency) ในเบราว์เซอร์ เพื่อความปลอดภัยและเป็นส่วนตัวแบบ 100%' 
+                                        : 'Voice Lock uses browser-based fundamental frequency estimation for 100% private and secure processing.'}
+                                </p>
+                            </div>
+                        </div>
+                    )}
+
                     {messages.map((msg, i) => (
                         <div key={msg.timestamp + i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} chat-msg`}>
                             <div className={`max-w-[85%] px-5 py-3.5 rounded-[24px] text-[13px] leading-relaxed ${msg.role === 'user'
@@ -943,6 +1415,24 @@ You must output valid JSON matching the schema. If no actions are needed, return
                             className="flex-1 bg-transparent border-none outline-none text-white px-3 py-2 text-sm placeholder:text-zinc-600 disabled:opacity-50"
                             disabled={isProcessing}
                         />
+
+                        {listening && (
+                            <button 
+                                onClick={stopListeningAndHandsFree}
+                                className="w-12 h-12 bg-rose-600 hover:bg-rose-500 text-white rounded-full flex items-center justify-center shadow-[0_0_15px_rgba(244,63,94,0.4)] active:scale-75 transition-all shrink-0 animate-pulse"
+                                title={preferredLanguage === 'th' ? "หยุดฟังเสียงไมค์" : "Stop Listening"}
+                            >
+                                <Square size={16} fill="white" />
+                            </button>
+                        )}
+
+                        <button 
+                            onClick={toggleSpeakerMute}
+                            className="w-12 h-12 rounded-full flex items-center justify-center text-zinc-500 hover:text-cyan-400 transition-all shrink-0"
+                            title={speakerMuted ? (preferredLanguage === 'th' ? 'เปิดเสียงพูด Nimo' : 'Unmute Nimo Voice') : (preferredLanguage === 'th' ? 'ปิดเสียงพูด Nimo' : 'Mute Nimo Voice')}
+                        >
+                            {speakerMuted ? <VolumeX size={18} /> : <Volume2 size={18} />}
+                        </button>
 
                         {/* Mic Trigger */}
                         <button 
