@@ -105,12 +105,22 @@ const AuthForm: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
          <div className="h-px flex-1 bg-white/5" />
       </div>
 
-      <button 
-        onClick={() => setIsSignUp(!isSignUp)}
-        className="w-full text-center text-[10px] font-black text-zinc-600 uppercase tracking-widest mt-8 hover:text-cyan-500 transition-colors"
-      >
-        {isSignUp ? 'Already have an account? → Sign In' : 'No account yet? → Sign Up Free'}
-      </button>
+      <div className="mt-8 flex justify-center">
+        <button 
+          onClick={() => setIsSignUp(!isSignUp)}
+          className="px-5 py-3 rounded-2xl bg-white/5 border border-white/10 hover:border-cyan-500/40 text-[10px] font-black text-zinc-300 hover:text-cyan-400 uppercase tracking-widest transition-all active:scale-95 shadow-md flex items-center gap-2"
+        >
+          {isSignUp ? (
+            <>
+              Already have an account? <span className="text-cyan-400">→ Sign In</span>
+            </>
+          ) : (
+            <>
+              No account yet? <span className="text-cyan-400">→ Sign Up Free</span>
+            </>
+          )}
+        </button>
+      </div>
     </div>
   );
 };
