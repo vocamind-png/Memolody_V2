@@ -367,10 +367,6 @@ const HomePage: React.FC<HomePageProps> = ({
   }, []);
   const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-
-  useEffect(() => {
-    setSearchQuery(searchInput);
-  }, [searchInput]);
   const [showFilters, setShowFilters] = useState(false);
   const [filterGenre, setFilterGenre] = useState('');
   const [filterEra, setFilterEra] = useState('');
@@ -504,6 +500,11 @@ const HomePage: React.FC<HomePageProps> = ({
   // Extract dynamic genre folders (Virtual Folders)
   const genreFolders = useMemo(() => {
     const genreMap = new Map<string, string>(); // normalized -> original
+    
+    // Always include these default genres
+    const DEFAULT_GENRES = ['POP', 'ROCK', 'JAZZ', 'CLASSIC', 'ELECTRONIC', 'ACOUSTIC', 'R&B'];
+    DEFAULT_GENRES.forEach(g => genreMap.set(g, g));
+
     userLibrary.forEach(i => {
       const g = i.metadata.genre || i.metadata.category;
       if (g) {
@@ -815,7 +816,12 @@ const HomePage: React.FC<HomePageProps> = ({
 
         {/* Search */}
         <div className="relative group">
-          <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-700 group-focus-within:text-cyan-400 transition-colors" />
+          <button 
+            onClick={() => setSearchQuery(searchInput)}
+            className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-700 group-focus-within:text-cyan-400 transition-colors z-10 hover:text-cyan-300"
+          >
+            <Search size={16} />
+          </button>
           <input
             type="text"
             placeholder="FIND YOUR MUSIC..."
@@ -826,7 +832,7 @@ const HomePage: React.FC<HomePageProps> = ({
           />
           {searchInput && (
           <div className="absolute right-12 top-1/2 -translate-y-1/2 flex items-center gap-2">
-            <button onClick={() => setSearchInput('')} className="text-zinc-600 hover:text-white transition-colors">
+            <button onClick={() => { setSearchInput(''); setSearchQuery(''); }} className="text-zinc-600 hover:text-white transition-colors">
               <X size={14} />
             </button>
             <button 
@@ -1080,12 +1086,21 @@ const HomePage: React.FC<HomePageProps> = ({
         <div className="flex-1 min-h-0 overflow-y-auto pb-32" onScroll={handleScroll}>
           {visibleItems.length === 0 ? (
             <div className="h-64 flex flex-col items-center justify-center text-zinc-800">
-              <Database size={24} className="mb-2 opacity-10" />
-              <p className="text-[8px] font-black uppercase tracking-widest opacity-20">
-                {activeTab === 'favorites' ? 'No Favorites Yet' :
-                  activeTab === 'mysongs' ? 'No Imported Songs' :
-                    activeTab === 'trash' ? 'Trash Empty' : 'No Songs Yet'}
-              </p>
+              {isSyncing ? (
+                <>
+                  <div className="w-8 h-8 border-2 border-cyan-500/20 border-t-cyan-500 rounded-full animate-spin mb-4 shadow-[0_0_10px_rgba(6,182,212,0.5)]"></div>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-cyan-400 animate-pulse">Syncing Database...</p>
+                </>
+              ) : (
+                <>
+                  <Database size={24} className="mb-2 opacity-10" />
+                  <p className="text-[8px] font-black uppercase tracking-widest opacity-20">
+                    {activeTab === 'favorites' ? 'No Favorites Yet' :
+                      activeTab === 'mysongs' ? 'No Imported Songs' :
+                        activeTab === 'trash' ? 'Trash Empty' : 'No Songs Yet'}
+                  </p>
+                </>
+              )}
             </div>
           ) : (
             <>

@@ -1,7 +1,46 @@
-import React, { useState } from 'react';
-import { Bot, Wand2, Music, Loader2, Play } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Bot, Wand2, Music, Loader2, Play, X, Tags } from 'lucide-react';
 import { TrackState } from '../../types';
 import { musicEngine } from '../../lib/MusicEngine';
+import { nimoBrain } from '../../lib/NimoBrain';
+
+const STYLE_CATEGORIES = [
+  {
+    name: "Pop & Electronic",
+    styles: ["Pop", "K-Pop", "J-Pop", "Lo-Fi Beats", "Synthwave", "EDM", "House", "Techno", "Chillout", "Hyperpop", "City Pop", "Dubstep", "Drum and Bass", "Trance"]
+  },
+  {
+    name: "Rock & Metal",
+    styles: ["Indie Rock", "Pop Punk", "Alternative Rock", "Heavy Metal", "Grunge", "Shoegaze", "Post-Rock", "Nu Metal", "Black Metal", "Math Rock"]
+  },
+  {
+    name: "Acoustic & Folk",
+    styles: ["Acoustic Pop", "Folk", "Country", "Singer-Songwriter", "Bluegrass", "Celtic"]
+  },
+  {
+    name: "Cinematic & Classical",
+    styles: ["Epic Cinematic", "Symphony Orchestra", "Piano Solo", "String Quartet", "Ambient", "Baroque", "Minimalist", "Choral", "Film Score"]
+  },
+  {
+    name: "R&B, Hip Hop & Urban",
+    styles: ["R&B", "Hip Hop", "Trap", "Soul", "Funk", "Neo-Soul", "Gospel", "Lo-Fi Hip Hop"]
+  },
+  {
+    name: "Jazz & Blues",
+    styles: ["Jazz", "Smooth Jazz", "Bossa Nova", "Blues", "Swing", "Bebop", "Ragtime"]
+  },
+  {
+    name: "World & Regional",
+    styles: ["Reggae", "Latin Pop", "Afrobeats", "Reggaeton", "Salsa", "Bollywood", "Mariachi", "K-Trot"]
+  },
+  {
+    name: "Niche & Specialty",
+    styles: ["8-bit / Chiptune", "Lullaby", "Acapella", "Gregorian Chant", "Sea Shanty", "Musical Theatre"]
+  }
+];
+
+const MOODS = ['😊 Happy', '😢 Sad', '⚡ Energetic', '☕ Chill', '🔥 Aggressive', '🌌 Dreamy', '🎲 Surprise Me'];
+const TEMPOS = ['🐢 Slow', '🚶 Medium', '🏃 Fast', '🌪️ Very Fast'];
 
 interface ComposerPageProps {
   parsedData: any | null;
@@ -11,34 +50,125 @@ interface ComposerPageProps {
 }
 
 const ComposerPage: React.FC<ComposerPageProps> = ({ parsedData, tracks, setTracks, onTrackCreated }) => {
-  const [lyriaPrompt, setLyriaPrompt] = useState('Epic Cinematic Symphony Orchestra');
+  const [lyriaPrompt, setLyriaPrompt] = useState('');
   const [lyrics, setLyrics] = useState('');
   const [isLyriaGenerating, setIsLyriaGenerating] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  
+  // New State for Selectors
+  const [genMode, setGenMode] = useState<'full' | 'backing'>('full');
+  const [selectedMood, setSelectedMood] = useState<string>('');
+  const [selectedTempo, setSelectedTempo] = useState<string>('');
+  const [selectedStyles, setSelectedStyles] = useState<string[]>([]);
+  const [isStyleModalOpen, setIsStyleModalOpen] = useState(false);
+  const [isLyricsExpanded, setIsLyricsExpanded] = useState(false);
   
   // Stem extraction state
   const [extractMode, setExtractMode] = useState<{[key: string]: string}>({});
   const [extractedStems, setExtractedStems] = useState<{[key: string]: any[]}>({});
   const [isExtracting, setIsExtracting] = useState<{[key: string]: boolean}>({});
 
+  // Use refs to access latest state in NimoBrain callbacks without re-registering
+  const generateRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    nimoBrain.updateState('musicgenState', {
+      mode: genMode,
+      mood: selectedMood,
+      tempo: selectedTempo,
+      styles: selectedStyles,
+      prompt: lyriaPrompt,
+      isGenerating: isLyriaGenerating,
+      generatedTracksCount: tracks.filter(t => t.id.startsWith('composer-')).length
+    });
+  }, [genMode, selectedMood, selectedTempo, selectedStyles, lyriaPrompt, isLyriaGenerating, tracks]);
+
+  useEffect(() => {
+    const unregGenerate = nimoBrain.registerAction('musicgen_generate', () => {
+      generateRef.current();
+    });
+    
+    const unregSetMood = nimoBrain.registerAction('musicgen_set_mood', (params) => {
+      if (params?.mood) setSelectedMood(params.mood);
+    });
+
+    const unregSetTempo = nimoBrain.registerAction('musicgen_set_tempo', (params) => {
+      if (params?.tempo) setSelectedTempo(params.tempo);
+    });
+
+    const unregAddStyle = nimoBrain.registerAction('musicgen_add_style', (params) => {
+      if (params?.style) {
+        setSelectedStyles(prev => {
+          if (!prev.includes(params.style)) return [...prev, params.style];
+          return prev;
+        });
+      }
+    });
+
+    const unregClearStyles = nimoBrain.registerAction('musicgen_clear_styles', () => {
+      setSelectedStyles([]);
+    });
+    
+    const unregSetPrompt = nimoBrain.registerAction('musicgen_set_prompt', (params) => {
+      if (params?.prompt !== undefined) setLyriaPrompt(params.prompt);
+    });
+
+    const unregSetLyrics = nimoBrain.registerAction('musicgen_set_lyrics', (params) => {
+      if (params?.lyrics !== undefined) setLyrics(params.lyrics);
+    });
+
+    return () => {
+      unregGenerate();
+      unregSetMood();
+      unregSetTempo();
+      unregAddStyle();
+      unregClearStyles();
+      unregSetPrompt();
+      unregSetLyrics();
+    };
+  }, []);
+
   const handleLyriaGenerate = async () => {
-    if (!parsedData || !parsedData.notes || parsedData.notes.length === 0) {
-      setErrorMsg("No notes found in the current song to send to AI.");
+    if (genMode === 'backing' && (!parsedData || !parsedData.notes || parsedData.notes.length === 0)) {
+      setErrorMsg("No notes found in the current song to create a backing track.");
       return;
     }
     setErrorMsg(null);
     setIsLyriaGenerating(true);
     
     try {
+      // Remove emojis from mood and tempo before sending
+      const moodText = selectedMood.replace(/[\u1000-\uFFFF]+/g, '').trim();
+      const tempoText = selectedTempo.replace(/[\u1000-\uFFFF]+/g, '').trim();
+      
+      const finalPromptParts = [
+        ...selectedStyles,
+        moodText && moodText !== 'Surprise Me' ? `${moodText} mood` : '',
+        tempoText ? `${tempoText} tempo` : '',
+        lyriaPrompt
+      ].filter(Boolean);
+      
+      const finalPrompt = finalPromptParts.join(', ');
+
+      // Bypass backend 'Missing notes data' check for full songs by sending a dummy rest note.
+      const payloadNotes = genMode === 'backing' 
+        ? parsedData.notes 
+        : [{ step: 'z', alter: 0, octave: 4, startTime: 0, duration: 4 }];
+        
+      const finalPromptForLyria = genMode === 'full' 
+        ? `[FULL ORIGINAL SONG] ${finalPrompt || 'Auto'}` 
+        : (finalPrompt || 'Auto');
+
       const response = await fetch('/vocalido/api/ai/lyria-render', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          notes: parsedData.notes, 
-          prompt: lyriaPrompt,
+          mode: genMode,
+          notes: payloadNotes, 
+          prompt: finalPromptForLyria,
           lyrics: lyrics,
-          key: parsedData.keySignature || 'C',
-          bpm: parsedData.tempo || 120,
+          key: parsedData?.keySignature || 'C',
+          bpm: parsedData?.tempo || 120,
           style: 'auto'
         })
       });
@@ -51,7 +181,10 @@ const ComposerPage: React.FC<ComposerPageProps> = ({ parsedData, tracks, setTrac
       let audioSrc = '';
       if (data.task_id) {
         let isComplete = false;
-        while (!isComplete) {
+        let pollCount = 0;
+        const MAX_POLLS = 60; // Max 3 minutes
+        while (!isComplete && pollCount < MAX_POLLS) {
+          pollCount++;
           await new Promise(r => setTimeout(r, 3000));
           const pollRes = await fetch('/vocalido/api/ai/lyria-poll', {
             method: 'POST',
@@ -59,12 +192,21 @@ const ComposerPage: React.FC<ComposerPageProps> = ({ parsedData, tracks, setTrac
             body: JSON.stringify({ task_id: data.task_id })
           });
           const pollData = await pollRes.json();
-          if (pollData.status === 'completed') {
+          if (!pollRes.ok || !pollData.success) {
+            if (pollData.status !== 'processing') {
+              throw new Error(pollData.message || pollData.error || 'Composition failed during generation');
+            }
+          }
+
+          if (pollData.status === 'completed' || pollData.status === 'success') {
             isComplete = true;
-            audioSrc = pollData.data.base64 ? `data:audio/mp3;base64,${pollData.data.base64}` : pollData.data.url;
+            audioSrc = pollData.data?.base64 ? `data:audio/mp3;base64,${pollData.data.base64}` : pollData.data?.url;
           } else if (pollData.status === 'failed' || pollData.error) {
             throw new Error(pollData.message || pollData.error || 'Composition failed during generation');
           }
+        }
+        if (!isComplete) {
+          throw new Error('Composition timed out. The server took too long to respond.');
         }
       } else if (data.data) {
         audioSrc = data.data.base64 ? `data:audio/mp3;base64,${data.data.base64}` : data.data.url;
@@ -73,9 +215,16 @@ const ComposerPage: React.FC<ComposerPageProps> = ({ parsedData, tracks, setTrac
       }
       
       const newTrackId = `composer-${Date.now()}`;
+      
+      // Generate dynamic name based on selections
+      const mainStyle = selectedStyles.length > 0 ? selectedStyles[0] : 'MusicGen';
+      const mainMood = selectedMood ? selectedMood.replace(/[\u1000-\uFFFF]+/g, '').trim().split(' ')[0] : 'Track';
+      const randomNum = Math.floor(Math.random() * 999) + 1;
+      const trackName = `${mainMood} ${mainStyle} #${randomNum}`;
+
       const newTrack: TrackState = {
         id: newTrackId,
-        name: 'AI Composer Track (Lyria)',
+        name: trackName,
         isMuted: false,
         isSolo: false,
         lyricMode: 'phoneme' as any,
@@ -102,6 +251,10 @@ const ComposerPage: React.FC<ComposerPageProps> = ({ parsedData, tracks, setTrac
     }
   };
 
+  useEffect(() => {
+    generateRef.current = handleLyriaGenerate;
+  }, [handleLyriaGenerate]);
+
   return (
     <div className="absolute inset-0 z-10 overflow-y-auto overflow-x-hidden bg-[#050507] pb-[160px] custom-scrollbar">
       {/* Background aesthetics */}
@@ -114,32 +267,137 @@ const ComposerPage: React.FC<ComposerPageProps> = ({ parsedData, tracks, setTrac
           <div className="w-16 h-16 bg-gradient-to-br from-cyan-400 to-indigo-600 rounded-2xl flex items-center justify-center mb-6 shadow-[0_0_30px_rgba(34,211,238,0.4)]">
             <Wand2 size={32} className="text-white" />
           </div>
-          <h1 className="text-3xl font-black text-white uppercase tracking-widest mb-3 drop-shadow-lg">
-            AI COMPOSER
+          <h1 className="text-3xl font-black text-white uppercase tracking-widest mb-3 drop-shadow-lg flex items-center gap-2">
+            ✨ MusicGen
           </h1>
           <p className="text-sm text-zinc-400 max-w-lg leading-relaxed">
-            Let the AI compose a full backing track for your melody. Describe the musical style, mood, and instrumentation.
+            {genMode === 'full' 
+              ? 'Let the AI compose a completely new song from your prompt and lyrics.' 
+              : 'Let the AI compose a full backing track for your melody. Select the mood, tempo, and styles, or describe your own.'}
           </p>
         </div>
 
         <div className="space-y-6">
+          
+          {/* Generation Mode Selector */}
+          <div className="flex justify-center mb-6">
+            <div className="inline-flex bg-black/40 rounded-full p-1 border border-white/10 relative">
+              <button
+                onClick={() => setGenMode('full')}
+                className={`relative px-6 py-2 text-sm font-medium rounded-full transition-all duration-300 z-10 ${
+                  genMode === 'full' ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                Full Song
+              </button>
+              <button
+                onClick={() => setGenMode('backing')}
+                className={`relative px-6 py-2 text-sm font-medium rounded-full transition-all duration-300 z-10 ${
+                  genMode === 'backing' ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                Backing Track
+              </button>
+              {/* Highlight Pill */}
+              <div
+                className={`absolute top-1 bottom-1 w-[50%] bg-cyan-600/80 shadow-[0_0_15px_rgba(8,145,178,0.5)] rounded-full transition-transform duration-300 ease-out`}
+                style={{ transform: genMode === 'backing' ? 'translateX(98%)' : 'translateX(0)' }}
+              />
+            </div>
+          </div>
+          
+          {/* Mood & Tempo Selectors */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-black/30 p-5 rounded-2xl border border-white/5">
+            <div>
+              <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-3">Mood</label>
+              <div className="flex flex-wrap gap-2">
+                {MOODS.map(mood => (
+                  <button
+                    key={mood}
+                    onClick={() => setSelectedMood(selectedMood === mood ? '' : mood)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all border ${
+                      selectedMood === mood 
+                        ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300' 
+                        : 'bg-black/60 border-white/10 text-zinc-400 hover:bg-white/10 hover:text-zinc-300'
+                    }`}
+                  >
+                    {mood}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-3">Tempo</label>
+              <div className="flex flex-wrap gap-2">
+                {TEMPOS.map(tempo => (
+                  <button
+                    key={tempo}
+                    onClick={() => setSelectedTempo(selectedTempo === tempo ? '' : tempo)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all border ${
+                      selectedTempo === tempo 
+                        ? 'bg-indigo-500/20 border-indigo-400 text-indigo-300' 
+                        : 'bg-black/60 border-white/10 text-zinc-400 hover:bg-white/10 hover:text-zinc-300'
+                    }`}
+                  >
+                    {tempo}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="group relative">
-              <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Musical Style Prompt</label>
-              <div className="absolute -inset-1 bg-gradient-to-r from-cyan-500 to-indigo-500 rounded-[20px] blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200 mt-6" />
-              <textarea
-                className="relative w-full bg-black/50 border border-white/10 rounded-2xl p-6 text-white text-base focus:border-cyan-400 focus:outline-none focus:ring-1 focus:ring-cyan-400 min-h-[160px] resize-none"
-                placeholder='e.g., "Epic Cinematic Symphony Orchestra with dramatic strings and brass..."'
-                value={lyriaPrompt}
-                onChange={e => setLyriaPrompt(e.target.value)}
-              />
+              <div className="flex justify-between items-end mb-2">
+                <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest">Custom Prompt</label>
+                <button 
+                  onClick={() => setIsStyleModalOpen(true)}
+                  className="flex items-center gap-1.5 text-xs font-bold text-cyan-400 hover:text-cyan-300 bg-cyan-500/10 hover:bg-cyan-500/20 px-3 py-1.5 rounded-lg transition-colors border border-cyan-500/20"
+                >
+                  <Tags size={14} />
+                  Browse Styles
+                </button>
+              </div>
+              
+              <div className="absolute -inset-1 bg-gradient-to-r from-cyan-500 to-indigo-500 rounded-[20px] blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200 mt-8" />
+              <div className="relative bg-black/50 border border-white/10 rounded-2xl flex flex-col focus-within:border-cyan-400 focus-within:ring-1 focus-within:ring-cyan-400 transition-all">
+                
+                {/* Selected Style Chips */}
+                {selectedStyles.length > 0 && (
+                  <div className="flex flex-wrap gap-2 p-3 border-b border-white/10 bg-black/20 rounded-t-2xl">
+                    {selectedStyles.map(style => (
+                      <span key={style} className="flex items-center gap-1 bg-purple-500/20 border border-purple-500/30 text-purple-300 px-2.5 py-1 rounded-md text-xs font-medium">
+                        {style}
+                        <button onClick={() => setSelectedStyles(s => s.filter(x => x !== style))} className="hover:text-white ml-1">
+                          <X size={12} />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                
+                <textarea
+                  className="w-full bg-transparent p-6 text-white text-base focus:outline-none min-h-[120px] resize-none rounded-2xl"
+                  placeholder="Describe your musical style here. e.g., 'Epic Cinematic Symphony', 'Upbeat K-Pop', 'Sad acoustic guitar'..."
+                  value={lyriaPrompt}
+                  onChange={e => setLyriaPrompt(e.target.value)}
+                />
+              </div>
             </div>
             
             <div className="group relative">
-              <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Lyrics (Optional)</label>
+              <div className="flex justify-between items-end mb-2">
+                <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest">Lyrics (Optional)</label>
+                <button
+                  onClick={() => setIsLyricsExpanded(!isLyricsExpanded)}
+                  className="text-xs font-bold text-cyan-400 hover:text-cyan-300 transition-colors flex items-center gap-1"
+                >
+                  {isLyricsExpanded ? 'Collapse' : 'Expand'}
+                </button>
+              </div>
               <div className="absolute -inset-1 bg-gradient-to-r from-pink-500 to-purple-500 rounded-[20px] blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200 mt-6" />
               <textarea
-                className="relative w-full bg-black/50 border border-white/10 rounded-2xl p-6 text-white text-base focus:border-pink-400 focus:outline-none focus:ring-1 focus:ring-pink-400 min-h-[160px] resize-none"
+                className={`relative w-full bg-black/50 border border-white/10 rounded-2xl p-6 text-white text-base focus:border-pink-400 focus:outline-none focus:ring-1 focus:ring-pink-400 resize-none transition-all ${isLyricsExpanded ? 'min-h-[400px]' : 'min-h-[160px] h-[calc(100%-24px)]'}`}
                 placeholder="Enter lyrics for the AI to sing... (Leave empty for an instrumental arrangement)"
                 value={lyrics}
                 onChange={e => setLyrics(e.target.value)}
@@ -156,7 +414,7 @@ const ComposerPage: React.FC<ComposerPageProps> = ({ parsedData, tracks, setTrac
           <button
             onClick={handleLyriaGenerate}
             disabled={isLyriaGenerating}
-            className="relative w-full h-16 rounded-2xl text-sm font-black uppercase tracking-[0.2em] transition-all group overflow-hidden bg-[#111] border border-white/10 disabled:opacity-50 disabled:pointer-events-none"
+            className="relative w-full h-16 rounded-2xl text-sm font-black uppercase tracking-[0.2em] transition-all group overflow-hidden bg-[#111] border border-white/10 disabled:opacity-50 disabled:pointer-events-none mt-4"
           >
             {/* Hover Effects */}
             <div className="absolute inset-0 bg-gradient-to-r from-cyan-500 to-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
@@ -169,8 +427,8 @@ const ComposerPage: React.FC<ComposerPageProps> = ({ parsedData, tracks, setTrac
                 </>
               ) : (
                 <>
-                  <Bot size={20} className="text-cyan-400 group-hover:text-white transition-colors" />
-                  <span className="text-zinc-300 group-hover:text-white transition-colors">GENERATE COMPOSITION</span>
+                  <Wand2 size={20} className="text-cyan-400 group-hover:text-white transition-colors" />
+                  <span className="text-zinc-300 group-hover:text-white transition-colors">GENERATE TRACK</span>
                 </>
               )}
             </div>
@@ -183,9 +441,23 @@ const ComposerPage: React.FC<ComposerPageProps> = ({ parsedData, tracks, setTrac
               <div className="space-y-3">
                 {tracks.filter(t => t.id.startsWith('composer-')).map(track => (
                   <div key={track.id} className="bg-black/40 border border-white/10 rounded-xl p-4 flex flex-col gap-3">
-                    <div className="flex items-center gap-2">
-                      <Music size={16} className="text-cyan-400" />
-                      <span className="text-sm font-bold text-white">{track.name}</span>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Music size={16} className="text-cyan-400" />
+                        <span className="text-sm font-bold text-white">{track.name}</span>
+                      </div>
+                      {/* Download Button */}
+                      {track.audioSrc && (
+                        <a 
+                          href={track.audioSrc} 
+                          download={`${track.name}.mp3`}
+                          className="text-[10px] font-bold uppercase bg-white/10 hover:bg-white/20 px-3 py-1 rounded text-white transition-colors flex items-center gap-1"
+                          title="Download MP3"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                          Save
+                        </a>
+                      )}
                     </div>
                     {track.audioSrc ? (
                       <audio controls className="w-full h-10" src={track.audioSrc}>
@@ -296,6 +568,70 @@ const ComposerPage: React.FC<ComposerPageProps> = ({ parsedData, tracks, setTrac
           )}
         </div>
       </div>
+      
+      {/* Style Library Modal */}
+      {isStyleModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-[#111] border border-white/10 rounded-3xl w-full max-w-4xl max-h-[85vh] flex flex-col shadow-2xl">
+            <div className="flex justify-between items-center p-6 border-b border-white/10">
+              <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                <Tags className="text-cyan-400" /> Style Library
+              </h2>
+              <button onClick={() => setIsStyleModalOpen(false)} className="text-zinc-400 hover:text-white p-2 rounded-full hover:bg-white/10 transition-colors">
+                <X size={24} />
+              </button>
+            </div>
+            
+            <div className="p-6 overflow-y-auto custom-scrollbar flex-1 space-y-8">
+              {STYLE_CATEGORIES.map(category => (
+                <div key={category.name}>
+                  <h3 className="text-sm font-bold text-cyan-300/80 uppercase tracking-widest mb-4 flex items-center gap-3">
+                    {category.name}
+                    <div className="h-px bg-white/10 flex-1"></div>
+                  </h3>
+                  <div className="flex flex-wrap gap-2.5">
+                    {category.styles.map(style => {
+                      const isSelected = selectedStyles.includes(style);
+                      return (
+                        <button
+                          key={style}
+                          onClick={() => {
+                            if (isSelected) {
+                              setSelectedStyles(s => s.filter(x => x !== style));
+                            } else {
+                              setSelectedStyles(s => [...s, style]);
+                            }
+                          }}
+                          className={`px-4 py-2 rounded-xl text-sm transition-all border shadow-sm ${
+                            isSelected 
+                              ? 'bg-gradient-to-r from-purple-500/30 to-pink-500/30 border-purple-400/50 text-white font-bold scale-105' 
+                              : 'bg-black/50 border-white/10 text-zinc-300 hover:border-white/30 hover:bg-white/5 hover:text-white'
+                          }`}
+                        >
+                          {style}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+            
+            <div className="p-6 border-t border-white/10 bg-black/40 flex justify-between items-center rounded-b-3xl">
+              <div className="text-zinc-400 text-sm">
+                Selected: <span className="text-white font-bold">{selectedStyles.length}</span> styles
+              </div>
+              <button 
+                onClick={() => setIsStyleModalOpen(false)}
+                className="bg-gradient-to-r from-cyan-500 to-indigo-500 hover:from-cyan-400 hover:to-indigo-400 text-white font-bold px-8 py-3 rounded-xl transition-all shadow-lg hover:shadow-cyan-500/25"
+              >
+                Apply Styles
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
     </div>
   );

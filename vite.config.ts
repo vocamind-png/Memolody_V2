@@ -15,7 +15,7 @@ export default defineConfig(({ mode }) => {
   const LOCAL_VOCALIDO = env.VITE_LOCAL_VOCALIDO === 'true';
   const VOCALIDO_TARGET = env.VITE_VOCALIDO_URL || (LOCAL_VOCALIDO
     ? 'http://127.0.0.1:5001'
-    : 'http://35.247.141.53:5001');
+    : 'https://u2txyroyplqko8-8888.proxy.runpod.net');
     
   const OMR_TARGET = env.VITE_OMR_URL || 'http://127.0.0.1:3003';
 

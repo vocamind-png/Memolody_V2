@@ -142,7 +142,7 @@ const App: React.FC = () => {
   const [loopPresets, setLoopPresets] = useState<LoopPreset[]>(INITIAL_LOOP_PRESETS);
   const [pendingImportFile, setPendingImportFile] = useState<File | null>(null);
   const [autoPlayOnLoad, setAutoPlayOnLoad] = useState(false); // true after OMR import → Player auto-starts
-
+  const [isSongLoading, setIsSongLoading] = useState(false);
   // Settings
   const [preferredLanguage, setPreferredLanguage] = useState<'th' | 'en'>(() => (localStorage.getItem('nimo_lang') as any) || 'en');
   const [userCountry, setUserCountry] = useState(() => localStorage.getItem('nimo_country') || 'Other');
@@ -186,10 +186,10 @@ const App: React.FC = () => {
     const forceTimeout = setTimeout(() => {
       if (!hasTransitioned) {
         hasTransitioned = true;
-        console.warn('[App] Initialization took too long (>8s), forcing Home screen entry.');
+        console.warn('[App] Initialization took too long (>30s), forcing Home screen entry.');
         setIsInitializing(false);
       }
-    }, 8000);
+    }, 30000);
 
     (async () => {
       try {
@@ -275,6 +275,7 @@ const App: React.FC = () => {
             setInitProgress(80);
             
             // 🔥 Non-blocking Sync: Let the app boot instantly, load songs in background
+            setIsSyncing(true);
             CloudSyncService.syncWithGlobalCloud((percent) => {
               // Can optionally dispatch progress event here if needed
             }).then(async (syncResult) => {
@@ -286,6 +287,8 @@ const App: React.FC = () => {
             }).catch((syncErr) => {
               console.warn('[App] Initial cloud sync failed:', syncErr);
               setTimeout(() => triggerSync(), 1000); 
+            }).finally(() => {
+              setIsSyncing(false);
             });
             
           } else {
@@ -482,6 +485,7 @@ const App: React.FC = () => {
     desiredView?: { main: 'player' | 'tracks', player?: 'score' | 'pianoroll' }
   ) => {
     try {
+      setIsSongLoading(true);
       if (mode === 'play') {
         setAutoPlayOnLoad(true);
       }
@@ -619,8 +623,10 @@ const App: React.FC = () => {
     } catch (err) {
       console.error('[App] handleSongSelect critical error:', err);
       alert("❌ ไม่สามารถเลือกเพลงได้:\n" + (err instanceof Error ? err.stack || err.message : String(err)));
+    } finally {
+      setIsSongLoading(false);
     }
-  }, []); // ← no deps: reads userSongsRef instead of closing over state // ← no deps: reads userSongsRef instead of closing over state
+  }, []); // ← no deps: reads userSongsRef instead of closing over state
 
   const handleLanguageChange = (lang: 'th' | 'en') => { setPreferredLanguage(lang); localStorage.setItem('nimo_lang', lang); };
   const handleCountryChange = (c: string) => { setUserCountry(c); localStorage.setItem('nimo_country', c); };
@@ -747,20 +753,31 @@ const App: React.FC = () => {
     });
 
     const unregSetTrackInstrument = nimoBrain.registerAction('set_track_instrument', (params) => {
-      const trackName = params?.trackName;
-      const trackIdx = params?.trackIndex;
-      const instrument = params?.instrument;
-      console.log('[App] Nimo requested set_track_instrument:', { trackName, trackIdx, instrument });
-      if (!instrument) return;
-      
+      const { trackName, trackIndex, instrument } = params;
       setTracks(prev => prev.map((t, idx) => {
-        const isTarget = (trackName && t.name.toLowerCase().includes(trackName.toLowerCase())) || 
-                         (trackIdx !== undefined && idx === Number(trackIdx));
-        if (isTarget) {
-          return { ...t, instrument: instrument };
-        }
+        if (t.mode !== 'vocal') return t;
+        const isMatch = (trackName && t.name.toLowerCase().includes(trackName.toLowerCase())) || 
+                       (trackIndex !== undefined && idx === trackIndex);
+        if (isMatch) return { ...t, instrument: instrument };
         return t;
       }));
+    });
+
+    const unregDeleteLatestTrack = nimoBrain.registerAction('delete_latest_track', async () => {
+      const engine = await getMusicEngine();
+      setTracks(prev => {
+        const composerTracks = prev.filter(t => t.id.startsWith('composer-'));
+        if (composerTracks.length > 0) {
+          const lastComposerTrackId = composerTracks[composerTracks.length - 1].id;
+          engine.clearVocalLayers(lastComposerTrackId);
+          return prev.filter(t => t.id !== lastComposerTrackId);
+        } else if (prev.length > 0) {
+          const lastTrackId = prev[prev.length - 1].id;
+          engine.clearVocalLayers(lastTrackId);
+          return prev.filter(t => t.id !== lastTrackId);
+        }
+        return prev;
+      });
     });
 
     return () => {
@@ -911,6 +928,14 @@ const App: React.FC = () => {
             {renderPage()}
           </Suspense>
         </PageErrorBoundary>
+
+        {/* Song Loading Overlay */}
+        {isSongLoading && (
+          <div className="absolute inset-0 z-[9999] flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm transition-all duration-300">
+            <div className="w-12 h-12 border-4 border-cyan-500/20 border-t-cyan-500 rounded-full animate-spin shadow-[0_0_20px_rgba(6,182,212,0.5)]"></div>
+            <p className="mt-4 text-[10px] font-black uppercase tracking-widest text-cyan-400 animate-pulse drop-shadow-[0_0_8px_rgba(6,182,212,0.8)]">กำลังดึงข้อมูลเพลงและวิเคราะห์โครงสร้าง...</p>
+          </div>
+        )}
       </main>
 
       {/* Floating Nimo AI - lazy loaded on first use only */}

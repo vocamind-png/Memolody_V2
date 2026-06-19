@@ -15,6 +15,77 @@ interface Message {
     actionData?: { song: any, xmlData: string }; // Optional action button to open song
 }
 
+const matchLocalCommand = (transcript: string, lang: 'th' | 'en'): { action: string; params: any; reply: string } | null => {
+    const text = transcript.toLowerCase().trim().replace(/[.?]/g, '');
+    
+    // Playback Play
+    if (/^(play|start play|เล่นเพลง|เล่นดนตรี|เล่น)$/.test(text) || text.includes('เล่นเพลง')) {
+        return {
+            action: 'play',
+            params: {},
+            reply: lang === 'th' ? 'กำลังเล่นเพลงค่ะ' : 'Playing music.'
+        };
+    }
+    // Playback Pause
+    if (/^(pause|stop play|หยุดเพลง|หยุด)$/.test(text) || text.includes('หยุดเพลง') || text.includes('หยุดก่อน') || text.includes('หยุดเล่น')) {
+        return {
+            action: 'pause',
+            params: {},
+            reply: lang === 'th' ? 'หยุดเล่นเพลงแล้วค่ะ' : 'Paused music.'
+        };
+    }
+    // Navigation
+    if (/^(go home|go to home|ไปหน้าแรก|กลับหน้าแรก|หน้าแรก)$/.test(text) || text.includes('หน้าแรก')) {
+        return {
+            action: 'navigate_to_page',
+            params: { view: 'home' },
+            reply: lang === 'th' ? 'กำลังเปิดหน้าแรกค่ะ' : 'Opening home page.'
+        };
+    }
+    if (/^(go to player|ไปหน้าเครื่องเล่น|เครื่องเล่น|เพลเยอร์)$/.test(text) || text.includes('เครื่องเล่น') || text.includes('หน้าเครื่องเล่น')) {
+        return {
+            action: 'navigate_to_page',
+            params: { view: 'player' },
+            reply: lang === 'th' ? 'กำลังเปิดหน้าเครื่องเล่นค่ะ' : 'Opening player page.'
+        };
+    }
+    if (/^(go to settings|ไปหน้าตั้งค่า|ตั้งค่า)$/.test(text) || text.includes('ตั้งค่า') || text.includes('หน้าตั้งค่า')) {
+        return {
+            action: 'navigate_to_page',
+            params: { view: 'settings' },
+            reply: lang === 'th' ? 'กำลังเปิดหน้าตั้งค่าค่ะ' : 'Opening settings page.'
+        };
+    }
+    if (/^(go to forge|go to studio|ไปหน้าสตูดิโอ|ไปหน้าฟอร์จ|หน้าสตูดิโอ)$/.test(text) || text.includes('สตูดิโอ') || text.includes('หน้าฟอร์จ')) {
+        return {
+            action: 'navigate_to_page',
+            params: { view: 'forge' },
+            reply: lang === 'th' ? 'กำลังเปิดหน้าสตูดิโอค่ะ' : 'Opening studio page.'
+        };
+    }
+    
+    // MusicGen Send Lyric Trigger
+    if (text.includes('ส่งไปที่ musicgen') || text.includes('ส่งเนื้อเพลงไป musicgen') || text.includes('ส่งเนื้อเพลง') || text.includes('send to musicgen')) {
+        return {
+            action: 'send_to_musicgen_local',
+            params: {},
+            reply: lang === 'th' ? 'กำลังส่งเนื้อเพลงไปที่ MusicGen และเปิดหน้าสตูดิโอค่ะ' : 'Sending lyrics to MusicGen and opening studio.'
+        };
+    }
+
+    return null;
+};
+
+const extractLastLyrics = (messageList: Message[]): string => {
+    for (let i = messageList.length - 1; i >= 0; i--) {
+        const m = messageList[i];
+        if (m.role === 'nimo' && m.content.includes('\n') && m.content.length > 25) {
+            return m.content;
+        }
+    }
+    return '';
+};
+
 interface NimoPageProps {
     selectedSong?: any;
     xmlData?: string | null;
@@ -117,6 +188,12 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
     const [permState, setPermState] = useState<'prompt' | 'granted' | 'denied'>('prompt');
     const [isTyping, setIsTyping] = useState(false);
 
+    // Wake Word & Speaker Lock-on
+    const [wokenUp, setWokenUp] = useState(false);
+    const [refSpeakerVolume, setRefSpeakerVolume] = useState<number | null>(null);
+    const [lockStatus, setLockStatus] = useState<string>('');
+    const peakVolumeRef = useRef<number>(0);
+
     // Speaker & Audio Settings
     const [speakerMuted, setSpeakerMuted] = useState(() => localStorage.getItem('nimo_speaker_muted') === 'true');
     const [showNimoSettings, setShowNimoSettings] = useState(false);
@@ -134,9 +211,19 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
     const listeningRef = useRef(listening);
     const collectedPitchSamplesRef = useRef<number[]>([]);
     const activePitchSamplesRef = useRef<number[]>([]);
+    const wokenUpRef = useRef(wokenUp);
+    const refSpeakerVolumeRef = useRef(refSpeakerVolume);
+    const preferredLanguageRef = useRef(preferredLanguage);
+    const messagesRef = useRef(messages);
+    const speakerMutedRef = useRef(speakerMuted);
 
     useEffect(() => { enrollingRef.current = enrolling; }, [enrolling]);
     useEffect(() => { listeningRef.current = listening; }, [listening]);
+    useEffect(() => { wokenUpRef.current = wokenUp; }, [wokenUp]);
+    useEffect(() => { refSpeakerVolumeRef.current = refSpeakerVolume; }, [refSpeakerVolume]);
+    useEffect(() => { preferredLanguageRef.current = preferredLanguage; }, [preferredLanguage]);
+    useEffect(() => { messagesRef.current = messages; }, [messages]);
+    useEffect(() => { speakerMutedRef.current = speakerMuted; }, [speakerMuted]);
 
     const { authUser } = useAuth();
     const userId = authUser ? authUser.id : 'guest';
@@ -156,6 +243,8 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
     }, [userId]);
 
     const audioContextRef = useRef<AudioContext | null>(null);
+    const isRecognitionRunningRef = useRef(false);
+    const hasPermissionErrorRef = useRef(false);
     const analyserRef = useRef<AnalyserNode | null>(null);
     const micStreamRef = useRef<MediaStream | null>(null);
     const animationFrameRef = useRef<number | null>(null);
@@ -180,9 +269,22 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
             }
         }
 
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+            sum += dataArray[i];
+        }
+        const average = sum / dataArray.length;
+        const level = Math.min(100, (average / 128) * 100); 
+
+        if (level > peakVolumeRef.current) {
+            peakVolumeRef.current = level;
+        }
+
         animationFrameRef.current = requestAnimationFrame(analyzeAudio);
     }, []);
 
+    // Commented out to prevent microphone resource capture conflict with SpeechRecognition API on Chrome/macOS
+    /*
     useEffect(() => {
         if (listening) {
             navigator.mediaDevices.getUserMedia({ audio: true })
@@ -241,6 +343,7 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
             }
         }
     }, [listening, analyzeAudio, noiseReductionEnabled]);
+    */
 
     const usedMic = useRef(false);
     const recRef = useRef<any>(null);
@@ -289,8 +392,13 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
         r.lang = 'th-TH'; // Always default to Thai for Speech Recognition
 
         r.onstart = () => {
+            isRecognitionRunningRef.current = true;
             setListening(true);
-            setStatus(preferredLanguage === 'th' ? '🎙️ กำลังฟัง... (พูดได้เลย)' : '🎙️ Listening...');
+            if (wokenUpRef.current) {
+                setStatus(preferredLanguageRef.current === 'th' ? '🎙️ กำลังฟัง... (พูดได้เลย)' : '🎙️ Listening...');
+            } else {
+                setStatus(preferredLanguageRef.current === 'th' ? '💤 สแตนด์บาย (พูด "Hey Nimo")' : '💤 Standby (Say "Hey Nimo")');
+            }
         };
         r.onresult = (e: any) => {
             if (enrollingRef.current) {
@@ -298,68 +406,222 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
                 return;
             }
             const t = Array.from(e.results).map((res: any) => res[0].transcript).join('');
-            
-            // Voice Lock check
+            const text = t.trim();
+            if (!text) {
+                setListening(false);
+                return;
+            }
+
+            const peakVol = peakVolumeRef.current;
+            peakVolumeRef.current = 0; // reset
+            const lowerText = text.toLowerCase();
+            const lang = preferredLanguageRef.current;
+
+            // 1. Wake word detection in standby
+            const wakeWords = ["hey nimo", "hello nimo", "hi nimo", "เฮ้ นิโม", "เฮ้ นิโม่", "ฮัลโหล นิโม", "ฮัลโหล นิโม่", "ไฮ นิโม", "ไฮ นิโม่"];
+            const isWakeWord = wakeWords.some(w => lowerText.includes(w));
+
+            if (!wokenUpRef.current) {
+                if (isWakeWord) {
+                    setWokenUp(true);
+                    const cleanPeak = peakVol > 0 ? peakVol : 45;
+                    setRefSpeakerVolume(cleanPeak);
+                    setLockStatus(lang === 'th' ? `🔒 ล็อกเสียงผู้ใช้ (ระดับ: ${Math.round(cleanPeak)}%)` : `🔒 Locked to User (Level: ${Math.round(cleanPeak)}%)`);
+                    
+                    const greeting = lang === 'th'
+                        ? 'สวัสดีค่ะ! Nimo พร้อมช่วยแล้ว ถามเรื่องแอพหรือสั่งการด้วยเสียงได้เลยนะคะ 🎵'
+                        : 'Hi! I am Nimo 🎵 Ask me about the app or give me voice commands!';
+                        
+                    setMessages(prev => [...prev, { role: 'nimo', content: greeting, timestamp: Date.now() }]);
+                    setListening(false);
+                    
+                    if ('speechSynthesis' in window && !speakerMutedRef.current) {
+                        window.speechSynthesis.cancel();
+                        setSpeaking(true);
+                        const u = new SpeechSynthesisUtterance(greeting);
+                        u.lang = lang === 'th' ? 'th-TH' : 'en-US';
+                        if (lang === 'th') {
+                            const thVoice = getBestThaiVoice();
+                            if (thVoice) u.voice = thVoice;
+                        }
+                        u.onend = () => {
+                            setSpeaking(false);
+                            setTimeout(() => startListening(), 400);
+                        };
+                        u.onerror = () => {
+                            setSpeaking(false);
+                            setTimeout(() => startListening(), 400);
+                        };
+                        window.speechSynthesis.speak(u);
+                    } else {
+                        setTimeout(() => startListening(), 400);
+                    }
+                } else {
+                    setListening(false);
+                }
+                return;
+            }
+
+            // 2. Speaker validation (volume lock-on) if already woken up
+            if (refSpeakerVolumeRef.current !== null) {
+                const threshold = refSpeakerVolumeRef.current * 0.45;
+                if (peakVol < threshold && peakVol > 0) {
+                    console.log(`[Nimo Lock-on] Ignored background voice. Peak: ${peakVol}, Threshold: ${threshold}`);
+                    setStatus(lang === 'th' ? '🔊 ข้ามเสียงรบกวนพื้นหลัง (ล็อกผู้ใช้หลัก)' : '🔊 Background speech ignored');
+                    setListening(false);
+                    setTimeout(() => startListening(), 800);
+                    return;
+                }
+            } else {
+                if (peakVol > 5) {
+                    setRefSpeakerVolume(peakVol);
+                    setLockStatus(lang === 'th' ? `🔒 ล็อกเสียงผู้ใช้ (ระดับ: ${Math.round(peakVol)}%)` : `🔒 Locked to User (Level: ${Math.round(peakVol)}%)`);
+                }
+            }
+
+            // Keep original Voice Lock pitch correlation check if enabled
             if (voiceRecognitionEnabled && voiceProfile && !allowOthers) {
                 const samples = activePitchSamplesRef.current.filter(p => p > 50 && p < 450);
                 if (samples.length > 0) {
                     const avgActivePitch = samples.reduce((a, b) => a + b, 0) / samples.length;
-                    console.log(`[VoiceLock] Detected pitch: ${avgActivePitch}Hz (Target: ${voiceProfile.pitchMin}-${voiceProfile.pitchMax}Hz)`);
-                    
                     if (avgActivePitch < voiceProfile.pitchMin || avgActivePitch > voiceProfile.pitchMax) {
-                        console.warn(`[VoiceLock] Voice mismatch! Detected ${avgActivePitch}Hz, expected ${voiceProfile.pitchMin}-${voiceProfile.pitchMax}Hz.`);
                         setListening(false);
-                        setStatus(preferredLanguage === 'th' ? '🔇 กรองเสียงผู้อื่น/เสียงรบกวนออก' : '🔇 Ignored non-user voice');
+                        setStatus(lang === 'th' ? '🔇 กรองเสียงผู้อื่น/เสียงรบกวนออก' : '🔇 Ignored non-user voice');
                         setTimeout(() => setStatus(''), 3000);
                         activePitchSamplesRef.current = [];
-                        return; // Discard command
+                        return;
                     }
                 } else {
-                    console.warn('[VoiceLock] No voice detected in samples.');
                     setListening(false);
-                    setStatus(preferredLanguage === 'th' ? '🔇 กรองเสียงรบกวนรอบข้างออก' : '🔇 Ignored background noise');
+                    setStatus(lang === 'th' ? '🔇 กรองเสียงรบกวนรอบข้างออก' : '🔇 Ignored background noise');
                     setTimeout(() => setStatus(''), 3000);
                     activePitchSamplesRef.current = [];
-                    return; // Discard command
+                    return;
                 }
             }
 
+            // 3. Deactivation commands
+            const byeWords = ["bye nimo", "bye bye", "see ya", "bye,see ya", "see you around", "บายนิโม่", "บาย นิโม", "บ๊ายบาย", "บายๆ", "ลาก่อน"];
+            const isByeWord = byeWords.some(w => lowerText.includes(w));
+            if (isByeWord) {
+                setWokenUp(false);
+                setRefSpeakerVolume(null);
+                setLockStatus('');
+                setListening(false);
+                const byeReply = lang === 'th' ? 'ไว้เจอกันใหม่นะคะ บ๊ายบายค่ะ!' : 'Goodbye! See you around!';
+                setMessages(prev => [...prev, { role: 'nimo', content: byeReply, timestamp: Date.now() }]);
+                
+                if ('speechSynthesis' in window && !speakerMutedRef.current) {
+                    window.speechSynthesis.cancel();
+                    setSpeaking(true);
+                    const u = new SpeechSynthesisUtterance(byeReply);
+                    u.lang = lang === 'th' ? 'th-TH' : 'en-US';
+                    if (lang === 'th') {
+                        const thVoice = getBestThaiVoice();
+                        if (thVoice) u.voice = thVoice;
+                    }
+                    u.onend = () => setSpeaking(false);
+                    u.onerror = () => setSpeaking(false);
+                    window.speechSynthesis.speak(u);
+                }
+                return;
+            }
+
+            // 4. Intercept Local Fast-Path Command
+            const localCmd = matchLocalCommand(text, lang);
+            if (localCmd) {
+                setListening(false);
+                setMessages(prev => [...prev, { role: 'user', content: text, timestamp: Date.now() }]);
+                
+                if (localCmd.action === 'send_to_musicgen_local') {
+                    const lyrics = extractLastLyrics(messagesRef.current);
+                    if (lyrics) {
+                        nimoBrain.executeAction('musicgen_set_lyrics', { lyrics });
+                        nimoBrain.executeAction('navigate_to_page', { view: 'forge' });
+                    } else {
+                        localCmd.reply = lang === 'th' ? 'ไม่พบเนื้อเพลงในประวัติการสนทนาค่ะ' : 'No lyrics found in chat history.';
+                    }
+                } else {
+                    nimoBrain.executeAction(localCmd.action, localCmd.params);
+                }
+
+                setMessages(prev => [...prev, { role: 'nimo', content: localCmd.reply, timestamp: Date.now() }]);
+                
+                if ('speechSynthesis' in window && !speakerMutedRef.current) {
+                    window.speechSynthesis.cancel();
+                    setSpeaking(true);
+                    const u = new SpeechSynthesisUtterance(localCmd.reply);
+                    u.lang = lang === 'th' ? 'th-TH' : 'en-US';
+                    if (lang === 'th') {
+                        const thVoice = getBestThaiVoice();
+                        if (thVoice) u.voice = thVoice;
+                    }
+                    u.onend = () => {
+                        setSpeaking(false);
+                        setTimeout(() => startListening(), 400);
+                    };
+                    u.onerror = () => {
+                        setSpeaking(false);
+                        setTimeout(() => startListening(), 400);
+                    };
+                    window.speechSynthesis.speak(u);
+                } else {
+                    setTimeout(() => startListening(), 400);
+                }
+                return;
+            }
+
             activePitchSamplesRef.current = [];
-            setInput(t);
+            setInput(text);
             setListening(false);
             usedMic.current = true;
-            handleSend(t);
+            handleSend(text);
         };
         r.onerror = (e: any) => {
+            isRecognitionRunningRef.current = false;
             setListening(false);
             console.error('[Mic Error]', e.error);
             if (e.error === 'not-allowed') {
-                setStatus(preferredLanguage === 'th' ? '🔴 ไม่ได้รับอนุญาตให้ใช้ไมค์' : '🔴 Mic Permission Denied');
+                hasPermissionErrorRef.current = true;
+                setStatus(preferredLanguageRef.current === 'th' ? '🔴 ไม่ได้รับอนุญาตให้ใช้ไมค์' : '🔴 Mic Permission Denied');
             } else {
                 if (e.error === 'no-speech') {
                     setStatus('');
                 } else {
-                    setStatus(preferredLanguage === 'th' ? `❌ ขออภัย ลองใหม่อีกครั้ง (${e.error})` : `❌ Error: ${e.error}`);
+                    setStatus(preferredLanguageRef.current === 'th' ? `❌ ขออภัย ลองใหม่อีกครั้ง (${e.error})` : `❌ Error: ${e.error}`);
                 }
             }
         };
         r.onend = () => {
+            isRecognitionRunningRef.current = false;
             setListening(false);
-            if (handsFreeRef.current && !isTypingRef.current && !speakingRef.current && !enrollingRef.current) {
+            if (hasPermissionErrorRef.current) {
+                console.log('[Nimo] Mic loop paused due to permission denial.');
+                return;
+            }
+            if ((handsFreeRef.current || !wokenUpRef.current) && !isTypingRef.current && !speakingRef.current && !enrollingRef.current) {
                 setTimeout(() => {
                     startListening();
                 }, 500);
             }
         };
         recRef.current = r;
-    }, [preferredLanguage, voiceRecognitionEnabled, voiceProfile, allowOthers]);
+    }, []);
+
+    useEffect(() => {
+        if (permState === 'granted' && !listening && !speaking && !isTyping) {
+            startListening();
+        }
+    }, [permState, listening, speaking, isTyping]);
 
     const startListening = () => {
-        if (listening || speakingRef.current || isTypingRef.current) return;
+        if (isRecognitionRunningRef.current || speakingRef.current || isTypingRef.current) return;
         try {
             if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+            isRecognitionRunningRef.current = true;
             recRef.current?.start();
         } catch (e) {
+            isRecognitionRunningRef.current = false;
             console.warn('[startListening Error]', e);
         }
     };
@@ -371,12 +633,16 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
             return;
         }
 
+        hasPermissionErrorRef.current = false;
         if (listening) {
             if (handsFree) {
                 setHandsFree(false);
                 localStorage.setItem('nimo_hands_free', 'false');
             }
-            try { recRef.current?.stop(); } catch(e){}
+            try { 
+                isRecognitionRunningRef.current = false;
+                recRef.current?.stop(); 
+            } catch(e){}
             setListening(false);
             setStatus(preferredLanguage === 'th' ? '🎙️ ปิดไมค์แล้ว' : '🎙️ Mic off');
         } else {
@@ -389,7 +655,10 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
         setHandsFree(false);
         localStorage.setItem('nimo_hands_free', 'false');
         setListening(false);
-        try { recRef.current?.stop(); } catch(e){}
+        try { 
+            isRecognitionRunningRef.current = false;
+            recRef.current?.stop(); 
+        } catch(e){}
         setStatus(preferredLanguage === 'th' ? '🎙️ หยุดรับเสียงแล้ว' : '🎙️ Microphone stopped');
         setTimeout(() => setStatus(''), 2000);
     };
@@ -850,11 +1119,17 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
             const appStateStr = JSON.stringify(appState, null, 2);
 
             const suffix = suffixKa;
+            const pronoun = isMale ? 'ผม' : 'หนู';
 
             // System instructions
             const sys = preferredLanguage === 'th'
                 ? `คุณคือ Nimo เพื่อนและผู้ช่วยอัจฉริยะของแอพพลิเคชัน Memolody V2
+คุณต้องแทนตัวเองว่า "${pronoun}" เสมอ และใช้คำลงท้ายที่เหมาะสมกับเพศสภาพของคุณคือ "${suffix}" เสมอ ห้ามสับสนสลับกันเด็ดขาด (เช่น ห้ามใช้คำแทนตัวว่า "ผม" คู่กับหางเสียง "ค่ะ" โดยเด็ดขาด หรือกลับกัน)
+
 คุยสนุก เป็นธรรมชาติเหมือนมนุษย์คุยกันจริงๆ ห้ามแข็งทื่อแบบหุ่นยนต์ และห้ามตอบแบบระบุหมายเลขข้อ (เช่น 1. 2. 3. หรือ - หัวข้อ) ถ้าไม่จำเป็น ให้คุยตอบรับกันสั้นๆ เป็นพารากราฟธรรมดา
+
+ข้อกำหนดเพิ่มเติมสำหรับการแต่งเพลงหรือเขียนเนื้อเพลง (Song Lyrics):
+- หากผู้ใช้ขอให้ช่วยแต่งเพลง ให้ทำการขึ้นบรรทัดใหม่ตามปกติในเนื้อเพลงแต่ละวรรค และแบ่งท่อนให้เห็นชัดเจน เช่น [ท่อนเวิร์ส 1], [ท่อนฮุค], [ท่อนเวิร์ส 2] เพื่อความสวยงามและอ่านง่าย ห้ามนำเนื้อเพลงมารวมเป็นบรรทัดเดียวหรือยัดรวมเป็นพารากราฟเดียวเด็ดขาด
 
 สำคัญมากเกี่ยวกับการเปล่งเสียงพูด (TTS):
 ในฟิลด์ 'reply' ห้ามใส่สัญลักษณ์ใดๆ ที่ระบบอ่านเสียงสังเคราะห์จะอ่านออกมาแล้วสะดุดหรือไม่เป็นธรรมชาติ เช่น:
@@ -1308,7 +1583,25 @@ You must output valid JSON matching the schema. If no actions are needed, return
                                         <img src={msg.imageUrl} alt="Sheet music" className="w-full h-full object-cover" />
                                     </div>
                                 )}
-                                <div className="whitespace-pre-wrap leading-relaxed">{msg.content}</div>
+                                {msg.role === 'nimo' && msg.content.includes('\n') && (msg.content.includes('[') || msg.content.includes(']') || msg.content.split('\n').length >= 4) ? (
+                                    <div className="space-y-3">
+                                        <div className="font-serif italic text-center whitespace-pre-line text-zinc-100 bg-black/40 p-5 rounded-2xl border border-white/5 shadow-inner leading-loose tracking-wide">
+                                            {msg.content}
+                                        </div>
+                                        <button
+                                            onClick={() => {
+                                                nimoBrain.executeAction('musicgen_set_lyrics', { lyrics: msg.content });
+                                                nimoBrain.executeAction('navigate_to_page', { view: 'forge' });
+                                            }}
+                                            className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs uppercase rounded-xl shadow-md active:scale-95 transition-all"
+                                        >
+                                            <Sparkles size={14} />
+                                            {preferredLanguage === 'th' ? '🎹 ส่งไปที่ MusicGen' : '🎹 Send to MusicGen'}
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <div className="whitespace-pre-wrap leading-relaxed">{msg.content}</div>
+                                )}
                                 {msg.actionData && (
                                     <button 
                                         onClick={() => onSongSelect?.(msg.actionData!.song, msg.actionData!.xmlData, 'listen')}
@@ -1379,6 +1672,12 @@ You must output valid JSON matching the schema. If no actions are needed, return
                     )}
                     
                     {status && <p className="text-center text-[10px] text-amber-500 font-bold uppercase tracking-wider py-2 animate-pulse">{status}</p>}
+                    {lockStatus && (
+                        <p className="text-center text-[9px] text-emerald-400 font-bold uppercase tracking-wider py-1 animate-pulse flex items-center justify-center gap-1">
+                            <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                            {lockStatus}
+                        </p>
+                    )}
                 </div>
 
                 {/* Input Area with ScoreLens & Mic Buttons */}

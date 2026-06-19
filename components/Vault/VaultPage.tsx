@@ -240,7 +240,9 @@ const VaultPage: React.FC<VaultPageProps> = ({
       {/* ── SEARCH BAR ── */}
       <div className="px-6 py-3 shrink-0 border-b border-white/[0.03]">
         <div className="relative">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-700" />
+          <button onClick={doSearch} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-700 hover:text-cyan-400 transition-colors z-10">
+            <Search size={14} />
+          </button>
           <input
             type="text"
             placeholder="Search songs..."

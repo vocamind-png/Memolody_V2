@@ -596,7 +596,7 @@ const PlayerPage: React.FC<{
           // Update availableStems so the ◆ Stem Solo buttons appear if needed
           const newAvailableStems: Record<string, number> = {};
           // Check all vocal tracks that have audio elements loaded (public API)
-          musicEngine.vocalPlayers.forEach((_, tid) => {
+          musicEngine.vocalAudioElements.forEach((_, tid) => {
             const count = musicEngine.getAvailableStems(tid);
             if (count > 0) newAvailableStems[tid] = count;
           });
@@ -2814,6 +2814,7 @@ const PlayerPage: React.FC<{
                   style={{ top: `${Math.max(2, baseTop - 56)}px` }}
                 >
                   <button
+                    data-nimo-target="toggle_favorite"
                     onClick={handleToggleFavorite}
                     className={`h-4 px-1.5 rounded-md flex items-center gap-1 text-[7px] font-black uppercase tracking-wider transition-all border shadow-md active:scale-95 ${
                       isFavorite
@@ -3606,6 +3607,7 @@ const PlayerPage: React.FC<{
                 <span className="text-[9px] font-black text-zinc-300 lcd-font tabular-nums w-9 text-right">{formatTime(totalDurationSeconds)}</span>
                 <div className="h-3 w-px bg-white/20 mx-1" />
                 <button
+                  data-nimo-target="toggle_metronome"
                   onClick={() => {
                     const next = !isMetronomeOn;
                     setIsMetronomeOn(next);
@@ -3616,6 +3618,7 @@ const PlayerPage: React.FC<{
                   <Bell size={13} fill={isMetronomeOn ? "currentColor" : "none"} />
                 </button>
                 <button
+                  data-nimo-target="toggle_loop"
                   onClick={() => setShowLoopMatrix(true)}
                   className={`w-9 h-9 rounded-full flex items-center justify-center transition-all border ${activeLoop ? 'border-transparent shadow-lg' : 'bg-transparent border-white/10 text-white/50 hover:text-white'}`}
                   style={activeLoop ? {
@@ -3633,6 +3636,7 @@ const PlayerPage: React.FC<{
               {/* LEFT GROUP: Mixer Toggle, Volume & SCR vertically stacked */}
               <div className="flex items-center gap-1.5 min-[360px]:gap-2 border-r border-zinc-100 pr-1.5 min-[360px]:pr-2.5 md:pr-3.5">
                 <button
+                  data-nimo-target="toggle_mixer"
                   onClick={() => setShowMixer(!showMixer)}
                   className={`w-8 h-8 min-[380px]:w-9 h-9 sm:w-10 sm:h-10 md:w-11 md:h-11 rounded-full flex items-center justify-center transition-all ${
                     showMixer ? 'bg-zinc-100 text-black' : 'text-zinc-400 hover:text-black hover:bg-zinc-50'

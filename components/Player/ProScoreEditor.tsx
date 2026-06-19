@@ -1321,8 +1321,8 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
         if (musicEngine && musicEngine.tracks) {
           const activeVocalTrack = musicEngine.tracks.find(t => t && t.mode === 'vocal' && !t.isMuted);
           if (activeVocalTrack) {
-            const player = musicEngine.vocalPlayers?.get(activeVocalTrack.id);
-            if (player && player.state === 'started' && player.buffer && player.buffer.loaded) {
+            const player = musicEngine.vocalAudioElements?.get(activeVocalTrack.id);
+            if (player && !player.paused && player.readyState >= 3) {
               const t = (Tone.Transport.seconds || 0);
               if (typeof t === 'number' && isFinite(t) && !isNaN(t)) {
                 curSeconds = t;

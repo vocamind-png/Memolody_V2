@@ -1,8 +1,7 @@
-
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   CheckCircle2, ShieldCheck, RefreshCcw, Trash2, HardDrive, AlertTriangle,
-  Sparkles, FileText, FileImage, FileCode, Plus, Music, Database, TrendingUp, Users, Lock, BrainCircuit
+  Sparkles, FileText, FileImage, FileCode, Plus, Music, Database, TrendingUp, Users, Lock, BrainCircuit, Server, Gift, Award, HelpCircle
 } from 'lucide-react';
 import { parseMusicXMLMetadata } from '../../lib/MusicXmlParser';
 import { songStorage } from '../../lib/SongStorage';
@@ -10,7 +9,9 @@ import { Song } from '../../types';
 import FinanceOverview from './FinanceOverview';
 import UserManagement from './UserManagement';
 import HeadAdminDashboard from './HeadAdminDashboard';
+import { ServerControlDashboard } from './ServerControlDashboard';
 import { useAuth, hasAccess } from '../../lib/useAuth';
+import { supabase } from '../../lib/supabase';
 
 interface AdminPageProps {
   onMusicXmlUpload?: (metadata: Song, xmlData: string) => void;
@@ -18,7 +19,25 @@ interface AdminPageProps {
   onRefresh?: () => void;
 }
 
-type AdminTab = 'vault' | 'finance' | 'users' | 'headquarters';
+type AdminTab = 'vault' | 'finance' | 'users' | 'servers' | 'promotions' | 'redemptions' | 'headquarters';
+
+interface PromoCode {
+  id: string;
+  code: string;
+  description: string;
+  reward_tokens: number;
+  is_active: boolean;
+  expires_at: string | null;
+}
+
+interface RedemptionRecord {
+  id: string;
+  email: string;
+  reward_title: string;
+  token_cost: number;
+  status: 'pending' | 'delivered' | 'cancelled';
+  created_at: string;
+}
 
 const AdminPage: React.FC<AdminPageProps> = ({ onMusicXmlUpload, onRestoreMasterpieces, onRefresh }) => {
   const { role } = useAuth();
@@ -28,13 +47,127 @@ const AdminPage: React.FC<AdminPageProps> = ({ onMusicXmlUpload, onRestoreMaster
   const [vaultCount, setVaultCount] = useState(0);
   const smartInputRef = useRef<HTMLInputElement>(null);
 
+  // Promotions tab state
+  const [promos, setPromos] = useState<PromoCode[]>([]);
+  const [newCode, setNewCode] = useState('');
+  const [newDesc, setNewDesc] = useState('');
+  const [newTokens, setNewTokens] = useState(100);
+  
+  // Redemptions tab state
+  const [redemptions, setRedemptions] = useState<RedemptionRecord[]>([]);
+  const [loadingDb, setLoadingDb] = useState(false);
+
   useEffect(() => {
     updateVaultCount();
   }, []);
 
+  useEffect(() => {
+    if (activeTab === 'promotions') {
+      loadPromotions();
+    } else if (activeTab === 'redemptions') {
+      loadRedemptions();
+    }
+  }, [activeTab]);
+
   const updateVaultCount = async () => {
     const songs = await songStorage.getAllSongs();
     setVaultCount(songs.length);
+  };
+
+  const loadPromotions = async () => {
+    setLoadingDb(true);
+    try {
+      const { data, error } = await supabase
+        .from('promotions')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (!error && data) setPromos(data);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoadingDb(false);
+    }
+  };
+
+  const handleCreatePromo = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCode.trim()) return;
+    try {
+      const { error } = await supabase
+        .from('promotions')
+        .insert({
+          code: newCode.trim().toUpperCase(),
+          description: newDesc.trim(),
+          reward_tokens: newTokens,
+          is_active: true
+        });
+      if (error) throw error;
+      alert(`Promotion code ${newCode.toUpperCase()} created successfully!`);
+      setNewCode('');
+      setNewDesc('');
+      setNewTokens(100);
+      loadPromotions();
+    } catch(e) {
+      alert("Failed to create promotion: " + (e as any).message);
+    }
+  };
+
+  const handleTogglePromo = async (promoId: string, currentStatus: boolean) => {
+    try {
+      const { error } = await supabase
+        .from('promotions')
+        .update({ is_active: !currentStatus })
+        .eq('id', promoId);
+      if (error) throw error;
+      setPromos(prev => prev.map(p => p.id === promoId ? { ...p, is_active: !currentStatus } : p));
+    } catch(e) {
+      alert("Failed updating promo code: " + (e as any).message);
+    }
+  };
+
+  const loadRedemptions = async () => {
+    setLoadingDb(true);
+    try {
+      const { data, error } = await supabase
+        .from('reward_redemptions')
+        .select(`
+          id,
+          status,
+          created_at,
+          profiles (email),
+          rewards (title, token_cost)
+        `)
+        .order('created_at', { ascending: false });
+
+      if (!error && data) {
+        const formatted = data.map((r: any) => ({
+          id: r.id,
+          email: r.profiles?.email || 'System user',
+          reward_title: r.rewards?.title || 'Custom Reward',
+          token_cost: r.rewards?.token_cost || 0,
+          status: r.status,
+          created_at: new Date(r.created_at).toLocaleString()
+        }));
+        setRedemptions(formatted);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoadingDb(false);
+    }
+  };
+
+  const handleUpdateRedemption = async (redemptionId: string, nextStatus: 'delivered' | 'cancelled') => {
+    try {
+      const { error } = await supabase
+        .from('reward_redemptions')
+        .update({ status: nextStatus })
+        .eq('id', redemptionId);
+      if (error) throw error;
+      setRedemptions(prev => prev.map(r => r.id === redemptionId ? { ...r, status: nextStatus } : r));
+    } catch (e) {
+      alert("Failed updating redemption record: " + (e as any).message);
+    }
   };
 
   const processFile = async (file: File) => {
@@ -97,11 +230,12 @@ const AdminPage: React.FC<AdminPageProps> = ({ onMusicXmlUpload, onRestoreMaster
     { id: 'vault', label: 'Vault', icon: Database, color: 'text-cyan-500' },
     { id: 'finance', label: 'Economics', icon: TrendingUp, color: 'text-emerald-500' },
     { id: 'users', label: 'Members', icon: Users, color: 'text-indigo-500' },
-    // Only show Headquarters to Owner/Executive
+    { id: 'promotions', label: 'Promos', icon: Award, color: 'text-amber-500' },
+    { id: 'redemptions', label: 'Rewards redemptions', icon: Gift, color: 'text-purple-500' },
+    { id: 'servers', label: 'Servers', icon: Server, color: 'text-zinc-500' },
     ...(hasAccess(role, 'executive') ? [{ id: 'headquarters', label: 'HQ Analytics', icon: BrainCircuit, color: 'text-rose-500' }] : [])
   ];
 
-  // Role guard — only admin and above
   if (!hasAccess(role, 'admin')) {
     return (
       <div className="h-full flex flex-col items-center justify-center gap-5 bg-[#050507] p-8">
@@ -124,7 +258,7 @@ const AdminPage: React.FC<AdminPageProps> = ({ onMusicXmlUpload, onRestoreMaster
   return (
     <div className="h-full flex flex-col bg-[#050507] overflow-y-auto no-scrollbar pb-32 px-6 pt-10">
       <header className="mb-10 space-y-6">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-6">
             <div className="space-y-4">
                 <div className="flex items-center gap-2 text-cyan-500 font-black text-[9px] uppercase tracking-[0.3em]">
                     <ShieldCheck size={12} /> SECURE ADMIN CORE V3.1
@@ -133,12 +267,12 @@ const AdminPage: React.FC<AdminPageProps> = ({ onMusicXmlUpload, onRestoreMaster
                     SYSTEM<span className="text-cyan-500">CONTROL</span>
                 </h1>
             </div>
-            <div className="flex bg-white/5 p-1 rounded-2xl border border-white/5 self-start md:self-auto">
+            <div className="flex flex-wrap bg-white/[0.02] p-1 rounded-2xl border border-white/5 self-start xl:self-auto gap-0.5">
                 {TABS.map(tab => (
                     <button
                         key={tab.id}
                         onClick={() => setActiveTab(tab.id as AdminTab)}
-                        className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all
+                        className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all
                             ${activeTab === tab.id ? 'bg-white/10 text-white shadow-lg' : 'text-zinc-500 hover:text-zinc-300'}`}
                     >
                         <tab.icon size={12} className={activeTab === tab.id ? tab.color : ''} />
@@ -150,8 +284,12 @@ const AdminPage: React.FC<AdminPageProps> = ({ onMusicXmlUpload, onRestoreMaster
         
         <p className="text-zinc-600 text-[10px] font-bold uppercase tracking-widest leading-relaxed max-w-2xl">
            {activeTab === 'vault' ? 'Neural Import Hub: High-fidelity MusicXML, MIDI, and PDF ingestion. Nimo Vision transcribes complex scores into editable matrix data.' : 
-            activeTab === 'finance' ? 'Economic Matrix: Real-time monitoring of subscription revenue, churn rate, and GPU infrastructure costs.' :
-            'Member Matrix: Authority levels for active AI slots, billing synchronization, and loyalty program management.'}
+            activeTab === 'finance' ? 'Economic Matrix: Real-time monitoring of subscription revenue, token circulating supply and dual-entry ledger.' :
+            activeTab === 'users' ? 'Member Matrix: Authority levels for active AI slots, token balances and account credentials.' :
+            activeTab === 'promotions' ? 'Promotion Matrix: Deploy promo codes to credit new users with vocal generation tokens.' :
+            activeTab === 'redemptions' ? 'Redemption Matrix: Real-time physical/digital rewards redemption log and tracking.' :
+            activeTab === 'servers' ? 'Infrastructure Matrix: Real-time service daemon monitoring, resource telemetry, and remote restart controls.' :
+            'Omni-Analytics: Headquarters Telemetry Feed.'}
         </p>
       </header>
 
@@ -174,7 +312,7 @@ const AdminPage: React.FC<AdminPageProps> = ({ onMusicXmlUpload, onRestoreMaster
                 <div className="flex items-center gap-2">
                    <Trash2 size={20} className="text-rose-500" />
                    <span className="text-[9px] font-black text-rose-500/50 uppercase tracking-tighter">RESET CORE</span>
-                </div>
+                 </div>
              </button>
           </div>
 
@@ -234,6 +372,182 @@ const AdminPage: React.FC<AdminPageProps> = ({ onMusicXmlUpload, onRestoreMaster
       {activeTab === 'users' && (
         <section className="animate-in fade-in slide-in-from-bottom-4 duration-500">
           <UserManagement currentUserRole={role} />
+        </section>
+      )}
+
+      {/* PROMOTIONS MATRIX */}
+      {activeTab === 'promotions' && (
+        <section className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="backdrop-blur-md bg-white/[0.02] border border-white/5 rounded-[32px] p-6 h-fit shadow-xl">
+              <h3 className="text-sm font-black uppercase text-white italic tracking-widest mb-4">Create Promo Code</h3>
+              <form onSubmit={handleCreatePromo} className="space-y-4">
+                <div className="space-y-1.5">
+                  <label className="text-[8px] text-zinc-500 uppercase font-black tracking-widest">CODE</label>
+                  <input
+                    required
+                    type="text"
+                    placeholder="e.g. WELCOME50"
+                    value={newCode}
+                    onChange={e => setNewCode(e.target.value)}
+                    className="w-full h-10 bg-white/[0.03] border border-white/5 rounded-xl px-3 text-[11px] font-black text-white outline-none focus:border-cyan-500/30 uppercase placeholder:text-zinc-800"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[8px] text-zinc-500 uppercase font-black tracking-widest">Tokens to reward</label>
+                  <input
+                    required
+                    type="number"
+                    value={newTokens}
+                    onChange={e => setNewTokens(parseInt(e.target.value) || 0)}
+                    className="w-full h-10 bg-white/[0.03] border border-white/5 rounded-xl px-3 text-[11px] font-black text-white outline-none focus:border-cyan-500/30 placeholder:text-zinc-800"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[8px] text-zinc-500 uppercase font-black tracking-widest">Description</label>
+                  <input
+                    type="text"
+                    placeholder="Brief description"
+                    value={newDesc}
+                    onChange={e => setNewDesc(e.target.value)}
+                    className="w-full h-10 bg-white/[0.03] border border-white/5 rounded-xl px-3 text-[11px] font-black text-white outline-none focus:border-cyan-500/30 placeholder:text-zinc-800"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="w-full h-12 bg-cyan-500 text-black text-xs font-black uppercase rounded-xl hover:bg-cyan-400 active:scale-95 transition-all shadow-md mt-2"
+                >
+                  Deploy Code
+                </button>
+              </form>
+            </div>
+
+            <div className="lg:col-span-2 backdrop-blur-md bg-white/[0.02] border border-white/5 rounded-[32px] overflow-hidden shadow-xl">
+              <div className="px-6 py-4 border-b border-white/5 flex justify-between items-center bg-white/[0.01]">
+                <h3 className="text-sm font-black uppercase text-white italic tracking-widest">Promotions Ledger (Supabase)</h3>
+                <button onClick={loadPromotions} className="p-2 rounded-xl bg-white/5 text-zinc-500 hover:text-white transition-colors">
+                  <RefreshCcw size={12} className={loadingDb ? 'animate-spin' : ''} />
+                </button>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="border-b border-white/5 text-[7px] font-black text-zinc-600 uppercase tracking-widest bg-black/10">
+                      <th className="px-6 py-3">Code</th>
+                      <th className="px-6 py-3">Reward</th>
+                      <th className="px-6 py-3">Description</th>
+                      <th className="px-6 py-3">Status</th>
+                      <th className="px-6 py-3">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {promos.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="py-8 text-center text-[8px] text-zinc-700 uppercase font-black">No promos found</td>
+                      </tr>
+                    ) : promos.map(p => (
+                      <tr key={p.id} className="hover:bg-white/[0.01] transition-colors text-[10px]">
+                        <td className="px-6 py-4 font-mono font-black text-white">{p.code}</td>
+                        <td className="px-6 py-4 font-black text-amber-400">+{p.reward_tokens} Tokens</td>
+                        <td className="px-6 py-4 text-zinc-400 uppercase text-[9px]">{p.description || 'No description'}</td>
+                        <td className="px-6 py-4">
+                          <span className={`px-2.5 py-0.5 rounded-full text-[7px] font-black uppercase ${p.is_active ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
+                            {p.is_active ? 'Active' : 'Disabled'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <button
+                            onClick={() => handleTogglePromo(p.id, p.is_active)}
+                            className={`px-3 py-1 rounded-lg text-[8px] font-black uppercase border transition-colors ${
+                              p.is_active ? 'border-rose-500/20 bg-rose-500/5 text-rose-400 hover:bg-rose-500/10' : 'border-emerald-500/20 bg-emerald-500/5 text-emerald-400 hover:bg-emerald-500/10'
+                            }`}
+                          >
+                            {p.is_active ? 'Disable' : 'Enable'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* REWARDS REDEMPTIONS */}
+      {activeTab === 'redemptions' && (
+        <section className="backdrop-blur-md bg-white/[0.02] border border-white/5 rounded-[40px] overflow-hidden shadow-xl animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="px-8 py-5 border-b border-white/5 flex justify-between items-center bg-white/[0.01]">
+            <h3 className="text-sm font-black uppercase text-white italic tracking-widest">Redemptions Matrix (Supabase)</h3>
+            <button onClick={loadRedemptions} className="p-2 rounded-xl bg-white/5 text-zinc-500 hover:text-white transition-colors">
+              <RefreshCcw size={12} className={loadingDb ? 'animate-spin' : ''} />
+            </button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="border-b border-white/5 text-[7px] font-black text-zinc-600 uppercase tracking-widest bg-black/10">
+                  <th className="px-8 py-4">Redemption ID</th>
+                  <th className="px-8 py-4">Member Email</th>
+                  <th className="px-8 py-4">Reward Item</th>
+                  <th className="px-8 py-4">Cost</th>
+                  <th className="px-8 py-4">Status</th>
+                  <th className="px-8 py-4">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {redemptions.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-10 text-center text-[8px] text-zinc-700 uppercase font-black">No redemption requests</td>
+                  </tr>
+                ) : redemptions.map(r => (
+                  <tr key={r.id} className="hover:bg-white/[0.01] transition-colors text-[10px]">
+                    <td className="px-8 py-5 font-mono text-zinc-500 font-bold uppercase">{r.id.slice(0, 8)}</td>
+                    <td className="px-8 py-5 font-black text-white uppercase italic">{r.email}</td>
+                    <td className="px-8 py-5 font-black text-zinc-300 uppercase">{r.reward_title}</td>
+                    <td className="px-8 py-5 text-amber-400 font-black">{r.token_cost} T</td>
+                    <td className="px-8 py-5">
+                      <span className={`px-2.5 py-0.5 rounded-full text-[7px] font-black uppercase ${
+                        r.status === 'delivered' ? 'bg-emerald-500/10 text-emerald-400' :
+                        r.status === 'cancelled' ? 'bg-rose-500/10 text-rose-400' :
+                        'bg-amber-500/10 text-amber-400'
+                      }`}>
+                        {r.status}
+                      </span>
+                    </td>
+                    <td className="px-8 py-5 flex gap-1">
+                      {r.status === 'pending' && (
+                        <>
+                          <button
+                            onClick={() => handleUpdateRedemption(r.id, 'delivered')}
+                            className="px-2.5 py-1 rounded bg-emerald-500 text-black text-[8px] font-black uppercase hover:bg-emerald-400 transition-colors"
+                          >
+                            Approve
+                          </button>
+                          <button
+                            onClick={() => handleUpdateRedemption(r.id, 'cancelled')}
+                            className="px-2.5 py-1 rounded bg-rose-500/10 border border-rose-500/20 text-rose-400 text-[8px] font-black uppercase hover:bg-rose-500 hover:text-white transition-colors"
+                          >
+                            Cancel
+                          </button>
+                        </>
+                      )}
+                      {r.status !== 'pending' && (
+                        <span className="text-[8px] text-zinc-600 uppercase font-black">Settled</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {activeTab === 'servers' && (
+        <section className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <ServerControlDashboard />
         </section>
       )}
 

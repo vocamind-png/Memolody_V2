@@ -13,7 +13,7 @@ export const COLORS = {
  * รูปลักษณ์อย่างเป็นทางการของ "นีโม" 
  * อัปเดตลิงก์รูปภาพเป็นเวอร์ชันล่าสุดค่ะ
  */
-export const NIMO_IDENTITY_IMAGE = "https://storage.googleapis.com/memolody-vault/Gemini_Generated_Image_n30f8on30f8on30f.png"; 
+export const NIMO_IDENTITY_IMAGE = "/Nimo.png"; 
 
 const createStandardXml = (title: string, composer: string) => `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.1 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">

@@ -427,8 +427,40 @@ app.get('/health', (req, res) => {
     engine: 'ScoreLens-Engine V2 & V3 Core (MIT License)', 
     version: '3.0.0',
     features: ['image-enhancement', 'scorelens-v2-dl', 'scorelens-v3-pipeline', 'layout-map', 'typography-ocr', 'music-theory-validator'],
-    commercial: true
+    commercial: true,
+    system: {
+      platform: process.platform,
+      node_version: process.version,
+      cpu_count: os.cpus().length,
+      uptime: Math.round(process.uptime()),
+      memory: {
+        total_mb: Math.round(os.totalmem() / (1024 * 1024)),
+        free_mb: Math.round(os.freemem() / (1024 * 1024)),
+        used_percent: Math.round(((os.totalmem() - os.freemem()) / os.totalmem()) * 100)
+      },
+      load_avg: os.loadavg()
+    }
   });
+});
+
+// ── API: /restart ────────────────────────────────────────────────────
+app.post('/restart', (req, res) => {
+  console.log('[OMR] 🔄 Restart requested via API');
+  res.json({ success: true, message: 'OMR Server restarting. Reconnecting in 3 seconds...' });
+  
+  setTimeout(() => {
+    import('child_process').then(({ spawn }) => {
+      const scriptPath = path.resolve(process.argv[1]);
+      // Spawn double-detached command: wait 1s, start Node
+      const cmd = `sleep 1 && "${process.argv[0]}" "${scriptPath}"`;
+      const child = spawn('sh', ['-c', cmd], {
+        detached: true,
+        stdio: 'ignore'
+      });
+      child.unref();
+      process.exit(0);
+    });
+  }, 500);
 });
 
 // ── API: /omr-v3 — ScoreLens V3 Core Pipeline ────────────────────────

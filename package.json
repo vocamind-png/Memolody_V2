@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@google/genai": "^1.38.0",
+    "@supabase/supabase-js": "^2.108.2",
     "@tonejs/midi": "^2.0.28",
     "cors": "^2.8.6",
     "express": "^5.2.1",

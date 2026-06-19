@@ -1,0 +1,8 @@
+#!/usr/bin/expect -f
+set timeout 10
+spawn ssh -o StrictHostKeyChecking=no u2txyroyplqko8-6441192e@ssh.runpod.io -i ~/.ssh/id_ed25519
+expect "# "
+send "cd /workspace/vocalido_server && nohup python main.py > server_8888.log 2>&1 &\r"
+expect "# "
+send "exit\r"
+expect eof

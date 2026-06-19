@@ -1,13 +1,13 @@
-
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
     ShieldCheck, RefreshCcw, Clock, Globe,
     LogOut, User as UserIcon, Camera, ImagePlus, Check,
-    CloudLightning, Music, Cpu, Star
+    CloudLightning, Music, Cpu, Star, Gift, Award, HelpCircle
 } from 'lucide-react';
 import { songStorage, NeuralStats } from '../../lib/SongStorage';
 import { Song } from '../../types';
 import AuthForm from './AuthForm';
+import { supabase } from '../../lib/supabase';
 
 // ─── Background presets ───────────────────────────────────────────
 const BG_PRESETS = [
@@ -18,6 +18,14 @@ const BG_PRESETS = [
     { id: 'forest', style: 'bg-gradient-to-br from-[#050507] via-[#051505] to-[#0a200a]', label: 'Forest' },
     { id: 'rose', style: 'bg-gradient-to-br from-[#050507] via-[#1a0510] to-[#20051a]', label: 'Rose' },
 ];
+
+interface RewardItem {
+  id: string;
+  title: string;
+  description: string;
+  token_cost: number;
+  stock: number;
+}
 
 interface ProfilePageProps {
     onEnterForge: () => void;
@@ -45,6 +53,12 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
     const [syncMessage, setSyncMessage] = useState('');
     const [isSyncingCloud, setIsSyncingCloud] = useState(false);
 
+    // Profile db states
+    const [profileData, setProfileData] = useState<{ token_balance: number; role: string } | null>(null);
+    const [rewards, setRewards] = useState<RewardItem[]>([]);
+    const [promoInput, setPromoInput] = useState('');
+    const [promoStatus, setPromoStatus] = useState('');
+
     // Avatar & Background
     const [avatarUrl, setAvatarUrl] = useState<string>('');
     const [customBgUrl, setCustomBgUrl] = useState<string>('');
@@ -66,6 +80,10 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
                 if (storedAvatar) setAvatarUrl(storedAvatar);
                 const storedBgUrl = localStorage.getItem(`bgurl_${storedUserId}`);
                 if (storedBgUrl) setCustomBgUrl(storedBgUrl);
+
+                // Fetch real-time Supabase profile balance & rewards
+                fetchSupabaseProfile(storedUserId);
+                fetchRewardsList();
             } else {
                 setUser(null);
             }
@@ -83,6 +101,150 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
 
         return () => window.removeEventListener('auth_change', handleAuthChange);
     }, []);
+
+    const fetchSupabaseProfile = async (uid: string) => {
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('token_balance, role')
+          .eq('id', uid)
+          .single();
+        if (!error && data) {
+          setProfileData(data);
+        } else if (error) {
+          // If profile doesn't exist, create it (fallback if trigger was bypassed)
+          const storedEmail = localStorage.getItem('mock_user_email') || 'user@memolody.com';
+          const { data: newProf } = await supabase
+            .from('profiles')
+            .insert({
+              id: uid,
+              email: storedEmail,
+              display_name: storedEmail.split('@')[0],
+              role: 'member',
+              token_balance: 100
+            })
+            .select()
+            .single();
+          if (newProf) setProfileData(newProf);
+        }
+      } catch (e) {
+        console.error('Supabase profile fetch failed:', e);
+      }
+    };
+
+    const fetchRewardsList = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('rewards')
+          .select('*')
+          .eq('is_active', true);
+        if (!error && data) {
+          setRewards(data);
+        }
+      } catch(e) {
+        console.error(e);
+      }
+    };
+
+    const handleApplyPromo = async () => {
+      if (!promoInput.trim() || !user) return;
+      setPromoStatus('Processing code...');
+      try {
+        const cleanCode = promoInput.trim().toUpperCase();
+        // 1. Verify code
+        const { data: promo, error: promoError } = await supabase
+          .from('promotions')
+          .select('*')
+          .eq('code', cleanCode)
+          .eq('is_active', true)
+          .single();
+
+        if (promoError || !promo) {
+          setPromoStatus('❌ Promo code invalid or expired');
+          return;
+        }
+
+        // 2. Insert token ledger transaction
+        const { error: ledgerError } = await supabase
+          .from('token_transactions')
+          .insert({
+            user_id: user.id,
+            amount: promo.reward_tokens,
+            source: 'promotion',
+            description: `Claimed promo code: ${cleanCode}`
+          });
+
+        if (ledgerError) throw ledgerError;
+
+        // 3. Update user balance
+        const currentBalance = profileData?.token_balance || 0;
+        const newBalance = currentBalance + promo.reward_tokens;
+
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .update({ token_balance: newBalance })
+          .eq('id', user.id);
+
+        if (profileError) throw profileError;
+
+        setProfileData(prev => prev ? { ...prev, token_balance: newBalance } : null);
+        setPromoStatus(`✅ Success! Credited +${promo.reward_tokens} Tokens`);
+        setPromoInput('');
+      } catch (e) {
+        setPromoStatus('❌ Error applying promo: ' + (e as any).message);
+      }
+    };
+
+    const handleRedeemReward = async (reward: RewardItem) => {
+      if (!user || !profileData) return;
+      if (profileData.token_balance < reward.token_cost) {
+        alert("❌ Insufficient tokens to redeem this reward!");
+        return;
+      }
+
+      if (!window.confirm(`Are you sure you want to redeem "${reward.title}" for ${reward.token_cost} Tokens?`)) {
+        return;
+      }
+
+      try {
+        // 1. Log transaction
+        const { error: ledgerError } = await supabase
+          .from('token_transactions')
+          .insert({
+            user_id: user.id,
+            amount: -reward.token_cost,
+            source: 'reward_exchange',
+            description: `Redeemed: ${reward.title}`
+          });
+
+        if (ledgerError) throw ledgerError;
+
+        // 2. Log redemption request
+        const { error: redemptionError } = await supabase
+          .from('reward_redemptions')
+          .insert({
+            user_id: user.id,
+            reward_id: reward.id,
+            status: 'pending'
+          });
+
+        if (redemptionError) throw redemptionError;
+
+        // 3. Update user balance
+        const newBalance = profileData.token_balance - reward.token_cost;
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .update({ token_balance: newBalance })
+          .eq('id', user.id);
+
+        if (profileError) throw profileError;
+
+        setProfileData(prev => prev ? { ...prev, token_balance: newBalance } : null);
+        alert(`🎉 Redemption successful! Admin will process your request: "${reward.title}"`);
+      } catch (e) {
+        alert("Redemption failed: " + (e as any).message);
+      }
+    };
 
     // Avatar upload (stored in localStorage as base64)
     const handleAvatarUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -123,7 +285,6 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
     const handleSync = async () => {
         if (!user) { await onTriggerSync(); onRefresh(); return; }
         setIsSyncingCloud(true);
-        // Supabase has been removed, so we mock a successful local sync
         await new Promise(r => setTimeout(r, 1000));
         setSyncMessage('Local sync completed (Cloud Disabled)');
         onRefresh();
@@ -241,10 +402,10 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
                         </p>
                         <div className="flex flex-col items-center justify-center gap-2 mt-2">
                             <div className="flex gap-2">
-                                <span className="px-2 py-0.5 rounded-full text-[7px] font-black uppercase tracking-widest bg-cyan-500/10 border border-cyan-500/20 text-cyan-400">
-                                    FREE TIER
+                                <span className="px-2.5 py-0.5 rounded-full text-[7px] font-black uppercase tracking-widest bg-cyan-500/10 border border-cyan-500/20 text-cyan-400">
+                                    {(profileData?.role || 'member').toUpperCase()} AUTHORITY
                                 </span>
-                                <span className="px-2 py-0.5 rounded-full text-[7px] font-black uppercase tracking-widest bg-white/5 border border-white/10 text-zinc-500">
+                                <span className="px-2.5 py-0.5 rounded-full text-[7px] font-black uppercase tracking-widest bg-white/5 border border-white/10 text-zinc-500">
                                     {userLibrary.length} Songs
                                 </span>
                             </div>
@@ -293,6 +454,35 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
 
                 <div className="p-4 space-y-4 max-w-2xl mx-auto w-full">
 
+                    {/* ── REAL-TIME TOKENS BALANCE & PROMO CODES ── */}
+                    <div className="backdrop-blur-md bg-white/[0.02] border border-white/5 rounded-3xl p-5 flex flex-col md:flex-row items-center gap-6 shadow-xl">
+                        <div className="flex-1 space-y-1 text-center md:text-left w-full">
+                            <span className="text-[8px] font-black text-zinc-500 uppercase tracking-[0.3em]">SUPABASE TOKEN BALANCE</span>
+                            <div className="text-3xl font-black text-amber-400 italic">
+                                {(profileData?.token_balance || 0).toLocaleString()} <span className="text-xs text-zinc-500 font-bold uppercase not-italic">Tokens</span>
+                            </div>
+                        </div>
+                        <div className="w-full md:w-fit flex gap-2">
+                            <input
+                                value={promoInput}
+                                onChange={e => setPromoInput(e.target.value)}
+                                placeholder="PROMO CODE..."
+                                className="bg-white/5 border border-white/10 rounded-2xl h-10 px-4 text-[10px] font-black uppercase text-white outline-none focus:border-cyan-500"
+                            />
+                            <button
+                                onClick={handleApplyPromo}
+                                className="h-10 px-4 bg-amber-500 hover:bg-amber-400 text-black text-[9px] font-black uppercase tracking-widest rounded-2xl active:scale-95 transition-all shadow-md shrink-0"
+                            >
+                                Claim
+                            </button>
+                        </div>
+                    </div>
+                    {promoStatus && (
+                      <p className="text-[9px] font-black uppercase text-center py-2 bg-white/5 border border-white/5 rounded-2xl tracking-wider text-amber-500">
+                        {promoStatus}
+                      </p>
+                    )}
+
                     {/* ── CLOUD SYNC CARD ── */}
                     <div className="bg-black/40 border border-white/5 rounded-3xl p-5 flex flex-col sm:flex-row items-center gap-4">
                         <div className="w-12 h-12 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center shrink-0">
@@ -334,6 +524,35 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
                             </div>
                         ))}
                     </div>
+
+                    {/* ── REWARDS CATALOG ── */}
+                    {rewards.length > 0 && (
+                      <div className="backdrop-blur-md bg-white/[0.02] border border-white/5 rounded-[32px] p-5 space-y-4 shadow-xl">
+                        <div className="flex items-center gap-2">
+                          <Gift size={14} className="text-purple-400" />
+                          <h3 className="text-[9px] font-black text-white uppercase italic tracking-widest">Rewards Store (Supabase)</h3>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          {rewards.map(item => (
+                            <div key={item.id} className="bg-white/5 border border-white/5 rounded-2xl p-4 flex flex-col justify-between hover:bg-white/10 transition-colors">
+                              <div>
+                                <h4 className="text-[10px] font-black text-white uppercase tracking-wider">{item.title}</h4>
+                                <p className="text-[8px] text-zinc-500 uppercase tracking-tight mt-1">{item.description}</p>
+                              </div>
+                              <div className="flex justify-between items-center mt-4 pt-2 border-t border-white/5">
+                                <span className="text-[10px] font-black text-amber-400">{item.token_cost} T</span>
+                                <button
+                                  onClick={() => handleRedeemReward(item)}
+                                  className="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white font-black text-[8px] uppercase tracking-widest rounded-xl transition-all shadow-md"
+                                >
+                                  Redeem
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     {/* ── RECENT SONGS ── */}
                     {recentSongs.length > 0 && (
