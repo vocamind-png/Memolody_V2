@@ -1,12 +1,5 @@
-/**
- * AuthContext.tsx — Provider-agnostic authentication layer
- *
- * ┌───────────────────────────────────────────────────────────────────┐
- * │  Phase 1: LOCAL STUB (saves to localStorage)                      │
- * │  Phase 2: Swap ADAPTER section with Supabase / Firebase / etc.   │
- * └───────────────────────────────────────────────────────────────────┘
- */
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { supabase } from './supabase';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -18,9 +11,7 @@ export interface AuthUserCore {
   email: string;
   displayName: string;
   tier: MemberTier;
-  /** Render quota: max renders per song before upgrade prompt */
   rendersPerSong: number;
-  /** Render quota: max unique songs rendered per day */
   dailySongQuota: number;
 }
 
@@ -32,35 +23,22 @@ interface AuthContextType {
   signOut: () => Promise<void>;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Tier definitions (edit here to change quotas)
-// ─────────────────────────────────────────────────────────────────────────────
-//
-//  free     → ทดลองใช้ฟรี 1 เดือนแรก (จำกัดเฉพาะในเครื่อง)
-//  pro      → จ่ายเงิน ซ้อมดนตรีส่วนบุคคล (จำกัด 100 render/เดือน, sync cloud 50 เพลง)
-//  premium  → จ่ายเงิน สตูดิโอ/ครูสอน (เรนเดอร์ไม่จำกัด, sync cloud ไม่จำกัด)
-//  admin    → ทีมงาน ไม่จำกัด
-//
 export const TIER_QUOTAS: Record<MemberTier, Pick<AuthUserCore, 'rendersPerSong' | 'dailySongQuota'>> = {
-  free:    { rendersPerSong: 30,   dailySongQuota: 10   },  // ทดลองใช้งานฟรี
-  pro:     { rendersPerSong: 100,  dailySongQuota: 50   },  // สำหรับบุคคลทั่วไป
-  premium: { rendersPerSong: 9999, dailySongQuota: 9999 },  // สำหรับครูและสตูดิโอ
-  admin:   { rendersPerSong: 9999, dailySongQuota: 9999 },  // ทีมงาน
+  free:    { rendersPerSong: 30,   dailySongQuota: 10   },
+  pro:     { rendersPerSong: 100,  dailySongQuota: 50   },
+  premium: { rendersPerSong: 9999, dailySongQuota: 9999 },
+  admin:   { rendersPerSong: 9999, dailySongQuota: 9999 },
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Pricing table — monthly & yearly
-// yearly = monthly × 12 × (1 - yearlyDiscountPct/100)
-// ─────────────────────────────────────────────────────────────────────────────
 export interface TierPrice {
   label: string;
   description: string;
-  monthlyThb: number | null;   // null = ฟรี
-  yearlyThb: number | null;    // null = ฟรี
-  yearlyDiscountPct: number;   // % ส่วนลดจ่ายรายปี
-  badge?: string;              // e.g. "Most Popular"
-  color: string;               // Tailwind text color class
-  accentBg: string;            // Tailwind bg class for card highlight
+  monthlyThb: number | null;
+  yearlyThb: number | null;
+  yearlyDiscountPct: number;
+  badge?: string;
+  color: string;
+  accentBg: string;
   features: string[];
 }
 
@@ -116,113 +94,32 @@ export const TIER_PRICING: Record<Exclude<MemberTier, 'admin'>, TierPrice> = {
   },
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Feature capability flags — check before gating features in UI
-// Usage: canDo(user?.tier, 'exportStems')
-// ─────────────────────────────────────────────────────────────────────────────
 export type AppFeature =
-  | 'renderVocal'       // Trigger AI vocal render
-  | 'memoRenderHistory' // Per-user render history cache
-  | 'stems'             // View stem mixer (listen only)
-  | 'exportStems'       // 📦 Export stems as WAV / MP3 (Premium only)
-  | 'allVoiceModels'    // Access all installed voice models
-  | 'priorityGpu'       // Priority GPU queue
-  | 'earlyAccess';      // Early-access beta features
+  | 'renderVocal'
+  | 'memoRenderHistory'
+  | 'stems'
+  | 'exportStems'
+  | 'allVoiceModels'
+  | 'priorityGpu'
+  | 'earlyAccess';
 
 const _FEATURE_MATRIX: Record<AppFeature, MemberTier[]> = {
   renderVocal:       ['free', 'pro', 'premium', 'admin'],
   memoRenderHistory: ['free', 'pro', 'premium', 'admin'],
   stems:             ['pro', 'premium', 'admin'],
-  exportStems:       ['premium', 'admin'],           // WAV / MP3 export
+  exportStems:       ['premium', 'admin'],
   allVoiceModels:    ['pro', 'premium', 'admin'],
   priorityGpu:       ['premium', 'admin'],
   earlyAccess:       ['premium', 'admin'],
 };
 
-/** Returns true if the given tier has access to the feature */
 export function canDo(tier: MemberTier | undefined | null, feature: AppFeature): boolean {
   if (!tier) return false;
   return _FEATURE_MATRIX[feature].includes(tier);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// LOCAL STUB ADAPTER (Phase 1)
-// Replace this section with a real provider adapter in Phase 2.
-// ─────────────────────────────────────────────────────────────────────────────
-const LS_KEY = 'memo_auth_session';
-
-interface StubSession {
-  id: string;
-  email: string;
-  displayName: string;
-  tier: MemberTier;
-  passwordHash: string; // NOT real hashing — stub only
-}
-
-function _stubHash(s: string) {
-  // Very lightweight hash for stub — NOT production-safe
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
-  return String(h);
-}
-
-function _loadUsers(): Record<string, StubSession> {
-  try { return JSON.parse(localStorage.getItem('memo_stub_users') || '{}'); } catch { return {}; }
-}
-function _saveUsers(u: Record<string, StubSession>) {
-  try { localStorage.setItem('memo_stub_users', JSON.stringify(u)); } catch {}
-}
-function _loadSession(): StubSession | null {
-  try { return JSON.parse(localStorage.getItem(LS_KEY) || 'null'); } catch { return null; }
-}
-function _saveSession(s: StubSession | null) {
-  try {
-    if (s) localStorage.setItem(LS_KEY, JSON.stringify(s));
-    else localStorage.removeItem(LS_KEY);
-  } catch {}
-}
-function _toAuthUser(s: StubSession): AuthUserCore {
-  const q = TIER_QUOTAS[s.tier] ?? TIER_QUOTAS.free;
-  return { id: s.id, email: s.email, displayName: s.displayName, tier: s.tier, ...q };
-}
-
-const stubAdapter = {
-  getSession: async (): Promise<AuthUserCore | null> => {
-    const s = _loadSession();
-    return s ? _toAuthUser(s) : null;
-  },
-  signIn: async (email: string, password: string): Promise<{ user?: AuthUserCore; error?: string }> => {
-    const users = _loadUsers();
-    const found = Object.values(users).find(u => u.email.toLowerCase() === email.toLowerCase());
-    if (!found) return { error: 'ไม่พบอีเมลนี้ในระบบ — กรุณาสมัครสมาชิกก่อนครับ' };
-    if (found.passwordHash !== _stubHash(password)) return { error: 'รหัสผ่านไม่ถูกต้อง' };
-    _saveSession(found);
-    return { user: _toAuthUser(found) };
-  },
-  signUp: async (email: string, password: string, name: string): Promise<{ user?: AuthUserCore; error?: string }> => {
-    if (password.length < 6) return { error: 'รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร' };
-    const users = _loadUsers();
-    const exists = Object.values(users).some(u => u.email.toLowerCase() === email.toLowerCase());
-    if (exists) return { error: 'อีเมลนี้ถูกสมัครไปแล้ว — กรุณาเข้าสู่ระบบแทนครับ' };
-    const session: StubSession = {
-      id: `usr_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      email,
-      displayName: name.trim() || email.split('@')[0],
-      tier: 'free',
-      passwordHash: _stubHash(password),
-    };
-    users[session.id] = session;
-    _saveUsers(users);
-    _saveSession(session);
-    return { user: _toAuthUser(session) };
-  },
-  signOut: async () => {
-    _saveSession(null);
-  },
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Context
+// Supabase Authentication Adapter (Phase 2)
 // ─────────────────────────────────────────────────────────────────────────────
 const AuthContext = createContext<AuthContextType | null>(null);
 
@@ -230,28 +127,102 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUserCore | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  // Sync Supabase Auth Session
+  const syncSession = useCallback(async (sessionUser: any) => {
+    if (!sessionUser) {
+      setUser(null);
+      localStorage.removeItem('mock_user_id');
+      localStorage.removeItem('mock_user_email');
+      return;
+    }
+
+    try {
+      // Query profiles table to retrieve user tier/role metadata
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', sessionUser.id)
+        .single();
+
+      // Mapping Supabase role values to billing tiers
+      const userRole = profile?.role || 'member';
+      let tier: MemberTier = 'free';
+      if (userRole === 'admin' || userRole === 'owner') {
+        tier = 'admin';
+      } else {
+        const storedTier = localStorage.getItem('mock_membership_tier') as MemberTier;
+        tier = storedTier || 'free';
+      }
+
+      const quotas = TIER_QUOTAS[tier] ?? TIER_QUOTAS.free;
+      const parsedUser: AuthUserCore = {
+        id: sessionUser.id,
+        email: sessionUser.email || '',
+        displayName: sessionUser.user_metadata?.full_name || sessionUser.email?.split('@')[0] || 'User',
+        tier,
+        ...quotas
+      };
+
+      setUser(parsedUser);
+      localStorage.setItem('mock_user_id', sessionUser.id);
+      localStorage.setItem('mock_user_email', sessionUser.email || '');
+    } catch (e) {
+      console.warn('Failed parsing Supabase profile metadata:', e);
+    }
+  }, []);
+
   useEffect(() => {
-    stubAdapter.getSession().then(u => {
-      setUser(u);
+    // 1. Check initial active session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      syncSession(session?.user ?? null);
       setIsLoading(false);
     });
-  }, []);
+
+    // 2. Listen for auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      syncSession(session?.user ?? null);
+      setIsLoading(false);
+      window.dispatchEvent(new Event('auth_change'));
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [syncSession]);
 
   const signIn = useCallback(async (email: string, password: string) => {
-    const { user: u, error } = await stubAdapter.signIn(email, password);
-    if (u) setUser(u);
-    return { error };
-  }, []);
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) return { error: error.message };
+    if (data.user) {
+      await syncSession(data.user);
+    }
+    return {};
+  }, [syncSession]);
 
   const signUp = useCallback(async (email: string, password: string, name: string) => {
-    const { user: u, error } = await stubAdapter.signUp(email, password, name);
-    if (u) setUser(u);
-    return { error };
-  }, []);
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          display_name: name,
+          full_name: name
+        }
+      }
+    });
+
+    if (error) return { error: error.message };
+    if (data.user) {
+      await syncSession(data.user);
+    }
+    return {};
+  }, [syncSession]);
 
   const signOut = useCallback(async () => {
-    await stubAdapter.signOut();
+    await supabase.auth.signOut();
     setUser(null);
+    localStorage.removeItem('mock_user_id');
+    localStorage.removeItem('mock_user_email');
   }, []);
 
   return (
