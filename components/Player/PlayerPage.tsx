@@ -327,6 +327,7 @@ const PlayerPage: React.FC<{
   onNavigate?: (view: any) => void;
 }> = ({ song, musicXml, layoutBundle, tracks, setTracks, viewMode = 'score', setViewMode, loopPresets, setLoopPresets, performanceMode, vocalidoAutoRender, autoPlay, onAutoPlayConsumed, onSongUpdate, onNavigate }) => {
   const { authUser } = useAuth();
+  const user = authUser;
   const isFree = (() => {
     const storedTier = typeof window !== 'undefined' ? localStorage.getItem('mock_membership_tier') : null;
     if (storedTier && storedTier !== 'free') return false;
