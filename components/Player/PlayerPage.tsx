@@ -7,7 +7,7 @@ import {
   RefreshCw, Repeat, Music,
   VolumeX, Bell, BellOff, Eye, EyeOff, Lock,
   ChevronDown, Library, Languages, Mic2, Timer, Sparkles,
-  Heart, Folder, Trash2, Plus, ChevronLeft, ChevronRight
+  Heart, Folder, Trash2, Plus, ChevronLeft, ChevronRight, Star
 } from 'lucide-react';
 import ProScoreEditor from './ProScoreEditor';
 import { KeyTransposeDisplay, BpmDisplay, BarBeatPositionDisplay } from './LCDDisplay';
