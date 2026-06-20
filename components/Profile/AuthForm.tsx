@@ -1,12 +1,13 @@
 
 import React, { useState } from 'react';
-import { Mail, Lock, User, ShieldCheck, Zap, ArrowRight, Loader2 } from 'lucide-react';
+import { Mail, Lock, User, ShieldCheck, Zap, ArrowRight, Loader2, Eye, EyeOff, Chrome } from 'lucide-react';
 import { authActions } from '../../lib/useAuth';
 
 const AuthForm: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
   const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [fullName, setFullName] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,8 +35,21 @@ const AuthForm: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
     }
   };
 
+  const handleGoogleSignIn = async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const { error: googleError } = await authActions.signInWithGoogle();
+      if (googleError) throw googleError;
+      // Note: OAuth redirects, so onComplete might not run immediately here.
+    } catch (err: any) {
+      setError(err.message || "Google sign in failed.");
+      setIsLoading(false);
+    }
+  };
+
   return (
-    <div className="w-full max-w-md p-10 bg-[#111115] border border-white/5 rounded-[48px] shadow-2xl relative overflow-hidden animate-in fade-in zoom-in-95 duration-700">
+    <div className="w-full max-w-md p-6 sm:p-10 bg-[#111115] border border-white/5 rounded-[32px] sm:rounded-[48px] shadow-2xl relative overflow-hidden animate-in fade-in zoom-in-95 duration-700 flex-shrink-0">
       <div className="absolute top-0 right-0 p-8 opacity-5"><Zap size={120} /></div>
       
       <div className="space-y-4 mb-2">
@@ -79,23 +93,45 @@ const AuthForm: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
           <Lock size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-700 group-focus-within:text-cyan-400" />
           <input 
             required
-            type="password" 
+            type={showPassword ? "text" : "password"} 
             placeholder="ACCESS CODE..." 
             value={password}
             onChange={e => setPassword(e.target.value)}
-            className="w-full h-12 bg-white/[0.03] border border-white/5 rounded-2xl pl-12 pr-4 text-[10px] font-black text-white outline-none focus:border-cyan-500/30 placeholder:text-zinc-800 uppercase"
+            className="w-full h-12 bg-white/[0.03] border border-white/5 rounded-2xl pl-12 pr-12 text-[10px] font-black text-white outline-none focus:border-cyan-500/30 placeholder:text-zinc-800 uppercase"
           />
+          <button 
+            type="button" 
+            onClick={() => setShowPassword(!showPassword)}
+            className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-600 hover:text-cyan-400 focus:outline-none"
+          >
+            {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+          </button>
         </div>
 
         {error && <p className="text-rose-500 text-[9px] font-black uppercase text-center py-2 bg-rose-500/10 rounded-xl">{error}</p>}
 
         <button 
+          type="submit" 
           disabled={isLoading}
-          type="submit"
-          className="w-full h-14 bg-cyan-500 text-black rounded-2xl font-black uppercase tracking-widest text-xs active:scale-95 transition-all flex items-center justify-center gap-3 shadow-xl hover:shadow-cyan-500/20 disabled:opacity-50"
+          className="w-full h-12 bg-gradient-to-r from-cyan-500 to-blue-500 rounded-2xl flex items-center justify-center gap-2 text-black font-black text-[12px] tracking-[0.2em] uppercase hover:brightness-110 hover:shadow-[0_0_20px_rgba(6,182,212,0.4)] transition-all disabled:opacity-50 mt-2"
         >
-          {isLoading ? <Loader2 size={18} className="animate-spin" /> : (isSignUp ? 'SIGN UP' : 'LOGIN')}
-          {!isLoading && <ArrowRight size={18} strokeWidth={3} />}
+          {isLoading ? <Loader2 size={16} className="animate-spin" /> : <>{isSignUp ? 'SIGN UP' : 'SIGN IN'} <ArrowRight size={16} /></>}
+        </button>
+
+        <div className="relative flex items-center py-4">
+          <div className="flex-grow border-t border-white/5"></div>
+          <span className="flex-shrink-0 mx-4 text-zinc-600 text-[9px] font-black tracking-widest uppercase">OR CONNECT WITH</span>
+          <div className="flex-grow border-t border-white/5"></div>
+        </div>
+
+        <button 
+          type="button" 
+          onClick={handleGoogleSignIn}
+          disabled={isLoading}
+          className="w-full h-12 bg-white text-black rounded-2xl flex items-center justify-center gap-3 font-black text-[11px] tracking-[0.1em] uppercase hover:bg-gray-200 transition-all shadow-[0_0_15px_rgba(255,255,255,0.1)]"
+        >
+          <Chrome size={18} className="text-black" />
+          CONTINUE WITH GOOGLE
         </button>
       </form>
 
@@ -108,15 +144,15 @@ const AuthForm: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
       <div className="mt-8 flex justify-center">
         <button 
           onClick={() => setIsSignUp(!isSignUp)}
-          className="px-5 py-3 rounded-2xl bg-white/5 border border-white/10 hover:border-cyan-500/40 text-[10px] font-black text-zinc-300 hover:text-cyan-400 uppercase tracking-widest transition-all active:scale-95 shadow-md flex items-center gap-2"
+          className="px-6 py-3.5 rounded-2xl bg-cyan-500/10 border-2 border-cyan-500/30 hover:border-cyan-500 hover:bg-cyan-500/20 text-xs font-black text-white hover:text-cyan-300 uppercase tracking-widest transition-all active:scale-95 shadow-[0_0_15px_rgba(6,182,212,0.15)] flex items-center gap-2"
         >
           {isSignUp ? (
             <>
-              Already have an account? <span className="text-cyan-400">→ Sign In</span>
+              Already have an account? <span className="text-cyan-400 font-extrabold underline decoration-2 underline-offset-4">→ Sign In</span>
             </>
           ) : (
             <>
-              No account yet? <span className="text-cyan-400">→ Sign Up Free</span>
+              No account yet? <span className="text-cyan-300 font-extrabold text-[13px] tracking-wide animate-pulse">→ Sign Up Free</span>
             </>
           )}
         </button>

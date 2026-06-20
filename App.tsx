@@ -25,6 +25,7 @@ import { Song, TrackState, LyricMode } from './types';
 import { LoopPreset } from './components/Player/LoopMatrixModal';
 import { useAuth, hasAccess } from './lib/useAuth';
 import { nimoBrain } from './lib/NimoBrain';
+import AuthForm from './components/Profile/AuthForm';
 
 // ── Lazy-load ALL heavy page components ──
 const HomePage = lazy(() => import('./components/Home/HomePage'));
@@ -113,7 +114,7 @@ const NAV_ITEMS: { id: ViewId; icon: any; label: string; minRole?: string; isNim
 ];
 
 const App: React.FC = () => {
-  const { authUser, role } = useAuth();
+  const { authUser, role, loading: authLoading } = useAuth();
   const isFree = (() => {
     const storedTier = typeof window !== 'undefined' ? localStorage.getItem('mock_membership_tier') : null;
     if (storedTier && storedTier !== 'free') return false; // Upgraded mock tier
@@ -878,6 +879,27 @@ const App: React.FC = () => {
         return null;
     }
   };
+
+  if (authLoading) {
+    return (
+      <div className="flex-1 flex h-[100dvh] items-center justify-center bg-[#0A0A0B]">
+        <div className="w-8 h-8 border-4 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin shadow-[0_0_20px_rgba(6,182,212,0.5)]" />
+      </div>
+    );
+  }
+
+  if (!authUser) {
+    return (
+      <div className="flex-1 flex flex-col min-h-[100dvh] w-full items-center justify-center bg-[#0A0A0B] p-4 overflow-y-auto py-10">
+        <div className="mb-8 flex flex-col items-center flex-shrink-0">
+           <Zap size={32} className="text-cyan-400 mb-2 drop-shadow-[0_0_15px_rgba(6,182,212,0.8)]" />
+           <h1 className="text-2xl font-black text-white tracking-[0.2em] uppercase">MEMOLODY <span className="text-cyan-400">V2.4</span></h1>
+           <p className="text-zinc-500 text-[10px] font-bold tracking-widest mt-2 uppercase">Please verify your identity to continue</p>
+        </div>
+        <AuthForm onComplete={() => window.location.reload()} />
+      </div>
+    );
+  }
 
   return (
     <div className={`flex flex-col h-[100dvh] w-full bg-[#0A0A0B] font-sans selection:bg-cyan-500/30 ${performanceMode ? 'perf-mode' : ''}`}>

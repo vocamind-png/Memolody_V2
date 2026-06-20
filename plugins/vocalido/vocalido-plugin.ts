@@ -1,5 +1,6 @@
 import { IMemolodyPlugin, PluginStatus } from '../core/types';
 import { telemetry } from '../../lib/Telemetry';
+import { SongAnalyticsService } from '../../lib/SongAnalyticsService';
 
 export interface VocalidoConfig {
   singerId: string;
@@ -62,7 +63,6 @@ export class VocalidoPlugin implements IMemolodyPlugin {
     const renderStartTime = Date.now();
     
     // Check if RunPod config is available in Vite environment
-    const runpodUrl = import.meta.env.VITE_RUNPOD_API_URL;
     const runpodKey = import.meta.env.VITE_RUNPOD_API_KEY;
 
     try {
@@ -78,8 +78,21 @@ export class VocalidoPlugin implements IMemolodyPlugin {
         };
       });
 
-      if (runpodUrl && runpodKey) {
-        console.log('[Vocalido] 🚀 Sending Request to RunPod Serverless Endpoint');
+      console.log('[Vocalido] Synthesizing notes...', notesWithLyrics);
+      
+      // Check Emergency Serverless Toggle
+      let forceServerless = false;
+      try {
+        forceServerless = await SongAnalyticsService.getSystemSetting('force_serverless');
+      } catch (e) {
+        console.warn("Could not fetch serverless setting", e);
+      }
+
+      const runpodSyncUrl = "https://api.runpod.ai/v2/c6u28bpxw16vne/runsync";
+      
+      // Use Serverless if toggled ON via Admin, OR if there's NO local proxy url configured
+      if ((forceServerless || !this.cloudEndpoint) && runpodKey) {
+        console.log(`[Vocalido] 🚀 Sending Request to RunPod Serverless (Emergency/Fallback)`);
         const payload = {
           input: {
             notes: notesWithLyrics,
@@ -140,6 +153,8 @@ export class VocalidoPlugin implements IMemolodyPlugin {
 
         const b64 = json.output?.audio_b64;
         if (!b64) {
+          const errDur = (Date.now() - renderStartTime) / 1000;
+          SongAnalyticsService.recordServerRender('Vocalido', 'runpod', 'error', errDur, "RunPod returned empty audio");
           throw new Error("RunPod returned empty audio.");
         }
 
@@ -155,6 +170,7 @@ export class VocalidoPlugin implements IMemolodyPlugin {
         
         const durationSec = (Date.now() - renderStartTime) / 1000;
         telemetry.track('vocalido_render', { renderSeconds: durationSec, provider: 'runpod' });
+        SongAnalyticsService.recordServerRender('Vocalido', 'runpod', 'success', durationSec);
         
         console.log('[Vocalido] ✅ Audio ready from RunPod Serverless');
         this.status = 'ready';
@@ -183,14 +199,17 @@ export class VocalidoPlugin implements IMemolodyPlugin {
         
         const durationSec = (Date.now() - renderStartTime) / 1000;
         telemetry.track('vocalido_render', { renderSeconds: durationSec, provider: 'legacy' });
+        SongAnalyticsService.recordServerRender('Vocalido', 'legacy', 'success', durationSec);
         
         console.log('[Vocalido] ✅ Audio ready at:', audioUrl);
 
         this.status = 'ready';
         return audioUrl;
       }
-    } catch (e) {
+    } catch (e: any) {
       this.status = 'error';
+      const errDur = (Date.now() - renderStartTime) / 1000;
+      SongAnalyticsService.recordServerRender('Vocalido', runpodUrl ? 'runpod' : 'legacy', 'error', errDur, e.message);
       console.error('[Vocalido] Synthesis Failed:', e);
       throw e;
     }

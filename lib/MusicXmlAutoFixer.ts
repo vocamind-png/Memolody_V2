@@ -1051,7 +1051,8 @@ export function autoFixMusicXml(
   totalFixes += fixMissingNoteTypes(xmlDoc, fixLog);
 
   // 9.5 Hide all chords (harmony) from the visual score, but keep data for AI Arranger
-  totalFixes += hideAllHarmonies(xmlDoc, fixLog);
+  // DISABLED: We want chords to be visible in Verovio and available for parsers.
+  // totalFixes += hideAllHarmonies(xmlDoc, fixLog);
 
   // 10. Auto-beam eighth/16th notes according to correct time signature rules
   // DISABLED: Malformed beams cause OSMD to silently fail to render.

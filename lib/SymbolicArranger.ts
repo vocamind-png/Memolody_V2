@@ -220,19 +220,69 @@ export class SymbolicArranger {
   }
   
   private static generateHarmonyShift(melody: ParsedNote[], config: ArrangementConfig, trackId: string, stepShift: number, voiceIndex: number): ParsedNote[] {
+    const progStr = config.chordProgression || "C G Am F";
+    const chords = progStr.split(/\s+/).filter(c => c.length > 0);
+    const beatsPerMeasure = config.timeSignature?.beats || 4;
+
     const harmonyNotes: ParsedNote[] = [];
     melody.forEach(note => {
       if (!note.step) return;
       const stepIndex = this.SCALE_STEPS.indexOf(note.step);
       if (stepIndex === -1) return;
-      let shiftedIndex = (stepIndex + stepShift) % 7;
-      if (shiftedIndex < 0) shiftedIndex += 7;
-      let octaveShift = Math.floor((stepIndex + stepShift) / 7);
-      const solfege = getChromaticSolfege(this.SCALE_STEPS[shiftedIndex], note.alter || 0, config.key, 'Ju Solfege Movable Doh');
+
+      // 1. Determine current chord based on measure or startTime
+      let mIndex = 0;
+      if (note.measure && !isNaN(parseInt(note.measure))) {
+         mIndex = parseInt(note.measure) - 1;
+      } else if (note.startTime !== undefined) {
+         mIndex = Math.floor(note.startTime / beatsPerMeasure);
+      }
+      mIndex = Math.max(0, mIndex);
+      const chordName = chords[mIndex % chords.length];
+      const chordPitches = this.parseChord(chordName);
+
+      // 2. Find target index using ideal parallel shift
+      let targetIndex = stepIndex + stepShift;
+      
+      // 3. Snap targetIndex to the nearest chord tone
+      let bestIndex = targetIndex;
+      let minDiff = 999;
+      
+      for (let offset = -2; offset <= 2; offset++) {
+         let checkIndex = targetIndex + offset;
+         let wrappedCheckIndex = ((checkIndex % 7) + 7) % 7;
+         let letter = this.SCALE_STEPS[wrappedCheckIndex];
+         
+         let isChordTone = chordPitches.some(cp => cp.charAt(0) === letter);
+         
+         if (isChordTone) {
+            let diff = Math.abs(offset);
+            if (diff < minDiff) {
+               minDiff = diff;
+               bestIndex = checkIndex;
+            }
+         }
+      }
+      
+      let shiftedIndex = ((bestIndex % 7) + 7) % 7;
+      let octaveShift = Math.floor(bestIndex / 7);
+      
+      // Determine alter based on chord pitch
+      let finalAlter = note.alter || 0;
+      let matchedChordPitch = chordPitches.find(cp => cp.charAt(0) === this.SCALE_STEPS[shiftedIndex]);
+      if (matchedChordPitch) {
+         if (matchedChordPitch.includes('#')) finalAlter = 1;
+         else if (matchedChordPitch.includes('b')) finalAlter = -1;
+         else finalAlter = 0;
+      }
+
+      const solfege = getChromaticSolfege(this.SCALE_STEPS[shiftedIndex], finalAlter, config.key, 'Ju Solfege Movable Doh');
+
       harmonyNotes.push({
         ...note,
         trackId,
         step: this.SCALE_STEPS[shiftedIndex],
+        alter: finalAlter,
         octave: note.octave + octaveShift,
         solfege: solfege,
         voice: voiceIndex

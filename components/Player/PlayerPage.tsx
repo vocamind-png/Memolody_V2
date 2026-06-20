@@ -30,7 +30,7 @@ import { useAuth } from '../../lib/useAuth';
 import { clientSvsEngine } from '../../lib/ClientSvsEngine';
 import { AudioBlobCache } from '../../lib/AudioBlobCache';
 import { vocalidoRenderService } from '../../lib/VocalidoRenderService';
-
+import { SongAnalyticsService } from '../../lib/SongAnalyticsService';
 export type PlayerCardType = 'score' | 'pianoroll' | 'trackview' | 'memochord' | 'practice' | 'vocalido';
 
 const saveRenderToLocalCache = async (
@@ -345,6 +345,18 @@ const PlayerPage: React.FC<{
   const [newFolderColor, setNewFolderColor] = useState('#6366f1');
   const folderPopoverRef = useRef<HTMLDivElement>(null);
   const [isRenderHistoryHidden, setIsRenderHistoryHidden] = useState(false);
+
+  // Engagement State
+  const [engagement, setEngagement] = useState({ isLiked: false, isFavorite: false });
+  const [likeCount, setLikeCount] = useState(song?.likesCount || 0);
+  const [favoriteCount, setFavoriteCount] = useState(song?.favoritesCount || 0);
+  const hasRecordedPlayRef = useRef(false);
+
+  useEffect(() => {
+    if (song?.id && user?.id) {
+      SongAnalyticsService.checkUserEngagement(song.id, user.id).then(setEngagement);
+    }
+  }, [song?.id, user?.id]);
 
   const [svsEngine, setSvsEngine] = useState<'vocalido' | 'browser-ai'>(() => {
     try {
@@ -1007,6 +1019,12 @@ const PlayerPage: React.FC<{
     if (isAudioLoading) {
       console.warn("[PlayerPage] ⛔ handleTogglePlay BLOCKED by isAudioLoading=true");
       return;
+    }
+
+    // Record Play Event on first play
+    if (musicEngine.transportState !== 'started' && !hasRecordedPlayRef.current && song?.id) {
+      hasRecordedPlayRef.current = true;
+      SongAnalyticsService.recordPlayEvent(song.id, user?.id);
     }
     
     // 🔊 CRITICAL: Start/Resume Tone.js context SYNCHRONOUSLY in user gesture
@@ -2511,6 +2529,42 @@ const PlayerPage: React.FC<{
             </span>
             <ChevronDown size={10} className={`text-zinc-500 transition-transform duration-300 ${activeCard === 'vocalido' ? 'rotate-180' : ''}`} />
           </button>
+
+          <div className="w-px h-2 bg-white/10" />
+
+          {/* Engagement: Like & Favorite */}
+          <div className="flex items-center gap-1.5 pl-1.5 pr-1">
+            <button
+              onClick={async (e) => {
+                e.stopPropagation();
+                if (!user?.id) return; // Must be logged in (maybe show toast?)
+                try {
+                  const newStatus = await SongAnalyticsService.toggleLike(song!.id, user.id, engagement.isLiked);
+                  setEngagement(p => ({ ...p, isLiked: newStatus }));
+                  setLikeCount(p => newStatus ? p + 1 : Math.max(0, p - 1));
+                } catch (err) { console.error(err); }
+              }}
+              className={`flex items-center justify-center p-1 rounded-full transition-all border border-transparent ${engagement.isLiked ? 'text-rose-500 bg-rose-500/10 border-rose-500/30' : 'text-zinc-500 hover:text-white hover:bg-white/10'}`}
+              title={engagement.isLiked ? `Unlike (${likeCount})` : `Like (${likeCount})`}
+            >
+              <Heart size={10} className={engagement.isLiked ? 'fill-current' : ''} />
+            </button>
+            <button
+              onClick={async (e) => {
+                e.stopPropagation();
+                if (!user?.id) return;
+                try {
+                  const newStatus = await SongAnalyticsService.toggleFavorite(song!.id, user.id, engagement.isFavorite);
+                  setEngagement(p => ({ ...p, isFavorite: newStatus }));
+                  setFavoriteCount(p => newStatus ? p + 1 : Math.max(0, p - 1));
+                } catch (err) { console.error(err); }
+              }}
+              className={`flex items-center justify-center p-1 rounded-full transition-all border border-transparent ${engagement.isFavorite ? 'text-amber-400 bg-amber-400/10 border-amber-400/30' : 'text-zinc-500 hover:text-white hover:bg-white/10'}`}
+              title={engagement.isFavorite ? `Unfavorite (${favoriteCount})` : `Favorite (${favoriteCount})`}
+            >
+              <Star size={10} className={engagement.isFavorite ? 'fill-current' : ''} />
+            </button>
+          </div>
 
           <div className="w-px h-2 bg-white/10" />
 

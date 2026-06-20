@@ -41,6 +41,7 @@ export interface Song {
   isPremium: boolean;
   category: string;
   difficulty: string;
+  difficultyGrade?: string;
   price?: number;
   isDraft?: boolean;
   ownerId?: string;
@@ -63,6 +64,9 @@ export interface Song {
   composer?: string;
   year?: string;
   instruments?: string[];
+  playCount?: number;
+  likesCount?: number;
+  favoritesCount?: number;
 }
 
 export interface SongFolder {

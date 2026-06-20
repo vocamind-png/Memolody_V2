@@ -373,6 +373,15 @@ const HomePage: React.FC<HomePageProps> = ({
   const [filterComposer, setFilterComposer] = useState('');
   const [filterYear, setFilterYear] = useState('');
   const [filterInstrument, setFilterInstrument] = useState('');
+  const [filterGrade, setFilterGrade] = useState('All');
+  const [topSongs, setTopSongs] = useState<any[]>([]);
+
+  useEffect(() => {
+    import('../../lib/SongAnalyticsService').then(m => {
+      m.SongAnalyticsService.getTopSongs(10).then(setTopSongs);
+    });
+  }, []);
+
   const [activeTab, setActiveTab] = useState<FilterTab>('home');
   const [sortMode, setSortMode] = useState<SortMode>('default');
   const [showSortDropdown, setShowSortDropdown] = useState(false);
@@ -578,6 +587,22 @@ const HomePage: React.FC<HomePageProps> = ({
     if (filterComposer) list = list.filter(i => i.metadata.composer === filterComposer || i.metadata.artist === filterComposer);
     if (filterYear) list = list.filter(i => i.metadata.year === filterYear);
     if (filterInstrument) list = list.filter(i => i.metadata.instruments?.includes(filterInstrument));
+    if (filterGrade && filterGrade !== 'All') {
+      list = list.filter(i => {
+        if (filterGrade === 'None') return !i.metadata.difficultyGrade || i.metadata.difficultyGrade === 'none';
+        if (filterGrade === 'Diploma') return i.metadata.difficultyGrade?.toLowerCase() === 'diploma';
+        if (filterGrade.includes('-')) {
+          const match = filterGrade.match(/Grade\s+(\d+)-(\d+)/i);
+          if (match) {
+            const min = parseInt(match[1]);
+            const max = parseInt(match[2]);
+            const grade = parseInt(i.metadata.difficultyGrade?.replace(/Grade\s*/i, '') || '0');
+            return grade >= min && grade <= max;
+          }
+        }
+        return i.metadata.difficultyGrade === filterGrade;
+      });
+    }
 
     switch (sortMode) {
       case 'az': list.sort((a, b) => a.metadata.title.localeCompare(b.metadata.title)); break;
@@ -828,21 +853,22 @@ const HomePage: React.FC<HomePageProps> = ({
             value={searchInput}
             onChange={e => setSearchInput(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && setSearchQuery(searchInput)}
-            className="w-full h-12 bg-white/[0.03] border border-white/5 rounded-2xl pl-12 pr-10 text-xs font-black text-white outline-none focus:border-cyan-500/30 placeholder:text-zinc-800 transition-all uppercase"
+            className="w-full h-12 bg-white/[0.03] border border-white/5 rounded-2xl pl-12 pr-20 text-xs font-black text-white outline-none focus:border-cyan-500/30 placeholder:text-zinc-800 transition-all uppercase"
           />
-          {searchInput && (
-          <div className="absolute right-12 top-1/2 -translate-y-1/2 flex items-center gap-2">
-            <button onClick={() => { setSearchInput(''); setSearchQuery(''); }} className="text-zinc-600 hover:text-white transition-colors">
-              <X size={14} />
-            </button>
+          <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+            {searchInput && (
+              <button onClick={() => { setSearchInput(''); setSearchQuery(''); }} className="text-zinc-600 hover:text-white transition-colors p-1.5">
+                <X size={14} />
+              </button>
+            )}
             <button 
               onClick={() => setShowFilters(!showFilters)}
-              className={`p-1.5 rounded-lg transition-colors ${showFilters || filterGenre || filterEra || filterComposer || filterYear || filterInstrument ? 'bg-cyan-500/20 text-cyan-400' : 'text-zinc-600 hover:text-zinc-400'}`}
+              className={`p-1.5 rounded-lg transition-colors ${showFilters || filterGenre || filterEra || filterComposer || filterYear || filterInstrument || filterGrade !== 'All' ? 'bg-cyan-500/20 text-cyan-400' : 'text-zinc-500 hover:text-zinc-300'}`}
+              title="Advanced Filters"
             >
-              <Database size={14} />
+              <Database size={16} />
             </button>
           </div>
-        )}
 
         {/* ── ADVANCED FILTERS PANEL ── */}
         {showFilters && (
@@ -917,12 +943,25 @@ const HomePage: React.FC<HomePageProps> = ({
                 ))}
               </select>
             </div>
+            {/* Grade */}
+            <div className="space-y-1">
+              <label className="text-[7px] font-black text-zinc-600 uppercase tracking-widest ml-2">Grade</label>
+              <select 
+                value={filterGrade}
+                onChange={e => setFilterGrade(e.target.value)}
+                className="w-full bg-[#111] border border-white/5 rounded-xl px-3 py-2 text-[10px] font-bold text-zinc-400 outline-none focus:border-cyan-500/50 transition-colors"
+              >
+                {['All', 'None', 'Grade 1-3', 'Grade 4-6', 'Grade 7-8', 'Diploma'].map(g => (
+                  <option key={g} value={g}>{g}</option>
+                ))}
+              </select>
+            </div>
 
             {/* Clear All */}
-            {(filterGenre || filterEra || filterComposer || filterYear || filterInstrument) && (
+            {(filterGenre || filterEra || filterComposer || filterYear || filterInstrument || filterGrade !== 'All') && (
               <button 
                 onClick={() => {
-                  setFilterGenre(''); setFilterEra(''); setFilterComposer(''); setFilterYear(''); setFilterInstrument('');
+                  setFilterGenre(''); setFilterEra(''); setFilterComposer(''); setFilterYear(''); setFilterInstrument(''); setFilterGrade('All');
                 }}
                 className="col-span-full mt-2 text-[8px] font-black text-rose-500 uppercase tracking-[0.2em] hover:text-rose-400 transition-colors flex items-center justify-center gap-1 py-2 border-t border-white/5"
               >
@@ -930,6 +969,54 @@ const HomePage: React.FC<HomePageProps> = ({
                 Reset All Filters
               </button>
             )}
+          </div>
+        )}
+      </div>
+
+      {/* Top Charts Matrix (Horizontal Scroll) */}
+      <div className="space-y-2 mb-6">
+        <div className="flex items-center justify-between px-1">
+          <span className="text-[8px] font-black text-amber-500 uppercase tracking-widest flex items-center gap-1"><Star size={10} /> Top Charts</span>
+          <span className="text-[8px] font-mono text-zinc-700">Global</span>
+        </div>
+        {topSongs.length > 0 ? (
+          <div className="flex gap-2 overflow-x-auto no-scrollbar px-1 pb-2">
+            {topSongs.map((item, index) => (
+              <div key={item.song_id} onClick={() => {
+                const songItem = userLibrary.find(s => s.metadata.id === item.song_id);
+                if (songItem) onSongSelect(songItem.metadata, songItem.xmlData, 'listen');
+              }}
+                className="shrink-0 w-[140px] flex flex-col gap-1.5 group/card cursor-pointer relative bg-white/[0.02] p-2 rounded-xl border border-white/5 hover:bg-white/[0.05] transition-all">
+                {/* Rank Badge */}
+                <div className="absolute top-0 left-0 -mt-2 -ml-2 w-6 h-6 rounded-full bg-amber-500 text-black flex items-center justify-center text-[10px] font-black shadow-lg z-10 border border-[#0a0a0b]">
+                  {index + 1}
+                </div>
+                {/* Cover Area */}
+                <div className="w-full aspect-square rounded-lg overflow-hidden relative shadow-md group-hover/card:shadow-lg border border-white/10 mb-1">
+                  <AbstractCover seed={item.title || item.song_id} size={140} />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end p-2 opacity-0 group-hover/card:opacity-100 transition-opacity">
+                    <div className="flex gap-2 text-[8px] font-bold text-white">
+                      <span className="flex items-center gap-0.5"><Star size={8} className="text-amber-400"/>{item.favorites_count || 0}</span>
+                      <span className="flex items-center gap-0.5"><Heart size={8} className="text-rose-400"/>{item.likes_count || 0}</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-[10px] font-black text-white truncate leading-tight group-hover/card:text-amber-400 transition-colors">
+                    {item.title}
+                  </h3>
+                  <p className="text-[8px] font-bold text-zinc-500 truncate mt-0.5 uppercase tracking-widest">{item.artist}</p>
+                </div>
+                <div className="text-[7px] text-zinc-600 font-mono mt-auto pt-1 border-t border-white/5 flex justify-between">
+                  <span>{item.play_count || 0} PLAYS</span>
+                  {item.difficulty_grade && <span className="text-cyan-600">{item.difficulty_grade}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="px-2 py-6 text-center border border-dashed border-white/10 rounded-xl bg-white/[0.01]">
+            <p className="text-[9px] font-black uppercase tracking-widest text-zinc-600">No chart data yet. Play a song to start tracking!</p>
           </div>
         )}
       </div>

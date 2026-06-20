@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   CheckCircle2, ShieldCheck, RefreshCcw, Trash2, HardDrive, AlertTriangle,
-  Sparkles, FileText, FileImage, FileCode, Plus, Music, Database, TrendingUp, Users, Lock, BrainCircuit, Server, Gift, Award, HelpCircle
+  Sparkles, FileText, FileImage, FileCode, Plus, Music, Database, TrendingUp, Users, Lock, BrainCircuit, Server, Gift, Award, HelpCircle, BarChart3
 } from 'lucide-react';
 import { parseMusicXMLMetadata } from '../../lib/MusicXmlParser';
 import { songStorage } from '../../lib/SongStorage';
@@ -10,6 +10,8 @@ import FinanceOverview from './FinanceOverview';
 import UserManagement from './UserManagement';
 import HeadAdminDashboard from './HeadAdminDashboard';
 import { ServerControlDashboard } from './ServerControlDashboard';
+import ServerAnalytics from './ServerAnalytics';
+import AdminAnalytics from './AdminAnalytics';
 import { useAuth, hasAccess } from '../../lib/useAuth';
 import { supabase } from '../../lib/supabase';
 
@@ -19,7 +21,7 @@ interface AdminPageProps {
   onRefresh?: () => void;
 }
 
-type AdminTab = 'vault' | 'finance' | 'users' | 'servers' | 'promotions' | 'redemptions' | 'headquarters';
+type AdminTab = 'vault' | 'finance' | 'users' | 'servers' | 'promotions' | 'redemptions' | 'analytics' | 'headquarters';
 
 interface PromoCode {
   id: string;
@@ -232,6 +234,7 @@ const AdminPage: React.FC<AdminPageProps> = ({ onMusicXmlUpload, onRestoreMaster
     { id: 'users', label: 'Members', icon: Users, color: 'text-indigo-500' },
     { id: 'promotions', label: 'Promos', icon: Award, color: 'text-amber-500' },
     { id: 'redemptions', label: 'Rewards redemptions', icon: Gift, color: 'text-purple-500' },
+    { id: 'analytics', label: 'Analytics', icon: BarChart3, color: 'text-cyan-400' },
     { id: 'servers', label: 'Servers', icon: Server, color: 'text-zinc-500' },
     ...(hasAccess(role, 'executive') ? [{ id: 'headquarters', label: 'HQ Analytics', icon: BrainCircuit, color: 'text-rose-500' }] : [])
   ];
@@ -546,8 +549,15 @@ const AdminPage: React.FC<AdminPageProps> = ({ onMusicXmlUpload, onRestoreMaster
       )}
 
       {activeTab === 'servers' && (
-        <section className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <section className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-8">
           <ServerControlDashboard />
+          <ServerAnalytics />
+        </section>
+      )}
+
+      {activeTab === 'analytics' && (
+        <section className="animate-in fade-in slide-in-from-bottom-4 duration-500 h-[calc(100vh-200px)]">
+          <AdminAnalytics />
         </section>
       )}
 

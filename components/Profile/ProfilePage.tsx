@@ -72,10 +72,11 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
 
     useEffect(() => {
         const getSession = async () => {
-            const storedUserId = localStorage.getItem('mock_user_id');
-            const storedEmail = localStorage.getItem('mock_user_email');
-            if (storedUserId && storedEmail) {
-                setUser({ id: storedUserId, email: storedEmail, user_metadata: { full_name: storedEmail.split('@')[0] } });
+            const { data: { session } } = await supabase.auth.getSession();
+            if (session?.user) {
+                const storedUserId = session.user.id;
+                const storedEmail = session.user.email || '';
+                setUser({ id: storedUserId, email: storedEmail, user_metadata: { full_name: session.user.user_metadata?.full_name || storedEmail.split('@')[0] } });
                 const storedAvatar = localStorage.getItem(`avatar_${storedUserId}`);
                 if (storedAvatar) setAvatarUrl(storedAvatar);
                 const storedBgUrl = localStorage.getItem(`bgurl_${storedUserId}`);

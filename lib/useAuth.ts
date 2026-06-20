@@ -114,6 +114,16 @@ export const authActions = {
     if (error) return { user: null, error };
     return { user: data.user, error: null };
   },
+  signInWithGoogle: async () => {
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: window.location.origin,
+      }
+    });
+    if (error) return { user: null, error };
+    return { user: data.user, error: null };
+  },
   signOut: async () => {
     await supabase.auth.signOut();
   }

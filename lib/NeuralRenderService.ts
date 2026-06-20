@@ -1,4 +1,5 @@
 import { TrackState, ParsedNote } from '../types';
+import { SongAnalyticsService } from './SongAnalyticsService';
 
 /**
  * NeuralRenderService
@@ -65,6 +66,7 @@ export class NeuralRenderService {
    */
   static async renderInstrumento(track: TrackState, notes: ParsedNote[]): Promise<string> {
     console.log(`[NeuralRender] Starting Instrumento render for track ${track.id} (${track.instrument})`);
+    const startTime = Date.now();
     try {
       const { MidiWriter } = await import('./MidiWriter');
       const midiBlob = MidiWriter.generateMidiBlob(notes, 120);
@@ -135,9 +137,13 @@ export class NeuralRenderService {
                 }
                 const byteArray = new Uint8Array(byteNumbers);
                 const blob = new Blob([byteArray], { type: out.mime_type || 'audio/mpeg' });
+                const durationSec = (Date.now() - startTime) / 1000;
+                SongAnalyticsService.recordServerRender('Instrumento', 'runpod', 'success', durationSec);
                 resolve(URL.createObjectURL(blob));
                 return;
               }
+              const errorDur = (Date.now() - startTime) / 1000;
+              SongAnalyticsService.recordServerRender('Instrumento', 'runpod', 'error', errorDur, "No audio returned from RunPod");
               throw new Error("No audio returned from RunPod");
             }
             
@@ -166,6 +172,8 @@ export class NeuralRenderService {
             });
             const data = await response.json();
             if (data.success) {
+              const durationSec = (Date.now() - startTime) / 1000;
+              SongAnalyticsService.recordServerRender('Instrumento', 'colab', 'success', durationSec);
               if (data.audio_base64) {
                 const response = await fetch(data.audio_base64);
                 const blob = await response.blob();
@@ -174,9 +182,13 @@ export class NeuralRenderService {
                 resolve(data.data.url);
               }
             } else {
+              const errorDur = (Date.now() - startTime) / 1000;
+              SongAnalyticsService.recordServerRender('Instrumento', 'colab', 'error', errorDur, data.message);
               reject(new Error(data.message));
             }
           } catch (e: any) {
+            const errorDur = (Date.now() - startTime) / 1000;
+            SongAnalyticsService.recordServerRender('Instrumento', 'colab', 'error', errorDur, e.message);
             if (e.message === 'Failed to fetch') localStorage.removeItem('instrumento_colab_url');
             reject(e);
           }
