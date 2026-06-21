@@ -3,6 +3,8 @@ import { Blocks, Loader2, Music2, Scissors, Repeat, Trash2, PlusCircle, Search, 
 import { Song, TrackState } from '../../types';
 import { musicEngine } from '../../lib/MusicEngine';
 import { SymbolicArranger, ArrangementConfig } from '../../lib/SymbolicArranger';
+import { AIArrangerService } from '../../lib/AIArrangerService';
+import { songStorage } from '../../lib/SongStorage';
 import { NeuralRenderService } from '../../lib/NeuralRenderService';
 import { TrackVisualizer } from './TrackVisualizer';
 
@@ -262,28 +264,53 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
       // Get lead melody
       const leadMelody = parsedData.notes.filter(n => n.trackId === tracks[0]?.id || (!n.trackId && tracks.length <= 1));
       
-      // Generate new tracks using Python Multi-Engine AI Router
-      const res = await fetch(`${baseUrl}/api/arrange`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-              engine: aiEngine,
-              leadMelody: leadMelody,
-              prompt: aiPrompt,
-              style: arrangeStyle,
-              key: arrangeKey,
-              bpm: arrangeBpm,
-              sections: sections,
-              config: {
-                is_simple_mode: isSimpleMode
-              }
-          })
-      });
-      const resData = await res.json();
-      if (!resData.success) {
-          throw new Error(resData.message || "Failed to generate arrangement");
+      let newTracks: TrackState[] = [];
+      
+      if (aiEngine === 'rag-gemini' && chordSource === 'ai') {
+        try {
+          console.log("[RAG] Retrieving library for references...");
+          const library = await songStorage.getAllSongs();
+          const references = AIArrangerService.retrieveReferences(library, arrangeStyle, aiPrompt, 3);
+          
+          console.log(`[RAG] Found ${references.length} references. Calling Gemini...`);
+          const aiResult = await AIArrangerService.generateAIArrangement(leadMelody, references, arrangeStyle, aiPrompt, arrangeKey, arrangeBpm);
+          
+          if (aiResult && aiResult.chords) {
+            console.log("[RAG] AI Chords generated:", aiResult.chords);
+            config.aiChords = aiResult.chords;
+          } else {
+            console.warn("[RAG] AI failed to generate chords, falling back to algorithmic.");
+          }
+          
+          newTracks = await SymbolicArranger.generateArrangement(leadMelody, config);
+        } catch (ragErr) {
+          console.error("RAG Arranger failed:", ragErr);
+          newTracks = await SymbolicArranger.generateArrangement(leadMelody, config);
+        }
+      } else {
+        // Generate new tracks using Python Multi-Engine AI Router
+        const res = await fetch(`${baseUrl}/api/arrange`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                engine: aiEngine,
+                leadMelody: leadMelody,
+                prompt: aiPrompt,
+                style: arrangeStyle,
+                key: arrangeKey,
+                bpm: arrangeBpm,
+                sections: sections,
+                config: {
+                  is_simple_mode: isSimpleMode
+                }
+            })
+        });
+        const resData = await res.json();
+        if (!resData.success) {
+            throw new Error(resData.message || "Failed to generate arrangement");
+        }
+        newTracks = resData.data.tracks || [];
       }
-      const newTracks = resData.data.tracks || [];
       
       // Filter out old AI tracks, keep user tracks
       const existingTracks = tracks.filter(t => !t.name.startsWith('AI '));
@@ -839,9 +866,10 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
                 <option value="ai">AI Chords</option>
                 <option value="original">Original</option>
               </select>
-              <select value={aiEngine} onChange={e => setAiEngine(e.target.value)} title="Advanced Engine Settings" className="bg-zinc-900 border border-purple-500/30 text-purple-400 font-bold text-[11px] rounded-lg px-2 py-1.5 w-[110px] outline-none shadow-[0_0_10px_rgba(168,85,247,0.1)] shrink-0">
+              <select value={aiEngine} onChange={e => setAiEngine(e.target.value)} title="Advanced Engine Settings" className="bg-zinc-900 border border-purple-500/30 text-purple-400 font-bold text-[11px] rounded-lg px-2 py-1.5 w-[130px] outline-none shadow-[0_0_10px_rgba(168,85,247,0.1)] shrink-0">
                 <option value="auto">⚙️ Auto Engine</option>
-                <option value="gemini">⚙️ Gemini LLM</option>
+                <option value="rag-gemini">⚙️ Gemini RAG (Local)</option>
+                <option value="gemini">⚙️ Gemini Cloud</option>
                 <option value="magenta">⚙️ Magenta</option>
                 <option value="symphonynet">⚙️ SymphonyNet</option>
                 <option value="choir">⚙️ Choir (SATB)</option>

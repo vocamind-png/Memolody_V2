@@ -11,6 +11,7 @@ export interface ArrangementConfig {
   instruments?: string[];
   is4PartChorus?: boolean;
   chordProgression?: string;
+  aiChords?: { name: string; measure: number; beat: number }[];
 }
 
 export class SymbolicArranger {
@@ -26,12 +27,10 @@ export class SymbolicArranger {
     console.log(`[SymbolicArranger] Generating arrangement for ${leadMelody.length} notes in ${config.key}`);
     
     // Simulate AI thinking time
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    await new Promise(resolve => setTimeout(resolve, 500));
     
     const promptStr = (config.prompt || '').toLowerCase();
     const is4PartChorus = config.is4PartChorus !== undefined ? config.is4PartChorus : (promptStr.includes('4') || promptStr.includes('four') || promptStr.includes('สี่') || promptStr.includes('chorus') || promptStr.includes('คอรัส') || promptStr.includes('ประสาน'));
-    const isAcoustic = config.style === 'acoustic' || promptStr.includes('acoustic');
-    const isRock = config.style === 'rock' || promptStr.includes('rock');
 
     let tracks: TrackState[] = [];
 
@@ -108,7 +107,16 @@ export class SymbolicArranger {
     for (let m = 1; m <= totalMeasures; m++) {
       const currentMeasure = String(m);
       const measureStartTime = (m - 1) * beatsPerMeasure;
-      const chordName = chords[(m - 1) % chords.length];
+      
+      let chordName = 'C';
+      if (config.aiChords && config.aiChords.length > 0) {
+        // Find the most recent chord up to this measure
+        const activeChord = config.aiChords.slice().reverse().find(c => c.measure <= m) || config.aiChords[0];
+        chordName = activeChord.name;
+      } else {
+        chordName = chords[(m - 1) % chords.length];
+      }
+      
       const chordPitches = this.parseChord(chordName);
       
       const style = (config.style || 'pop').toLowerCase();
