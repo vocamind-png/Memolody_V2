@@ -888,8 +888,18 @@ Extract search parameters into JSON. Return ONLY JSON with this format:
 { "keywords": ["..."], "genres": ["..."], "moods": ["..."], "instruments": ["..."], "era": ["..."] }
 If a field is not relevant, leave the array empty. Translate concepts into English keywords if needed.`;
 
-                  const response = await ai.models.generateContent({ model: 'gemini-1.5-flash', contents: prompt, config: { responseMimeType: 'application/json', temperature: 0.1 } });
-                  const params = JSON.parse(response.text || '{}');
+                  const modelsToTry = ['gemini-3.5-flash', 'gemini-3.1-pro', 'gemini-2.5-flash', 'gemini-1.5-flash'];
+                  let responseText = '{}';
+                  for (const modelName of modelsToTry) {
+                    try {
+                      const response = await ai.models.generateContent({ model: modelName, contents: prompt, config: { responseMimeType: 'application/json', temperature: 0.1 } });
+                      responseText = response.text || '{}';
+                      break;
+                    } catch (modelErr) {
+                      console.warn(`[AI Search] Model ${modelName} failed, trying next...`);
+                    }
+                  }
+                  const params = JSON.parse(responseText);
                   
                   // Local filtering based on extracted intent
                   let matches = userLibrary;
