@@ -878,15 +878,21 @@ const HomePage: React.FC<HomePageProps> = ({
                 setIsAiSearching(true);
                 setAiFilteredIds(null);
                 try {
-                  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || (typeof __GEMINI_API_KEY__ !== 'undefined' ? __GEMINI_API_KEY__ : '');
-                  if (!apiKey) throw new Error('GEMINI_API_KEY is not configured');
-                  const ai = new GoogleGenAI({ apiKey });
-                  
                   // Extract search intent instead of passing the entire catalog to avoid token limits
+                  // Now we also instruct the AI to detect deep structural requests!
                   const prompt = `You are a music search intent extractor. User query: "${searchInput}". 
 Extract search parameters into JSON. Return ONLY JSON with this format: 
-{ "keywords": ["..."], "genres": ["..."], "moods": ["..."], "instruments": ["..."], "era": ["..."] }
-If a field is not relevant, leave the array empty. Translate concepts into English keywords if needed.`;
+{ 
+  "keywords": ["..."], 
+  "genres": ["..."], 
+  "moods": ["..."], 
+  "instruments": ["..."], 
+  "era": ["..."],
+  "hasChords": boolean | null,
+  "hasLyrics": boolean | null
+}
+If a field is not relevant, leave the array empty or boolean null. Translate concepts into English keywords if needed. 
+Note: "hasChords" is true if user asks for songs with chords (คอร์ด). "hasLyrics" is true if user asks for songs with lyrics/singing (เนื้อร้อง).`;
 
                   const modelsToTry = ['gemini-3.5-flash', 'gemini-3.1-pro', 'gemini-2.5-flash', 'gemini-1.5-flash'];
                   let responseText = '{}';
@@ -899,10 +905,26 @@ If a field is not relevant, leave the array empty. Translate concepts into Engli
                       console.warn(`[AI Search] Model ${modelName} failed, trying next...`);
                     }
                   }
+                  
                   const params = JSON.parse(responseText);
                   
-                  // Local filtering based on extracted intent
+                  // Local filtering based on extracted intent (Deep Search included!)
                   let matches = userLibrary;
+                  
+                  // 1. Deep XML Scanning
+                  if (params.hasChords === true) {
+                    matches = matches.filter(song => song.xmlData && song.xmlData.includes('<harmony>'));
+                  } else if (params.hasChords === false) {
+                    matches = matches.filter(song => song.xmlData && !song.xmlData.includes('<harmony>'));
+                  }
+                  
+                  if (params.hasLyrics === true) {
+                    matches = matches.filter(song => song.xmlData && song.xmlData.includes('<lyric>'));
+                  } else if (params.hasLyrics === false) {
+                    matches = matches.filter(song => song.xmlData && !song.xmlData.includes('<lyric>'));
+                  }
+
+                  // 2. Metadata Keyword Scanning
                   const allKeywords = [
                     ...(params.keywords || []), ...(params.genres || []), ...(params.moods || []), ...(params.instruments || []), ...(params.era || [])
                   ].map((k: string) => k.toLowerCase());
