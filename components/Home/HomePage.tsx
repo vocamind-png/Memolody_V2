@@ -188,11 +188,14 @@ const SongRow = memo(({ item, onSongSelect, onToggleDelete, onPermanentDelete, i
         </div>
         <p className="text-[8px] font-bold text-zinc-600 uppercase tracking-widest truncate flex items-center gap-1.5 mt-0.5">
           <span>{item.metadata.artist || 'Unknown Maestro'}</span>
-          {item.metadata.difficultyGrade && item.metadata.difficultyGrade !== 'none' && (
-            <span className="px-1.5 py-0.5 rounded-sm bg-white/5 border border-white/10 text-[7px] text-zinc-400 font-bold tracking-widest leading-none">
-              {item.metadata.difficultyGrade}
-            </span>
-          )}
+          {(() => {
+            const grade = item.metadata?.difficulty_grade || item.metadata?.difficultyGrade || item.difficulty_grade || item.difficultyGrade;
+            return grade && grade !== 'none' ? (
+              <span className="px-1.5 py-0.5 rounded-sm bg-white/5 border border-white/10 text-[7px] text-zinc-400 font-bold tracking-widest leading-none">
+                {grade}
+              </span>
+            ) : null;
+          })()}
           {item.metadata.ownerName && item.metadata.ownerName !== 'Admin' && (
             <span className="text-cyan-500/80 lowercase italic font-medium">@{item.metadata.ownerName}</span>
           )}
@@ -541,7 +544,7 @@ const HomePage: React.FC<HomePageProps> = ({
     }));
   }, [userLibrary]);
 
-  const allFolders = useMemo(() => [...folders, ...genreFolders], [folders, genreFolders]);
+  const allFolders = useMemo(() => folders, [folders]);
 
   // Counts
   const totalCount = useMemo(() => userLibrary.filter(i => !i.metadata.isDeleted).length, [userLibrary]);
@@ -912,10 +915,10 @@ const HomePage: React.FC<HomePageProps> = ({
             </button>
             <button 
               onClick={() => setShowFilters(!showFilters)}
-              className={`p-1.5 rounded-lg transition-colors ${showFilters || filterGenre || filterEra || filterComposer || filterYear || filterInstrument || filterGrade !== 'All' ? 'bg-cyan-500/20 text-cyan-400' : 'text-zinc-500 hover:text-zinc-300'}`}
-              title="Advanced Filters"
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-colors ${showFilters || filterGenre ? 'bg-cyan-500/20 text-cyan-400' : 'bg-white/5 text-zinc-400 hover:text-white'}`}
+              title="Styles & Filters"
             >
-              <Database size={16} />
+              <Database size={12} /> STYLES
             </button>
           </div>
 
