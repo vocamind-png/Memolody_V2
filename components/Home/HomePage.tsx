@@ -186,12 +186,17 @@ const SongRow = memo(({ item, onSongSelect, onToggleDelete, onPermanentDelete, i
             {item.metadata.title}
           </p>
         </div>
-        <p className="text-[8px] font-bold text-zinc-600 uppercase tracking-widest truncate">
-          {item.metadata.artist || 'Unknown Maestro'}
-          {item.metadata.ownerName && item.metadata.ownerName !== 'Admin' && (
-            <span className="ml-1 text-cyan-500/80 lowercase italic font-medium"> @{item.metadata.ownerName}</span>
+        <p className="text-[8px] font-bold text-zinc-600 uppercase tracking-widest truncate flex items-center gap-1.5 mt-0.5">
+          <span>{item.metadata.artist || 'Unknown Maestro'}</span>
+          {item.metadata.difficultyGrade && item.metadata.difficultyGrade !== 'none' && (
+            <span className="px-1.5 py-0.5 rounded-sm bg-white/5 border border-white/10 text-[7px] text-zinc-400 font-bold tracking-widest leading-none">
+              {item.metadata.difficultyGrade}
+            </span>
           )}
-          {item.metadata.folderId && <span className="ml-2 text-indigo-400/60">• {folders?.find((f: SongFolder) => f.id === item.metadata.folderId)?.name || ''}</span>}
+          {item.metadata.ownerName && item.metadata.ownerName !== 'Admin' && (
+            <span className="text-cyan-500/80 lowercase italic font-medium">@{item.metadata.ownerName}</span>
+          )}
+          {item.metadata.folderId && <span className="text-indigo-400/60">• {folders?.find((f: SongFolder) => f.id === item.metadata.folderId)?.name || ''}</span>}
         </p>
       </div>
       <span className="text-[9px] text-zinc-700 font-mono tabular-nums shrink-0">
