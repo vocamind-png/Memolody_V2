@@ -872,10 +872,27 @@ const HomePage: React.FC<HomePageProps> = ({
                 setAiFilteredIds(null);
               }
             }}
-            onKeyDown={e => {
+            onKeyDown={async e => {
               if (e.key === 'Enter') {
-                setSearchQuery(searchInput);
+                if (!searchInput.trim()) return;
+                setIsAiSearching(true);
                 setAiFilteredIds(null);
+                try {
+                  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || (typeof __GEMINI_API_KEY__ !== 'undefined' ? __GEMINI_API_KEY__ : '');
+                  if (!apiKey) throw new Error('GEMINI_API_KEY is not configured');
+                  const ai = new GoogleGenAI({ apiKey });
+                  const catalog = userLibrary.map(i => ({ id: i.metadata.id, title: i.metadata.title, artist: i.metadata.artist, genre: i.metadata.genre, mood: i.metadata.mood }));
+                  const prompt = `You are a music search AI. User query: "${searchInput}". Songs JSON: ${JSON.stringify(catalog)}. Return ONLY a JSON array of string IDs of songs that match best.`;
+                  const response = await ai.models.generateContent({ model: 'gemini-1.5-flash', contents: prompt, config: { responseMimeType: 'application/json', temperature: 0.1 } });
+                  setAiFilteredIds(JSON.parse(response.text || '[]'));
+                  setSearchQuery(searchInput);
+                } catch (err) {
+                  console.error(err);
+                  // fallback to standard search if AI fails
+                  setSearchQuery(searchInput);
+                } finally {
+                  setIsAiSearching(false);
+                }
               }
             }}
             className="w-full h-12 bg-white/[0.03] border border-white/5 rounded-2xl pl-12 pr-20 text-xs font-black text-white outline-none focus:border-cyan-500/30 placeholder:text-zinc-800 transition-all uppercase"
