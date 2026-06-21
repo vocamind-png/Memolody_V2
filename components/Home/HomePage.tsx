@@ -825,7 +825,7 @@ const HomePage: React.FC<HomePageProps> = ({
   ];
 
   return (
-    <div className="h-full flex flex-col bg-[#0A0A0B] overflow-hidden select-none">
+    <div className="h-full flex flex-col bg-[#0A0A0B] overflow-y-auto overflow-x-hidden select-none" onScroll={handleScroll}>
 
       {/* ── HEADER / SEARCH & RECENT (STATIC TOP) ── */}
       <div className="shrink-0 px-6 pt-6 pb-2 space-y-5 bg-gradient-to-b from-white/[0.02] to-transparent border-b border-white/5">
@@ -1218,8 +1218,8 @@ const HomePage: React.FC<HomePageProps> = ({
           </>
         )}
 
-        {/* Scrollable List */}
-        <div className="flex-1 min-h-0 overflow-y-auto pb-32" onScroll={handleScroll}>
+        {/* Song List */}
+        <div className="pb-32">
           {visibleItems.length === 0 ? (
             <div className="h-64 flex flex-col items-center justify-center text-zinc-800">
               {isSyncing ? (
