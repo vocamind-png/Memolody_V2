@@ -1059,6 +1059,9 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
         console.warn('[ProScoreEditor] Failed to inject xml:id', err);
       }
 
+      // ── Auto Chord Detection: Inject chords if missing ──────
+      // finalXml = detectAndInjectChords(finalXml);
+
       // ── Chord symbols: Process in all modes per user request ──────
       if (/<harmony/i.test(finalXml)) {
         finalXml = finalXml

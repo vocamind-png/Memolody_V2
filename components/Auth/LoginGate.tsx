@@ -131,8 +131,8 @@ function AuthScreen() {
       </div>
 
       {/* ── Right panel: auth form ── */}
-      <div className="flex-1 flex items-center justify-center p-6 overflow-y-auto">
-        <div className="w-full max-w-md">
+      <div className="flex-1 flex flex-col p-6 overflow-y-auto">
+        <div className="w-full max-w-md m-auto">
           {/* Mobile logo */}
           <div className="flex items-center gap-2 mb-8 lg:hidden">
             <Zap size={16} className="text-cyan-400" />

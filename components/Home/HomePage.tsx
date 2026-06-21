@@ -4,6 +4,7 @@ import { Song, ViewId, SongFolder } from '../../types';
 import { parseMusicXMLMetadata } from '../../lib/MusicXmlParser';
 import { songStorage } from '../../lib/SongStorage';
 import ScoreSelectionModal from './ScoreSelectionModal';
+import { GoogleGenAI } from '@google/genai';
 
 
 
@@ -367,6 +368,8 @@ const HomePage: React.FC<HomePageProps> = ({
   }, []);
   const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [isAiSearching, setIsAiSearching] = useState(false);
+  const [aiFilteredIds, setAiFilteredIds] = useState<string[] | null>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [filterGenre, setFilterGenre] = useState('');
   const [filterEra, setFilterEra] = useState('');
@@ -574,7 +577,9 @@ const HomePage: React.FC<HomePageProps> = ({
       }
     }
 
-    if (searchQuery) {
+    if (aiFilteredIds !== null) {
+      list = list.filter(i => aiFilteredIds.includes(i.metadata.id));
+    } else if (searchQuery) {
       const q = searchQuery.toLowerCase();
       list = list.filter(i =>
         i.metadata.title.toLowerCase().includes(q) ||
@@ -851,16 +856,55 @@ const HomePage: React.FC<HomePageProps> = ({
             type="text"
             placeholder="FIND YOUR MUSIC..."
             value={searchInput}
-            onChange={e => setSearchInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && setSearchQuery(searchInput)}
+            onChange={e => {
+              setSearchInput(e.target.value);
+              if (e.target.value === '') {
+                setSearchQuery('');
+                setAiFilteredIds(null);
+              }
+            }}
+            onKeyDown={e => {
+              if (e.key === 'Enter') {
+                setSearchQuery(searchInput);
+                setAiFilteredIds(null);
+              }
+            }}
             className="w-full h-12 bg-white/[0.03] border border-white/5 rounded-2xl pl-12 pr-20 text-xs font-black text-white outline-none focus:border-cyan-500/30 placeholder:text-zinc-800 transition-all uppercase"
           />
           <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
             {searchInput && (
-              <button onClick={() => { setSearchInput(''); setSearchQuery(''); }} className="text-zinc-600 hover:text-white transition-colors p-1.5">
+              <button onClick={() => { setSearchInput(''); setSearchQuery(''); setAiFilteredIds(null); }} className="text-zinc-600 hover:text-white transition-colors p-1.5">
                 <X size={14} />
               </button>
             )}
+            <button
+              onClick={async () => {
+                if (!searchInput.trim()) return;
+                setIsAiSearching(true);
+                setAiFilteredIds(null);
+                try {
+                  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || (typeof __GEMINI_API_KEY__ !== 'undefined' ? __GEMINI_API_KEY__ : '');
+                  if (!apiKey) throw new Error('GEMINI_API_KEY is not configured');
+                  const ai = new GoogleGenAI({ apiKey });
+                  const catalog = userLibrary.map(i => ({ id: i.metadata.id, title: i.metadata.title, artist: i.metadata.artist, genre: i.metadata.genre, mood: i.metadata.mood }));
+                  const prompt = `You are a music search AI. User query: "${searchInput}". Songs JSON: ${JSON.stringify(catalog)}. Return ONLY a JSON array of string IDs of songs that match best.`;
+                  const response = await ai.models.generateContent({ model: 'gemini-1.5-flash', contents: prompt, config: { responseMimeType: 'application/json', temperature: 0.1 } });
+                  setAiFilteredIds(JSON.parse(response.text || '[]'));
+                  setSearchQuery(searchInput); // just to update the text display
+                } catch (e) {
+                  console.error(e);
+                  alert('AI Search Failed: ' + (e as Error).message);
+                  setAiFilteredIds([]);
+                } finally {
+                  setIsAiSearching(false);
+                }
+              }}
+              className={`p-1.5 rounded-lg transition-colors ${isAiSearching ? 'text-cyan-400 animate-pulse' : 'text-zinc-500 hover:text-cyan-400'}`}
+              title="AI Smart Search"
+              disabled={isAiSearching}
+            >
+              <Sparkles size={16} className={isAiSearching ? 'animate-spin' : ''} />
+            </button>
             <button 
               onClick={() => setShowFilters(!showFilters)}
               className={`p-1.5 rounded-lg transition-colors ${showFilters || filterGenre || filterEra || filterComposer || filterYear || filterInstrument || filterGrade !== 'All' ? 'bg-cyan-500/20 text-cyan-400' : 'text-zinc-500 hover:text-zinc-300'}`}
