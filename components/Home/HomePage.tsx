@@ -881,10 +881,31 @@ const HomePage: React.FC<HomePageProps> = ({
                   const apiKey = import.meta.env.VITE_GEMINI_API_KEY || (typeof __GEMINI_API_KEY__ !== 'undefined' ? __GEMINI_API_KEY__ : '');
                   if (!apiKey) throw new Error('GEMINI_API_KEY is not configured');
                   const ai = new GoogleGenAI({ apiKey });
-                  const catalog = userLibrary.map(i => ({ id: i.metadata.id, title: i.metadata.title, artist: i.metadata.artist, genre: i.metadata.genre, mood: i.metadata.mood }));
-                  const prompt = `You are a music search AI. User query: "${searchInput}". Songs JSON: ${JSON.stringify(catalog)}. Return ONLY a JSON array of string IDs of songs that match best.`;
+                  
+                  // Extract search intent instead of passing the entire catalog to avoid token limits
+                  const prompt = `You are a music search intent extractor. User query: "${searchInput}". 
+Extract search parameters into JSON. Return ONLY JSON with this format: 
+{ "keywords": ["..."], "genres": ["..."], "moods": ["..."], "instruments": ["..."], "era": ["..."] }
+If a field is not relevant, leave the array empty. Translate concepts into English keywords if needed.`;
+
                   const response = await ai.models.generateContent({ model: 'gemini-1.5-flash', contents: prompt, config: { responseMimeType: 'application/json', temperature: 0.1 } });
-                  setAiFilteredIds(JSON.parse(response.text || '[]'));
+                  const params = JSON.parse(response.text || '{}');
+                  
+                  // Local filtering based on extracted intent
+                  let matches = userLibrary;
+                  const allKeywords = [
+                    ...(params.keywords || []), ...(params.genres || []), ...(params.moods || []), ...(params.instruments || []), ...(params.era || [])
+                  ].map((k: string) => k.toLowerCase());
+
+                  if (allKeywords.length > 0) {
+                    matches = matches.filter(song => {
+                      const m = song.metadata;
+                      const textToSearch = [m.title, m.artist, m.genre, m.mood, m.era, m.composer, ...(m.instruments || [])].filter(Boolean).join(' ').toLowerCase();
+                      return allKeywords.some(kw => textToSearch.includes(kw));
+                    });
+                  }
+                  
+                  setAiFilteredIds(matches.map(m => m.id));
                   setSearchQuery(searchInput);
                 } catch (err) {
                   console.error(err);
@@ -912,15 +933,33 @@ const HomePage: React.FC<HomePageProps> = ({
                   const apiKey = import.meta.env.VITE_GEMINI_API_KEY || (typeof __GEMINI_API_KEY__ !== 'undefined' ? __GEMINI_API_KEY__ : '');
                   if (!apiKey) throw new Error('GEMINI_API_KEY is not configured');
                   const ai = new GoogleGenAI({ apiKey });
-                  const catalog = userLibrary.map(i => ({ id: i.metadata.id, title: i.metadata.title, artist: i.metadata.artist, genre: i.metadata.genre, mood: i.metadata.mood }));
-                  const prompt = `You are a music search AI. User query: "${searchInput}". Songs JSON: ${JSON.stringify(catalog)}. Return ONLY a JSON array of string IDs of songs that match best.`;
+                  
+                  const prompt = `You are a music search intent extractor. User query: "${searchInput}". 
+Extract search parameters into JSON. Return ONLY JSON with this format: 
+{ "keywords": ["..."], "genres": ["..."], "moods": ["..."], "instruments": ["..."], "era": ["..."] }
+If a field is not relevant, leave the array empty. Translate concepts into English keywords if needed.`;
+
                   const response = await ai.models.generateContent({ model: 'gemini-1.5-flash', contents: prompt, config: { responseMimeType: 'application/json', temperature: 0.1 } });
-                  setAiFilteredIds(JSON.parse(response.text || '[]'));
-                  setSearchQuery(searchInput); // just to update the text display
+                  const params = JSON.parse(response.text || '{}');
+                  
+                  let matches = userLibrary;
+                  const allKeywords = [
+                    ...(params.keywords || []), ...(params.genres || []), ...(params.moods || []), ...(params.instruments || []), ...(params.era || [])
+                  ].map((k: string) => k.toLowerCase());
+
+                  if (allKeywords.length > 0) {
+                    matches = matches.filter(song => {
+                      const m = song.metadata;
+                      const textToSearch = [m.title, m.artist, m.genre, m.mood, m.era, m.composer, ...(m.instruments || [])].filter(Boolean).join(' ').toLowerCase();
+                      return allKeywords.some(kw => textToSearch.includes(kw));
+                    });
+                  }
+                  
+                  setAiFilteredIds(matches.map(m => m.id));
+                  setSearchQuery(searchInput);
                 } catch (e) {
                   console.error(e);
-                  alert('AI Search Failed: ' + (e as Error).message);
-                  setAiFilteredIds([]);
+                  setSearchQuery(searchInput);
                 } finally {
                   setIsAiSearching(false);
                 }
@@ -1227,8 +1266,7 @@ const HomePage: React.FC<HomePageProps> = ({
             ))}
           </div>
         )}
-
-        {/* Sort Dropdown Overlay */}
+{/* Sort Dropdown Overlay */}
         {showSortDropdown && (
           <>
             <div className="fixed inset-0 z-[1000]" onClick={() => setShowSortDropdown(false)} />
@@ -1245,9 +1283,14 @@ const HomePage: React.FC<HomePageProps> = ({
 
         {/* Song List */}
         <div className="pb-32">
-          {visibleItems.length === 0 ? (
+          {isAiSearching ? (
             <div className="h-64 flex flex-col items-center justify-center text-zinc-800">
-              {isSyncing ? (
+              <div className="w-8 h-8 border-2 border-cyan-500/20 border-t-cyan-500 rounded-full animate-spin mb-4 shadow-[0_0_10px_rgba(6,182,212,0.5)]"></div>
+              <p className="text-[10px] font-black uppercase tracking-widest text-cyan-400 animate-pulse">AI is searching...</p>
+            </div>
+          ) : visibleItems.length === 0 ? (
+            <div className="h-64 flex flex-col items-center justify-center text-zinc-800">
+              {isSyncing && !searchQuery ? (
                 <>
                   <div className="w-8 h-8 border-2 border-cyan-500/20 border-t-cyan-500 rounded-full animate-spin mb-4 shadow-[0_0_10px_rgba(6,182,212,0.5)]"></div>
                   <p className="text-[10px] font-black uppercase tracking-widest text-cyan-400 animate-pulse">Syncing Database...</p>
@@ -1256,9 +1299,10 @@ const HomePage: React.FC<HomePageProps> = ({
                 <>
                   <Database size={24} className="mb-2 opacity-10" />
                   <p className="text-[8px] font-black uppercase tracking-widest opacity-20">
-                    {activeTab === 'favorites' ? 'No Favorites Yet' :
-                      activeTab === 'mysongs' ? 'No Imported Songs' :
-                        activeTab === 'trash' ? 'Trash Empty' : 'No Songs Yet'}
+                    {searchQuery ? 'No songs match your search' :
+                      activeTab === 'favorites' ? 'No Favorites Yet' :
+                        activeTab === 'mysongs' ? 'No Imported Songs' :
+                          activeTab === 'trash' ? 'Trash is Empty' : 'No songs found'}
                   </p>
                 </>
               )}
