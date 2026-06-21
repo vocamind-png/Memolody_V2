@@ -595,11 +595,11 @@ const HomePage: React.FC<HomePageProps> = ({
       );
     }
 
-    if (filterGenre) list = list.filter(i => i.metadata.genre === filterGenre);
-    if (filterEra) list = list.filter(i => i.metadata.era === filterEra);
-    if (filterComposer) list = list.filter(i => i.metadata.composer === filterComposer || i.metadata.artist === filterComposer);
-    if (filterYear) list = list.filter(i => i.metadata.year === filterYear);
-    if (filterInstrument) list = list.filter(i => i.metadata.instruments?.includes(filterInstrument));
+    if (filterGenre) list = list.filter(i => i.metadata.genre?.toLowerCase() === filterGenre.toLowerCase());
+    if (filterEra) list = list.filter(i => i.metadata.era?.toLowerCase() === filterEra.toLowerCase());
+    if (filterComposer) list = list.filter(i => i.metadata.composer?.toLowerCase() === filterComposer.toLowerCase() || i.metadata.artist?.toLowerCase() === filterComposer.toLowerCase());
+    if (filterYear) list = list.filter(i => String(i.metadata.year) === String(filterYear));
+    if (filterInstrument) list = list.filter(i => i.metadata.instruments?.some(inst => inst.toLowerCase() === filterInstrument.toLowerCase()));
     if (filterGrade && filterGrade !== 'All') {
       list = list.filter(i => {
         const dGrade = i.metadata.difficultyGrade || i.metadata.difficulty || '';
@@ -939,7 +939,7 @@ const HomePage: React.FC<HomePageProps> = ({
                 className="w-full bg-[#111] border border-white/5 rounded-xl px-3 py-2 text-[10px] font-bold text-zinc-400 outline-none focus:border-cyan-500/50 transition-colors"
               >
                 <option value="">All Genres</option>
-                {Array.from(new Set([...userLibrary.map(i => i.metadata.genre).filter(Boolean), 'Pop', 'Rock', 'Jazz', 'Classical', 'R&B', 'Hip Hop', 'Electronic', 'Acoustic', 'Anime', 'K-Pop'])).sort().map(g => (
+                {Array.from(new Set([...userLibrary.map(i => i.metadata.genre).filter(Boolean), 'Classical', 'Baroque', 'Romantic', 'Modern', 'Contemporary', 'Jazz', 'Pop', 'Rock', 'Blues', 'R&B', 'Hip Hop', 'Electronic', 'Acoustic', 'Folk', 'Country', 'Latin', 'World', 'Soundtrack', 'Anime', 'K-Pop', 'J-Pop', 'Bossa Nova', 'Lo-Fi', 'Metal', 'Soul', 'Funk', 'Disco', 'Reggae'])).sort().map(g => (
                   <option key={g} value={g}>{g}</option>
                 ))}
               </select>
@@ -953,7 +953,7 @@ const HomePage: React.FC<HomePageProps> = ({
                 className="w-full bg-[#111] border border-white/5 rounded-xl px-3 py-2 text-[10px] font-bold text-zinc-400 outline-none focus:border-cyan-500/50 transition-colors"
               >
                 <option value="">All Eras</option>
-                {Array.from(new Set([...userLibrary.map(i => i.metadata.era).filter(Boolean), 'Baroque', 'Classical', 'Romantic', 'Modern', 'Contemporary', '80s', '90s', '2000s', '2010s', '2020s'])).sort().map(e => (
+                {Array.from(new Set([...userLibrary.map(i => i.metadata.era).filter(Boolean), 'Medieval', 'Renaissance', 'Baroque', 'Classical', 'Romantic', '20th Century', 'Modern', 'Contemporary', '1920s', '1930s', '1940s', '1950s', '1960s', '1970s', '1980s', '1990s', '2000s', '2010s', '2020s'])).sort().map(e => (
                   <option key={e} value={e}>{e}</option>
                 ))}
               </select>
@@ -967,7 +967,7 @@ const HomePage: React.FC<HomePageProps> = ({
                 className="w-full bg-[#111] border border-white/5 rounded-xl px-3 py-2 text-[10px] font-bold text-zinc-400 outline-none focus:border-cyan-500/50 transition-colors"
               >
                 <option value="">All Composers</option>
-                {Array.from(new Set([...userLibrary.map(i => i.metadata.composer || i.metadata.artist).filter(Boolean), 'Mozart', 'Beethoven', 'Bach', 'Chopin', 'Joe Hisaishi', 'Hans Zimmer', 'John Williams'])).sort().map(c => (
+                {Array.from(new Set([...userLibrary.map(i => i.metadata.composer || i.metadata.artist).filter(Boolean), 'J.S. Bach', 'W.A. Mozart', 'L.v. Beethoven', 'F. Chopin', 'C. Debussy', 'P.I. Tchaikovsky', 'A. Vivaldi', 'J. Brahms', 'F. Schubert', 'G.F. Handel', 'J. Haydn', 'F. Liszt', 'R. Schumann', 'S. Rachmaninoff', 'I. Stravinsky', 'C. Saint-Saëns', 'A. Dvořák', 'E. Grieg', 'G. Verdi', 'R. Wagner', 'G. Puccini', 'Joe Hisaishi', 'Hans Zimmer', 'John Williams', 'Ennio Morricone', 'Ryuichi Sakamoto', 'Yiruma'])).sort().map(c => (
                   <option key={c} value={c}>{c}</option>
                 ))}
               </select>
