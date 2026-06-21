@@ -39,6 +39,7 @@ const NimoPage = lazy(() => import('./components/Nimo/NimoPage'));
 const BrandingPage = lazy(() => import('./components/Presentation/BrandingPage'));
 const AdminPage = lazy(() => import('./components/Admin/AdminPage'));
 const PricingPage = lazy(() => import('./components/Subscription/PricingPage'));
+const GameHub = lazy(() => import('./components/Game/GameHub'));
 
 // ── Error Boundary for lazy-loaded pages ──
 interface EBState { hasError: boolean; error?: Error }
@@ -91,7 +92,7 @@ const PageLoader = () => {
   );
 };
 
-type ViewId = 'home' | 'library' | 'player' | 'profile' | 'forge' | 'distribution' | 'settings' | 'nimo' | 'presentation' | 'admin' | 'subscription';
+type ViewId = 'home' | 'library' | 'player' | 'profile' | 'forge' | 'distribution' | 'settings' | 'nimo' | 'presentation' | 'admin' | 'subscription' | 'game';
 
 const INITIAL_LOOP_PRESETS: LoopPreset[] = [
   { id: 'intro', label: 'Intro', color: '#00e5ff', startBar: 1, endBar: 4, isActive: false },
@@ -127,7 +128,7 @@ const App: React.FC = () => {
   const [initProgress, setInitProgress] = useState(0);
   const [initStatus, setInitStatus] = useState('Booting Audio System...');
   const [isNimoOpen, setIsNimoOpen] = useState(false);
-  const [nimoMounted, setNimoMounted] = useState(false); // mount on first click only
+  const [nimoMounted, setNimoMounted] = useState(true); // Always mount for sidebar mode
   const [selectedSong, setSelectedSong] = useState<Song | null>(null);
   const [uploadedMusicXml, setUploadedMusicXml] = useState<string | null>(null);
   const [selectedLayoutBundle, setSelectedLayoutBundle] = useState<any | null>(null);
@@ -676,6 +677,16 @@ const App: React.FC = () => {
       }
     });
 
+    const unregArrangeSong = nimoBrain.registerAction('arrange_song', (params) => {
+      console.log('[App] Nimo requested arrange_song', params);
+      navigateTo('forge');
+    });
+
+    const unregTeachMe = nimoBrain.registerAction('teach_me', (params) => {
+      console.log('[App] Nimo requested teach_me', params);
+      navigateTo('game');
+    });
+
     const unregPlaySong = nimoBrain.registerAction('play_song', async (params) => {
       const title = params?.songTitle;
       if (!title) return;
@@ -791,6 +802,9 @@ const App: React.FC = () => {
       unregMuteTrack();
       unregSetTrackMode();
       unregSetTrackInstrument();
+      unregDeleteLatestTrack();
+      unregArrangeSong();
+      unregTeachMe();
     };
   }, [navigateTo, handleSongSelect]);
 
@@ -839,6 +853,8 @@ const App: React.FC = () => {
         return <DistributionPage userLibrary={userSongs} onRefresh={triggerSync} onBack={() => navigateTo('home')} />;
       case 'nimo':
         return <NimoPage selectedSong={selectedSong} xmlData={uploadedMusicXml} preferredLanguage={preferredLanguage} onSongSelect={handleSongSelect} onRefresh={triggerSync} initialFile={pendingImportFile} voiceType={nimoVoice} />;
+      case 'game':
+        return <GameHub />;
       case 'presentation':
         return <BrandingPage onEnter={() => navigateTo('home')} backgroundImage="/images/memolody_hero.png" />;
       case 'admin':
@@ -933,34 +949,54 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      <main className="flex-1 min-h-0 overflow-hidden relative bg-[#0A0A0B]">
-        <PageErrorBoundary>
-          <Suspense fallback={<PageLoader />}>
-            {renderPage()}
-          </Suspense>
-        </PageErrorBoundary>
+      <div className="flex-1 flex min-h-0 overflow-hidden relative">
+        {/* Persistent Nimo Sidebar (Desktop) */}
+        {nimoEnabled && nimoMounted && (
+          <aside className="w-[360px] flex-shrink-0 relative z-[50] hidden md:flex border-r border-white/5">
+            <Suspense fallback={null}>
+              <FloatingNimo
+                isOpenProp={true}
+                setIsOpenProp={() => {}}
+                voiceType={nimoVoice}
+                preferredLanguage={preferredLanguage}
+                geminiModel={nimoModel}
+                isSidebarMode={true}
+              />
+            </Suspense>
+          </aside>
+        )}
 
-        {/* Song Loading Overlay */}
-        {isSongLoading && (
-          <div className="absolute inset-0 z-[9999] flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm transition-all duration-300">
-            <div className="w-12 h-12 border-4 border-cyan-500/20 border-t-cyan-500 rounded-full animate-spin shadow-[0_0_20px_rgba(6,182,212,0.5)]"></div>
-            <p className="mt-4 text-[10px] font-black uppercase tracking-widest text-cyan-400 animate-pulse drop-shadow-[0_0_8px_rgba(6,182,212,0.8)]">กำลังดึงข้อมูลเพลงและวิเคราะห์โครงสร้าง...</p>
+        <main className="flex-1 min-w-0 overflow-hidden relative bg-[#0A0A0B]">
+          <PageErrorBoundary>
+            <Suspense fallback={<PageLoader />}>
+              {renderPage()}
+            </Suspense>
+          </PageErrorBoundary>
+
+          {/* Song Loading Overlay */}
+          {isSongLoading && (
+            <div className="absolute inset-0 z-[9999] flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm transition-all duration-300">
+              <div className="w-12 h-12 border-4 border-cyan-500/20 border-t-cyan-500 rounded-full animate-spin shadow-[0_0_20px_rgba(6,182,212,0.5)]"></div>
+              <p className="mt-4 text-[10px] font-black uppercase tracking-widest text-cyan-400 animate-pulse drop-shadow-[0_0_8px_rgba(6,182,212,0.8)]">กำลังดึงข้อมูลเพลงและวิเคราะห์โครงสร้าง...</p>
+            </div>
+          )}
+        </main>
+
+        {/* Floating Nimo AI (Mobile) */}
+        {nimoEnabled && nimoMounted && (
+          <div className="md:hidden">
+            <Suspense fallback={null}>
+              <FloatingNimo
+                isOpenProp={isNimoOpen}
+                setIsOpenProp={setIsNimoOpen}
+                voiceType={nimoVoice}
+                preferredLanguage={preferredLanguage}
+                geminiModel={nimoModel}
+              />
+            </Suspense>
           </div>
         )}
-      </main>
-
-      {/* Floating Nimo AI - lazy loaded on first use only */}
-      {nimoEnabled && nimoMounted && (
-        <Suspense fallback={null}>
-          <FloatingNimo
-            isOpenProp={isNimoOpen}
-            setIsOpenProp={setIsNimoOpen}
-            voiceType={nimoVoice}
-            preferredLanguage={preferredLanguage}
-            geminiModel={nimoModel}
-          />
-        </Suspense>
-      )}
+      </div>
     </div>
   );
 };

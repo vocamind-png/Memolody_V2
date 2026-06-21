@@ -102,6 +102,24 @@ const matchLocalCommand = (transcript: string, lang: 'th' | 'en'): { action: str
         };
     }
     
+    // Arrange
+    if (text.includes('arrange') || text.includes('เรียบเรียง')) {
+        return {
+            action: 'arrange_song',
+            params: {},
+            reply: lang === 'th' ? 'กำลังพาไปเรียบเรียงเพลงค่ะ' : 'Preparing to arrange song.'
+        };
+    }
+    
+    // Teach
+    if (text.includes('teach me') || text.includes('สอนหน่อย') || text.includes('แบบฝึกหัด')) {
+        return {
+            action: 'teach_me',
+            params: {},
+            reply: lang === 'th' ? 'กำลังเปิดโหมดแบบฝึกหัดค่ะ' : 'Opening practice mode.'
+        };
+    }
+
     // MusicGen Send Lyric Trigger
     if (text.includes('ส่งไปที่ musicgen') || text.includes('ส่งเนื้อเพลงไป musicgen') || text.includes('ส่งเนื้อเพลง') || text.includes('send to musicgen')) {
         return {
@@ -130,12 +148,13 @@ interface Props {
     voiceType?: string;
     preferredLanguage?: 'th' | 'en';
     geminiModel?: string;
+    isSidebarMode?: boolean;
 }
 
 export const FloatingNimoContent: React.FC<Props> = ({
     isOpenProp, setIsOpenProp,
     voiceType = 'teen_girl', preferredLanguage = 'en',
-    geminiModel = 'gemini-3.5-flash'
+    geminiModel = 'gemini-3.5-flash', isSidebarMode = false
 }) => {
     const [open, setOpen] = useState(false);
     const isOpen = isOpenProp !== undefined ? isOpenProp : open;
@@ -741,8 +760,9 @@ ${appStateStr}
 15. 'take_screenshot': ถ่ายรูปภาพหน้าจอปัจจุบันของแอพพลิเคชันเพื่อตรวจสอบความถูกต้องหรือแก้ไขปัญหาให้ผู้ใช้ (ไม่มี params)
 16. 'solo_track': โซโล่ (Solo) เสียงเฉพาะของแทร็กใดแทร็กหนึ่ง (params: { trackName?: string, trackIndex?: number, solo: boolean })
 17. 'mute_track': ปิดเสียง (Mute) หรือเปิดเสียงของแทร็กใดแทร็กหนึ่ง (params: { trackName?: string, trackIndex?: number, mute: boolean })
-18. 'set_track_mode': สลับโหมดของแทร็กระหว่างเสียงร้อง Vocal และเสียงดนตรี Instrument (params: { trackName?: string, trackIndex?: number, mode: 'vocal' | 'instrument' })
 19. 'set_track_instrument': เลือกเครื่องดนตรีหรือนักร้องเสียงประสาน/Vocalido ของแทร็กนั้นๆ เช่น 'Piano', 'Violin', 'Canary', 'Lotte V', 'Soprano' (params: { trackName?: string, trackIndex?: number, instrument: string })
+20. 'arrange_song': ส่งเนื้อเพลงหรือเพลงไปเรียบเรียงประสานเสียงใน MusicGen หรือ Studio (params: { text?: string })
+21. 'teach_me': เริ่มโหมดแบบฝึกหัดหรือการสอนดนตรี (params: { topic?: string })
 
 ข้อสำคัญเกี่ยวกับการตอบกลับ (JSON):
 - 'reply': ข้อความที่จะพูดและแสดงผล ต้องลงท้ายอย่างเป็นธรรมชาติด้วย ${suffix}
@@ -778,6 +798,8 @@ Supported Actions:
 17. 'mute_track': Mute or unmute a specific track (params: { trackName?: string, trackIndex?: number, mute: boolean })
 18. 'set_track_mode': Switch track mode between vocal and instrument (params: { trackName?: string, trackIndex?: number, mode: 'vocal' | 'instrument' })
 19. 'set_track_instrument': Choose track voice/instrument like 'Piano', 'Violin', 'Canary', 'Lotte V', 'Soprano' (params: { trackName?: string, trackIndex?: number, instrument: string })
+20. 'arrange_song': Send lyrics or song to be arranged in MusicGen or Studio (params: { text?: string })
+21. 'teach_me': Start a lesson or practice mode (params: { topic?: string })
 
 You must output valid JSON matching the schema. If no actions are needed, return an empty array.`;
 
@@ -979,7 +1001,7 @@ You must output valid JSON matching the schema. If no actions are needed, return
         };
     }, [preferredLanguage]);
 
-    if (!isOpen) {
+    if (!isOpen && !isSidebarMode) {
         return (
             <button
                 onClick={() => setIsOpen(true)}
@@ -997,11 +1019,13 @@ You must output valid JSON matching the schema. If no actions are needed, return
     return (
         <div 
             ref={containerDivRef}
-            className="fixed z-[40000] flex flex-col bg-[#0d0d0f] border border-white/10 shadow-2xl overflow-hidden floating-nimo-container"
-            style={isMobile 
+            className={`flex flex-col bg-[#0d0d0f] border-white/10 shadow-2xl overflow-hidden floating-nimo-container ${
+                isSidebarMode ? 'w-full h-full relative border-r' : 'fixed z-[40000] border'
+            }`}
+            style={isSidebarMode ? {} : (isMobile 
                 ? { left: 0, right: 0, bottom: 0, height: '80vh', borderRadius: '24px 24px 0 0' } 
                 : { bottom: 24, right: 24, width: 360, height: 560, borderRadius: 28 }
-            }
+            )}
         >
             <style>{`
                 @keyframes wave {
@@ -1078,22 +1102,26 @@ You must output valid JSON matching the schema. If no actions are needed, return
                     >
                         {speakerMuted ? <VolumeX size={18} /> : <Volume2 size={18} />}
                     </button>
-                    <button
-                        onClick={() => {
-                            nimoBrain.executeAction('navigate_to_page', { view: 'nimo' });
-                            setIsOpen(false);
-                        }}
-                        className="w-8 h-8 flex items-center justify-center text-zinc-500 hover:text-white active:scale-75 transition-all"
-                        title={preferredLanguage === 'th' ? 'ขยายหน้าต่าง' : 'Expand to Full Page'}
-                    >
-                        <Maximize2 size={16} />
-                    </button>
-                    <button 
-                        onClick={() => setIsOpen(false)} 
-                        className="w-8 h-8 flex items-center justify-center text-zinc-500 hover:text-white active:scale-75 transition-all"
-                    >
-                        <X size={20} />
-                    </button>
+                    {!isSidebarMode && (
+                        <>
+                            <button
+                                onClick={() => {
+                                    nimoBrain.executeAction('navigate_to_page', { view: 'nimo' });
+                                    setIsOpen(false);
+                                }}
+                                className="w-8 h-8 flex items-center justify-center text-zinc-500 hover:text-white active:scale-75 transition-all"
+                                title={preferredLanguage === 'th' ? 'ขยายหน้าต่าง' : 'Expand to Full Page'}
+                            >
+                                <Maximize2 size={16} />
+                            </button>
+                            <button 
+                                onClick={() => setIsOpen(false)} 
+                                className="w-8 h-8 flex items-center justify-center text-zinc-500 hover:text-white active:scale-75 transition-all"
+                            >
+                                <X size={20} />
+                            </button>
+                        </>
+                    )}
                 </div>
             </div>
 
