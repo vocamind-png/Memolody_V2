@@ -266,20 +266,22 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
       
       let newTracks: TrackState[] = [];
       
-      if (aiEngine === 'rag-gemini' && chordSource === 'ai') {
+      if (['rag-gemini', 'gemini', 'auto'].includes(aiEngine)) {
         try {
-          console.log("[RAG] Retrieving library for references...");
-          const library = await songStorage.getAllSongs();
-          const references = AIArrangerService.retrieveReferences(library, arrangeStyle, aiPrompt, 3);
-          
-          console.log(`[RAG] Found ${references.length} references. Calling Gemini...`);
-          const aiResult = await AIArrangerService.generateAIArrangement(leadMelody, references, arrangeStyle, aiPrompt, arrangeKey, arrangeBpm);
-          
-          if (aiResult && aiResult.chords) {
-            console.log("[RAG] AI Chords generated:", aiResult.chords);
-            config.aiChords = aiResult.chords;
-          } else {
-            console.warn("[RAG] AI failed to generate chords, falling back to algorithmic.");
+          if (chordSource === 'ai') {
+            console.log("[RAG] Retrieving library for references...");
+            const library = await songStorage.getAllSongs();
+            const references = AIArrangerService.retrieveReferences(library, arrangeStyle, aiPrompt, 3);
+            
+            console.log(`[RAG] Found ${references.length} references. Calling Gemini...`);
+            const aiResult = await AIArrangerService.generateAIArrangement(leadMelody, references, arrangeStyle, aiPrompt, arrangeKey, arrangeBpm);
+            
+            if (aiResult && aiResult.chords) {
+              console.log("[RAG] AI Chords generated:", aiResult.chords);
+              config.aiChords = aiResult.chords;
+            } else {
+              console.warn("[RAG] AI failed to generate chords, falling back to algorithmic.");
+            }
           }
           
           newTracks = await SymbolicArranger.generateArrangement(leadMelody, config);
