@@ -890,8 +890,8 @@ const App: React.FC = () => {
 
   if (!authUser) {
     return (
-      <div className="flex-1 flex flex-col min-h-[100dvh] w-full bg-[#0A0A0B] p-4 overflow-y-auto py-10">
-        <div className="m-auto w-full max-w-md flex flex-col items-center">
+      <div className="flex-1 flex flex-col min-h-[100dvh] w-full bg-[#0A0A0B] px-4 py-12 overflow-y-auto items-center justify-start">
+        <div className="w-full max-w-md flex flex-col items-center">
           <div className="mb-8 flex flex-col items-center flex-shrink-0">
              <Zap size={32} className="text-cyan-400 mb-2 drop-shadow-[0_0_15px_rgba(6,182,212,0.8)]" />
              <h1 className="text-2xl font-black text-white tracking-[0.2em] uppercase">MEMOLODY <span className="text-cyan-400">V2.4</span></h1>
@@ -946,7 +946,7 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      <main className="flex-1 overflow-hidden relative bg-[#0A0A0B]">
+      <main className="flex-1 min-h-0 overflow-hidden relative bg-[#0A0A0B]">
         <PageErrorBoundary>
           <Suspense fallback={<PageLoader />}>
             {renderPage()}
