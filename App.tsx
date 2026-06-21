@@ -888,20 +888,7 @@ const App: React.FC = () => {
     );
   }
 
-  if (!authUser) {
-    return (
-      <div className="flex-1 flex flex-col min-h-[100dvh] w-full bg-[#0A0A0B] px-4 py-12 overflow-y-auto items-center justify-start">
-        <div className="w-full max-w-md flex flex-col items-center">
-          <div className="mb-8 flex flex-col items-center flex-shrink-0">
-             <Zap size={32} className="text-cyan-400 mb-2 drop-shadow-[0_0_15px_rgba(6,182,212,0.8)]" />
-             <h1 className="text-2xl font-black text-white tracking-[0.2em] uppercase">MEMOLODY <span className="text-cyan-400">V2.4</span></h1>
-             <p className="text-zinc-500 text-[10px] font-bold tracking-widest mt-2 uppercase text-center">Please verify your identity to continue</p>
-          </div>
-          <AuthForm onComplete={() => window.location.reload()} />
-        </div>
-      </div>
-    );
-  }
+
 
   return (
     <div className={`flex flex-col h-[100dvh] w-full bg-[#0A0A0B] font-sans selection:bg-cyan-500/30 ${performanceMode ? 'perf-mode' : ''}`}>
