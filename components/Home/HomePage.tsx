@@ -995,7 +995,7 @@ const HomePage: React.FC<HomePageProps> = ({
                 className="w-full bg-[#111] border border-white/5 rounded-xl px-3 py-2 text-[10px] font-bold text-zinc-400 outline-none focus:border-cyan-500/50 transition-colors"
               >
                 <option value="">All Instruments</option>
-                {Array.from(new Set([...userLibrary.flatMap(i => i.metadata.instruments || []), 'Piano', 'Guitar', 'Violin', 'Cello', 'Drums', 'Bass', 'Synthesizer', 'Flute', 'Vocals'])).sort().map(inst => (
+                {Array.from(new Set([...userLibrary.flatMap(i => i.metadata.instruments || []), 'Piano', 'Acoustic Guitar', 'Electric Guitar', 'Bass Guitar', 'Violin', 'Viola', 'Cello', 'Double Bass', 'Harp', 'Flute', 'Clarinet', 'Oboe', 'Bassoon', 'Saxophone', 'Trumpet', 'Trombone', 'French Horn', 'Tuba', 'Drums', 'Percussion', 'Timpani', 'Marimba', 'Synthesizer', 'Keyboard', 'Organ', 'Accordion', 'Ukulele', 'Vocals', 'Choir'])).sort().map(inst => (
                   <option key={inst} value={inst}>{inst}</option>
                 ))}
               </select>
