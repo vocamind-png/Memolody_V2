@@ -939,7 +939,7 @@ const HomePage: React.FC<HomePageProps> = ({
                 className="w-full bg-[#111] border border-white/5 rounded-xl px-3 py-2 text-[10px] font-bold text-zinc-400 outline-none focus:border-cyan-500/50 transition-colors"
               >
                 <option value="">All Genres</option>
-                {Array.from(new Set(userLibrary.map(i => i.metadata.genre).filter(Boolean))).sort().map(g => (
+                {Array.from(new Set([...userLibrary.map(i => i.metadata.genre).filter(Boolean), 'Pop', 'Rock', 'Jazz', 'Classical', 'R&B', 'Hip Hop', 'Electronic', 'Acoustic', 'Anime', 'K-Pop'])).sort().map(g => (
                   <option key={g} value={g}>{g}</option>
                 ))}
               </select>
@@ -953,7 +953,7 @@ const HomePage: React.FC<HomePageProps> = ({
                 className="w-full bg-[#111] border border-white/5 rounded-xl px-3 py-2 text-[10px] font-bold text-zinc-400 outline-none focus:border-cyan-500/50 transition-colors"
               >
                 <option value="">All Eras</option>
-                {Array.from(new Set(userLibrary.map(i => i.metadata.era).filter(Boolean))).sort().map(e => (
+                {Array.from(new Set([...userLibrary.map(i => i.metadata.era).filter(Boolean), 'Baroque', 'Classical', 'Romantic', 'Modern', 'Contemporary', '80s', '90s', '2000s', '2010s', '2020s'])).sort().map(e => (
                   <option key={e} value={e}>{e}</option>
                 ))}
               </select>
@@ -967,7 +967,7 @@ const HomePage: React.FC<HomePageProps> = ({
                 className="w-full bg-[#111] border border-white/5 rounded-xl px-3 py-2 text-[10px] font-bold text-zinc-400 outline-none focus:border-cyan-500/50 transition-colors"
               >
                 <option value="">All Composers</option>
-                {Array.from(new Set(userLibrary.map(i => i.metadata.composer || i.metadata.artist).filter(Boolean))).sort().map(c => (
+                {Array.from(new Set([...userLibrary.map(i => i.metadata.composer || i.metadata.artist).filter(Boolean), 'Mozart', 'Beethoven', 'Bach', 'Chopin', 'Joe Hisaishi', 'Hans Zimmer', 'John Williams'])).sort().map(c => (
                   <option key={c} value={c}>{c}</option>
                 ))}
               </select>
@@ -981,7 +981,7 @@ const HomePage: React.FC<HomePageProps> = ({
                 className="w-full bg-[#111] border border-white/5 rounded-xl px-3 py-2 text-[10px] font-bold text-zinc-400 outline-none focus:border-cyan-500/50 transition-colors"
               >
                 <option value="">All Years</option>
-                {Array.from(new Set(userLibrary.map(i => i.metadata.year).filter(Boolean))).sort().map(y => (
+                {Array.from(new Set([...userLibrary.map(i => i.metadata.year).filter(Boolean), '2024', '2023', '2022', '2021', '2020', '2019', '2018', '2015', '2010'])).sort((a, b) => Number(b) - Number(a)).map(y => (
                   <option key={y} value={y}>{y}</option>
                 ))}
               </select>
@@ -995,7 +995,7 @@ const HomePage: React.FC<HomePageProps> = ({
                 className="w-full bg-[#111] border border-white/5 rounded-xl px-3 py-2 text-[10px] font-bold text-zinc-400 outline-none focus:border-cyan-500/50 transition-colors"
               >
                 <option value="">All Instruments</option>
-                {Array.from(new Set(userLibrary.flatMap(i => i.metadata.instruments || []))).sort().map(inst => (
+                {Array.from(new Set([...userLibrary.flatMap(i => i.metadata.instruments || []), 'Piano', 'Guitar', 'Violin', 'Cello', 'Drums', 'Bass', 'Synthesizer', 'Flute', 'Vocals'])).sort().map(inst => (
                   <option key={inst} value={inst}>{inst}</option>
                 ))}
               </select>
@@ -1008,7 +1008,8 @@ const HomePage: React.FC<HomePageProps> = ({
                 onChange={e => setFilterGrade(e.target.value)}
                 className="w-full bg-[#111] border border-white/5 rounded-xl px-3 py-2 text-[10px] font-bold text-zinc-400 outline-none focus:border-cyan-500/50 transition-colors"
               >
-                {['All', 'None', 'Grade 1-3', 'Grade 4-6', 'Grade 7-8', 'Diploma'].map(g => (
+                <option value="All">All</option>
+                {Array.from(new Set([...userLibrary.map(i => i.metadata.difficulty_grade).filter(Boolean), 'Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6', 'Grade 7', 'Grade 8', 'Diploma'])).sort().map(g => (
                   <option key={g} value={g}>{g}</option>
                 ))}
               </select>
