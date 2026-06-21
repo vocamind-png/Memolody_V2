@@ -189,7 +189,7 @@ const SongRow = memo(({ item, onSongSelect, onToggleDelete, onPermanentDelete, i
         <p className="text-[8px] font-bold text-zinc-600 uppercase tracking-widest truncate flex items-center gap-1.5 mt-0.5">
           <span>{item.metadata.artist || 'Unknown Maestro'}</span>
           {(() => {
-            const grade = item.metadata?.difficulty_grade || item.metadata?.difficultyGrade || item.difficulty_grade || item.difficultyGrade;
+            const grade = item.metadata?.difficulty_grade || item.metadata?.difficultyGrade || item.metadata?.difficulty || item.difficulty_grade || item.difficultyGrade || item.difficulty;
             return grade && grade !== 'none' ? (
               <span className="px-1.5 py-0.5 rounded-sm bg-white/5 border border-white/10 text-[7px] text-zinc-400 font-bold tracking-widest leading-none">
                 {grade}
@@ -602,18 +602,19 @@ const HomePage: React.FC<HomePageProps> = ({
     if (filterInstrument) list = list.filter(i => i.metadata.instruments?.includes(filterInstrument));
     if (filterGrade && filterGrade !== 'All') {
       list = list.filter(i => {
-        if (filterGrade === 'None') return !i.metadata.difficultyGrade || i.metadata.difficultyGrade === 'none';
-        if (filterGrade === 'Diploma') return i.metadata.difficultyGrade?.toLowerCase() === 'diploma';
+        const dGrade = i.metadata.difficultyGrade || i.metadata.difficulty || '';
+        if (filterGrade === 'None') return !dGrade || dGrade === 'none';
+        if (filterGrade === 'Diploma') return dGrade.toLowerCase() === 'diploma';
         if (filterGrade.includes('-')) {
           const match = filterGrade.match(/Grade\s+(\d+)-(\d+)/i);
           if (match) {
             const min = parseInt(match[1]);
             const max = parseInt(match[2]);
-            const grade = parseInt(i.metadata.difficultyGrade?.replace(/Grade\s*/i, '') || '0');
+            const grade = parseInt(dGrade.replace(/Grade\s*/i, '') || '0');
             return grade >= min && grade <= max;
           }
         }
-        return i.metadata.difficultyGrade === filterGrade;
+        return dGrade === filterGrade;
       });
     }
 
@@ -828,7 +829,7 @@ const HomePage: React.FC<HomePageProps> = ({
   ];
 
   return (
-    <div className="h-full flex flex-col bg-[#0A0A0B] overflow-y-auto overflow-x-hidden select-none" onScroll={handleScroll}>
+    <div className="absolute inset-0 flex flex-col bg-[#0A0A0B] overflow-y-auto overflow-x-hidden select-none" onScroll={handleScroll}>
 
       {/* ── HEADER / SEARCH & RECENT (STATIC TOP) ── */}
       <div className="shrink-0 px-6 pt-6 pb-2 space-y-5 bg-gradient-to-b from-white/[0.02] to-transparent border-b border-white/5">
@@ -921,6 +922,7 @@ const HomePage: React.FC<HomePageProps> = ({
               <Database size={12} /> STYLES
             </button>
           </div>
+        </div>
 
         {/* ── ADVANCED FILTERS PANEL ── */}
         {showFilters && (
