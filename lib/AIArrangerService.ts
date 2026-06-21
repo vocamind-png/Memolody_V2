@@ -95,10 +95,10 @@ export class AIArrangerService {
       // Build context from references
       let referenceContext = '';
       if (references.length > 0) {
-        referenceContext = 'Here are structural examples extracted from the user\\'s library for this style:\\n';
+        referenceContext = "Here are structural examples extracted from the user's library for this style:\n";
         references.forEach((ref, idx) => {
           const extractedChords = this.extractStylisticFeatures(ref.xmlData);
-          referenceContext += `Reference ${idx + 1} (${ref.metadata.title}): Typical chord progression: ${extractedChords || 'N/A'}\\n`;
+          referenceContext += `Reference ${idx + 1} (${ref.metadata.title}): Typical chord progression: ${extractedChords || 'N/A'}\n`;
         });
       } else {
         referenceContext = 'No direct local references found, please use your general knowledge of this style.';
