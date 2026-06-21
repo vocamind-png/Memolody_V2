@@ -914,16 +914,19 @@ const HomePage: React.FC<HomePageProps> = ({
             >
               <Sparkles size={16} className={isAiSearching ? 'animate-spin' : ''} />
             </button>
-            <button 
-              onClick={() => setShowFilters(!showFilters)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-colors ${showFilters || filterGenre ? 'bg-cyan-500/20 text-cyan-400' : 'bg-white/5 text-zinc-400 hover:text-white'}`}
-              title="Styles & Filters"
-            >
-              <Database size={12} /> STYLES
-            </button>
           </div>
         </div>
 
+        {/* ── STYLES & FILTERS TOGGLE ── */}
+        <div className="flex items-center justify-end w-full">
+          <button 
+            onClick={() => setShowFilters(!showFilters)}
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-colors shadow-sm ${showFilters || filterGenre || filterInstrument || filterEra || filterYear || filterComposer || filterGrade !== 'All' ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30' : 'bg-white/5 text-zinc-400 hover:text-white border border-white/5'}`}
+            title="Toggle Styles & Filters"
+          >
+            <Database size={12} /> {showFilters ? 'HIDE STYLES' : 'STYLES & FILTERS'}
+          </button>
+        </div>
         {/* ── ADVANCED FILTERS PANEL ── */}
         {showFilters && (
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3 p-4 bg-white/[0.02] border border-white/5 rounded-[20px] animate-in slide-in-from-top-2 duration-200">
@@ -1143,7 +1146,6 @@ const HomePage: React.FC<HomePageProps> = ({
             </div>
           </div>
         )}
-      </div>
 
       {/* ── TOTAL MATRIX / VAULT (SCROLLABLE BOTTOM) ── */}
       <div className="flex-1 min-h-0 flex flex-col">
