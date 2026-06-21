@@ -981,7 +981,7 @@ const HomePage: React.FC<HomePageProps> = ({
                 className="w-full bg-[#111] border border-white/5 rounded-xl px-3 py-2 text-[10px] font-bold text-zinc-400 outline-none focus:border-cyan-500/50 transition-colors"
               >
                 <option value="">All Years</option>
-                {Array.from(new Set([...userLibrary.map(i => i.metadata.year).filter(Boolean), '2024', '2023', '2022', '2021', '2020', '2019', '2018', '2015', '2010'])).sort((a, b) => Number(b) - Number(a)).map(y => (
+                {Array.from(new Set([...userLibrary.map(i => i.metadata.year).filter(Boolean), '2024', '2023', '2022', '2021', '2020', '2019', '2018', '2015', '2010', '2000', '1990', '1980', '1970', '1960', '1950', '1900', '1850', '1800', '1750', '1700', '1650', '1600'])).sort((a, b) => Number(b) - Number(a)).map(y => (
                   <option key={y} value={y}>{y}</option>
                 ))}
               </select>
