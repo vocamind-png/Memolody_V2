@@ -624,12 +624,13 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
   }, [dragState, pixelsPerMeasure, totalMeasures, sections, hasSavedDragHistory, saveHistory]);
 
   return (
-    <div className="relative flex flex-col h-full bg-[#0c0c0e] overflow-hidden group/arranger">
+    <div className="relative flex flex-col h-full bg-transparent overflow-hidden group/arranger">
       <input type="file" ref={fileInputRef} className="hidden" accept=".xml,.musicxml,.mxl,.mid,.midi" onChange={handleAddSong} />
       <style>{`
         .track-lane {
-          background: rgba(12, 12, 14, 0.4);
-          border: 1px solid rgba(255, 255, 255, 0.05);
+          background: var(--bg-panel);
+          backdrop-filter: blur(8px);
+          border: 1px solid var(--border-light);
           border-radius: 12px;
           margin-bottom: 8px;
           height: 50px;
@@ -671,12 +672,12 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
       
       {/* Arranger Header */}
       {!hideHeader && (
-        <header className="h-14 sm:h-16 bg-[#0c0c0e] border-b border-white/5 flex items-center justify-between px-3 sm:px-6 z-[3000] shrink-0">
+        <header className="h-14 sm:h-16 glass-panel flex items-center justify-between px-3 sm:px-6 z-[3000] shrink-0 sticky top-0 border-b-0 border-x-0">
           <div className="flex items-center gap-2 sm:gap-4 min-w-0">
-            <button onClick={() => { /* Implement back to previous view */ }} className="w-9 h-9 sm:w-10 sm:h-10 bg-white/5 text-zinc-400 rounded-xl sm:rounded-2xl flex items-center justify-center hover:text-white transition-all shrink-0"><ArrowLeft size={18}/></button>
+            <button onClick={() => { /* Implement back to previous view */ }} className="w-9 h-9 sm:w-10 sm:h-10 glass-button text-zinc-400 rounded-xl sm:rounded-2xl flex items-center justify-center hover:text-white transition-all shrink-0"><ArrowLeft size={18}/></button>
             <div className="flex flex-col min-w-0">
-              <span className="text-[11px] sm:text-[13px] font-black text-white uppercase italic truncate max-w-[100px] sm:max-w-[200px] leading-tight">{localSong?.title || 'ARRANGER VIEW'}</span>
-              <span className="text-[6px] sm:text-[7px] font-bold text-cyan-500 uppercase tracking-widest italic leading-none">NEURAL ARRANGER</span>
+              <span className="text-[11px] sm:text-[13px] font-black text-white uppercase italic truncate max-w-[100px] sm:max-w-[200px] leading-tight drop-shadow-md">{localSong?.title || 'ARRANGER VIEW'}</span>
+              <span className="text-[6px] sm:text-[7px] font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-indigo-400 uppercase tracking-widest italic leading-none drop-shadow-sm">NEURAL ARRANGER</span>
             </div>
           </div>
           <div className="flex items-center gap-2">

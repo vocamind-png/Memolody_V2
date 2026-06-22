@@ -56,7 +56,7 @@ const THEMES: GameTheme[] = [
 
 const GameHub: React.FC = () => {
   return (
-    <div className="h-full flex flex-col bg-[#1a233a] overflow-y-auto no-scrollbar pb-32">
+    <div className="h-full flex flex-col bg-transparent overflow-y-auto no-scrollbar pb-32 pt-2">
       <style>{`
         .game-card {
           width: 100%;
@@ -64,16 +64,19 @@ const GameHub: React.FC = () => {
           border-radius: 24px;
           overflow: hidden;
           flex-shrink: 0;
-          box-shadow: 0 8px 20px rgba(0,0,0,0.4);
+          box-shadow: 0 8px 30px rgba(0,0,0,0.5);
           transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-          background: #0c0c0e;
+          background: var(--bg-panel);
+          backdrop-filter: blur(12px);
+          border: 1px solid var(--border-light);
         }
         @media (min-width: 640px) {
           .game-card { height: 250px; border-radius: 32px; }
         }
         .game-card:hover {
           transform: translateY(-5px) scale(1.03);
-          box-shadow: 0 15px 35px rgba(0,0,0,0.6);
+          box-shadow: 0 15px 40px rgba(0,0,0,0.8);
+          border-color: rgba(255,255,255,0.2);
         }
         .play-btn-area {
           background: white;

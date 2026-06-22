@@ -925,6 +925,11 @@ export class MusicEngine {
     this.trackModes.set(trackId, 'vocal');
     const htmlStems = stemAudios.length;
     debugOverlay(`🎤 addVocalLayer(${trackId}): HTMLStems=${htmlStems}`);
+
+    // Re-sync states now that the HTML Audio element is fully loaded and readyState is > 0
+    if (this.tracks && this.tracks.length > 0) {
+      this.updateTrackStates(this.tracks);
+    }
   }
 
   updateVocalPitchShifts() {
@@ -1285,7 +1290,9 @@ export class MusicEngine {
         // EXCEPT if no vocal audio exists for this track at all (fallback to instrument so the track isn't dead)
         const sampler = this.trackSamplers.get(t.id);
         if (sampler && sampler.volume) {
-          const hasVocalAudio = (this.trackVocalLayers.get(t.id)?.length || 0) > 0 || this.vocalAudioElements.has(t.id);
+          const audioEl = this.vocalAudioElements.get(t.id);
+          const hasValidHtmlAudio = audioEl && !audioEl.error && audioEl.readyState > 0;
+          const hasVocalAudio = (this.trackVocalLayers.get(t.id)?.length || 0) > 0 || hasValidHtmlAudio;
           sampler.volume.value = (t.mode === 'vocal' && hasVocalAudio) ? -100 : 4;
         }
       }
