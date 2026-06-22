@@ -141,6 +141,8 @@ const App: React.FC = () => {
   const [onlineStatus, setOnlineStatus] = useState<'online' | 'offline'>('online');
   const [globalSearchQuery, setGlobalSearchQuery] = useState('');
   const [performanceMode, setPerformanceMode] = useState(() => localStorage.getItem('nimo_perf_mode') === 'true');
+  const [uiTheme, setUiTheme] = useState<'v1' | 'v2'>(() => (localStorage.getItem('memo_ui_theme') as 'v1' | 'v2') || 'v2');
+  const [nimoPosition, setNimoPosition] = useState<'left' | 'right'>(() => (localStorage.getItem('nimo_position') as 'left' | 'right') || 'left');
   const [loopPresets, setLoopPresets] = useState<LoopPreset[]>(INITIAL_LOOP_PRESETS);
   const [pendingImportFile, setPendingImportFile] = useState<File | null>(null);
   const [autoPlayOnLoad, setAutoPlayOnLoad] = useState(false); // true after OMR import → Player auto-starts
@@ -161,7 +163,17 @@ const App: React.FC = () => {
   const [nimoVoice, setNimoVoice] = useState<'teen_girl' | 'adult_woman' | 'teen_boy' | 'adult_man'>(() => (localStorage.getItem('nimo_voice') as any) || 'teen_girl');
   const [nimoModel, setNimoModel] = useState<string>(() => localStorage.getItem('nimo_model') || 'gemini-3.5-flash');
 
+  // Apply UI Theme class to body
+  useEffect(() => {
+    document.body.classList.remove('theme-v1', 'theme-v2');
+    document.body.classList.add(`theme-${uiTheme}`);
+    localStorage.setItem('memo_ui_theme', uiTheme);
+  }, [uiTheme]);
 
+  // Save Nimo Position
+  useEffect(() => {
+    localStorage.setItem('nimo_position', nimoPosition);
+  }, [nimoPosition]);
 
   // Save currentView to localStorage on change
   useEffect(() => {
@@ -848,7 +860,7 @@ const App: React.FC = () => {
       case 'profile':
         return <ProfilePage onEnterForge={() => navigateTo('forge')} userLibrary={userSongs} onSongSelect={handleSongSelect} onTriggerSync={triggerSync} isSyncing={isSyncing} onRefresh={triggerSync} preferredLanguage={preferredLanguage} setPreferredLanguage={handleLanguageChange} userCountry={userCountry} setUserCountry={handleCountryChange} userInstrument={userInstrument} setUserInstrument={handleInstrumentChange} onViewPlan={() => navigateTo('subscription')} />;
       case 'settings':
-        return <SettingsPage performanceMode={performanceMode} onTogglePerformanceMode={handleTogglePerformanceMode} nimoEnabled={nimoEnabled} onToggleNimoEnabled={(val) => { setNimoEnabled(val); localStorage.setItem('nimo_enabled', String(val)); }} nimoVoice={nimoVoice} onChangeNimoVoice={(val) => { setNimoVoice(val); localStorage.setItem('nimo_voice', val); }} vocalidoAutoRender={vocalidoAutoRender} onToggleVocalidoAutoRender={(val) => { setVocalidoAutoRender(val); localStorage.setItem('vocalido_auto_render', String(val)); }} renderCardStyle={vocalidoRenderCardStyle} onSelectRenderCardStyle={(val) => { setVocalidoRenderCardStyle(val); localStorage.setItem('vocalido_render_card_style', val); }} nimoModel={nimoModel} onChangeNimoModel={(val) => { setNimoModel(val); localStorage.setItem('nimo_model', val); }} />
+        return <SettingsPage performanceMode={performanceMode} onTogglePerformanceMode={handleTogglePerformanceMode} nimoEnabled={nimoEnabled} onToggleNimoEnabled={(val) => { setNimoEnabled(val); localStorage.setItem('nimo_enabled', String(val)); }} nimoVoice={nimoVoice} onChangeNimoVoice={(val) => { setNimoVoice(val); localStorage.setItem('nimo_voice', val); }} vocalidoAutoRender={vocalidoAutoRender} onToggleVocalidoAutoRender={(val) => { setVocalidoAutoRender(val); localStorage.setItem('vocalido_auto_render', String(val)); }} renderCardStyle={vocalidoRenderCardStyle} onSelectRenderCardStyle={(val) => { setVocalidoRenderCardStyle(val); localStorage.setItem('vocalido_render_card_style', val); }} nimoModel={nimoModel} onChangeNimoModel={(val) => { setNimoModel(val); localStorage.setItem('nimo_model', val); }} uiTheme={uiTheme} onUiThemeChange={setUiTheme} nimoPosition={nimoPosition} onNimoPositionChange={setNimoPosition} onBack={() => setCurrentView('home')} />;
       case 'distribution':
         return <DistributionPage userLibrary={userSongs} onRefresh={triggerSync} onBack={() => navigateTo('home')} />;
       case 'nimo':
@@ -907,14 +919,14 @@ const App: React.FC = () => {
 
 
   return (
-    <div className={`flex flex-col h-[100dvh] w-full bg-[#0A0A0B] font-sans selection:bg-cyan-500/30 ${performanceMode ? 'perf-mode' : ''}`}>
+    <div className={`flex flex-col h-[100dvh] w-full bg-transparent font-sans selection:bg-cyan-500/30 ${performanceMode ? 'perf-mode' : ''}`}>
 
-      <header className="h-12 flex items-center justify-between px-4 bg-[#0A0A0B] border-b border-white/5 shrink-0 z-[10000]">
-        <div className="flex items-center gap-2">
-          <Zap size={14} className="text-cyan-400" />
-          <span className="text-[10px] font-black tracking-[0.15em] text-zinc-400">MEMOLODY <span className="text-cyan-400">V2.4</span></span>
+      <header className="h-14 flex items-center justify-between px-6 glass-panel shrink-0 z-[10000] sticky top-0">
+        <div className="flex items-center gap-3">
+          <Zap size={18} className="text-cyan-400 drop-shadow-[0_0_8px_rgba(0,229,255,0.8)]" />
+          <span className="text-[12px] font-black tracking-[0.2em] text-white drop-shadow-md">MEMOLODY <span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-indigo-400">V2.4</span></span>
         </div>
-        <nav className="flex items-center gap-0.5 sm:gap-1 shrink-0">
+        <nav className="flex items-center gap-1 sm:gap-2 shrink-0">
           {NAV_ITEMS
             .filter(item => !item.minRole || hasAccess(role, item.minRole as any))
             .map(item => (
@@ -922,37 +934,37 @@ const App: React.FC = () => {
               key={item.id}
               id={`nav-${item.id}`}
               onClick={() => navigateTo(item.id, item.isNimo)}
-              className={`flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded-md text-[8px] font-black uppercase tracking-wider transition-colors duration-75 ${
+              className={`flex items-center gap-2 px-3 sm:px-4 py-2 rounded-xl text-[9px] font-bold uppercase tracking-widest transition-all duration-300 ${
                 item.isNimo
-                  ? currentView === item.id ? 'bg-cyan-500 text-black' : 'text-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/10 border border-cyan-500/20'
-                  : currentView === item.id ? 'bg-white text-black' : 'text-zinc-600 hover:text-zinc-300'
+                  ? currentView === item.id ? 'bg-cyan-500 text-black shadow-[0_0_15px_rgba(0,229,255,0.4)]' : 'text-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/10 border border-cyan-500/20 glass-button'
+                  : currentView === item.id ? 'bg-white text-black shadow-[0_0_15px_rgba(255,255,255,0.3)]' : 'text-zinc-400 hover:text-white glass-button border-transparent hover:border-white/10'
               }`}
             >
-              <item.icon size={12} strokeWidth={2.5} />
+              <item.icon size={14} strokeWidth={2.5} />
               <span className={currentView === item.id ? "inline" : "hidden sm:inline"}>
                 {item.label}
               </span>
             </button>
           ))}
         </nav>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           {authUser && ['owner','executive','admin'].includes(role) && (
-            <span className={`hidden sm:flex items-center gap-1 px-2 py-0.5 rounded-full text-[7px] font-black uppercase tracking-widest border
-              ${role === 'owner' ? 'bg-amber-500/10 border-amber-500/20 text-amber-400' :
-                role === 'executive' ? 'bg-violet-500/10 border-violet-500/20 text-violet-400' :
-                'bg-cyan-500/10 border-cyan-500/20 text-cyan-400'}`}>
+            <span className={`hidden sm:flex items-center gap-1 px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-widest border
+              ${role === 'owner' ? 'bg-amber-500/10 border-amber-500/30 text-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.2)]' :
+                role === 'executive' ? 'bg-violet-500/10 border-violet-500/30 text-violet-400 shadow-[0_0_10px_rgba(139,92,246,0.2)]' :
+                'bg-cyan-500/10 border-cyan-500/30 text-cyan-400 shadow-[0_0_10px_rgba(0,229,255,0.2)]'}`}>
               {role === 'owner' ? '👑' : role === 'executive' ? '💼' : '🛡️'} {role}
             </span>
           )}
-          {isSyncing && <RefreshCcw size={10} className="animate-spin text-cyan-400" />}
-          <div className={`w-1.5 h-1.5 rounded-full ${onlineStatus === 'online' ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+          {isSyncing && <RefreshCcw size={12} className="animate-spin text-cyan-400" />}
+          <div className={`w-2 h-2 rounded-full shadow-[0_0_8px_currentColor] ${onlineStatus === 'online' ? 'bg-emerald-400 text-emerald-400' : 'bg-rose-400 text-rose-400'}`} />
         </div>
       </header>
 
-      <div className="flex-1 flex min-h-0 overflow-hidden relative">
+      <div className={`flex-1 flex min-h-0 overflow-hidden relative ${nimoPosition === 'right' ? 'md:flex-row-reverse' : 'md:flex-row'}`}>
         {/* Persistent Nimo Sidebar (Desktop) */}
         {nimoEnabled && nimoMounted && (
-          <aside className="w-[360px] flex-shrink-0 relative z-[50] hidden md:flex border-r border-white/5">
+          <aside className={`w-[360px] flex-shrink-0 relative z-[50] hidden md:flex ${nimoPosition === 'right' ? 'border-l border-white/5' : 'border-r border-white/5'}`}>
             <Suspense fallback={null}>
               <FloatingNimo
                 isOpenProp={true}
@@ -961,12 +973,13 @@ const App: React.FC = () => {
                 preferredLanguage={preferredLanguage}
                 geminiModel={nimoModel}
                 isSidebarMode={true}
+                position={nimoPosition}
               />
             </Suspense>
           </aside>
         )}
 
-        <main className="flex-1 min-w-0 overflow-hidden relative bg-[#0A0A0B]">
+        <main className="flex-1 min-w-0 overflow-hidden relative bg-transparent">
           <PageErrorBoundary>
             <Suspense fallback={<PageLoader />}>
               {renderPage()}
@@ -992,6 +1005,7 @@ const App: React.FC = () => {
                 voiceType={nimoVoice}
                 preferredLanguage={preferredLanguage}
                 geminiModel={nimoModel}
+                position={nimoPosition}
               />
             </Suspense>
           </div>

@@ -22,9 +22,13 @@ interface SettingsPageProps {
     onSelectRenderCardStyle?: (style: 'compact' | 'large') => void;
     nimoModel?: string;
     onChangeNimoModel?: (model: string) => void;
+    uiTheme?: 'v1' | 'v2';
+    onUiThemeChange?: (theme: 'v1' | 'v2') => void;
+    nimoPosition?: 'left' | 'right';
+    onNimoPositionChange?: (pos: 'left' | 'right') => void;
 }
 
-const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, onTogglePerformanceMode, nimoEnabled, onToggleNimoEnabled, nimoVoice, onChangeNimoVoice, vocalidoAutoRender, onToggleVocalidoAutoRender, renderCardStyle = 'compact', onSelectRenderCardStyle, nimoModel = 'gemini-3.5-flash', onChangeNimoModel }) => {
+const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, onTogglePerformanceMode, nimoEnabled, onToggleNimoEnabled, nimoVoice, onChangeNimoVoice, vocalidoAutoRender, onToggleVocalidoAutoRender, renderCardStyle = 'compact', onSelectRenderCardStyle, nimoModel = 'gemini-3.5-flash', onChangeNimoModel, uiTheme = 'v2', onUiThemeChange, nimoPosition = 'left', onNimoPositionChange }) => {
     const [activeTab, setActiveTab] = useState<'audio' | 'midi' | 'shortcuts' | 'visual' | 'ai'>('audio');
 
     // Audio Settings State
@@ -505,6 +509,62 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, on
                                         >
                                             <div className={`w-5 h-5 bg-white rounded-full shadow-lg transform transition-transform ${performanceMode ? 'translate-x-7' : 'translate-x-0'}`} />
                                         </button>
+                                    </div>
+                                </div>
+
+                                <div className={`p-6 rounded-[28px] border transition-all ${uiTheme === 'v2' ? 'bg-indigo-500/10 border-indigo-500/30' : 'bg-white/5 border-white/10'}`}>
+                                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
+                                        <div className="flex-1">
+                                            <div className="flex items-center gap-2 mb-2">
+                                                <Sparkles size={16} className={uiTheme === 'v2' ? 'text-indigo-400' : 'text-zinc-500'} />
+                                                <h3 className="text-sm font-black uppercase tracking-widest text-white">App Theme Style</h3>
+                                            </div>
+                                            <p className="text-[10px] text-zinc-500 uppercase tracking-widest leading-relaxed">
+                                                Choose your visual experience. Version B offers the new premium glassmorphism aesthetics.
+                                            </p>
+                                        </div>
+                                        <div className="flex items-center gap-2 bg-black/40 p-1.5 rounded-2xl border border-white/5">
+                                            <button 
+                                                onClick={() => onUiThemeChange && onUiThemeChange('v1')}
+                                                className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all ${uiTheme === 'v1' ? 'bg-zinc-800 text-white shadow-md' : 'text-zinc-500 hover:text-zinc-300'}`}
+                                            >
+                                                Classic (V1)
+                                            </button>
+                                            <button 
+                                                onClick={() => onUiThemeChange && onUiThemeChange('v2')}
+                                                className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all ${uiTheme === 'v2' ? 'bg-indigo-500 text-white shadow-[0_0_15px_rgba(99,102,241,0.4)]' : 'text-zinc-500 hover:text-zinc-300'}`}
+                                            >
+                                                Premium (V2)
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className={`p-6 rounded-[28px] border transition-all ${nimoPosition === 'right' ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-white/5 border-white/10'}`}>
+                                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
+                                        <div className="flex-1">
+                                            <div className="flex items-center gap-2 mb-2">
+                                                <Bot size={16} className={nimoPosition === 'right' ? 'text-emerald-400' : 'text-zinc-500'} />
+                                                <h3 className="text-sm font-black uppercase tracking-widest text-white">Nimo AI Placement</h3>
+                                            </div>
+                                            <p className="text-[10px] text-zinc-500 uppercase tracking-widest leading-relaxed">
+                                                Dock the Nimo AI assistant on the left or right side of the screen.
+                                            </p>
+                                        </div>
+                                        <div className="flex items-center gap-2 bg-black/40 p-1.5 rounded-2xl border border-white/5">
+                                            <button 
+                                                onClick={() => onNimoPositionChange && onNimoPositionChange('left')}
+                                                className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all ${nimoPosition === 'left' ? 'bg-cyan-500 text-black shadow-[0_0_15px_rgba(6,182,212,0.4)]' : 'text-zinc-500 hover:text-zinc-300'}`}
+                                            >
+                                                Dock Left
+                                            </button>
+                                            <button 
+                                                onClick={() => onNimoPositionChange && onNimoPositionChange('right')}
+                                                className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all ${nimoPosition === 'right' ? 'bg-emerald-500 text-black shadow-[0_0_15px_rgba(16,185,129,0.4)]' : 'text-zinc-500 hover:text-zinc-300'}`}
+                                            >
+                                                Dock Right
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
 

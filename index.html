@@ -8,7 +8,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=5, user-scalable=yes">
     <title>Memolody — Play by Ear, Hear by Eye</title>
     <!-- Tailwind classes are handled by Vite build, no CDN needed -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&family=JetBrains+Mono:wght@700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&family=Outfit:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@700&display=swap" rel="stylesheet">
     <link rel="apple-touch-icon" href="/icon-192.png">
     <link rel="icon" href="/favicon.ico" sizes="any">
     <link rel="manifest" href="/manifest.json">
@@ -62,7 +62,16 @@
             width: 100%; 
             margin: 0; 
             padding: 0; 
-            background: var(--bg-dark); 
+        }
+        
+        /* Default background — will be overridden by theme classes in index.css */
+        body { background: #050507; }
+        body.theme-v1 { background: #0A0A0B !important; background-image: none !important; }
+        body.theme-v2 { 
+            background-color: #030305 !important; 
+            background-image: 
+                radial-gradient(circle at 15% 50%, rgba(139, 92, 246, 0.08), transparent 30%),
+                radial-gradient(circle at 85% 30%, rgba(0, 229, 255, 0.06), transparent 30%) !important;
         }
         
         #root {
@@ -70,7 +79,7 @@
             margin: 0 auto;
             width: 100%;
             position: relative;
-            background: var(--bg-dark);
+            background: transparent;
         }
 
         @media (min-width: 1024px) {

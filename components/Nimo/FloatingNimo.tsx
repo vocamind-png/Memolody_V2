@@ -149,12 +149,13 @@ interface Props {
     preferredLanguage?: 'th' | 'en';
     geminiModel?: string;
     isSidebarMode?: boolean;
+    position?: 'left' | 'right';
 }
 
 export const FloatingNimoContent: React.FC<Props> = ({
     isOpenProp, setIsOpenProp,
     voiceType = 'teen_girl', preferredLanguage = 'en',
-    geminiModel = 'gemini-3.5-flash', isSidebarMode = false
+    geminiModel = 'gemini-3.5-flash', isSidebarMode = false, position = 'right'
 }) => {
     const [open, setOpen] = useState(false);
     const isOpen = isOpenProp !== undefined ? isOpenProp : open;
@@ -1005,7 +1006,7 @@ You must output valid JSON matching the schema. If no actions are needed, return
         return (
             <button
                 onClick={() => setIsOpen(true)}
-                className="fixed z-[40000] bottom-20 right-4 w-14 h-14 bg-black border-2 border-cyan-500 rounded-full shadow-[0_0_20px_rgba(0,229,255,0.4)] overflow-hidden flex items-center justify-center active:scale-95 transition-transform"
+                className={`fixed z-[40000] bottom-20 ${position === 'left' ? 'left-4' : 'right-4'} w-14 h-14 bg-black border-2 border-cyan-500 rounded-full shadow-[0_0_20px_rgba(0,229,255,0.4)] overflow-hidden flex items-center justify-center active:scale-95 transition-transform`}
             >
                 <img src={NIMO_IDENTITY_IMAGE} alt="" className="absolute inset-0 w-full h-full object-cover opacity-60" />
                 <MessageCircle className="relative z-10 text-white" size={24} />
@@ -1024,7 +1025,7 @@ You must output valid JSON matching the schema. If no actions are needed, return
             }`}
             style={isSidebarMode ? {} : (isMobile 
                 ? { left: 0, right: 0, bottom: 0, height: '80vh', borderRadius: '24px 24px 0 0' } 
-                : { bottom: 24, right: 24, width: 360, height: 560, borderRadius: 28 }
+                : { bottom: 24, ...(position === 'left' ? { left: 24 } : { right: 24 }), width: 360, height: 560, borderRadius: 28 }
             )}
         >
             <style>{`
