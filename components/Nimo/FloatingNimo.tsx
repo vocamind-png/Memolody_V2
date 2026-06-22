@@ -930,14 +930,31 @@ If no actions are needed, return "actions": []`;
 
             let parsedRes = { reply: '', actions: [] as any[] };
             try {
-                let cleanJsonStr = reply.replace(/```json/gi, '').replace(/```/g, '').trim();
+                // Extract JSON block in case AI added conversational text before it
+                const jsonMatch = reply.match(/\{[\s\S]*\}/);
+                let cleanJsonStr = (jsonMatch ? jsonMatch[0] : reply)
+                    .replace(/```json/gi, '')
+                    .replace(/```/g, '')
+                    .replace(/,\s*([\}\]])/g, '$1') // Remove trailing commas
+                    .trim();
                 parsedRes = JSON.parse(cleanJsonStr);
             } catch(e) {
                 console.error("[Nimo] Failed to parse JSON:", reply);
                 // Attempt to salvage the reply string using Regex if JSON parsing fails completely
                 const replyMatch = reply.match(/"reply"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/);
-                const salvagedReply = replyMatch ? replyMatch[1] : "หนูไม่เข้าใจคำสั่งค่ะ กรุณาลองใหม่อีกครั้ง";
-                parsedRes = { reply: salvagedReply, actions: [] };
+                const salvagedReply = replyMatch ? replyMatch[1] : (preferredLanguage === 'th' ? "รับทราบค่ะ กำลังดำเนินการให้ทันทีค่ะ" : "Understood. Executing now.");
+                
+                // Salvage compose action if we detected compose keywords
+                let salvagedActions = [];
+                if (input.includes('แต่งเพลง') || input.toLowerCase().includes('compose') || input.includes('สร้างเพลง')) {
+                     salvagedActions = [
+                        { type: 'navigate_to_page', params: { view: 'forge' } },
+                        { type: 'studio_set_tab', params: { tab: 'composer' } },
+                        { type: 'musicgen_generate', params: {} }
+                     ] as any;
+                }
+
+                parsedRes = { reply: salvagedReply, actions: salvagedActions };
             }
 
             let cleanReply = parsedRes.reply || "หนูทำตามคำสั่งเรียบร้อยแล้วค่ะ";
@@ -1033,6 +1050,7 @@ If no actions are needed, return "actions": []`;
     const sendMsg = (override?: string) => {
         const text = (override ?? input).trim();
         if (!text && !attachedScreenshot) return;
+        setStatus(''); // Clear mic error or any status when user types
         executeSendMsg(text || (preferredLanguage === 'th' ? 'ช่วยวิเคราะห์ภาพหน้าจอนี้ให้หน่อยค่ะ/ครับ' : 'Please analyze this screenshot.'));
     };
 
