@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Send, Music, MessageSquare, Bot, Sparkles, ChevronRight, Music2, Mic, MicOff, Volume2, VolumeX, Square, Settings, Sliders } from 'lucide-react';
+import { Send, Music, MessageSquare, Bot, Sparkles, ChevronRight, Music2, Mic, MicOff, Volume2, VolumeX, Square, Settings, Sliders, Copy, Check, Share2 } from 'lucide-react';
 import { NIMO_IDENTITY_IMAGE } from '../../constants';
 import { Song } from '../../types';
 import ScoreLensBar from '../ScoreLens/ScoreLensBar';
@@ -187,6 +187,7 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
     const [status, setStatus] = useState('');
     const [permState, setPermState] = useState<'prompt' | 'granted' | 'denied'>('prompt');
     const [isTyping, setIsTyping] = useState(false);
+    const [copiedId, setCopiedId] = useState<string | null>(null);
 
     // Wake Word & Speaker Lock-on
     const [wokenUp, setWokenUp] = useState(false);
@@ -1463,7 +1464,45 @@ You must output valid JSON matching the schema. If no actions are needed, return
                         </div>
                     </div>
                     
-                    <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                        {/* Copy All Button */}
+                        <button
+                            onClick={() => {
+                                const allText = messages.map(m => `${m.role === 'user' ? 'You' : 'Nimo'}: ${m.content}`).join('\n\n');
+                                navigator.clipboard.writeText(allText).then(() => {
+                                    setCopiedId('all');
+                                    setTimeout(() => setCopiedId(null), 2000);
+                                });
+                            }}
+                            className="px-3 py-1.5 rounded-full text-[9px] font-black uppercase tracking-wider transition-all border bg-white/5 border-white/10 text-zinc-400 hover:text-zinc-300 flex items-center gap-1"
+                            title={preferredLanguage === 'th' ? 'คัดลอกทั้งหมด' : 'Copy All'}
+                        >
+                            {copiedId === 'all' ? <Check size={10} className="text-green-400" /> : <Copy size={10} />}
+                            {preferredLanguage === 'th' ? (copiedId === 'all' ? 'คัดลอกแล้ว' : 'คัดลอกทั้งหมด') : (copiedId === 'all' ? 'Copied!' : 'Copy All')}
+                        </button>
+
+                        {/* Share Button */}
+                        <button
+                            onClick={async () => {
+                                const allText = messages.map(m => `${m.role === 'user' ? 'You' : 'Nimo'}: ${m.content}`).join('\n\n');
+                                if (navigator.share) {
+                                    try {
+                                        await navigator.share({ title: 'Nimo Chat - Memolody V2', text: allText });
+                                    } catch (e) { /* user cancelled */ }
+                                } else {
+                                    navigator.clipboard.writeText(allText).then(() => {
+                                        setCopiedId('share');
+                                        setTimeout(() => setCopiedId(null), 2000);
+                                    });
+                                }
+                            }}
+                            className="px-3 py-1.5 rounded-full text-[9px] font-black uppercase tracking-wider transition-all border bg-white/5 border-white/10 text-zinc-400 hover:text-zinc-300 flex items-center gap-1"
+                            title={preferredLanguage === 'th' ? 'แชร์บทสนทนา' : 'Share Chat'}
+                        >
+                            {copiedId === 'share' ? <Check size={10} className="text-green-400" /> : <Share2 size={10} />}
+                            {preferredLanguage === 'th' ? (copiedId === 'share' ? 'คัดลอกแล้ว' : 'แชร์') : (copiedId === 'share' ? 'Copied!' : 'Share')}
+                        </button>
+
                         {/* Settings Button */}
                         <button 
                             onClick={() => setShowNimoSettings(!showNimoSettings)}
@@ -1641,11 +1680,27 @@ You must output valid JSON matching the schema. If no actions are needed, return
                     )}
 
                     {messages.map((msg, i) => (
-                        <div key={msg.timestamp + i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} chat-msg`}>
-                            <div className={`max-w-[85%] px-5 py-3.5 rounded-[24px] text-[13px] leading-relaxed ${msg.role === 'user'
+                        <div key={msg.timestamp + i} className={`group/msg flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} chat-msg`}>
+                            <div className={`relative max-w-[85%] px-5 py-3.5 rounded-[24px] text-[13px] leading-relaxed ${msg.role === 'user'
                                 ? 'bg-zinc-800 text-white rounded-br-none'
                                 : 'bg-cyan-500/10 text-cyan-100 border border-cyan-500/20 rounded-bl-none'
                                 }`}>
+                                {/* Copy single message button (appears on hover) */}
+                                <button
+                                    onClick={() => {
+                                        navigator.clipboard.writeText(msg.content).then(() => {
+                                            setCopiedId(String(msg.timestamp) + i);
+                                            setTimeout(() => setCopiedId(null), 2000);
+                                        });
+                                    }}
+                                    className={`absolute ${msg.role === 'user' ? '-left-8' : '-right-8'} top-2 opacity-0 group-hover/msg:opacity-100 transition-opacity p-1.5 rounded-lg bg-white/10 hover:bg-white/20 backdrop-blur-sm border border-white/10`}
+                                    title={preferredLanguage === 'th' ? 'คัดลอกข้อความ' : 'Copy message'}
+                                >
+                                    {copiedId === String(msg.timestamp) + i
+                                        ? <Check size={12} className="text-green-400" />
+                                        : <Copy size={12} className="text-zinc-400" />
+                                    }
+                                </button>
                                 {/* Image preview in chat bubble */}
                                 {msg.imageUrl && (
                                     <div className="mb-3 rounded-xl overflow-hidden border border-white/10 w-40 h-40">
