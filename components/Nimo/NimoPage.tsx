@@ -1180,7 +1180,7 @@ ${appStateStr}
 17. 'mute_track': ปิดเสียง (Mute) หรือเปิดเสียงของแทร็กใดแทร็กหนึ่ง (params: { trackName?: string, trackIndex?: number, mute: boolean })
 18. 'set_track_mode': สลับโหมดของแทร็กระหว่างเสียงร้อง Vocal และเสียงดนตรี Instrument (params: { trackName?: string, trackIndex?: number, mode: 'vocal' | 'instrument' })
 19. 'set_track_instrument': เลือกเครื่องดนตรีหรือนักร้องเสียงประสาน/Vocalido ของแทร็กนั้นๆ เช่น 'Piano', 'Violin', 'Canary', 'Lotte V', 'Soprano' (params: { trackName?: string, trackIndex?: number, instrument: string })
-20. 'arrange_song': ส่งเนื้อเพลงหรือเพลงไปเรียบเรียงประสานเสียงใน MusicGen หรือ Studio (params: { text?: string })
+20. 'arrange_song': ส่งเพลงที่มีอยู่แล้วไปเรียบเรียงประสานเสียงในหน้า AI Arranger เท่านั้น ห้ามใช้เมื่อผู้ใช้ขอแต่งเพลงใหม่ (params: { text?: string })
 21. 'teach_me': เริ่มโหมดแบบฝึกหัดหรือการสอนดนตรี (params: { topic?: string })
 22. 'studio_set_tab': เปลี่ยนแท็บในหน้า Studio (params: { tab: 'composer' | 'arranger' | 'editor' })
 23. 'musicgen_set_mood': ตั้ง Mood ของเพลงใหม่ (params: { mood: 'Happy' | 'Sad' | 'Energetic' | 'Chill' | 'Aggressive' | 'Dreamy' })
@@ -1189,11 +1189,12 @@ ${appStateStr}
 26. 'musicgen_set_lyrics': ใส่เนื้อร้องสำหรับเพลงใหม่ (params: { lyrics: string })
 27. 'musicgen_generate': สั่ง AI แต่งเพลงใหม่ทันที (ไม่มี params)
 
-หมายเหตุสำคัญ: เมื่อผู้ใช้ขอให้แต่งเพลงใหม่ ต้องทำตามลำดับนี้เสมอ:
+หมายเหตุสำคัญ: เมื่อผู้ใช้ขอให้แต่งเพลงใหม่ หรือสร้างเพลงใหม่ ห้ามใช้ arrange_song เด็ดขาด ต้องใช้ musicgen actions ตามลำดับนี้เสมอ:
 1. navigate_to_page กับ view='forge' (เปิดหน้า Studio ก่อน)
-2. studio_set_tab กับ tab='composer' (สลับไปแท็บ Composer เพื่อเปิดระบบแต่งเพลง)
+2. studio_set_tab กับ tab='composer' (สลับไปแท็บ Composer เท่านั้น ห้ามไปแท็บ arranger)
 3. musicgen_set_mood / musicgen_set_tempo / musicgen_set_prompt (ตั้งค่าตามที่ผู้ใช้ต้องการ)
 4. musicgen_generate (สั่งสร้างเพลง)
+ข้อห้าม: ห้ามใช้ arrange_song สำหรับการแต่งเพลงใหม่ เพราะจะเปิดหน้า Arranger แทน Composer
 
 ข้อสำคัญเกี่ยวกับการตอบกลับ (JSON):
 คุณต้องตอบกลับเป็นรูปแบบ JSON ที่ถูกต้องเสมอ (Strict JSON) ตามโครงสร้างนี้:
@@ -1238,6 +1239,21 @@ Supported Actions:
 17. 'mute_track': Mute or unmute a specific track (params: { trackName?: string, trackIndex?: number, mute: boolean })
 18. 'set_track_mode': Switch track mode between vocal and instrument (params: { trackName?: string, trackIndex?: number, mode: 'vocal' | 'instrument' })
 19. 'set_track_instrument': Choose track voice/instrument like 'Piano', 'Violin', 'Canary', 'Lotte V', 'Soprano' (params: { trackName?: string, trackIndex?: number, instrument: string })
+20. 'arrange_song': Send an EXISTING song to be harmonized in the AI Arranger page only. DO NOT use this for composing new songs. (params: { text?: string })
+21. 'teach_me': Start a lesson or practice mode (params: { topic?: string })
+22. 'studio_set_tab': Change tab inside Studio (params: { tab: 'composer' | 'arranger' | 'editor' })
+23. 'musicgen_set_mood': Set mood for new song (params: { mood: 'Happy' | 'Sad' | 'Energetic' | 'Chill' | 'Aggressive' | 'Dreamy' })
+24. 'musicgen_set_tempo': Set tempo for new song (params: { tempo: 'Slow' | 'Medium' | 'Fast' | 'Very Fast' })
+25. 'musicgen_set_prompt': Set description/prompt for new song (params: { prompt: string })
+26. 'musicgen_set_lyrics': Set lyrics for new song (params: { lyrics: string })
+27. 'musicgen_generate': Trigger AI to compose a new song NOW (no params)
+
+IMPORTANT: When user asks to compose/create a new song, you MUST use musicgen actions in this order (NEVER use arrange_song for new songs):
+1. navigate_to_page with view='forge'
+2. studio_set_tab with tab='composer' (MUST be 'composer', NOT 'arranger')
+3. musicgen_set_mood / musicgen_set_tempo / musicgen_set_prompt (configure as requested)
+4. musicgen_generate (trigger generation)
+DO NOT use 'arrange_song' for composing new songs — it opens the wrong tab.
 
 You must output valid JSON matching the schema. If no actions are needed, return an empty array.`;
 
@@ -1295,11 +1311,20 @@ You must output valid JSON matching the schema. If no actions are needed, return
 
             let cleanReply = parsedRes.reply || reply;
 
-            // Programmatic Suffix Enforcement (force correct gender suffix)
+            // Programmatic Suffix & Pronoun Enforcement (force correct gender)
             if (isMale) {
-                cleanReply = cleanReply.replace(/ค่ะ/g, 'ครับ').replace(/คะ/g, 'ครับ');
+                // Force male: ค่ะ/คะ→ครับ, นะคะ→นะครับ, หนู→ผม
+                cleanReply = cleanReply
+                    .replace(/นะคะ/g, 'นะครับ')
+                    .replace(/ค่ะ/g, 'ครับ')
+                    .replace(/คะ/g, 'ครับ')
+                    .replace(/หนู/g, 'ผม');
             } else {
-                cleanReply = cleanReply.replace(/ครับ/g, 'ค่ะ');
+                // Force female: ครับ→ค่ะ, นะครับ→นะคะ, ผม→หนู
+                cleanReply = cleanReply
+                    .replace(/นะครับ/g, 'นะคะ')
+                    .replace(/ครับ/g, 'ค่ะ')
+                    .replace(/ผม/g, 'หนู');
             }
 
             setMessages(prev => [...prev, { role: 'nimo', content: cleanReply, timestamp: Date.now() }]);
