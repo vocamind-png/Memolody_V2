@@ -51,7 +51,17 @@ class PageErrorBoundary extends React.Component<EBProps, EBState> {
   }
   static getDerivedStateFromError(error: Error): EBState { return { hasError: true, error }; }
   componentDidCatch(err: Error, errorInfo: any) { 
-    console.error('[EB] lazy fail:', err, errorInfo); 
+    console.error('[EB] lazy fail:', err, errorInfo);
+    // Auto-reload on chunk load failures (stale cache after deployment)
+    if (err.message && (err.message.includes('Failed to fetch dynamically imported module') || 
+                        err.message.includes('Loading chunk'))) {
+      const reloaded = sessionStorage.getItem('eb_chunk_reload');
+      if (!reloaded) {
+        sessionStorage.setItem('eb_chunk_reload', '1');
+        console.warn('[EB] Stale chunk detected, auto-reloading...');
+        window.location.reload();
+      }
+    }
   }
   render(): React.ReactNode {
     if (((this as any).state as EBState).hasError) {
@@ -225,7 +235,7 @@ const App: React.FC = () => {
         setInitProgress(35);
 
         // 🚨 AUTO-CLEAR CACHE ON NEW BUILD/REINSTALL
-        const APP_VERSION = '2.4.0-build-20260603-0857';
+        const APP_VERSION = '2.4.1-build-20260622-1322';
         const savedVersion = localStorage.getItem('memo_app_version');
         if (savedVersion !== APP_VERSION) {
           setInitStatus('Wiping Old Cache');

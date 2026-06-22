@@ -39,6 +39,21 @@
                 });
             });
         }
+        // Auto-reload when lazy-loaded chunks fail (stale cache after deploy)
+        window.addEventListener('error', function(e) {
+            if (e.message && (e.message.indexOf('Failed to fetch dynamically imported module') !== -1 || 
+                              e.message.indexOf('Loading chunk') !== -1 ||
+                              e.message.indexOf('Loading CSS chunk') !== -1)) {
+                var reloaded = sessionStorage.getItem('chunk_reload');
+                if (!reloaded) {
+                    sessionStorage.setItem('chunk_reload', '1');
+                    console.warn('[App] Stale chunk detected, auto-reloading...');
+                    window.location.reload();
+                }
+            }
+        });
+        // Clear the reload flag on successful load
+        sessionStorage.removeItem('chunk_reload');
     </script>
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
