@@ -764,16 +764,18 @@ ${appStateStr}
 19. 'set_track_instrument': เลือกเครื่องดนตรีหรือนักร้องเสียงประสาน/Vocalido ของแทร็กนั้นๆ เช่น 'Piano', 'Violin', 'Canary', 'Lotte V', 'Soprano' (params: { trackName?: string, trackIndex?: number, instrument: string })
 20. 'arrange_song': ส่งเนื้อเพลงหรือเพลงไปเรียบเรียงประสานเสียงใน MusicGen หรือ Studio (params: { text?: string })
 21. 'teach_me': เริ่มโหมดแบบฝึกหัดหรือการสอนดนตรี (params: { topic?: string })
-22. 'musicgen_set_mood': ตั้ง Mood ของเพลงใหม่ (params: { mood: 'Happy' | 'Sad' | 'Energetic' | 'Chill' | 'Aggressive' | 'Dreamy' })
-23. 'musicgen_set_tempo': ตั้งจังหวะของเพลงใหม่ (params: { tempo: 'Slow' | 'Medium' | 'Fast' | 'Very Fast' })
-24. 'musicgen_set_prompt': ตั้งคำอธิบายเพลงที่ต้องการ (params: { prompt: string })
-25. 'musicgen_set_lyrics': ใส่เนื้อร้องสำหรับเพลงใหม่ (params: { lyrics: string })
-26. 'musicgen_generate': สั่ง AI แต่งเพลงใหม่ทันที (ไม่มี params — ต้องเปิดหน้า Studio ก่อนโดยใช้ navigate_to_page กับ view='forge')
+22. 'studio_set_tab': เปลี่ยนแท็บในหน้า Studio (params: { tab: 'composer' | 'arranger' | 'editor' })
+23. 'musicgen_set_mood': ตั้ง Mood ของเพลงใหม่ (params: { mood: 'Happy' | 'Sad' | 'Energetic' | 'Chill' | 'Aggressive' | 'Dreamy' })
+24. 'musicgen_set_tempo': ตั้งจังหวะของเพลงใหม่ (params: { tempo: 'Slow' | 'Medium' | 'Fast' | 'Very Fast' })
+25. 'musicgen_set_prompt': ตั้งคำอธิบายเพลงที่ต้องการ (params: { prompt: string })
+26. 'musicgen_set_lyrics': ใส่เนื้อร้องสำหรับเพลงใหม่ (params: { lyrics: string })
+27. 'musicgen_generate': สั่ง AI แต่งเพลงใหม่ทันที (ไม่มี params)
 
 หมายเหตุสำคัญ: เมื่อผู้ใช้ขอให้แต่งเพลงใหม่ ต้องทำตามลำดับนี้เสมอ:
 1. navigate_to_page กับ view='forge' (เปิดหน้า Studio ก่อน)
-2. musicgen_set_mood / musicgen_set_tempo / musicgen_set_prompt (ตั้งค่าตามที่ผู้ใช้ต้องการ)
-3. musicgen_generate (สั่งสร้างเพลง)
+2. studio_set_tab กับ tab='composer' (สลับไปแท็บ Composer เพื่อเปิดระบบแต่งเพลง)
+3. musicgen_set_mood / musicgen_set_tempo / musicgen_set_prompt (ตั้งค่าตามที่ผู้ใช้ต้องการ)
+4. musicgen_generate (สั่งสร้างเพลง)
 
 ข้อสำคัญเกี่ยวกับการตอบกลับ (JSON):
 คุณต้องตอบกลับเป็นรูปแบบ JSON ที่ถูกต้องเสมอ (Strict JSON) ตามโครงสร้างนี้:
@@ -820,16 +822,18 @@ Supported Actions:
 19. 'set_track_instrument': Choose track voice/instrument like 'Piano', 'Violin', 'Canary', 'Lotte V', 'Soprano' (params: { trackName?: string, trackIndex?: number, instrument: string })
 20. 'arrange_song': Send lyrics or song to be arranged in MusicGen or Studio (params: { text?: string })
 21. 'teach_me': Start a lesson or practice mode (params: { topic?: string })
-22. 'musicgen_set_mood': Set mood for new song (params: { mood: 'Happy' | 'Sad' | 'Energetic' | 'Chill' | 'Aggressive' | 'Dreamy' })
-23. 'musicgen_set_tempo': Set tempo for new song (params: { tempo: 'Slow' | 'Medium' | 'Fast' | 'Very Fast' })
-24. 'musicgen_set_prompt': Set description/prompt for new song (params: { prompt: string })
-25. 'musicgen_set_lyrics': Set lyrics for new song (params: { lyrics: string })
-26. 'musicgen_generate': Trigger AI to compose a new song NOW (no params — MUST navigate to Studio first via navigate_to_page with view='forge')
+22. 'studio_set_tab': Change tab inside Studio (params: { tab: 'composer' | 'arranger' | 'editor' })
+23. 'musicgen_set_mood': Set mood for new song (params: { mood: 'Happy' | 'Sad' | 'Energetic' | 'Chill' | 'Aggressive' | 'Dreamy' })
+24. 'musicgen_set_tempo': Set tempo for new song (params: { tempo: 'Slow' | 'Medium' | 'Fast' | 'Very Fast' })
+25. 'musicgen_set_prompt': Set description/prompt for new song (params: { prompt: string })
+26. 'musicgen_set_lyrics': Set lyrics for new song (params: { lyrics: string })
+27. 'musicgen_generate': Trigger AI to compose a new song NOW (no params)
 
 IMPORTANT: When user asks to compose/create a new song, you MUST send actions in this order:
 1. navigate_to_page with view='forge' (open Studio first)
-2. musicgen_set_mood / musicgen_set_tempo / musicgen_set_prompt (configure as requested)
-3. musicgen_generate (trigger generation)
+2. studio_set_tab with tab='composer' (switch to Composer tab)
+3. musicgen_set_mood / musicgen_set_tempo / musicgen_set_prompt (configure as requested)
+4. musicgen_generate (trigger generation)
 
 You must output valid JSON matching this exact schema:
 {
@@ -968,9 +972,9 @@ If no actions are needed, return "actions": []`;
                     if (actionType) {
                         try {
                             await nimoBrain.executeAction(actionType, act.params);
-                            // Important: If we just navigated to a new page, wait briefly so React can
+                            // Important: If we just navigated to a new page or tab, wait briefly so React can
                             // mount the new component and register its specific actions before continuing.
-                            if (actionType === 'navigate_to_page') {
+                            if (actionType === 'navigate_to_page' || actionType === 'studio_set_tab') {
                                 await new Promise(resolve => setTimeout(resolve, 250));
                             }
                         } catch (err) {

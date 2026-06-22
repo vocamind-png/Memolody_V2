@@ -20,6 +20,7 @@ import { parseMusicXMLMetadata, injectSolfegeToXml } from '../../lib/MusicXmlPar
 import ArrangerPage from '../Arranger/ArrangerPage';
 import ComposerPage from '../Composer/ComposerPage';
 import { AudioConverter } from '../../lib/AudioConverter';
+import { nimoBrain } from '../../lib/NimoBrain';
 
 interface StudioPageProps {
   selectedSong: Song | null;
@@ -67,6 +68,18 @@ const StudioPage: React.FC<StudioPageProps> = ({
   const [plugins] = useState(PluginManager.getInstance().listPlugins());
   const [studioMode, setStudioMode] = useState<'composer' | 'arranger' | 'editor' | 'pianoroll'>('arranger');
   const [pianorollTrackId, setPianorollTrackId] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Register Nimo action to switch studio tabs
+    const unreg = nimoBrain.registerAction('studio_set_tab', (params) => {
+      if (params && params.tab) {
+        if (['composer', 'arranger', 'editor', 'pianoroll'].includes(params.tab)) {
+          setStudioMode(params.tab as any);
+        }
+      }
+    });
+    return unreg;
+  }, []);
 
   // Sync props to state if they change (e.g. when navigating from Player)
   useEffect(() => {
