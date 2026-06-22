@@ -143,6 +143,7 @@ const App: React.FC = () => {
   const [performanceMode, setPerformanceMode] = useState(() => localStorage.getItem('nimo_perf_mode') === 'true');
   const [uiTheme, setUiTheme] = useState<'v1' | 'v2'>(() => (localStorage.getItem('memo_ui_theme') as 'v1' | 'v2') || 'v2');
   const [nimoPosition, setNimoPosition] = useState<'left' | 'right'>(() => (localStorage.getItem('nimo_position') as 'left' | 'right') || 'left');
+  const [layoutMode, setLayoutMode] = useState<'compact' | 'full'>(() => (localStorage.getItem('memo_layout_mode') as 'compact' | 'full') || 'compact');
   const [loopPresets, setLoopPresets] = useState<LoopPreset[]>(INITIAL_LOOP_PRESETS);
   const [pendingImportFile, setPendingImportFile] = useState<File | null>(null);
   const [autoPlayOnLoad, setAutoPlayOnLoad] = useState(false); // true after OMR import → Player auto-starts
@@ -174,6 +175,16 @@ const App: React.FC = () => {
   useEffect(() => {
     localStorage.setItem('nimo_position', nimoPosition);
   }, [nimoPosition]);
+
+  // Apply Layout Mode class to #root
+  useEffect(() => {
+    const root = document.getElementById('root');
+    if (root) {
+      root.classList.remove('layout-compact', 'layout-full');
+      root.classList.add(`layout-${layoutMode}`);
+    }
+    localStorage.setItem('memo_layout_mode', layoutMode);
+  }, [layoutMode]);
 
   // Save currentView to localStorage on change
   useEffect(() => {
@@ -860,7 +871,7 @@ const App: React.FC = () => {
       case 'profile':
         return <ProfilePage onEnterForge={() => navigateTo('forge')} userLibrary={userSongs} onSongSelect={handleSongSelect} onTriggerSync={triggerSync} isSyncing={isSyncing} onRefresh={triggerSync} preferredLanguage={preferredLanguage} setPreferredLanguage={handleLanguageChange} userCountry={userCountry} setUserCountry={handleCountryChange} userInstrument={userInstrument} setUserInstrument={handleInstrumentChange} onViewPlan={() => navigateTo('subscription')} />;
       case 'settings':
-        return <SettingsPage performanceMode={performanceMode} onTogglePerformanceMode={handleTogglePerformanceMode} nimoEnabled={nimoEnabled} onToggleNimoEnabled={(val) => { setNimoEnabled(val); localStorage.setItem('nimo_enabled', String(val)); }} nimoVoice={nimoVoice} onChangeNimoVoice={(val) => { setNimoVoice(val); localStorage.setItem('nimo_voice', val); }} vocalidoAutoRender={vocalidoAutoRender} onToggleVocalidoAutoRender={(val) => { setVocalidoAutoRender(val); localStorage.setItem('vocalido_auto_render', String(val)); }} renderCardStyle={vocalidoRenderCardStyle} onSelectRenderCardStyle={(val) => { setVocalidoRenderCardStyle(val); localStorage.setItem('vocalido_render_card_style', val); }} nimoModel={nimoModel} onChangeNimoModel={(val) => { setNimoModel(val); localStorage.setItem('nimo_model', val); }} uiTheme={uiTheme} onUiThemeChange={setUiTheme} nimoPosition={nimoPosition} onNimoPositionChange={setNimoPosition} onBack={() => setCurrentView('home')} />;
+        return <SettingsPage performanceMode={performanceMode} onTogglePerformanceMode={handleTogglePerformanceMode} nimoEnabled={nimoEnabled} onToggleNimoEnabled={(val) => { setNimoEnabled(val); localStorage.setItem('nimo_enabled', String(val)); }} nimoVoice={nimoVoice} onChangeNimoVoice={(val) => { setNimoVoice(val); localStorage.setItem('nimo_voice', val); }} vocalidoAutoRender={vocalidoAutoRender} onToggleVocalidoAutoRender={(val) => { setVocalidoAutoRender(val); localStorage.setItem('vocalido_auto_render', String(val)); }} renderCardStyle={vocalidoRenderCardStyle} onSelectRenderCardStyle={(val) => { setVocalidoRenderCardStyle(val); localStorage.setItem('vocalido_render_card_style', val); }} nimoModel={nimoModel} onChangeNimoModel={(val) => { setNimoModel(val); localStorage.setItem('nimo_model', val); }} uiTheme={uiTheme} onUiThemeChange={setUiTheme} nimoPosition={nimoPosition} onNimoPositionChange={setNimoPosition} layoutMode={layoutMode} onLayoutModeChange={setLayoutMode} onBack={() => setCurrentView('home')} />;
       case 'distribution':
         return <DistributionPage userLibrary={userSongs} onRefresh={triggerSync} onBack={() => navigateTo('home')} />;
       case 'nimo':

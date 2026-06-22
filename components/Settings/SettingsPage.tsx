@@ -26,9 +26,11 @@ interface SettingsPageProps {
     onUiThemeChange?: (theme: 'v1' | 'v2') => void;
     nimoPosition?: 'left' | 'right';
     onNimoPositionChange?: (pos: 'left' | 'right') => void;
+    layoutMode?: 'compact' | 'full';
+    onLayoutModeChange?: (mode: 'compact' | 'full') => void;
 }
 
-const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, onTogglePerformanceMode, nimoEnabled, onToggleNimoEnabled, nimoVoice, onChangeNimoVoice, vocalidoAutoRender, onToggleVocalidoAutoRender, renderCardStyle = 'compact', onSelectRenderCardStyle, nimoModel = 'gemini-3.5-flash', onChangeNimoModel, uiTheme = 'v2', onUiThemeChange, nimoPosition = 'left', onNimoPositionChange }) => {
+const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, onTogglePerformanceMode, nimoEnabled, onToggleNimoEnabled, nimoVoice, onChangeNimoVoice, vocalidoAutoRender, onToggleVocalidoAutoRender, renderCardStyle = 'compact', onSelectRenderCardStyle, nimoModel = 'gemini-3.5-flash', onChangeNimoModel, uiTheme = 'v2', onUiThemeChange, nimoPosition = 'left', onNimoPositionChange, layoutMode = 'compact', onLayoutModeChange }) => {
     const [activeTab, setActiveTab] = useState<'audio' | 'midi' | 'shortcuts' | 'visual' | 'ai'>('audio');
 
     // Audio Settings State
@@ -563,6 +565,36 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, on
                                                 className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all ${nimoPosition === 'right' ? 'bg-emerald-500 text-black shadow-[0_0_15px_rgba(16,185,129,0.4)]' : 'text-zinc-500 hover:text-zinc-300'}`}
                                             >
                                                 Dock Right
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className={`p-6 rounded-[28px] border transition-all ${layoutMode === 'full' ? 'bg-violet-500/10 border-violet-500/30' : 'bg-white/5 border-white/10'}`}>
+                                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
+                                        <div className="flex-1">
+                                            <div className="flex items-center gap-2 mb-2">
+                                                <Monitor size={16} className={layoutMode === 'full' ? 'text-violet-400' : 'text-zinc-500'} />
+                                                <h3 className="text-sm font-black uppercase tracking-widest text-white">Desktop Layout</h3>
+                                            </div>
+                                            <p className="text-[10px] text-zinc-500 uppercase tracking-widest leading-relaxed">
+                                                {layoutMode === 'full'
+                                                    ? 'Full Desktop mode: App uses the entire screen width. Perfect for laptops and widescreen monitors.'
+                                                    : 'Compact mode: Centered narrow column optimized for mobile and tablet experience.'}
+                                            </p>
+                                        </div>
+                                        <div className="flex items-center gap-2 bg-black/40 p-1.5 rounded-2xl border border-white/5">
+                                            <button 
+                                                onClick={() => onLayoutModeChange && onLayoutModeChange('compact')}
+                                                className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all ${layoutMode === 'compact' ? 'bg-zinc-800 text-white shadow-md' : 'text-zinc-500 hover:text-zinc-300'}`}
+                                            >
+                                                Compact
+                                            </button>
+                                            <button 
+                                                onClick={() => onLayoutModeChange && onLayoutModeChange('full')}
+                                                className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all ${layoutMode === 'full' ? 'bg-violet-500 text-white shadow-[0_0_15px_rgba(139,92,246,0.4)]' : 'text-zinc-500 hover:text-zinc-300'}`}
+                                            >
+                                                Full Desktop
                                             </button>
                                         </div>
                                     </div>

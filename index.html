@@ -82,11 +82,22 @@
             background: transparent;
         }
 
+        /* Compact Layout (default) — centered narrow column on desktop */
         @media (min-width: 1024px) {
-            #root {
+            #root.layout-compact {
                 max-width: 900px;
                 border-left: 1px solid rgba(255,255,255,0.05);
                 border-right: 1px solid rgba(255,255,255,0.05);
+            }
+        }
+
+        /* Full Desktop Layout — use entire screen width */
+        @media (min-width: 1024px) {
+            #root.layout-full {
+                max-width: 100vw;
+                border-left: none;
+                border-right: none;
+                padding: 0 1rem;
             }
         }
         
