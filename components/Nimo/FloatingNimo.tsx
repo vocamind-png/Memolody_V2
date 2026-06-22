@@ -776,8 +776,17 @@ ${appStateStr}
 3. musicgen_generate (สั่งสร้างเพลง)
 
 ข้อสำคัญเกี่ยวกับการตอบกลับ (JSON):
-- 'reply': ข้อความที่จะพูดและแสดงผล ต้องลงท้ายอย่างเป็นธรรมชาติด้วย ${suffix}
-- 'actions': รายการคำสั่งที่จะรันตามความต้องการของผู้ใช้ ถ้าไม่มีให้ใช้ []`
+คุณต้องตอบกลับเป็นรูปแบบ JSON ที่ถูกต้องเสมอ (Strict JSON) ตามโครงสร้างนี้:
+{
+  "reply": "ข้อความที่จะพูดและแสดงผล ห้ามใช้ Markdown ห้ามมีวงเล็บ ห้ามใช้อีโมจิ (ต้องลงท้ายอย่างเป็นธรรมชาติด้วย ${suffix})",
+  "actions": [
+    {
+      "type": "ชื่อของ action ที่ตรงกับรายการด้านบน",
+      "params": { "พารามิเตอร์ของ action นั้นๆ" }
+    }
+  ]
+}
+ถ้าไม่มี action ให้ส่ง "actions": []`
                 : `You are Nimo, a friendly, human-like AI companion and central brain for the Memolody V2 app.
 Speak naturally, keep your responses conversational, and do not use bullet points or numbered lists. 
 
@@ -822,7 +831,17 @@ IMPORTANT: When user asks to compose/create a new song, you MUST send actions in
 2. musicgen_set_mood / musicgen_set_tempo / musicgen_set_prompt (configure as requested)
 3. musicgen_generate (trigger generation)
 
-You must output valid JSON matching the schema. If no actions are needed, return an empty array.`;
+You must output valid JSON matching this exact schema:
+{
+  "reply": "Text to speak/display. No markdown. No emojis.",
+  "actions": [
+    {
+      "type": "action_name_from_supported_actions_list",
+      "params": { ... }
+    }
+  ]
+}
+If no actions are needed, return "actions": []`;
 
             const contentsList: any[] = [];
             const recentMsgs = msgs.slice(-6);
@@ -910,10 +929,14 @@ You must output valid JSON matching the schema. If no actions are needed, return
                 let cleanJsonStr = reply.replace(/```json/gi, '').replace(/```/g, '').trim();
                 parsedRes = JSON.parse(cleanJsonStr);
             } catch(e) {
-                parsedRes = { reply: reply, actions: [] };
+                console.error("[Nimo] Failed to parse JSON:", reply);
+                // Attempt to salvage the reply string using Regex if JSON parsing fails completely
+                const replyMatch = reply.match(/"reply"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/);
+                const salvagedReply = replyMatch ? replyMatch[1] : "หนูไม่เข้าใจคำสั่งค่ะ กรุณาลองใหม่อีกครั้ง";
+                parsedRes = { reply: salvagedReply, actions: [] };
             }
 
-            let cleanReply = parsedRes.reply || reply;
+            let cleanReply = parsedRes.reply || "หนูทำตามคำสั่งเรียบร้อยแล้วค่ะ";
 
             // Programmatic Suffix Enforcement (force correct gender suffix)
             if (isMale) {
@@ -941,11 +964,17 @@ You must output valid JSON matching the schema. If no actions are needed, return
 
             if (parsedRes.actions && Array.isArray(parsedRes.actions)) {
                 for (const act of parsedRes.actions) {
-                    if (act.type) {
+                    const actionType = act.type || act.name; // Fallback just in case
+                    if (actionType) {
                         try {
-                            await nimoBrain.executeAction(act.type, act.params);
+                            await nimoBrain.executeAction(actionType, act.params);
+                            // Important: If we just navigated to a new page, wait briefly so React can
+                            // mount the new component and register its specific actions before continuing.
+                            if (actionType === 'navigate_to_page') {
+                                await new Promise(resolve => setTimeout(resolve, 250));
+                            }
                         } catch (err) {
-                            console.error(`[NimoAction Error] Failed executing ${act.type}:`, err);
+                            console.error(`[NimoAction Error] Failed executing ${actionType}:`, err);
                         }
                     }
                 }
