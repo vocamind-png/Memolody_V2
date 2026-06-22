@@ -1685,20 +1685,25 @@ You must output valid JSON matching the schema. If no actions are needed, return
                                 ? 'bg-zinc-800 text-white rounded-br-none'
                                 : 'bg-cyan-500/10 text-cyan-100 border border-cyan-500/20 rounded-bl-none'
                                 }`}>
-                                {/* Copy single message button (appears on hover) */}
+                                {/* Copy single message button */}
                                 <button
-                                    onClick={() => {
+                                    onClick={(e) => {
+                                        e.stopPropagation();
                                         navigator.clipboard.writeText(msg.content).then(() => {
                                             setCopiedId(String(msg.timestamp) + i);
                                             setTimeout(() => setCopiedId(null), 2000);
                                         });
                                     }}
-                                    className={`absolute ${msg.role === 'user' ? '-left-8' : '-right-8'} top-2 opacity-0 group-hover/msg:opacity-100 transition-opacity p-1.5 rounded-lg bg-white/10 hover:bg-white/20 backdrop-blur-sm border border-white/10`}
+                                    className={`absolute ${msg.role === 'user' ? 'left-2' : 'right-2'} bottom-1.5 p-1 rounded-md transition-all ${
+                                        copiedId === String(msg.timestamp) + i
+                                            ? 'text-green-400'
+                                            : 'text-zinc-500 hover:text-zinc-300 opacity-40 hover:opacity-100'
+                                    }`}
                                     title={preferredLanguage === 'th' ? 'คัดลอกข้อความ' : 'Copy message'}
                                 >
                                     {copiedId === String(msg.timestamp) + i
-                                        ? <Check size={12} className="text-green-400" />
-                                        : <Copy size={12} className="text-zinc-400" />
+                                        ? <Check size={11} />
+                                        : <Copy size={11} />
                                     }
                                 </button>
                                 {/* Image preview in chat bubble */}
