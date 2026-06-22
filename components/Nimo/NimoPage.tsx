@@ -1121,7 +1121,23 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
             const suffix = suffixKa;
             const pronoun = isMale ? 'ผม' : 'หนู';
 
-            // System instructions
+            // Construct chat history list for Gemini context
+            const contentsList: any[] = [];
+            // Keep up to 6 recent messages from history
+            const recentMsgs = messages.slice(-6);
+            recentMsgs.forEach(m => {
+                contentsList.push({
+                    role: m.role === 'user' ? 'user' : 'model',
+                    parts: [{ text: m.content }]
+                });
+            });
+            // Append current message
+            contentsList.push({
+                role: 'user',
+                parts: [{ text: text }]
+            });
+
+            // Ensure system instructions contain actions 20-27
             const sys = preferredLanguage === 'th'
                 ? `คุณคือ Nimo เพื่อนและผู้ช่วยอัจฉริยะของแอพพลิเคชัน Memolody V2
 คุณต้องแทนตัวเองว่า "${pronoun}" เสมอ และใช้คำลงท้ายที่เหมาะสมกับเพศสภาพของคุณคือ "${suffix}" เสมอ ห้ามสับสนสลับกันเด็ดขาด (เช่น ห้ามใช้คำแทนตัวว่า "ผม" คู่กับหางเสียง "ค่ะ" โดยเด็ดขาด หรือกลับกัน)
@@ -1164,10 +1180,33 @@ ${appStateStr}
 17. 'mute_track': ปิดเสียง (Mute) หรือเปิดเสียงของแทร็กใดแทร็กหนึ่ง (params: { trackName?: string, trackIndex?: number, mute: boolean })
 18. 'set_track_mode': สลับโหมดของแทร็กระหว่างเสียงร้อง Vocal และเสียงดนตรี Instrument (params: { trackName?: string, trackIndex?: number, mode: 'vocal' | 'instrument' })
 19. 'set_track_instrument': เลือกเครื่องดนตรีหรือนักร้องเสียงประสาน/Vocalido ของแทร็กนั้นๆ เช่น 'Piano', 'Violin', 'Canary', 'Lotte V', 'Soprano' (params: { trackName?: string, trackIndex?: number, instrument: string })
+20. 'arrange_song': ส่งเนื้อเพลงหรือเพลงไปเรียบเรียงประสานเสียงใน MusicGen หรือ Studio (params: { text?: string })
+21. 'teach_me': เริ่มโหมดแบบฝึกหัดหรือการสอนดนตรี (params: { topic?: string })
+22. 'studio_set_tab': เปลี่ยนแท็บในหน้า Studio (params: { tab: 'composer' | 'arranger' | 'editor' })
+23. 'musicgen_set_mood': ตั้ง Mood ของเพลงใหม่ (params: { mood: 'Happy' | 'Sad' | 'Energetic' | 'Chill' | 'Aggressive' | 'Dreamy' })
+24. 'musicgen_set_tempo': ตั้งจังหวะของเพลงใหม่ (params: { tempo: 'Slow' | 'Medium' | 'Fast' | 'Very Fast' })
+25. 'musicgen_set_prompt': ตั้งคำอธิบายเพลงที่ต้องการ (params: { prompt: string })
+26. 'musicgen_set_lyrics': ใส่เนื้อร้องสำหรับเพลงใหม่ (params: { lyrics: string })
+27. 'musicgen_generate': สั่ง AI แต่งเพลงใหม่ทันที (ไม่มี params)
+
+หมายเหตุสำคัญ: เมื่อผู้ใช้ขอให้แต่งเพลงใหม่ ต้องทำตามลำดับนี้เสมอ:
+1. navigate_to_page กับ view='forge' (เปิดหน้า Studio ก่อน)
+2. studio_set_tab กับ tab='composer' (สลับไปแท็บ Composer เพื่อเปิดระบบแต่งเพลง)
+3. musicgen_set_mood / musicgen_set_tempo / musicgen_set_prompt (ตั้งค่าตามที่ผู้ใช้ต้องการ)
+4. musicgen_generate (สั่งสร้างเพลง)
 
 ข้อสำคัญเกี่ยวกับการตอบกลับ (JSON):
-- 'reply': ข้อความที่จะพูดและแสดงผล ต้องลงท้ายอย่างเป็นธรรมชาติด้วย ${suffix}
-- 'actions': รายการคำสั่งที่จะรันตามความต้องการของผู้ใช้ ถ้าไม่มีให้ใช้ []`
+คุณต้องตอบกลับเป็นรูปแบบ JSON ที่ถูกต้องเสมอ (Strict JSON) ตามโครงสร้างนี้:
+{
+  "reply": "ข้อความที่จะพูดและแสดงผล ห้ามใช้ Markdown ห้ามมีวงเล็บ ห้ามใช้อีโมจิ (ต้องลงท้ายอย่างเป็นธรรมชาติด้วย ${suffix})",
+  "actions": [
+    {
+      "type": "ชื่อของ action ที่ตรงกับรายการด้านบน",
+      "params": { "พารามิเตอร์ของ action นั้นๆ" }
+    }
+  ]
+}
+ถ้าไม่มี action ให้ส่ง "actions": []`
                 : `You are Nimo, a friendly, human-like AI companion and central brain for the Memolody V2 app.
 Speak naturally, keep your responses conversational, and do not use bullet points or numbered lists. 
 
@@ -1203,13 +1242,13 @@ Supported Actions:
 You must output valid JSON matching the schema. If no actions are needed, return an empty array.`;
 
             // Direct API call
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`;
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
             const res = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     system_instruction: { parts: [{ text: sys }] },
-                    contents: [{ role: 'user', parts: [{ text: text }] }],
+                    contents: contentsList,
                     generationConfig: {
                         maxOutputTokens: 1024,
                         temperature: 0.4,
@@ -1268,13 +1307,18 @@ You must output valid JSON matching the schema. If no actions are needed, return
             // Execute Actions
             if (parsedRes.actions && Array.isArray(parsedRes.actions)) {
                 for (const act of parsedRes.actions) {
-                    if (act.type) {
+                    const actionType = act.type || act.name; // Fallback just in case
+                    if (actionType) {
                         try {
                             if (window.NimoBrain) {
-                                await window.NimoBrain.executeAction(act.type, act.params);
+                                await window.NimoBrain.executeAction(actionType, act.params);
+                            }
+                            // Wait briefly after page or tab change to let components mount & register actions
+                            if (actionType === 'navigate_to_page' || actionType === 'studio_set_tab') {
+                                await new Promise(resolve => setTimeout(resolve, 250));
                             }
                         } catch (err) {
-                            console.error(`[NimoAction Error] Failed executing ${act.type}:`, err);
+                            console.error(`[NimoAction Error] Failed executing ${actionType}:`, err);
                         }
                     }
                 }
