@@ -1337,11 +1337,31 @@ You must output valid JSON matching the schema. If no actions are needed, return
                     if (actionType) {
                         try {
                             if (window.NimoBrain) {
-                                await window.NimoBrain.executeAction(actionType, act.params);
+                                // For musicgen actions, retry if not registered yet (ComposerPage may still be mounting)
+                                if (actionType.startsWith('musicgen_')) {
+                                    let retries = 0;
+                                    const maxRetries = 5;
+                                    while (retries < maxRetries) {
+                                        try {
+                                            await window.NimoBrain.executeAction(actionType, act.params);
+                                            break; // Success
+                                        } catch (err: any) {
+                                            if (err?.message?.includes('unregistered') || err?.message?.includes('not registered')) {
+                                                retries++;
+                                                console.log(`[NimoAction] ${actionType} not ready, retry ${retries}/${maxRetries}...`);
+                                                await new Promise(resolve => setTimeout(resolve, 500));
+                                            } else {
+                                                throw err;
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    await window.NimoBrain.executeAction(actionType, act.params);
+                                }
                             }
-                            // Wait briefly after page or tab change to let components mount & register actions
+                            // Wait after page or tab change to let components mount & register actions
                             if (actionType === 'navigate_to_page' || actionType === 'studio_set_tab') {
-                                await new Promise(resolve => setTimeout(resolve, 250));
+                                await new Promise(resolve => setTimeout(resolve, 800));
                             }
                         } catch (err) {
                             console.error(`[NimoAction Error] Failed executing ${actionType}:`, err);

@@ -61,7 +61,7 @@ export class NimoBrainRegistry {
     const handler = this.actions.get(id);
     if (!handler) {
       console.warn(`[NimoBrain] Action not found: ${id}`);
-      return;
+      throw new Error(`Action unregistered: ${id}`);
     }
 
     // Role Security Boundary check for Nimo agent actions

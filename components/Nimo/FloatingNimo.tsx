@@ -990,11 +990,30 @@ If no actions are needed, return "actions": []`;
                     const actionType = act.type || act.name; // Fallback just in case
                     if (actionType) {
                         try {
-                            await nimoBrain.executeAction(actionType, act.params);
-                            // Important: If we just navigated to a new page or tab, wait briefly so React can
-                            // mount the new component and register its specific actions before continuing.
+                            // For musicgen actions, retry if not registered yet (ComposerPage may still be mounting)
+                            if (actionType.startsWith('musicgen_')) {
+                                let retries = 0;
+                                const maxRetries = 5;
+                                while (retries < maxRetries) {
+                                    try {
+                                        await nimoBrain.executeAction(actionType, act.params);
+                                        break; // Success
+                                    } catch (err: any) {
+                                        if (err?.message?.includes('unregistered') || err?.message?.includes('not registered')) {
+                                            retries++;
+                                            console.log(`[NimoAction] ${actionType} not ready, retry ${retries}/${maxRetries}...`);
+                                            await new Promise(resolve => setTimeout(resolve, 500));
+                                        } else {
+                                            throw err; // Different error, don't retry
+                                        }
+                                    }
+                                }
+                            } else {
+                                await nimoBrain.executeAction(actionType, act.params);
+                            }
+                            // After navigation/tab change, wait for the new page to mount and register actions
                             if (actionType === 'navigate_to_page' || actionType === 'studio_set_tab') {
-                                await new Promise(resolve => setTimeout(resolve, 250));
+                                await new Promise(resolve => setTimeout(resolve, 800));
                             }
                         } catch (err) {
                             console.error(`[NimoAction Error] Failed executing ${actionType}:`, err);
