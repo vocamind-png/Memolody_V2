@@ -506,6 +506,8 @@ export const FloatingNimoContent: React.FC<Props> = ({
             if (e.error === 'not-allowed') {
                 hasPermissionErrorRef.current = true;
                 setStatus(preferredLanguageRef.current === 'th' ? '🔴 ไม่ได้รับอนุญาตให้ใช้ไมค์' : '🔴 Mic Permission Denied');
+                // Auto-clear the status after 3 seconds so it doesn't block UI when user types
+                setTimeout(() => setStatus(''), 3000);
             } else {
                 if (e.error === 'no-speech') {
                     setStatus('');

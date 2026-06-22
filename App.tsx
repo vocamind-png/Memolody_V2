@@ -144,6 +144,7 @@ const App: React.FC = () => {
   const [uiTheme, setUiTheme] = useState<'v1' | 'v2'>(() => (localStorage.getItem('memo_ui_theme') as 'v1' | 'v2') || 'v2');
   const [nimoPosition, setNimoPosition] = useState<'left' | 'right'>(() => (localStorage.getItem('nimo_position') as 'left' | 'right') || 'left');
   const [layoutMode, setLayoutMode] = useState<'compact' | 'full'>(() => (localStorage.getItem('memo_layout_mode') as 'compact' | 'full') || 'compact');
+  const [studioInitialMode, setStudioInitialMode] = useState<'composer' | 'arranger' | 'editor'>('arranger');
   const [loopPresets, setLoopPresets] = useState<LoopPreset[]>(INITIAL_LOOP_PRESETS);
   const [pendingImportFile, setPendingImportFile] = useState<File | null>(null);
   const [autoPlayOnLoad, setAutoPlayOnLoad] = useState(false); // true after OMR import → Player auto-starts
@@ -686,9 +687,14 @@ const App: React.FC = () => {
   useEffect(() => {
     const unregNavigate = nimoBrain.registerAction('navigate_to_page', (params) => {
       const view = params?.view || params?.page || params?.target || params?.name;
+      const tab = params?.tab; // optional: set studio tab when navigating
       console.log('[App] Nimo requested navigation to:', view, params);
       if (view) {
         navigateTo(view as any);
+        // If navigating to Studio with a specific tab, set it immediately
+        if (view === 'forge' && tab) {
+          setStudioInitialMode(tab);
+        }
       }
     });
 
@@ -815,6 +821,16 @@ const App: React.FC = () => {
       });
     });
 
+    const unregStudioSetTab = nimoBrain.registerAction('studio_set_tab', (params) => {
+      const tab = params?.tab;
+      console.log('[App] Nimo requested studio_set_tab:', tab);
+      if (['composer', 'arranger', 'editor'].includes(tab)) {
+        setStudioInitialMode(tab);
+        // Also navigate to forge if not already there
+        navigateTo('forge');
+      }
+    });
+
     return () => {
       unregNavigate();
       unregNavigateAlias();
@@ -828,6 +844,7 @@ const App: React.FC = () => {
       unregDeleteLatestTrack();
       unregArrangeSong();
       unregTeachMe();
+      unregStudioSetTab();
     };
   }, [navigateTo, handleSongSelect]);
 
@@ -867,7 +884,7 @@ const App: React.FC = () => {
       case 'player':
         return <PlayerPage song={selectedSong} musicXml={uploadedMusicXml} layoutBundle={selectedLayoutBundle} tracks={tracks} setTracks={setTracks} viewMode={playerViewMode} setViewMode={setPlayerViewMode} loopPresets={loopPresets} setLoopPresets={setLoopPresets} performanceMode={performanceMode} vocalidoAutoRender={vocalidoAutoRender} renderCardStyle={vocalidoRenderCardStyle} autoPlay={autoPlayOnLoad} onAutoPlayConsumed={() => setAutoPlayOnLoad(false)} onSongUpdate={handleSongUpdate} onNavigate={(view) => setCurrentView(view)} />;
       case 'forge':
-        return <StudioPage selectedSong={selectedSong} xmlData={uploadedMusicXml} layoutBundle={selectedLayoutBundle} tracks={tracks} setTracks={setTracks} onPublish={triggerSync} onExit={() => navigateTo('home')} />;
+        return <StudioPage selectedSong={selectedSong} xmlData={uploadedMusicXml} layoutBundle={selectedLayoutBundle} tracks={tracks} setTracks={setTracks} onPublish={triggerSync} onExit={() => navigateTo('home')} initialStudioMode={studioInitialMode} />;
       case 'profile':
         return <ProfilePage onEnterForge={() => navigateTo('forge')} userLibrary={userSongs} onSongSelect={handleSongSelect} onTriggerSync={triggerSync} isSyncing={isSyncing} onRefresh={triggerSync} preferredLanguage={preferredLanguage} setPreferredLanguage={handleLanguageChange} userCountry={userCountry} setUserCountry={handleCountryChange} userInstrument={userInstrument} setUserInstrument={handleInstrumentChange} onViewPlan={() => navigateTo('subscription')} />;
       case 'settings':

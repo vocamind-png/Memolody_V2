@@ -30,6 +30,7 @@ interface StudioPageProps {
   setTracks: React.Dispatch<React.SetStateAction<TrackState[]>>;
   onPublish: () => void;
   onExit?: () => void;
+  initialStudioMode?: 'composer' | 'arranger' | 'editor';
 }
 
 /** Map EngraverCommandCenter tool IDs → ScoreEditOverlay tool + duration */
@@ -47,7 +48,7 @@ function mapEngraverTool(toolId: string): { tool: EditTool; duration: NoteType |
 }
 
 const StudioPage: React.FC<StudioPageProps> = ({
-  selectedSong: initialSong, xmlData: initialXml, layoutBundle, tracks, setTracks, onPublish, onExit
+  selectedSong: initialSong, xmlData: initialXml, layoutBundle, tracks, setTracks, onPublish, onExit, initialStudioMode = 'arranger'
 }) => {
   const [currentProject, setCurrentProject] = useState<Song | null>(initialSong);
   const [xmlHistory, setXmlHistory] = useState<string[]>(initialXml ? [initialXml] : []);
@@ -66,20 +67,15 @@ const StudioPage: React.FC<StudioPageProps> = ({
   const [showPluginSettings, setShowPluginSettings] = useState(false);
   const [activePluginId, setActivePluginId] = useState<string>('vocalido-svs');
   const [plugins] = useState(PluginManager.getInstance().listPlugins());
-  const [studioMode, setStudioMode] = useState<'composer' | 'arranger' | 'editor' | 'pianoroll'>('arranger');
+  const [studioMode, setStudioMode] = useState<'composer' | 'arranger' | 'editor' | 'pianoroll'>(initialStudioMode);
   const [pianorollTrackId, setPianorollTrackId] = useState<string | null>(null);
 
+  // Sync initialStudioMode prop changes (e.g. from Nimo AI)
   useEffect(() => {
-    // Register Nimo action to switch studio tabs
-    const unreg = nimoBrain.registerAction('studio_set_tab', (params) => {
-      if (params && params.tab) {
-        if (['composer', 'arranger', 'editor', 'pianoroll'].includes(params.tab)) {
-          setStudioMode(params.tab as any);
-        }
-      }
-    });
-    return unreg;
-  }, []);
+    if (initialStudioMode) {
+      setStudioMode(initialStudioMode);
+    }
+  }, [initialStudioMode]);
 
   // Sync props to state if they change (e.g. when navigating from Player)
   useEffect(() => {
