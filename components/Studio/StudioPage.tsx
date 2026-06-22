@@ -347,6 +347,55 @@ const StudioPage: React.FC<StudioPageProps> = ({
     } finally { setIsPreparing(false); }
   };
 
+  // ── Refs for stable NimoBrain callbacks ──
+  const handleUndoRef = useRef(handleUndo);
+  const handleRedoRef = useRef(handleRedo);
+  const executeExportRef = useRef(executeExport);
+  useEffect(() => { handleUndoRef.current = handleUndo; }, [handleUndo]);
+  useEffect(() => { handleRedoRef.current = handleRedo; }, [handleRedo]);
+  useEffect(() => { executeExportRef.current = executeExport; });
+
+  // Register Studio-specific NimoBrain actions once on mount
+  useEffect(() => {
+    const unregUndo = nimoBrain.registerAction('undo', () => {
+      console.log('[StudioPage] Nimo requested undo');
+      handleUndoRef.current();
+    });
+
+    const unregRedo = nimoBrain.registerAction('redo', () => {
+      console.log('[StudioPage] Nimo requested redo');
+      handleRedoRef.current();
+    });
+
+    const unregExportSong = nimoBrain.registerAction('export_song', (params) => {
+      console.log('[StudioPage] Nimo requested export_song', params);
+      const formatMap: Record<string, string> = {
+        musicxml: 'xml',
+        midi: 'midi',
+        pdf: 'pdf',
+        wav: 'wav',
+        mp3: 'mp3',
+        png: 'png',
+        jpeg: 'jpeg',
+        nimo: 'nimo',
+      };
+      const rawFormat = params?.format;
+      const mapped = rawFormat ? formatMap[rawFormat] || rawFormat : null;
+      if (mapped) {
+        executeExportRef.current(mapped as any);
+      } else {
+        // No format specified — open the export modal for the user to choose
+        setShowExportModal(true);
+      }
+    });
+
+    return () => {
+      unregUndo();
+      unregRedo();
+      unregExportSong();
+    };
+  }, []);
+
   if (showProjectBrowser) {
     return (
       <div className="h-full w-full flex flex-col bg-[#050507] p-8">

@@ -841,6 +841,38 @@ const App: React.FC = () => {
       }
     });
 
+    const unregSearchSong = nimoBrain.registerAction('search_song', (params) => {
+      const query = params?.query ?? '';
+      console.log('[App] Nimo requested search_song', params);
+      navigateTo('home');
+      // Defer dispatch so HomePage is mounted and listening
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('nimo-search-song', { detail: { query } }));
+      }, 100);
+    });
+
+    const unregSortSongs = nimoBrain.registerAction('sort_songs', (params) => {
+      const mode = params?.mode ?? 'default';
+      console.log('[App] Nimo requested sort_songs', params);
+      navigateTo('home');
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('nimo-sort-songs', { detail: { mode } }));
+      }, 100);
+    });
+
+    const unregImportFile = nimoBrain.registerAction('import_file', (params) => {
+      console.log('[App] Nimo requested import_file', params);
+      navigateTo('home');
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('nimo-import-file'));
+      }, 100);
+    });
+
+    const unregSyncCloud = nimoBrain.registerAction('sync_cloud', (params) => {
+      console.log('[App] Nimo requested sync_cloud', params);
+      triggerSync();
+    });
+
     return () => {
       unregNavigate();
       unregNavigateAlias();
@@ -855,8 +887,12 @@ const App: React.FC = () => {
       unregArrangeSong();
       unregTeachMe();
       unregStudioSetTab();
+      unregSearchSong();
+      unregSortSongs();
+      unregImportFile();
+      unregSyncCloud();
     };
-  }, [navigateTo, handleSongSelect]);
+  }, [navigateTo, handleSongSelect, triggerSync]);
 
   const renderPage = () => {
     // Show premium splash loader on startup while loading database and plugins

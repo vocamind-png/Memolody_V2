@@ -413,6 +413,38 @@ const HomePage: React.FC<HomePageProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
+  // ── Listen for NimoBrain custom events dispatched from App.tsx ──
+  useEffect(() => {
+    const handleSearchSong = (e: Event) => {
+      const query = (e as CustomEvent).detail?.query ?? '';
+      console.log('[HomePage] Nimo search_song event:', query);
+      setSearchInput(query);
+      setSearchQuery(query);
+    };
+    const handleSortSongs = (e: Event) => {
+      let mode = (e as CustomEvent).detail?.mode ?? 'default';
+      // Normalize 'a-z'→'az', 'z-a'→'za' for compatibility
+      if (mode === 'a-z') mode = 'az';
+      if (mode === 'z-a') mode = 'za';
+      console.log('[HomePage] Nimo sort_songs event:', mode);
+      if (['default', 'az', 'za', 'newest', 'oldest'].includes(mode)) {
+        setSortMode(mode as SortMode);
+      }
+    };
+    const handleImportFile = () => {
+      console.log('[HomePage] Nimo import_file event');
+      setShowImport(true);
+    };
+    window.addEventListener('nimo-search-song', handleSearchSong);
+    window.addEventListener('nimo-sort-songs', handleSortSongs);
+    window.addEventListener('nimo-import-file', handleImportFile);
+    return () => {
+      window.removeEventListener('nimo-search-song', handleSearchSong);
+      window.removeEventListener('nimo-sort-songs', handleSortSongs);
+      window.removeEventListener('nimo-import-file', handleImportFile);
+    };
+  }, []);
+
   const handleToggleSelect = useCallback((id: string) => {
     setSelectedIds(prev => {
       const next = new Set(prev);

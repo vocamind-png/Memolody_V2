@@ -1790,6 +1790,12 @@ const PlayerPage: React.FC<{
   const setTransposeRef = useRef(setTranspose);
   const handleToggleFavoriteRef = useRef(handleToggleFavorite);
   const isMetronomeOnRef = useRef(isMetronomeOn);
+  const setActiveCardRef = useRef(setActiveCard);
+  const setTracksRef = useRef(setTracks);
+  const triggerVocalSynthesisRef = useRef<(forceRender?: boolean, selectedTrackIds?: string[], overrideLyricMode?: string) => Promise<void>>(async () => {});
+  const setIsPlayingRef = useRef(setIsPlaying);
+  const setShowRenderPromptRef = useRef(setShowRenderPrompt);
+  const setIsNavMenuVisibleRef = useRef(setIsNavMenuVisible);
 
   // Sync refs to latest values on every render
   useEffect(() => {
@@ -1803,6 +1809,12 @@ const PlayerPage: React.FC<{
     setTransposeRef.current = setTranspose;
     handleToggleFavoriteRef.current = handleToggleFavorite;
     isMetronomeOnRef.current = isMetronomeOn;
+    setActiveCardRef.current = setActiveCard;
+    setTracksRef.current = setTracks;
+    triggerVocalSynthesisRef.current = triggerVocalSynthesis;
+    setIsPlayingRef.current = setIsPlaying;
+    setShowRenderPromptRef.current = setShowRenderPrompt;
+    setIsNavMenuVisibleRef.current = setIsNavMenuVisible;
   });
 
   // Register Player-specific NimoBrain actions once on mount
@@ -1875,6 +1887,39 @@ const PlayerPage: React.FC<{
       await handleToggleFavoriteRef.current();
     });
 
+    const unregRenderVocal = nimoBrain.registerAction('render_vocal', (params) => {
+      console.log('[App] Nimo requested render_vocal', params);
+      setShowRenderPromptRef.current(true);
+    });
+
+    const unregSkipToStart = nimoBrain.registerAction('skip_to_start', (params) => {
+      console.log('[App] Nimo requested skip_to_start', params);
+      if (musicEngine.transportState !== 'stopped') {
+        musicEngine.pause();
+      }
+      musicEngine.setTransportSeconds(0);
+      musicEngine.currentMeasure = '';
+      musicEngine.currentNoteTime = 0;
+      setIsPlayingRef.current(false);
+    });
+
+    const unregSetSingingSystem = nimoBrain.registerAction('set_singing_system', (params) => {
+      console.log('[App] Nimo requested set_singing_system', params);
+      const system = params?.system;
+      if (!system) return;
+      const mode = mapToLyricMode(system);
+      setTracksRef.current((prevTracks: any) => prevTracks.map((t: any) => ({ ...t, lyricMode: mode })));
+      try { localStorage.setItem('memo_lyric_mode', mode); } catch {}
+      setIsNavMenuVisibleRef.current(false);
+      lastRenderedKeyRef.current = '';
+      setTimeout(() => triggerVocalSynthesisRef.current(true, undefined, mode), 150);
+    });
+
+    const unregToggleVocalido = nimoBrain.registerAction('toggle_vocalido', (params) => {
+      console.log('[App] Nimo requested toggle_vocalido', params);
+      setActiveCardRef.current((prev: PlayerCardType) => prev === 'vocalido' ? 'score' : 'vocalido');
+    });
+
     return () => {
       unregPlay();
       unregPause();
@@ -1886,6 +1931,10 @@ const PlayerPage: React.FC<{
       unregToggleMetronome();
       unregSetTranspose();
       unregToggleFavorite();
+      unregRenderVocal();
+      unregSkipToStart();
+      unregSetSingingSystem();
+      unregToggleVocalido();
     };
   }, []);
 

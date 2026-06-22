@@ -763,8 +763,9 @@ ${appStateStr}
 15. 'take_screenshot': ถ่ายรูปภาพหน้าจอปัจจุบันของแอพพลิเคชันเพื่อตรวจสอบความถูกต้องหรือแก้ไขปัญหาให้ผู้ใช้ (ไม่มี params)
 16. 'solo_track': โซโล่ (Solo) เสียงเฉพาะของแทร็กใดแทร็กหนึ่ง (params: { trackName?: string, trackIndex?: number, solo: boolean })
 17. 'mute_track': ปิดเสียง (Mute) หรือเปิดเสียงของแทร็กใดแทร็กหนึ่ง (params: { trackName?: string, trackIndex?: number, mute: boolean })
+18. 'set_track_mode': สลับโหมดของแทร็กระหว่างเสียงร้อง Vocal และเสียงดนตรี Instrument (params: { trackName?: string, trackIndex?: number, mode: 'vocal' | 'instrument' })
 19. 'set_track_instrument': เลือกเครื่องดนตรีหรือนักร้องเสียงประสาน/Vocalido ของแทร็กนั้นๆ เช่น 'Piano', 'Violin', 'Canary', 'Lotte V', 'Soprano' (params: { trackName?: string, trackIndex?: number, instrument: string })
-20. 'arrange_song': ส่งเนื้อเพลงหรือเพลงไปเรียบเรียงประสานเสียงใน MusicGen หรือ Studio (params: { text?: string })
+20. 'arrange_song': ส่งเพลงที่มีอยู่แล้วไปเรียบเรียงประสานเสียงในหน้า AI Arranger เท่านั้น ห้ามใช้เมื่อผู้ใช้ขอแต่งเพลงใหม่ (params: { text?: string })
 21. 'teach_me': เริ่มโหมดแบบฝึกหัดหรือการสอนดนตรี (params: { topic?: string })
 22. 'studio_set_tab': เปลี่ยนแท็บในหน้า Studio (params: { tab: 'composer' | 'arranger' | 'editor' })
 23. 'musicgen_set_mood': ตั้ง Mood ของเพลงใหม่ (params: { mood: 'Happy' | 'Sad' | 'Energetic' | 'Chill' | 'Aggressive' | 'Dreamy' })
@@ -772,12 +773,26 @@ ${appStateStr}
 25. 'musicgen_set_prompt': ตั้งคำอธิบายเพลงที่ต้องการ (params: { prompt: string })
 26. 'musicgen_set_lyrics': ใส่เนื้อร้องสำหรับเพลงใหม่ (params: { lyrics: string })
 27. 'musicgen_generate': สั่ง AI แต่งเพลงใหม่ทันที (ไม่มี params)
+28. 'musicgen_add_style': เพิ่มสไตล์เพลง เช่น 'Pop', 'Jazz', 'Classical' (params: { style: string })
+29. 'musicgen_clear_styles': ล้างสไตล์ทั้งหมดที่เลือกไว้ (ไม่มี params)
+30. 'delete_latest_track': ลบแทร็กล่าสุดที่เพิ่มเข้ามา (ไม่มี params)
+31. 'render_vocal': สั่ง Vocalido สังเคราะห์เสียงร้อง AI (ไม่มี params)
+32. 'skip_to_start': กลับไปต้นเพลง (ไม่มี params)
+33. 'set_singing_system': เปลี่ยนระบบร้อง (params: { system: 'american' | 'british' | 'ju-solfege' | 'jianpu' | 'kodaly' | 'lyric' | 'close' })
+34. 'toggle_vocalido': เปิด/ปิดโหมด Vocalido (ไม่มี params)
+35. 'undo': ย้อนกลับการแก้ไขล่าสุดใน Studio (ไม่มี params)
+36. 'redo': ทำซ้ำการแก้ไขที่ย้อนกลับใน Studio (ไม่มี params)
+37. 'export_song': ส่งออกเพลง (params: { format?: 'musicxml' | 'midi' | 'pdf' | 'wav' })
+38. 'search_song': ค้นหาเพลงในคลัง (params: { query: string })
+39. 'sort_songs': เรียงลำดับเพลง (params: { mode: 'default' | 'a-z' | 'z-a' | 'newest' | 'oldest' })
+40. 'sync_cloud': ซิงค์ข้อมูลกับ Cloud (ไม่มี params)
 
-หมายเหตุสำคัญ: เมื่อผู้ใช้ขอให้แต่งเพลงใหม่ ต้องทำตามลำดับนี้เสมอ:
+หมายเหตุสำคัญ: เมื่อผู้ใช้ขอให้แต่งเพลงใหม่ ห้ามใช้ arrange_song เด็ดขาด ต้องใช้ musicgen actions ตามลำดับนี้เสมอ:
 1. navigate_to_page กับ view='forge' (เปิดหน้า Studio ก่อน)
-2. studio_set_tab กับ tab='composer' (สลับไปแท็บ Composer เพื่อเปิดระบบแต่งเพลง)
+2. studio_set_tab กับ tab='composer' (สลับไปแท็บ Composer เท่านั้น ห้ามไปแท็บ arranger)
 3. musicgen_set_mood / musicgen_set_tempo / musicgen_set_prompt (ตั้งค่าตามที่ผู้ใช้ต้องการ)
 4. musicgen_generate (สั่งสร้างเพลง)
+ข้อห้าม: ห้ามใช้ arrange_song สำหรับการแต่งเพลงใหม่ เพราะจะเปิดหน้า Arranger แทน Composer
 
 ข้อสำคัญเกี่ยวกับการตอบกลับ (JSON):
 คุณต้องตอบกลับเป็นรูปแบบ JSON ที่ถูกต้องเสมอ (Strict JSON) ตามโครงสร้างนี้:
@@ -822,7 +837,7 @@ Supported Actions:
 17. 'mute_track': Mute or unmute a specific track (params: { trackName?: string, trackIndex?: number, mute: boolean })
 18. 'set_track_mode': Switch track mode between vocal and instrument (params: { trackName?: string, trackIndex?: number, mode: 'vocal' | 'instrument' })
 19. 'set_track_instrument': Choose track voice/instrument like 'Piano', 'Violin', 'Canary', 'Lotte V', 'Soprano' (params: { trackName?: string, trackIndex?: number, instrument: string })
-20. 'arrange_song': Send lyrics or song to be arranged in MusicGen or Studio (params: { text?: string })
+20. 'arrange_song': Send an EXISTING song to the AI Arranger only. DO NOT use for composing new songs. (params: { text?: string })
 21. 'teach_me': Start a lesson or practice mode (params: { topic?: string })
 22. 'studio_set_tab': Change tab inside Studio (params: { tab: 'composer' | 'arranger' | 'editor' })
 23. 'musicgen_set_mood': Set mood for new song (params: { mood: 'Happy' | 'Sad' | 'Energetic' | 'Chill' | 'Aggressive' | 'Dreamy' })
@@ -830,12 +845,26 @@ Supported Actions:
 25. 'musicgen_set_prompt': Set description/prompt for new song (params: { prompt: string })
 26. 'musicgen_set_lyrics': Set lyrics for new song (params: { lyrics: string })
 27. 'musicgen_generate': Trigger AI to compose a new song NOW (no params)
+28. 'musicgen_add_style': Add a style tag e.g. 'Pop', 'Jazz', 'Classical' (params: { style: string })
+29. 'musicgen_clear_styles': Clear all selected style tags (no params)
+30. 'delete_latest_track': Delete the most recently added track (no params)
+31. 'render_vocal': Trigger Vocalido AI vocal synthesis (no params)
+32. 'skip_to_start': Reset playback position to the beginning (no params)
+33. 'set_singing_system': Change singing notation system (params: { system: 'american' | 'british' | 'ju-solfege' | 'jianpu' | 'kodaly' | 'lyric' | 'close' })
+34. 'toggle_vocalido': Toggle Vocalido vocal mode on/off (no params)
+35. 'undo': Undo last edit in Studio (no params)
+36. 'redo': Redo last undone edit in Studio (no params)
+37. 'export_song': Export song (params: { format?: 'musicxml' | 'midi' | 'pdf' | 'wav' })
+38. 'search_song': Search for songs in library (params: { query: string })
+39. 'sort_songs': Sort song library (params: { mode: 'default' | 'a-z' | 'z-a' | 'newest' | 'oldest' })
+40. 'sync_cloud': Sync data with cloud (no params)
 
-IMPORTANT: When user asks to compose/create a new song, you MUST send actions in this order:
+IMPORTANT: When user asks to compose/create a new song, you MUST use musicgen actions in this order (NEVER use arrange_song for new songs):
 1. navigate_to_page with view='forge' (open Studio first)
-2. studio_set_tab with tab='composer' (switch to Composer tab)
+2. studio_set_tab with tab='composer' (MUST be 'composer', NOT 'arranger')
 3. musicgen_set_mood / musicgen_set_tempo / musicgen_set_prompt (configure as requested)
 4. musicgen_generate (trigger generation)
+DO NOT use 'arrange_song' for composing new songs — it opens the wrong tab.
 
 You must output valid JSON matching this exact schema:
 {
