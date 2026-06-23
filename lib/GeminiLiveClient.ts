@@ -7,6 +7,7 @@ export interface GeminiLiveClientOptions {
   onMessage: (role: 'user' | 'nimo', text: string) => void;
   onLog: (msg: string) => void;
   language?: 'th' | 'en';
+  onVolumeChange?: (micVolume: number, speakerVolume: number) => void;
 }
 
 export class GeminiLiveClient {
@@ -19,6 +20,10 @@ export class GeminiLiveClient {
   private isPlaying = false;
   private nextPlayTime = 0;
   private currentSource: AudioBufferSourceNode | null = null;
+  
+  private micAnalyser: AnalyserNode | null = null;
+  private speakerAnalyser: AnalyserNode | null = null;
+  private animFrameId: number | null = null;
   
   private options: GeminiLiveClientOptions;
   
@@ -40,6 +45,13 @@ export class GeminiLiveClient {
         noiseSuppression: true,
         autoGainControl: true,
       }});
+
+      this.micAnalyser = this.audioContext.createAnalyser();
+      this.micAnalyser.fftSize = 256;
+      this.speakerAnalyser = this.audioContext.createAnalyser();
+      this.speakerAnalyser.fftSize = 256;
+      
+      this.startAnalysisLoop();
 
       const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${this.options.apiKey}`;
       this.ws = new WebSocket(wsUrl);
@@ -79,6 +91,34 @@ export class GeminiLiveClient {
       this.options.onStateChange('error');
       this.disconnect();
     }
+  }
+
+  private startAnalysisLoop() {
+    if (!this.micAnalyser || !this.speakerAnalyser) return;
+    
+    const analyze = () => {
+      if (!this.micAnalyser || !this.speakerAnalyser) return;
+      
+      const getVolume = (analyser: AnalyserNode) => {
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        analyser.getByteFrequencyData(dataArray);
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+        const average = sum / dataArray.length;
+        return Math.min(100, (average / 128) * 100);
+      };
+
+      const micVol = getVolume(this.micAnalyser);
+      const speakerVol = getVolume(this.speakerAnalyser);
+      
+      if (this.options.onVolumeChange) {
+        this.options.onVolumeChange(micVol, speakerVol);
+      }
+      
+      this.animFrameId = requestAnimationFrame(analyze);
+    };
+    
+    analyze();
   }
 
   private sendSetupMessage() {
@@ -201,7 +241,8 @@ export class GeminiLiveClient {
       }
     };
     
-    source.connect(this.workletNode);
+    source.connect(this.micAnalyser!);
+    this.micAnalyser!.connect(this.workletNode);
     this.workletNode.connect(this.audioContext.destination);
   }
 
@@ -334,7 +375,8 @@ export class GeminiLiveClient {
     
     const source = this.audioContext.createBufferSource();
     source.buffer = buffer;
-    source.connect(this.audioContext.destination);
+    source.connect(this.speakerAnalyser!);
+    this.speakerAnalyser!.connect(this.audioContext.destination);
     this.currentSource = source;
     
     const startTime = Math.max(this.audioContext.currentTime, this.nextPlayTime);
@@ -376,6 +418,12 @@ export class GeminiLiveClient {
       this.micStream.getTracks().forEach(t => t.stop());
       this.micStream = null;
     }
+    if (this.animFrameId) {
+      cancelAnimationFrame(this.animFrameId);
+      this.animFrameId = null;
+    }
+    this.micAnalyser = null;
+    this.speakerAnalyser = null;
     if (this.audioContext) {
       this.audioContext.close();
       this.audioContext = null;

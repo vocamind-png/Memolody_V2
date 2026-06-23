@@ -172,6 +172,7 @@ export const FloatingNimoContent: React.FC<Props> = ({
     const [status, setStatus] = useState('');
     const [permState, setPermState] = useState<'prompt' | 'granted' | 'denied'>('prompt');
     const [userAudioLevel, setUserAudioLevel] = useState(0);
+    const [nimoAudioLevel, setNimoAudioLevel] = useState(0);
 
     const [wokenUp, setWokenUp] = useState(false);
     const [refSpeakerVolume, setRefSpeakerVolume] = useState<number | null>(null);
@@ -319,6 +320,10 @@ export const FloatingNimoContent: React.FC<Props> = ({
                     setSpeaking(false);
                     setStatus(preferredLanguage === 'th' ? '💤 สแตนด์บาย' : '💤 Standby');
                 }
+            },
+            onVolumeChange: (micVol, speakerVol) => {
+                setUserAudioLevel(micVol);
+                setNimoAudioLevel(speakerVol);
             },
             onMessage: (role, text) => {
                 setMsgs(prev => [...prev, { role, text }]);
@@ -1156,6 +1161,18 @@ If no actions are needed, return "actions": []`;
                     animation: wave 0.8s ease-in-out infinite;
                     transform-origin: center;
                 }
+                @keyframes blob-spin {
+                    0% { border-radius: 40% 60% 60% 40% / 40% 40% 60% 60%; transform: rotate(0deg); }
+                    33% { border-radius: 60% 40% 40% 60% / 60% 60% 40% 40%; }
+                    66% { border-radius: 40% 60% 60% 40% / 60% 40% 60% 40%; }
+                    100% { border-radius: 40% 60% 60% 40% / 40% 40% 60% 60%; transform: rotate(360deg); }
+                }
+                .animate-blob {
+                    animation: blob-spin 4s linear infinite;
+                }
+                .animate-blob-reverse {
+                    animation: blob-spin 5s linear infinite reverse;
+                }
             `}</style>
 
             {/* Header */}
@@ -1316,14 +1333,26 @@ If no actions are needed, return "actions": []`;
                     </div>
                 ))}
                 
-                {/* Visual waves animation when listening or speaking */}
+                {/* Gemini-style Dynamic Waveform */}
                 {(listening || speaking) && (
-                    <div className="flex items-center gap-1.5 justify-center py-2 h-10">
-                        <span className={`w-1 rounded-full animate-wave [animation-delay:0.1s] ${listening ? 'h-6 bg-red-400' : 'h-4 bg-cyan-400'}`} />
-                        <span className={`w-1 rounded-full animate-wave [animation-delay:0.2s] ${listening ? 'h-8 bg-red-400' : 'h-6 bg-cyan-400'}`} />
-                        <span className={`w-1 rounded-full animate-wave [animation-delay:0.3s] ${listening ? 'h-4 bg-red-400' : 'h-5 bg-cyan-400'}`} />
-                        <span className={`w-1 rounded-full animate-wave [animation-delay:0.4s] ${listening ? 'h-7 bg-red-400' : 'h-7 bg-cyan-400'}`} />
-                        <span className={`w-1 rounded-full animate-wave [animation-delay:0.5s] ${listening ? 'h-5 bg-red-400' : 'h-4 bg-cyan-400'}`} />
+                    <div className="relative flex items-center justify-center py-6 h-28 overflow-hidden w-full transition-opacity duration-300">
+                        {/* Container that scales based on audio level */}
+                        <div 
+                            className="relative flex items-center justify-center transition-transform duration-75 ease-out"
+                            style={{ transform: `scale(${1 + (speaking ? nimoAudioLevel : userAudioLevel) / 40})` }}
+                        >
+                            {/* Base Glow */}
+                            <div className={`absolute w-24 h-24 rounded-full blur-2xl opacity-50 transition-colors duration-500 ${speaking ? 'bg-cyan-500' : 'bg-rose-500'}`} />
+                            
+                            {/* Blob 1 */}
+                            <div className={`absolute w-16 h-16 mix-blend-screen opacity-80 animate-blob transition-colors duration-500 ${speaking ? 'bg-gradient-to-tr from-cyan-400 to-blue-500' : 'bg-gradient-to-tr from-rose-400 to-orange-400'}`} />
+                            
+                            {/* Blob 2 */}
+                            <div className={`absolute w-16 h-16 mix-blend-screen opacity-70 animate-blob-reverse transition-colors duration-500 ${speaking ? 'bg-gradient-to-bl from-indigo-500 to-purple-500' : 'bg-gradient-to-bl from-pink-500 to-rose-500'}`} />
+
+                            {/* Core Highlight */}
+                            <div className="absolute w-8 h-8 bg-white rounded-full blur-[6px] opacity-90 mix-blend-overlay" />
+                        </div>
                     </div>
                 )}
 
