@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   CheckCircle2, ShieldCheck, RefreshCcw, Trash2, HardDrive, AlertTriangle,
-  Sparkles, FileText, FileImage, FileCode, Plus, Music, Database, TrendingUp, Users, Lock, BrainCircuit, Server, Gift, Award, HelpCircle, BarChart3
+  Sparkles, FileText, FileImage, FileCode, Plus, Music, Database, TrendingUp, Users, Lock, BrainCircuit, Server, Gift, Award, HelpCircle, BarChart3, MessageSquare
 } from 'lucide-react';
 import { parseMusicXMLMetadata } from '../../lib/MusicXmlParser';
 import { songStorage } from '../../lib/SongStorage';
