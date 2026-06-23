@@ -387,6 +387,7 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
   const measureVisualNotesRef = useRef<Map<string, { startTime: number, offset: number, relX: number, pageIndex: number }[]>>(new Map());
   const volta1MeasuresRef = useRef<Set<string>>(new Set());
   const prevPageRef = useRef<number>(-1);
+  const timemapCacheRef = useRef<any[] | null>(null);
   // Track current repeat pass (0=cyan pass1, 1+=rose pass2+)
   const currentPassRef = useRef<number>(0);
 
@@ -417,8 +418,14 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
     let scoreEndTime = 0;
 
     try {
-      const timemapRaw = vrvToolkitRef.current.renderToTimemap({ includeMeasures: true });
-      const timemap: any[] = typeof timemapRaw === 'string' ? JSON.parse(timemapRaw) : (Array.isArray(timemapRaw) ? timemapRaw : []);
+      let timemap: any[];
+      if (timemapCacheRef.current) {
+        timemap = timemapCacheRef.current;
+      } else {
+        const timemapRaw = vrvToolkitRef.current.renderToTimemap({ includeMeasures: true });
+        timemap = typeof timemapRaw === 'string' ? JSON.parse(timemapRaw) : (Array.isArray(timemapRaw) ? timemapRaw : []);
+        timemapCacheRef.current = timemap;
+      }
 
       timemap.forEach((entry: any) => {
         const qstamp: number = typeof entry.qstamp === 'number' ? entry.qstamp : 0;
@@ -1141,6 +1148,7 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
 
       // Yield before Verovio parse (heavy WASM call)
       await new Promise<void>(r => setTimeout(r, 0));
+      timemapCacheRef.current = null;
       vrvToolkit.loadData(finalXml);
       vrvToolkit.redoLayout();
       let pageCount = vrvToolkit.getPageCount();

@@ -73,6 +73,30 @@ const saveRenderToLocalCache = async (
   }
 };
 
+export const mapPartNameToInstrument = (partName: string): string => {
+  if (!partName) return 'acoustic_grand_piano';
+  const name = partName.toLowerCase();
+  if (name.includes('violin')) return 'violin';
+  if (name.includes('viola')) return 'viola';
+  if (name.includes('cello') || name.includes('violoncello')) return 'cello';
+  if (name.includes('bass') || name.includes('contrabass')) return 'acoustic_bass';
+  if (name.includes('flute')) return 'flute';
+  if (name.includes('oboe')) return 'oboe';
+  if (name.includes('clarinet')) return 'clarinet';
+  if (name.includes('bassoon')) return 'bassoon';
+  if (name.includes('trumpet')) return 'trumpet';
+  if (name.includes('horn') || name.includes('french horn')) return 'french_horn';
+  if (name.includes('trombone')) return 'trombone';
+  if (name.includes('tuba')) return 'tuba';
+  if (name.includes('sax') || name.includes('saxophone')) return 'alto_sax';
+  if (name.includes('guitar')) return 'acoustic_guitar_nylon';
+  if (name.includes('harp')) return 'orchestral_harp';
+  if (name.includes('choir') || name.includes('voice') || name.includes('vocal') || name.includes('soprano') || name.includes('alto') || name.includes('tenor')) return 'choir_aahs';
+  if (name.includes('synth')) return 'synth_strings_1';
+  if (name.includes('drum') || name.includes('percussion')) return 'synth_drum';
+  return 'acoustic_grand_piano';
+};
+
 export const getRenderKey = (entry: any) => {
   const tfStr = entry.timingFeel !== undefined ? `_tf${entry.timingFeel}` : '';
   const tpStr = entry.transpose !== undefined ? `_tp${entry.transpose}` : '_tp0';
@@ -1095,7 +1119,7 @@ const PlayerPage: React.FC<{
         isMuted: false,
         isSolo: false,
         mode: 'instrument' as 'instrument' | 'vocal',
-        instrument: 'Piano',
+        instrument: mapPartNameToInstrument(parsedData.partNames[id] || ''),
         lyricMode: 'British Fixed Doh' as any,
         engineId: activeEngineId,
         effects: Array(6).fill(null),
@@ -1555,7 +1579,7 @@ const PlayerPage: React.FC<{
         isMuted: false,
         isSolo: false,
         mode: index === 0 ? 'vocal' : 'instrument',
-        instrument: index === 0 ? (activeVoiceName || 'Alto Female') : 'Piano',
+        instrument: index === 0 ? (activeVoiceName || 'Alto Female') : mapPartNameToInstrument(currentPartNames[id] || ''),
         lyricMode: (savedLyricMode || activeLyricMode || 'British Fixed Doh') as LyricMode,
         engineId: activeEngineId,
         effects: Array(6).fill(null)
@@ -1805,25 +1829,15 @@ const PlayerPage: React.FC<{
     setCurrentBpmRef.current = setCurrentBpm;
     setMasterVolumeRef.current = setMasterVolume;
     setShowMixerRef.current = setShowMixer;
-    setIsMetronomeOnRef.current = setIsMetronomeOn;
-    setTransposeRef.current = setTranspose;
-    handleToggleFavoriteRef.current = handleToggleFavorite;
-    isMetronomeOnRef.current = isMetronomeOn;
-    setActiveCardRef.current = setActiveCard;
-    setTracksRef.current = setTracks;
-    triggerVocalSynthesisRef.current = triggerVocalSynthesis;
-    setIsPlayingRef.current = setIsPlaying;
-    setShowRenderPromptRef.current = setShowRenderPrompt;
-    setIsNavMenuVisibleRef.current = setIsNavMenuVisible;
-  });
-
-  // Register Player-specific NimoBrain actions once on mount
-  useEffect(() => {
     const unregPlay = nimoBrain.registerAction('play', async () => {
       const state = musicEngine.transportState;
       if (state !== 'started') {
         await handleTogglePlayRef.current();
       }
+    }, {
+      th: 'เริ่มเล่นเพลง',
+      en: 'Start playback',
+      category: 'player'
     });
 
     const unregPause = nimoBrain.registerAction('pause', async () => {
@@ -1831,6 +1845,10 @@ const PlayerPage: React.FC<{
       if (state === 'started') {
         await handleTogglePlayRef.current();
       }
+    }, {
+      th: 'หยุดเล่นเพลง',
+      en: 'Pause playback',
+      category: 'player'
     });
 
     const unregSetTempo = nimoBrain.registerAction('set_tempo', (params) => {
@@ -1839,6 +1857,11 @@ const PlayerPage: React.FC<{
         setCurrentBpmRef.current(bpm);
         musicEngine.setBpm(bpm);
       }
+    }, {
+      th: 'ตั้ง BPM จังหวะเพลง',
+      en: 'Set tempo BPM',
+      params: "{ bpm: number [20-400] }",
+      category: 'player'
     });
 
     const unregSetVolume = nimoBrain.registerAction('set_volume', (params) => {
@@ -1847,10 +1870,19 @@ const PlayerPage: React.FC<{
         setMasterVolumeRef.current(level);
         musicEngine.setMasterVolume(level);
       }
+    }, {
+      th: 'ตั้งระดับเสียง',
+      en: 'Set master volume',
+      params: "{ level: number [0.0-1.0] }",
+      category: 'player'
     });
 
     const unregToggleViewMode = nimoBrain.registerAction('toggle_view_mode', () => {
       setViewModeRef.current((prev: any) => prev === 'score' ? 'pianoroll' : 'score');
+    }, {
+      th: 'สลับโหมด Score/Piano Roll',
+      en: 'Toggle Score/Piano Roll view',
+      category: 'player'
     });
 
     const unregToggleLoop = nimoBrain.registerAction('toggle_loop', (params) => {
@@ -1864,16 +1896,29 @@ const PlayerPage: React.FC<{
           }
         });
       });
+    }, {
+      th: 'เปิด/ปิดโหมดลูป',
+      en: 'Toggle loop mode',
+      params: "{ enabled: boolean }",
+      category: 'player'
     });
 
     const unregToggleMixer = nimoBrain.registerAction('toggle_mixer', () => {
       setShowMixerRef.current(prev => !prev);
+    }, {
+      th: 'เปิด/ปิดแผงมิกเซอร์',
+      en: 'Toggle mixer panel',
+      category: 'player'
     });
 
     const unregToggleMetronome = nimoBrain.registerAction('toggle_metronome', () => {
       const next = !isMetronomeOnRef.current;
       setIsMetronomeOnRef.current(next);
       musicEngine.toggleMetronome(next);
+    }, {
+      th: 'เปิด/ปิดเครื่องเคาะจังหวะ',
+      en: 'Toggle metronome',
+      category: 'player'
     });
 
     const unregSetTranspose = nimoBrain.registerAction('set_transpose', (params) => {
@@ -1881,15 +1926,28 @@ const PlayerPage: React.FC<{
       if (val !== undefined && typeof val === 'number') {
         setTransposeRef.current(val);
       }
+    }, {
+      th: 'ปรับคีย์ Transpose',
+      en: 'Adjust transpose key',
+      params: "{ transpose: number }",
+      category: 'player'
     });
 
     const unregToggleFavorite = nimoBrain.registerAction('toggle_favorite', async () => {
       await handleToggleFavoriteRef.current();
+    }, {
+      th: 'กดถูกใจเพลง',
+      en: 'Toggle song favorite',
+      category: 'player'
     });
 
     const unregRenderVocal = nimoBrain.registerAction('render_vocal', (params) => {
       console.log('[App] Nimo requested render_vocal', params);
       setShowRenderPromptRef.current(true);
+    }, {
+      th: 'สั่ง Vocalido สังเคราะห์เสียงร้อง AI',
+      en: 'Trigger Vocalido AI vocal synthesis',
+      category: 'player'
     });
 
     const unregSkipToStart = nimoBrain.registerAction('skip_to_start', (params) => {
@@ -1901,6 +1959,10 @@ const PlayerPage: React.FC<{
       musicEngine.currentMeasure = '';
       musicEngine.currentNoteTime = 0;
       setIsPlayingRef.current(false);
+    }, {
+      th: 'กลับไปต้นเพลง',
+      en: 'Reset to beginning',
+      category: 'player'
     });
 
     const unregSetSingingSystem = nimoBrain.registerAction('set_singing_system', (params) => {
@@ -1913,6 +1975,11 @@ const PlayerPage: React.FC<{
       setIsNavMenuVisibleRef.current(false);
       lastRenderedKeyRef.current = '';
       setTimeout(() => triggerVocalSynthesisRef.current(true, undefined, mode), 150);
+    }, {
+      th: 'เปลี่ยนระบบร้อง',
+      en: 'Change singing notation system',
+      params: "{ system: 'american' | 'british' | 'ju-solfege' | 'jianpu' | 'kodaly' | 'lyric' | 'close' }",
+      category: 'player'
     });
 
     const unregToggleVocalido = nimoBrain.registerAction('toggle_vocalido', (params) => {
@@ -2308,6 +2375,7 @@ const PlayerPage: React.FC<{
 
   const cancelVocalSynthesis = () => {
     vocalidoRenderService.cancelRender();
+    setTracks(prev => prev.map(t => t.mode === 'vocal' ? { ...t, mode: 'instrument', instrument: mapPartNameToInstrument(t.name) } as TrackState : t));
   };
 
   const handleClearCache = async () => {

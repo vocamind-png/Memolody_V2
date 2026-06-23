@@ -886,7 +886,8 @@ const HomePage: React.FC<HomePageProps> = ({
         />
 
         {/* Search */}
-        <div className="relative group">
+        <div className="flex items-center gap-2">
+          <div className="relative group flex-1">
           <button 
             onClick={() => setSearchQuery(searchInput)}
             className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-700 group-focus-within:text-cyan-400 transition-colors z-10 hover:text-cyan-300"
@@ -910,6 +911,10 @@ const HomePage: React.FC<HomePageProps> = ({
                 setIsAiSearching(true);
                 setAiFilteredIds(null);
                 try {
+                  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || (typeof (window as any).__GEMINI_API_KEY__ !== 'undefined' ? (window as any).__GEMINI_API_KEY__ : '');
+                  if (!apiKey) throw new Error('GEMINI_API_KEY is not configured');
+                  const ai = new GoogleGenAI({ apiKey });
+                  
                   // Extract search intent instead of passing the entire catalog to avoid token limits
                   // Now we also instruct the AI to detect deep structural requests!
                   const prompt = `You are a music search intent extractor. User query: "${searchInput}". 
@@ -983,70 +988,69 @@ Note: "hasChords" is true if user asks for songs with chords (คอร์ด). 
             className="w-full h-12 bg-white/[0.03] border border-white/5 rounded-2xl pl-12 pr-20 text-xs font-black text-white outline-none focus:border-cyan-500/30 placeholder:text-zinc-800 transition-all uppercase"
           />
           <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
-            {searchInput && (
-              <button onClick={() => { setSearchInput(''); setSearchQuery(''); setAiFilteredIds(null); }} className="text-zinc-600 hover:text-white transition-colors p-1.5">
-                <X size={14} />
-              </button>
-            )}
-            <button
-              onClick={async () => {
-                if (!searchInput.trim()) return;
-                setIsAiSearching(true);
-                setAiFilteredIds(null);
-                try {
-                  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || (typeof __GEMINI_API_KEY__ !== 'undefined' ? __GEMINI_API_KEY__ : '');
-                  if (!apiKey) throw new Error('GEMINI_API_KEY is not configured');
-                  const ai = new GoogleGenAI({ apiKey });
-                  
-                  const prompt = `You are a music search intent extractor. User query: "${searchInput}". 
+              {searchInput && (
+                <button onClick={() => { setSearchInput(''); setSearchQuery(''); setAiFilteredIds(null); }} className="text-zinc-600 hover:text-white transition-colors p-1.5">
+                  <X size={14} />
+                </button>
+              )}
+              <button
+                onClick={async () => {
+                  if (!searchInput.trim()) return;
+                  setIsAiSearching(true);
+                  setAiFilteredIds(null);
+                  try {
+                    const apiKey = import.meta.env.VITE_GEMINI_API_KEY || (typeof __GEMINI_API_KEY__ !== 'undefined' ? __GEMINI_API_KEY__ : '');
+                    if (!apiKey) throw new Error('GEMINI_API_KEY is not configured');
+                    const ai = new GoogleGenAI({ apiKey });
+                    
+                    const prompt = `You are a music search intent extractor. User query: "${searchInput}". 
 Extract search parameters into JSON. Return ONLY JSON with this format: 
 { "keywords": ["..."], "genres": ["..."], "moods": ["..."], "instruments": ["..."], "era": ["..."] }
 If a field is not relevant, leave the array empty. Translate concepts into English keywords if needed.`;
 
-                  const response = await ai.models.generateContent({ model: 'gemini-1.5-flash', contents: prompt, config: { responseMimeType: 'application/json', temperature: 0.1 } });
-                  const params = JSON.parse(response.text || '{}');
-                  
-                  let matches = userLibrary;
-                  const allKeywords = [
-                    ...(params.keywords || []), ...(params.genres || []), ...(params.moods || []), ...(params.instruments || []), ...(params.era || [])
-                  ].map((k: string) => k.toLowerCase());
+                    const response = await ai.models.generateContent({ model: 'gemini-1.5-flash', contents: prompt, config: { responseMimeType: 'application/json', temperature: 0.1 } });
+                    const params = JSON.parse(response.text || '{}');
+                    
+                    let matches = userLibrary;
+                    const allKeywords = [
+                      ...(params.keywords || []), ...(params.genres || []), ...(params.moods || []), ...(params.instruments || []), ...(params.era || [])
+                    ].map((k: string) => k.toLowerCase());
 
-                  if (allKeywords.length > 0) {
-                    matches = matches.filter(song => {
-                      const m = song.metadata;
-                      const textToSearch = [m.title, m.artist, m.genre, m.mood, m.era, m.composer, ...(m.instruments || [])].filter(Boolean).join(' ').toLowerCase();
-                      return allKeywords.some(kw => textToSearch.includes(kw));
-                    });
+                    if (allKeywords.length > 0) {
+                      matches = matches.filter(song => {
+                        const m = song.metadata;
+                        const textToSearch = [m.title, m.artist, m.genre, m.mood, m.era, m.composer, ...(m.instruments || [])].filter(Boolean).join(' ').toLowerCase();
+                        return allKeywords.some(kw => textToSearch.includes(kw));
+                      });
+                    }
+                    
+                    setAiFilteredIds(matches.map(m => m.id));
+                    setSearchQuery(searchInput);
+                  } catch (e) {
+                    console.error(e);
+                    setSearchQuery(searchInput);
+                  } finally {
+                    setIsAiSearching(false);
                   }
-                  
-                  setAiFilteredIds(matches.map(m => m.id));
-                  setSearchQuery(searchInput);
-                } catch (e) {
-                  console.error(e);
-                  setSearchQuery(searchInput);
-                } finally {
-                  setIsAiSearching(false);
-                }
-              }}
-              className={`p-1.5 rounded-lg transition-colors ${isAiSearching ? 'text-cyan-400 animate-pulse' : 'text-zinc-500 hover:text-cyan-400'}`}
-              title="AI Smart Search"
-              disabled={isAiSearching}
-            >
-              <Sparkles size={16} className={isAiSearching ? 'animate-spin' : ''} />
-            </button>
+                }}
+                className={`p-1.5 rounded-lg transition-colors ${isAiSearching ? 'text-cyan-400 animate-pulse' : 'text-zinc-500 hover:text-cyan-400'}`}
+                title="AI Smart Search"
+                disabled={isAiSearching}
+              >
+                <Sparkles size={16} className={isAiSearching ? 'animate-spin' : ''} />
+              </button>
+              
+              <button 
+                onClick={() => setShowFilters(!showFilters)}
+                className={`p-1.5 rounded-lg transition-colors ${showFilters || filterGenre || filterInstrument || filterEra || filterYear || filterComposer || filterGrade !== 'All' ? 'text-cyan-400' : 'text-zinc-500 hover:text-cyan-400'}`}
+                title="Styles & Filters"
+              >
+                <Database size={16} /> 
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* ── STYLES & FILTERS TOGGLE ── */}
-        <div className="flex items-center justify-end w-full">
-          <button 
-            onClick={() => setShowFilters(!showFilters)}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-colors shadow-sm ${showFilters || filterGenre || filterInstrument || filterEra || filterYear || filterComposer || filterGrade !== 'All' ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30' : 'bg-white/5 text-zinc-400 hover:text-white border border-white/5'}`}
-            title="Toggle Styles & Filters"
-          >
-            <Database size={12} /> {showFilters ? 'HIDE STYLES' : 'STYLES & FILTERS'}
-          </button>
-        </div>
         {/* ── ADVANCED FILTERS PANEL ── */}
         {showFilters && (
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3 p-4 bg-white/[0.02] border border-white/5 rounded-[20px] animate-in slide-in-from-top-2 duration-200">

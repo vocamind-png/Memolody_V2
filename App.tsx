@@ -706,6 +706,11 @@ const App: React.FC = () => {
           setStudioInitialMode(tab);
         }
       }
+    }, {
+      th: 'ไปยังหน้าต่างๆ ของแอพ',
+      en: 'Navigate to a page view',
+      params: "{ view: 'home' | 'player' | 'forge' | 'nimo' | 'profile' | 'settings' | 'admin' | 'game' | 'vault' | 'subscription' }",
+      category: 'navigation'
     });
 
     const unregNavigateAlias = nimoBrain.registerAction('navigate', (params) => {
@@ -714,16 +719,31 @@ const App: React.FC = () => {
       if (view) {
         navigateTo(view as any);
       }
+    }, {
+      th: 'ไปยังหน้าต่างๆ (ชื่ออื่น)',
+      en: 'Navigate (alias)',
+      params: '{ view: string }',
+      category: 'navigation'
     });
 
     const unregArrangeSong = nimoBrain.registerAction('arrange_song', (params) => {
       console.log('[App] Nimo requested arrange_song', params);
       navigateTo('forge');
+    }, {
+      th: 'ส่งเพลงไปเรียบเรียงประสานเสียงใน AI Arranger',
+      en: 'Send song to AI Arranger for harmonization',
+      params: '{ text?: string }',
+      category: 'studio'
     });
 
     const unregTeachMe = nimoBrain.registerAction('teach_me', (params) => {
       console.log('[App] Nimo requested teach_me', params);
       navigateTo('game');
+    }, {
+      th: 'เริ่มโหมดแบบฝึกหัดหรือการสอนดนตรี',
+      en: 'Start a lesson or practice mode',
+      params: '{ topic?: string }',
+      category: 'navigation'
     });
 
     const unregPlaySong = nimoBrain.registerAction('play_song', async (params) => {
@@ -731,12 +751,22 @@ const App: React.FC = () => {
       if (!title) return;
       
       const songs = userSongsRef.current;
-      const found = songs.find(s => s.metadata.title.toLowerCase().includes(title.toLowerCase()));
+      const titleTokens = title.toLowerCase().split(/\s+/);
+      const found = songs.find(s => {
+        const t = (s.metadata.title || '').toLowerCase();
+        return titleTokens.every(token => t.includes(token));
+      });
+      
       if (found) {
         await handleSongSelect(found.metadata, found.xmlData, 'listen');
       } else {
         throw new Error(`Song not found: ${title}`);
       }
+    }, {
+      th: 'ค้นหาและเปิดเพลงจากคลัง',
+      en: 'Search and play a song from library',
+      params: '{ songTitle: string }',
+      category: 'player'
     });
 
     const unregChangeLang = nimoBrain.registerAction('change_language', (params) => {
@@ -744,6 +774,11 @@ const App: React.FC = () => {
       if (lang === 'th' || lang === 'en') {
         handleLanguageChange(lang);
       }
+    }, {
+      th: 'เปลี่ยนภาษาการแสดงผล',
+      en: 'Change display language',
+      params: "{ lang: 'th' | 'en' }",
+      category: 'settings'
     });
 
     const unregChangeInstrument = nimoBrain.registerAction('change_instrument', (params) => {
@@ -751,6 +786,11 @@ const App: React.FC = () => {
       if (['piano', 'violin', 'voice', 'guitar'].includes(instrument)) {
         handleInstrumentChange(instrument);
       }
+    }, {
+      th: 'เปลี่ยนเครื่องดนตรีหลัก',
+      en: 'Change main instrument',
+      params: "{ instrument: 'piano' | 'violin' | 'voice' | 'guitar' }",
+      category: 'settings'
     });
 
     const unregSoloTrack = nimoBrain.registerAction('solo_track', (params) => {
@@ -767,6 +807,11 @@ const App: React.FC = () => {
         }
         return t;
       }));
+    }, {
+      th: 'โซโล่เสียงเฉพาะแทร็ก',
+      en: 'Solo a specific track',
+      params: '{ trackName?: string, trackIndex?: number, solo: boolean }',
+      category: 'player'
     });
 
     const unregMuteTrack = nimoBrain.registerAction('mute_track', (params) => {
@@ -783,6 +828,11 @@ const App: React.FC = () => {
         }
         return t;
       }));
+    }, {
+      th: 'ปิด/เปิดเสียงแทร็ก',
+      en: 'Mute/unmute a track',
+      params: '{ trackName?: string, trackIndex?: number, mute: boolean }',
+      category: 'player'
     });
 
     const unregSetTrackMode = nimoBrain.registerAction('set_track_mode', (params) => {
@@ -801,6 +851,11 @@ const App: React.FC = () => {
         }
         return t;
       }));
+    }, {
+      th: 'สลับโหมดแทร็ก Vocal/Instrument',
+      en: 'Switch track mode vocal/instrument',
+      params: "{ trackName?: string, trackIndex?: number, mode: 'vocal' | 'instrument' }",
+      category: 'player'
     });
 
     const unregSetTrackInstrument = nimoBrain.registerAction('set_track_instrument', (params) => {
@@ -812,6 +867,11 @@ const App: React.FC = () => {
         if (isMatch) return { ...t, instrument: instrument };
         return t;
       }));
+    }, {
+      th: 'เลือกเครื่องดนตรี/นักร้องของแทร็ก',
+      en: 'Choose track instrument/voice',
+      params: '{ trackName?: string, trackIndex?: number, instrument: string }',
+      category: 'player'
     });
 
     const unregDeleteLatestTrack = nimoBrain.registerAction('delete_latest_track', async () => {
@@ -829,6 +889,10 @@ const App: React.FC = () => {
         }
         return prev;
       });
+    }, {
+      th: 'ลบแทร็กล่าสุดที่เพิ่มเข้ามา',
+      en: 'Delete the most recently added track',
+      category: 'studio'
     });
 
     const unregStudioSetTab = nimoBrain.registerAction('studio_set_tab', (params) => {
@@ -839,6 +903,11 @@ const App: React.FC = () => {
         // Also navigate to forge if not already there
         navigateTo('forge');
       }
+    }, {
+      th: 'เปลี่ยนแท็บใน Studio',
+      en: 'Change Studio tab',
+      params: "{ tab: 'composer' | 'arranger' | 'editor' }",
+      category: 'studio'
     });
 
     const unregSearchSong = nimoBrain.registerAction('search_song', (params) => {
@@ -849,6 +918,11 @@ const App: React.FC = () => {
       setTimeout(() => {
         window.dispatchEvent(new CustomEvent('nimo-search-song', { detail: { query } }));
       }, 100);
+    }, {
+      th: 'ค้นหาเพลงในคลัง',
+      en: 'Search for songs in library',
+      params: '{ query: string }',
+      category: 'navigation'
     });
 
     const unregSortSongs = nimoBrain.registerAction('sort_songs', (params) => {
@@ -858,6 +932,11 @@ const App: React.FC = () => {
       setTimeout(() => {
         window.dispatchEvent(new CustomEvent('nimo-sort-songs', { detail: { mode } }));
       }, 100);
+    }, {
+      th: 'เรียงลำดับเพลง',
+      en: 'Sort song library',
+      params: "{ mode: 'default' | 'a-z' | 'z-a' | 'newest' | 'oldest' }",
+      category: 'navigation'
     });
 
     const unregImportFile = nimoBrain.registerAction('import_file', (params) => {
@@ -866,11 +945,19 @@ const App: React.FC = () => {
       setTimeout(() => {
         window.dispatchEvent(new CustomEvent('nimo-import-file'));
       }, 100);
+    }, {
+      th: 'นำเข้าไฟล์ MusicXML/MIDI',
+      en: 'Import MusicXML/MIDI file',
+      category: 'navigation'
     });
 
     const unregSyncCloud = nimoBrain.registerAction('sync_cloud', (params) => {
       console.log('[App] Nimo requested sync_cloud', params);
       triggerSync();
+    }, {
+      th: 'ซิงค์ข้อมูลกับ Cloud',
+      en: 'Sync data with cloud',
+      category: 'system'
     });
 
     return () => {

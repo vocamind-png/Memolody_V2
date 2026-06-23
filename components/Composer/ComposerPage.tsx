@@ -86,15 +86,15 @@ const ComposerPage: React.FC<ComposerPageProps> = ({ parsedData, tracks, setTrac
   useEffect(() => {
     const unregGenerate = nimoBrain.registerAction('musicgen_generate', () => {
       generateRef.current();
-    });
+    }, { th: 'สั่ง AI แต่งเพลงใหม่ทันที', en: 'Trigger AI to compose a new song', category: 'composer' });
     
     const unregSetMood = nimoBrain.registerAction('musicgen_set_mood', (params) => {
       if (params?.mood) setSelectedMood(params.mood);
-    });
+    }, { th: 'ตั้ง Mood ของเพลง', en: 'Set song mood', params: "{ mood: 'Happy' | 'Sad' | 'Energetic' | 'Chill' | 'Aggressive' | 'Dreamy' }", category: 'composer' });
 
     const unregSetTempo = nimoBrain.registerAction('musicgen_set_tempo', (params) => {
       if (params?.tempo) setSelectedTempo(params.tempo);
-    });
+    }, { th: 'ตั้งจังหวะเพลงใหม่', en: 'Set new song tempo', params: "{ tempo: 'Slow' | 'Medium' | 'Fast' | 'Very Fast' }", category: 'composer' });
 
     const unregAddStyle = nimoBrain.registerAction('musicgen_add_style', (params) => {
       if (params?.style) {
@@ -103,19 +103,19 @@ const ComposerPage: React.FC<ComposerPageProps> = ({ parsedData, tracks, setTrac
           return prev;
         });
       }
-    });
+    }, { th: 'เพิ่มสไตล์เพลง', en: 'Add a style tag', params: "{ style: string }", category: 'composer' });
 
     const unregClearStyles = nimoBrain.registerAction('musicgen_clear_styles', () => {
       setSelectedStyles([]);
-    });
+    }, { th: 'ล้างสไตล์ทั้งหมด', en: 'Clear all style tags', category: 'composer' });
     
     const unregSetPrompt = nimoBrain.registerAction('musicgen_set_prompt', (params) => {
       if (params?.prompt !== undefined) setLyriaPrompt(params.prompt);
-    });
+    }, { th: 'ตั้งคำอธิบายเพลง', en: 'Set song description prompt', params: "{ prompt: string }", category: 'composer' });
 
     const unregSetLyrics = nimoBrain.registerAction('musicgen_set_lyrics', (params) => {
       if (params?.lyrics !== undefined) setLyrics(params.lyrics);
-    });
+    }, { th: 'ใส่เนื้อร้อง', en: 'Set lyrics text', params: "{ lyrics: string }", category: 'composer' });
 
     return () => {
       unregGenerate();

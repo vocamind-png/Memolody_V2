@@ -12,6 +12,7 @@ import HeadAdminDashboard from './HeadAdminDashboard';
 import { ServerControlDashboard } from './ServerControlDashboard';
 import ServerAnalytics from './ServerAnalytics';
 import AdminAnalytics from './AdminAnalytics';
+import NimoActionsAdmin from './NimoActionsAdmin';
 import { useAuth, hasAccess } from '../../lib/useAuth';
 import { supabase } from '../../lib/supabase';
 
@@ -21,7 +22,7 @@ interface AdminPageProps {
   onRefresh?: () => void;
 }
 
-type AdminTab = 'vault' | 'finance' | 'users' | 'servers' | 'promotions' | 'redemptions' | 'analytics' | 'headquarters';
+type AdminTab = 'vault' | 'finance' | 'users' | 'servers' | 'promotions' | 'redemptions' | 'analytics' | 'headquarters' | 'nimo_actions';
 
 interface PromoCode {
   id: string;
@@ -236,6 +237,7 @@ const AdminPage: React.FC<AdminPageProps> = ({ onMusicXmlUpload, onRestoreMaster
     { id: 'redemptions', label: 'Rewards redemptions', icon: Gift, color: 'text-purple-500' },
     { id: 'analytics', label: 'Analytics', icon: BarChart3, color: 'text-cyan-400' },
     { id: 'servers', label: 'Servers', icon: Server, color: 'text-zinc-500' },
+    { id: 'nimo_actions', label: 'Nimo Actions', icon: Sparkles, color: 'text-fuchsia-500' },
     ...(hasAccess(role, 'executive') ? [{ id: 'headquarters', label: 'HQ Analytics', icon: BrainCircuit, color: 'text-rose-500' }] : [])
   ];
 
@@ -292,6 +294,7 @@ const AdminPage: React.FC<AdminPageProps> = ({ onMusicXmlUpload, onRestoreMaster
             activeTab === 'promotions' ? 'Promotion Matrix: Deploy promo codes to credit new users with vocal generation tokens.' :
             activeTab === 'redemptions' ? 'Redemption Matrix: Real-time physical/digital rewards redemption log and tracking.' :
             activeTab === 'servers' ? 'Infrastructure Matrix: Real-time service daemon monitoring, resource telemetry, and remote restart controls.' :
+            activeTab === 'nimo_actions' ? 'Dynamic Actions Registry: Manage Nimo AI autonomous actions and scripts. Owner access only.' :
             'Omni-Analytics: Headquarters Telemetry Feed.'}
         </p>
       </header>
@@ -564,6 +567,12 @@ const AdminPage: React.FC<AdminPageProps> = ({ onMusicXmlUpload, onRestoreMaster
       {activeTab === 'headquarters' && hasAccess(role, 'executive') && (
         <section className="animate-in fade-in slide-in-from-bottom-4 duration-500">
           <HeadAdminDashboard />
+        </section>
+      )}
+
+      {activeTab === 'nimo_actions' && hasAccess(role, 'admin') && (
+        <section className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <NimoActionsAdmin />
         </section>
       )}
     </div>

@@ -7,6 +7,20 @@ export interface NimoAction {
   handler: (params?: any) => void | Promise<void>;
 }
 
+// Action metadata for auto-prompt generation
+export interface ActionMeta {
+  th: string;           // Thai description
+  en: string;           // English description  
+  params?: string;      // e.g. "{ bpm: number [20-400] }"
+  category?: 'navigation' | 'player' | 'studio' | 'composer' | 'settings' | 'system';
+}
+
+interface ActionOverride {
+  enabled: boolean;
+  custom_th?: string;
+  custom_en?: string;
+}
+
 // Light symmetric encryption using XOR + Base64
 export function encryptString(str: string, key: string): string {
   if (typeof window === 'undefined') return '';
@@ -35,21 +49,28 @@ export function decryptString(b64: string, key: string): string {
 
 export class NimoBrainRegistry {
   private actions: Map<string, (params?: any) => void | Promise<void>> = new Map();
+  private actionMeta: Map<string, ActionMeta> = new Map();  // Persists even after handler unregisters
+  private actionOverrides: Map<string, ActionOverride> = new Map();
   private state: Record<string, any> = {};
   private listeners: Set<(state: Record<string, any>) => void> = new Set();
   
   // Remote polling status
   private pollingActive = false;
   private processedCommandIds: Set<string> = new Set();
+  private overridesLoaded = false;
 
-  registerAction(id: string, handler: (params?: any) => void | Promise<void>) {
+  registerAction(id: string, handler: (params?: any) => void | Promise<void>, meta?: ActionMeta) {
     this.actions.set(id, handler);
-    console.log(`[NimoBrain] Action registered: ${id}`);
+    if (meta) {
+      this.actionMeta.set(id, meta);  // Meta persists even after unregister
+    }
+    console.log(`[NimoBrain] Action registered: ${id}${meta ? ' (with meta)' : ''}`);
     return () => this.unregisterAction(id);
   }
 
   unregisterAction(id: string) {
     this.actions.delete(id);
+    // NOTE: actionMeta is NOT deleted — it persists so the prompt always lists all known actions
     console.log(`[NimoBrain] Action unregistered: ${id}`);
   }
 
@@ -125,6 +146,162 @@ export class NimoBrainRegistry {
 
   getState() {
     return { ...this.state };
+  }
+
+  // ===== Auto-Prompt Generation =====
+  generateActionPrompt(lang: 'th' | 'en'): string {
+    const lines: string[] = [];
+    let i = 1;
+    for (const [id, meta] of this.actionMeta) {
+      const override = this.actionOverrides.get(id);
+      if (override?.enabled === false) continue;  // Skip disabled actions
+
+      const desc = lang === 'th'
+        ? (override?.custom_th || meta.th)
+        : (override?.custom_en || meta.en);
+      const paramStr = meta.params ? ` (params: ${meta.params})` : (lang === 'th' ? ' (ไม่มี params)' : ' (no params)');
+      lines.push(`${i}. '${id}': ${desc}${paramStr}`);
+      i++;
+    }
+    return lines.join('\n');
+  }
+
+  // ===== Owner Verification =====
+  async isOwner(userId?: string): Promise<boolean> {
+    const uid = userId || localStorage.getItem('mock_user_id');
+    if (!uid) return false;
+    try {
+      const { data } = await supabase
+        .from('profiles')
+        .select('role, username')
+        .eq('id', uid)
+        .single();
+      if (!data) return false;
+      return data.role === 'owner' ||
+             ['jiew', 'paisan', 'จิ๋ว'].includes((data.username || '').toLowerCase());
+    } catch {
+      return false;
+    }
+  }
+
+  // ===== Owner Control: Toggle Action =====
+  async toggleAction(actionId: string, enabled: boolean): Promise<{ success: boolean; message: string }> {
+    if (!await this.isOwner()) {
+      return { success: false, message: '🔒 เฉพาะเจ้าของระบบ (Jiew/Paisan) เท่านั้นที่แก้ไขได้' };
+    }
+    const current = this.actionOverrides.get(actionId) || { enabled: true };
+    this.actionOverrides.set(actionId, { ...current, enabled });
+    try {
+      const uid = localStorage.getItem('mock_user_id');
+      await supabase.from('nimo_action_config').upsert({
+        action_id: actionId,
+        enabled,
+        updated_by: uid,
+        updated_at: new Date().toISOString()
+      });
+    } catch (e) {
+      console.warn('[NimoBrain] Failed to save override to Supabase:', e);
+    }
+    return { success: true, message: enabled ? `✅ เปิด action '${actionId}' แล้ว` : `⛔ ปิด action '${actionId}' แล้ว` };
+  }
+
+  // ===== Owner Control: Update Description =====
+  async updateActionDesc(actionId: string, descTh?: string, descEn?: string): Promise<{ success: boolean; message: string }> {
+    if (!await this.isOwner()) {
+      return { success: false, message: '🔒 เฉพาะเจ้าของระบบเท่านั้น' };
+    }
+    const current = this.actionOverrides.get(actionId) || { enabled: true };
+    if (descTh) current.custom_th = descTh;
+    if (descEn) current.custom_en = descEn;
+    this.actionOverrides.set(actionId, current);
+    try {
+      const uid = localStorage.getItem('mock_user_id');
+      await supabase.from('nimo_action_config').upsert({
+        action_id: actionId,
+        custom_desc_th: descTh || null,
+        custom_desc_en: descEn || null,
+        updated_by: uid,
+        updated_at: new Date().toISOString()
+      });
+    } catch (e) {
+      console.warn('[NimoBrain] Failed to save description to Supabase:', e);
+    }
+    return { success: true, message: `✅ อัพเดตคำอธิบาย '${actionId}' แล้ว` };
+  }
+
+  // ===== Load Overrides from Supabase =====
+  async loadOverrides(): Promise<void> {
+    if (this.overridesLoaded) return;
+    try {
+      const { data } = await supabase.from('nimo_action_config').select('*');
+      if (data) {
+        data.forEach((row: any) => {
+          this.actionOverrides.set(row.action_id, {
+            enabled: row.enabled !== false,
+            custom_th: row.custom_desc_th || undefined,
+            custom_en: row.custom_desc_en || undefined
+          });
+        });
+        this.overridesLoaded = true;
+        console.log(`[NimoBrain] Loaded ${data.length} action overrides from Supabase`);
+      }
+    } catch (e) {
+      console.warn('[NimoBrain] Could not load action overrides (table may not exist yet):', e);
+    }
+  }
+
+  // ===== Dynamic Actions Auto-Learning =====
+  async loadDynamicActions(): Promise<void> {
+    try {
+      const { data } = await supabase.from('nimo_dynamic_actions').select('*').eq('is_active', true);
+      if (data && data.length > 0) {
+        data.forEach((action: any) => {
+          // Register dynamic action
+          const handler = async (params: any) => {
+            console.log(`[NimoBrain] Executing dynamic action '${action.name}'`);
+            // Safe execution context
+            const execFunc = new Function('params', 'nimoBrain', `
+              try {
+                ${action.script}
+              } catch(e) {
+                console.error("Dynamic Action Error:", e);
+                throw e;
+              }
+            `);
+            execFunc(params, this);
+          };
+          
+          this.registerAction(action.name, handler, {
+            th: action.description,
+            en: action.description,
+            params: JSON.stringify(action.parameters),
+            category: 'system'
+          });
+        });
+        console.log(`[NimoBrain] Learned ${data.length} dynamic actions from Supabase`);
+      }
+    } catch (e) {
+      console.warn('[NimoBrain] Could not load dynamic actions:', e);
+    }
+  }
+
+  // ===== List All Actions (for owner dashboard) =====
+  listAllActions(): { id: string; meta: ActionMeta; enabled: boolean; hasHandler: boolean }[] {
+    const result: { id: string; meta: ActionMeta; enabled: boolean; hasHandler: boolean }[] = [];
+    for (const [id, meta] of this.actionMeta) {
+      const override = this.actionOverrides.get(id);
+      result.push({
+        id,
+        meta,
+        enabled: override?.enabled !== false,
+        hasHandler: this.actions.has(id)
+      });
+    }
+    return result;
+  }
+
+  getActionCount(): number {
+    return this.actionMeta.size;
   }
 
   subscribe(listener: (state: Record<string, any>) => void) {
@@ -465,3 +642,9 @@ if (typeof window !== 'undefined') {
 export const nimoBrain = typeof window !== 'undefined' 
   ? ((window as any).NimoBrain as NimoBrainRegistry) 
   : new NimoBrainRegistry();
+
+// Auto-load configs and dynamic actions on startup
+if (typeof window !== 'undefined') {
+  nimoBrain.loadOverrides();
+  nimoBrain.loadDynamicActions();
+}

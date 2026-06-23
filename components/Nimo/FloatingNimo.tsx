@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Send, Mic, MicOff, MessageCircle, Sparkles, Camera, Trash2, Volume2, VolumeX, Maximize2 } from 'lucide-react';
+import { X, Send, Mic, MicOff, MessageCircle, Sparkles, Camera, Trash2, Volume2, VolumeX, Maximize2, Copy, Check } from 'lucide-react';
 import { NIMO_IDENTITY_IMAGE } from '../../constants';
-import { nimoBrain } from '../../lib/NimoBrain';
+import { NimoBrainRegistry, nimoBrain } from '../../lib/NimoBrain';
+import { GeminiLiveClient } from '../../lib/GeminiLiveClient';
 
 const WaveformIndicator = ({ isListening, isSpeaking, userLevel }: { isListening: boolean, isSpeaking: boolean, userLevel: number }) => {
     const [simLevel, setSimLevel] = useState([4, 4, 4]);
@@ -158,6 +159,7 @@ export const FloatingNimoContent: React.FC<Props> = ({
     geminiModel = 'gemini-3.5-flash', isSidebarMode = false, position = 'right'
 }) => {
     const [open, setOpen] = useState(false);
+    const [copiedId, setCopiedId] = useState<string | null>(null);
     const isOpen = isOpenProp !== undefined ? isOpenProp : open;
     const setIsOpen = setIsOpenProp ?? setOpen;
 
@@ -187,6 +189,9 @@ export const FloatingNimoContent: React.FC<Props> = ({
 
     const containerDivRef = useRef<HTMLDivElement>(null);
     const msgsEndRef = useRef<HTMLDivElement>(null);
+    const liveClientRef = useRef<GeminiLiveClient | null>(null);
+    const [liveState, setLiveState] = useState<'idle' | 'connecting' | 'connected' | 'listening' | 'speaking' | 'error'>('idle');
+    
     
     // usedMic tracks if the last message was voice input
     const usedMic = useRef(false);
@@ -286,7 +291,60 @@ export const FloatingNimoContent: React.FC<Props> = ({
         }
     }, []);
 
+    const startLiveMode = () => {
+        if (liveClientRef.current) return;
+        
+        const apiKey = localStorage.getItem('gemini_api_key');
+        if (!apiKey) {
+            setStatus(preferredLanguage === 'th' ? '⚠️ กรุณาตั้งค่า Gemini API Key' : '⚠️ Please set Gemini API Key');
+            return;
+        }
+
+        const client = new GeminiLiveClient({
+            apiKey,
+            nimoBrain,
+            language: preferredLanguage,
+            onStateChange: (state) => {
+                setLiveState(state);
+                if (state === 'listening' || state === 'connected') {
+                    setStatus(preferredLanguage === 'th' ? '🟢 Live Mode (พูดได้เลย)' : '🟢 Live Mode (Speak now)');
+                    setListening(true);
+                    setSpeaking(false);
+                } else if (state === 'speaking') {
+                    setStatus(preferredLanguage === 'th' ? '🔊 กำลังพูด...' : '🔊 Speaking...');
+                    setSpeaking(true);
+                    setListening(false);
+                } else if (state === 'idle' || state === 'error') {
+                    setListening(false);
+                    setSpeaking(false);
+                    setStatus(preferredLanguage === 'th' ? '💤 สแตนด์บาย' : '💤 Standby');
+                }
+            },
+            onMessage: (role, text) => {
+                setMsgs(prev => [...prev, { role, text }]);
+            },
+            onLog: (msg) => {
+                console.log(`[Nimo Live] ${msg}`);
+            }
+        });
+        
+        liveClientRef.current = client;
+        client.connect();
+    };
+
+    const stopLiveMode = () => {
+        if (liveClientRef.current) {
+            liveClientRef.current.disconnect();
+            liveClientRef.current = null;
+        }
+        setLiveState('idle');
+        setListening(false);
+        setSpeaking(false);
+        setStatus(preferredLanguage === 'th' ? '💤 สแตนด์บาย' : '💤 Standby');
+    };
+
     const startListening = () => {
+        if (liveClientRef.current) return; // Do not use old mic if live mode is active
         if (isRecognitionRunningRef.current || speakingRef.current || busyRef.current) return;
         try {
             if ('speechSynthesis' in window) window.speechSynthesis.cancel();
@@ -299,18 +357,36 @@ export const FloatingNimoContent: React.FC<Props> = ({
     };
 
     const requestPermission = () => {
+        setStatus(preferredLanguage === 'th' ? '⏳ กำลังเตรียม...' : '⏳ Preparing...');
+        if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+        
+        hasPermissionErrorRef.current = false;
+        isRecognitionRunningRef.current = true;
         try {
-            setStatus(preferredLanguage === 'th' ? '⏳ กำลังเตรียม...' : '⏳ Preparing...');
-            if ('speechSynthesis' in window) window.speechSynthesis.cancel();
-            
-            hasPermissionErrorRef.current = false;
-            setPermState('granted');
-            isRecognitionRunningRef.current = true;
             recRef.current?.start();
         } catch (e) {
             isRecognitionRunningRef.current = false;
-            setPermState('denied');
-            setStatus(preferredLanguage === 'th' ? '🔴 ขออภัย กรุณาปลดล็อกไมค์ที่รูปแม่กุญแจ 🔒' : '🔴 Please unblock in URL bar 🔒');
+        }
+
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(stream => {
+                    stream.getTracks().forEach(track => track.stop());
+                    setPermState('granted');
+                    if (!isRecognitionRunningRef.current) {
+                        try {
+                            isRecognitionRunningRef.current = true;
+                            recRef.current?.start();
+                        } catch(e) {}
+                    }
+                })
+                .catch(err => {
+                    isRecognitionRunningRef.current = false;
+                    setPermState('denied');
+                    setStatus(preferredLanguage === 'th' ? '🔴 ขออภัย กรุณาปลดล็อกไมค์ 🔒' : '🔴 Please unblock mic 🔒');
+                });
+        } else {
+            setPermState('granted');
         }
     };
 
@@ -336,10 +412,12 @@ export const FloatingNimoContent: React.FC<Props> = ({
         r.continuous = false;
         r.interimResults = false;
         r.lang = 'th-TH'; 
+        let lastStart = 0;
 
         r.onstart = () => {
             isRecognitionRunningRef.current = true;
             setListening(true);
+            lastStart = Date.now();
             if (wokenUpRef.current) {
                 setStatus(preferredLanguageRef.current === 'th' ? '🎙️ กำลังฟัง... (พูดได้เลย)' : '🎙️ Listening...');
             } else {
@@ -367,38 +445,9 @@ export const FloatingNimoContent: React.FC<Props> = ({
                 if (isWakeWord) {
                     setWokenUp(true);
                     setIsOpen(true);
-                    const cleanPeak = peakVol > 0 ? peakVol : 45;
-                    setRefSpeakerVolume(cleanPeak);
-                    setLockStatus(lang === 'th' ? `🔒 ล็อกเสียงผู้ใช้ (ระดับ: ${Math.round(cleanPeak)}%)` : `🔒 Locked to User (Level: ${Math.round(cleanPeak)}%)`);
-                    
-                    const greeting = lang === 'th'
-                        ? 'สวัสดีค่ะ! Nimo พร้อมช่วยแล้ว ถามเรื่องแอพหรือสั่งการด้วยเสียงได้เลยนะคะ 🎵'
-                        : 'Hi! I am Nimo 🎵 Ask me about the app or give me voice commands!';
-                        
-                    setMsgs(prev => [...prev, { role: 'nimo', text: greeting }]);
                     setListening(false);
-                    
-                    if ('speechSynthesis' in window && !speakerMutedRef.current) {
-                        window.speechSynthesis.cancel();
-                        setSpeaking(true);
-                        const u = new SpeechSynthesisUtterance(greeting);
-                        u.lang = lang === 'th' ? 'th-TH' : 'en-US';
-                        if (lang === 'th') {
-                            const thVoice = getBestThaiVoice();
-                            if (thVoice) u.voice = thVoice;
-                        }
-                        u.onend = () => {
-                            setSpeaking(false);
-                            setTimeout(() => startListening(), 400);
-                        };
-                        u.onerror = () => {
-                            setSpeaking(false);
-                            setTimeout(() => startListening(), 400);
-                        };
-                        window.speechSynthesis.speak(u);
-                    } else {
-                        setTimeout(() => startListening(), 400);
-                    }
+                    try { recRef.current?.stop(); } catch(e){}
+                    startLiveMode();
                 } else {
                     setListening(false);
                 }
@@ -422,20 +471,23 @@ export const FloatingNimoContent: React.FC<Props> = ({
                 }
             }
 
-            // 3. Deactivation commands
+            // 3. Deactivation commands (Fallback if using text mode)
             const byeWords = ["bye nimo", "bye bye", "see ya", "bye,see ya", "see you around", "บายนิโม่", "บาย นิโม", "บ๊ายบาย", "บายๆ", "ลาก่อน"];
             const isByeWord = byeWords.some(w => lowerText.includes(w));
             if (isByeWord) {
                 setWokenUp(false);
+                setIsOpen(false);
                 setRefSpeakerVolume(null);
                 setLockStatus('');
                 setListening(false);
-                const byeReply = lang === 'th' ? 'ไว้เจอกันใหม่นะคะ บ๊ายบายค่ะ!' : 'Goodbye! See you around!';
-                setMsgs(prev => [...prev, { role: 'nimo', text: byeReply }]);
+                stopLiveMode();
+                setMsgs(prev => [...prev, { role: 'user', text }]);
+                setMsgs(prev => [...prev, { role: 'nimo', text: lang === 'th' ? 'พักผ่อนนะ เดี๋ยวเจอกัน!' : 'Alright, taking a nap. See ya!' }]);
                 
                 if ('speechSynthesis' in window && !speakerMutedRef.current) {
                     window.speechSynthesis.cancel();
                     setSpeaking(true);
+                    const byeReply = lang === 'th' ? 'พักผ่อนนะ เดี๋ยวเจอกัน!' : 'Alright, taking a nap. See ya!';
                     const u = new SpeechSynthesisUtterance(byeReply);
                     u.lang = lang === 'th' ? 'th-TH' : 'en-US';
                     if (lang === 'th') {
@@ -519,10 +571,19 @@ export const FloatingNimoContent: React.FC<Props> = ({
         r.onend = () => {
             isRecognitionRunningRef.current = false;
             setListening(false);
+            
             if (hasPermissionErrorRef.current) {
                 console.log('[Nimo] Mic loop paused due to permission denial.');
                 return;
             }
+            
+            // On mobile devices, continuous restart will freeze the browser.
+            const runDuration = Date.now() - lastStart;
+            if (runDuration < 1000) {
+                console.warn('[Nimo] Mic stopped too quickly, aborting loop to prevent freeze.');
+                return; // Stop the infinite loop!
+            }
+            
             if ((handsFreeRef.current || !wokenUpRef.current) && !busyRef.current && !speakingRef.current) {
                 setTimeout(() => {
                     startListening();
@@ -539,22 +600,28 @@ export const FloatingNimoContent: React.FC<Props> = ({
     }, [permState, listening, speaking, busy]);
 
     const toggleMic = () => {
-        const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-        if (!SR) {
-            setStatus(preferredLanguage === 'th' ? '⚠️ ต้องใช้ Chrome บน Android' : '⚠️ Use Chrome on Android');
-            return;
-        }
-
         hasPermissionErrorRef.current = false;
-        if (listening) {
-            try { 
-                isRecognitionRunningRef.current = false;
-                recRef.current?.stop(); 
-            } catch(e){}
-            setListening(false);
+        
+        if (liveClientRef.current) {
+            stopLiveMode();
         } else {
             setStatus(preferredLanguage === 'th' ? '⏳ กำลังเปิดไมค์...' : '⏳ Opening...');
-            startListening();
+            
+            // Force permission check via getUserMedia on toggle as well
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia && permState !== 'granted') {
+                navigator.mediaDevices.getUserMedia({ audio: true })
+                    .then(stream => {
+                        stream.getTracks().forEach(track => track.stop());
+                        setPermState('granted');
+                        startLiveMode();
+                    })
+                    .catch(() => {
+                        setPermState('denied');
+                        setStatus(preferredLanguage === 'th' ? '🔴 กรุณาปลดล็อกไมค์ 🔒' : '🔴 Please unblock mic 🔒');
+                    });
+            } else {
+                startLiveMode();
+            }
         }
     };
 
@@ -669,6 +736,13 @@ export const FloatingNimoContent: React.FC<Props> = ({
         setAttachedScreenshot(null);
 
         setMsgs(prev => [...prev, { role: 'user', text }]);
+        
+        if (liveClientRef.current) {
+            // Forward to Live API if active
+            liveClientRef.current.sendTextMessage(text);
+            setBusy(false);
+            return;
+        }
 
         if (typeof window !== 'undefined' && window.NimoBrain && window.NimoBrain.processSecretCommand(text)) {
             const confirmationText = preferredLanguage === 'th' 
@@ -746,46 +820,8 @@ export const FloatingNimoContent: React.FC<Props> = ({
 ${appStateStr}
 
 ฟีเจอร์และคำสั่งที่คุณควบคุมได้ผ่านทาง actions (ห้ามใช้คำสั่งที่ไม่มีในรายการนี้):
-1. 'navigate_to_page': เปลี่ยนหน้าเพจ (params: { view: 'home' | 'player' | 'forge' | 'settings' | 'profile' })
-2. 'play_song': ค้นหาและเล่นเพลงจากคลังเพลง (params: { songTitle: string })
-3. 'play': เริ่มเล่นเพลงหรือเล่นเสียงดนตรี (ไม่มี params)
-4. 'pause': หยุดเพลงชั่วคราว (ไม่มี params)
-5. 'set_tempo': ปรับความเร็วเพลง BPM (params: { bpm: number [20-400] })
-6. 'set_volume': ปรับความดังเสียงหลัก (params: { level: number [0.0 - 1.0] })
-7. 'change_language': สลับภาษาการแสดงผล (params: { lang: 'th' | 'en' })
-8. 'change_instrument': เปลี่ยนเครื่องดนตรีหลักของเพลง (params: { instrument: 'piano' | 'violin' | 'voice' | 'guitar' })
-9. 'toggle_view_mode': สลับโหมด Score และ Piano Roll (ไม่มี params)
-10. 'toggle_loop': เปิด/ปิดโหมดลูปเสียง (params: { enabled: boolean })
-11. 'toggle_mixer': เปิด/ปิดแผงมิกเซอร์ (Mixer) (ไม่มี params)
-12. 'toggle_metronome': เปิด/ปิดเครื่องเคาะจังหวะ (Metronome) (ไม่มี params)
-13. 'set_transpose': ปรับระดับคีย์ Transpose สูงต่ำตามระดับครึ่งเสียง (semitones) (params: { transpose: number })
-14. 'toggle_favorite': กดเพิ่มหรือเอาเพลงปัจจุบันออกจากรายการโปรด (Favorite) (ไม่มี params)
-15. 'take_screenshot': ถ่ายรูปภาพหน้าจอปัจจุบันของแอพพลิเคชันเพื่อตรวจสอบความถูกต้องหรือแก้ไขปัญหาให้ผู้ใช้ (ไม่มี params)
-16. 'solo_track': โซโล่ (Solo) เสียงเฉพาะของแทร็กใดแทร็กหนึ่ง (params: { trackName?: string, trackIndex?: number, solo: boolean })
-17. 'mute_track': ปิดเสียง (Mute) หรือเปิดเสียงของแทร็กใดแทร็กหนึ่ง (params: { trackName?: string, trackIndex?: number, mute: boolean })
-18. 'set_track_mode': สลับโหมดของแทร็กระหว่างเสียงร้อง Vocal และเสียงดนตรี Instrument (params: { trackName?: string, trackIndex?: number, mode: 'vocal' | 'instrument' })
-19. 'set_track_instrument': เลือกเครื่องดนตรีหรือนักร้องเสียงประสาน/Vocalido ของแทร็กนั้นๆ เช่น 'Piano', 'Violin', 'Canary', 'Lotte V', 'Soprano' (params: { trackName?: string, trackIndex?: number, instrument: string })
-20. 'arrange_song': ส่งเพลงที่มีอยู่แล้วไปเรียบเรียงประสานเสียงในหน้า AI Arranger เท่านั้น ห้ามใช้เมื่อผู้ใช้ขอแต่งเพลงใหม่ (params: { text?: string })
-21. 'teach_me': เริ่มโหมดแบบฝึกหัดหรือการสอนดนตรี (params: { topic?: string })
-22. 'studio_set_tab': เปลี่ยนแท็บในหน้า Studio (params: { tab: 'composer' | 'arranger' | 'editor' })
-23. 'musicgen_set_mood': ตั้ง Mood ของเพลงใหม่ (params: { mood: 'Happy' | 'Sad' | 'Energetic' | 'Chill' | 'Aggressive' | 'Dreamy' })
-24. 'musicgen_set_tempo': ตั้งจังหวะของเพลงใหม่ (params: { tempo: 'Slow' | 'Medium' | 'Fast' | 'Very Fast' })
-25. 'musicgen_set_prompt': ตั้งคำอธิบายเพลงที่ต้องการ (params: { prompt: string })
-26. 'musicgen_set_lyrics': ใส่เนื้อร้องสำหรับเพลงใหม่ (params: { lyrics: string })
-27. 'musicgen_generate': สั่ง AI แต่งเพลงใหม่ทันที (ไม่มี params)
-28. 'musicgen_add_style': เพิ่มสไตล์เพลง เช่น 'Pop', 'Jazz', 'Classical' (params: { style: string })
-29. 'musicgen_clear_styles': ล้างสไตล์ทั้งหมดที่เลือกไว้ (ไม่มี params)
-30. 'delete_latest_track': ลบแทร็กล่าสุดที่เพิ่มเข้ามา (ไม่มี params)
-31. 'render_vocal': สั่ง Vocalido สังเคราะห์เสียงร้อง AI (ไม่มี params)
-32. 'skip_to_start': กลับไปต้นเพลง (ไม่มี params)
-33. 'set_singing_system': เปลี่ยนระบบร้อง (params: { system: 'american' | 'british' | 'ju-solfege' | 'jianpu' | 'kodaly' | 'lyric' | 'close' })
-34. 'toggle_vocalido': เปิด/ปิดโหมด Vocalido (ไม่มี params)
-35. 'undo': ย้อนกลับการแก้ไขล่าสุดใน Studio (ไม่มี params)
-36. 'redo': ทำซ้ำการแก้ไขที่ย้อนกลับใน Studio (ไม่มี params)
-37. 'export_song': ส่งออกเพลง (params: { format?: 'musicxml' | 'midi' | 'pdf' | 'wav' })
-38. 'search_song': ค้นหาเพลงในคลัง (params: { query: string })
-39. 'sort_songs': เรียงลำดับเพลง (params: { mode: 'default' | 'a-z' | 'z-a' | 'newest' | 'oldest' })
-40. 'sync_cloud': ซิงค์ข้อมูลกับ Cloud (ไม่มี params)
+${typeof window !== 'undefined' && window.NimoBrain ? window.NimoBrain.generateActionPrompt('th') : ''}
+
 
 หมายเหตุสำคัญ: เมื่อผู้ใช้ขอให้แต่งเพลงใหม่ ห้ามใช้ arrange_song เด็ดขาด ต้องใช้ musicgen actions ตามลำดับนี้เสมอ:
 1. navigate_to_page กับ view='forge' (เปิดหน้า Studio ก่อน)
@@ -818,46 +854,8 @@ Current Application State:
 ${appStateStr}
 
 Supported Actions:
-1. 'navigate_to_page': Change page view (params: { view: 'home' | 'player' | 'forge' | 'settings' | 'profile' })
-2. 'play_song': Search and play a song from library (params: { songTitle: string })
-3. 'play': Start playback/audio engine (no params)
-4. 'pause': Pause playback (no params)
-5. 'set_tempo': Adjust tempo BPM (params: { bpm: number [20-400] })
-6. 'set_volume': Adjust master volume level (params: { level: number [0.0 - 1.0] })
-7. 'change_language': Change settings language (params: { lang: 'th' | 'en' })
-8. 'change_instrument': Set main instrument track (params: { instrument: 'piano' | 'violin' | 'voice' | 'guitar' })
-9. 'toggle_view_mode': Switch between Score Sheet and Piano Roll views (no params)
-10. 'toggle_loop': Enable or disable playback looping (params: { enabled: boolean })
-11. 'toggle_mixer': Open or close the Mixer panel (no params)
-12. 'toggle_metronome': Toggle Metronome click track (no params)
-13. 'set_transpose': Adjust transpose key by semitones (params: { transpose: number })
-14. 'toggle_favorite': Toggle current song favorite status (no params)
-15. 'take_screenshot': Capture a screenshot of the current application screen to inspect or troubleshoot (no params)
-16. 'solo_track': Solo or unsolo a specific track (params: { trackName?: string, trackIndex?: number, solo: boolean })
-17. 'mute_track': Mute or unmute a specific track (params: { trackName?: string, trackIndex?: number, mute: boolean })
-18. 'set_track_mode': Switch track mode between vocal and instrument (params: { trackName?: string, trackIndex?: number, mode: 'vocal' | 'instrument' })
-19. 'set_track_instrument': Choose track voice/instrument like 'Piano', 'Violin', 'Canary', 'Lotte V', 'Soprano' (params: { trackName?: string, trackIndex?: number, instrument: string })
-20. 'arrange_song': Send an EXISTING song to the AI Arranger only. DO NOT use for composing new songs. (params: { text?: string })
-21. 'teach_me': Start a lesson or practice mode (params: { topic?: string })
-22. 'studio_set_tab': Change tab inside Studio (params: { tab: 'composer' | 'arranger' | 'editor' })
-23. 'musicgen_set_mood': Set mood for new song (params: { mood: 'Happy' | 'Sad' | 'Energetic' | 'Chill' | 'Aggressive' | 'Dreamy' })
-24. 'musicgen_set_tempo': Set tempo for new song (params: { tempo: 'Slow' | 'Medium' | 'Fast' | 'Very Fast' })
-25. 'musicgen_set_prompt': Set description/prompt for new song (params: { prompt: string })
-26. 'musicgen_set_lyrics': Set lyrics for new song (params: { lyrics: string })
-27. 'musicgen_generate': Trigger AI to compose a new song NOW (no params)
-28. 'musicgen_add_style': Add a style tag e.g. 'Pop', 'Jazz', 'Classical' (params: { style: string })
-29. 'musicgen_clear_styles': Clear all selected style tags (no params)
-30. 'delete_latest_track': Delete the most recently added track (no params)
-31. 'render_vocal': Trigger Vocalido AI vocal synthesis (no params)
-32. 'skip_to_start': Reset playback position to the beginning (no params)
-33. 'set_singing_system': Change singing notation system (params: { system: 'american' | 'british' | 'ju-solfege' | 'jianpu' | 'kodaly' | 'lyric' | 'close' })
-34. 'toggle_vocalido': Toggle Vocalido vocal mode on/off (no params)
-35. 'undo': Undo last edit in Studio (no params)
-36. 'redo': Redo last undone edit in Studio (no params)
-37. 'export_song': Export song (params: { format?: 'musicxml' | 'midi' | 'pdf' | 'wav' })
-38. 'search_song': Search for songs in library (params: { query: string })
-39. 'sort_songs': Sort song library (params: { mode: 'default' | 'a-z' | 'z-a' | 'newest' | 'oldest' })
-40. 'sync_cloud': Sync data with cloud (no params)
+${typeof window !== 'undefined' && window.NimoBrain ? window.NimoBrain.generateActionPrompt('en') : ''}
+
 
 IMPORTANT: When user asks to compose/create a new song, you MUST use musicgen actions in this order (NEVER use arrange_song for new songs):
 1. navigate_to_page with view='forge' (open Studio first)
@@ -1117,7 +1115,7 @@ If no actions are needed, return "actions": []`;
                 setMsgs(prev => [...prev, { role: 'nimo', text: preferredLanguage === 'th' ? '⚠️ ถ่ายภาพหน้าจอล้มเหลว ไม่สามารถวิเคราะห์ได้ค่ะ' : '⚠️ Screen capture failed. Cannot analyze.' }]);
                 setBusy(false);
             }
-        });
+        }, { th: 'ถ่ายภาพหน้าจอเพื่อตรวจสอบ', en: 'Capture screenshot for inspection', category: 'system' });
         return () => {
             unregTakeScreenshot();
         };
@@ -1224,6 +1222,22 @@ If no actions are needed, return "actions": []`;
                     >
                         {speakerMuted ? <VolumeX size={18} /> : <Volume2 size={18} />}
                     </button>
+                    {/* Copy All Button */}
+                    <button
+                        onClick={() => {
+                            const allText = msgs.map(m => `${m.role === 'user' ? 'You' : 'Nimo'}: ${m.text}`).join('\n\n');
+                            navigator.clipboard.writeText(allText).then(() => {
+                                setCopiedId('all');
+                                setTimeout(() => setCopiedId(null), 2000);
+                            });
+                        }}
+                        className={`w-8 h-8 flex items-center justify-center rounded-lg transition-all ${
+                            copiedId === 'all' ? 'text-green-400' : 'text-zinc-500 hover:text-white'
+                        }`}
+                        title={preferredLanguage === 'th' ? 'คัดลอกทั้งหมด' : 'Copy All'}
+                    >
+                        {copiedId === 'all' ? <Check size={16} /> : <Copy size={16} />}
+                    </button>
                     {!isSidebarMode && (
                         <>
                             <button
@@ -1250,17 +1264,35 @@ If no actions are needed, return "actions": []`;
             {/* Chat List */}
             <div ref={listRef} className="flex-1 overflow-y-auto p-4 space-y-4 no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>
                 {msgs.map((m, i) => (
-                    <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} items-end gap-2`}>
+                    <div key={i} className={`group relative flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} items-end gap-2`}>
                         {m.role === 'nimo' && (
                             <div className="w-7 h-7 rounded-full overflow-hidden border border-cyan-500/20 shrink-0">
                                 <img src={NIMO_IDENTITY_IMAGE} alt="" className="w-full h-full object-cover" />
                             </div>
                         )}
-                        <div className={`max-w-[85%] px-4 py-2.5 text-sm leading-relaxed rounded-2xl shadow-sm ${
+                        <div className={`relative max-w-[85%] px-4 py-2.5 text-sm leading-relaxed rounded-2xl shadow-sm ${
                             m.role === 'user' 
                                 ? 'bg-zinc-800 text-white rounded-br-sm' 
                                 : 'bg-cyan-950/40 text-cyan-50 border border-cyan-500/10 rounded-bl-sm'
                         }`}>
+                            {/* Copy single message button */}
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    navigator.clipboard.writeText(m.text).then(() => {
+                                        setCopiedId(String(i));
+                                        setTimeout(() => setCopiedId(null), 2000);
+                                    });
+                                }}
+                                className={`absolute ${m.role === 'user' ? '-left-8' : '-right-8'} bottom-1 p-1.5 rounded-md transition-all ${
+                                    copiedId === String(i)
+                                        ? 'text-green-400'
+                                        : 'text-zinc-500 hover:text-zinc-300 opacity-0 group-hover:opacity-100'
+                                }`}
+                                title={preferredLanguage === 'th' ? 'คัดลอกข้อความ' : 'Copy message'}
+                            >
+                                {copiedId === String(i) ? <Check size={14} /> : <Copy size={14} />}
+                            </button>
                             {m.role === 'nimo' && m.text.includes('\n') && (m.text.includes('[') || m.text.includes(']') || m.text.split('\n').length >= 4) ? (
                                 <div className="space-y-3">
                                     <div className="font-serif italic text-center whitespace-pre-line text-zinc-100 bg-black/40 p-4 rounded-xl border border-white/5 shadow-inner leading-loose tracking-wide">

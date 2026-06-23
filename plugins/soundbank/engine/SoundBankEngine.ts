@@ -1,32 +1,32 @@
 import * as Tone from 'tone';
 import { Soundfont } from 'smplr';
 import { SoundBankSettings } from '../types';
-import { AudioBlobCache } from '../../../lib/AudioBlobCache';
 
-async function getCachedSampleUrl(baseUrl: string, file: string): Promise<string> {
-    const fullUrl = baseUrl + file;
-    try {
-        const cachedBlob = await AudioBlobCache.get(fullUrl);
-        if (cachedBlob) {
-            return URL.createObjectURL(cachedBlob);
-        }
-        
-        const response = await fetch(fullUrl);
-        if (response.ok) {
-            const blob = await response.blob();
-            await AudioBlobCache.set(fullUrl, blob);
-            return URL.createObjectURL(blob);
-        }
-    } catch (e) {
-        console.warn(`[SoundBankCache] Failed to load/cache ${fullUrl}:`, e);
+class SmplrWrapper {
+    constructor(private sf: any) {}
+
+    triggerAttackRelease(freq: string | number, duration: number, time: number, velocity: number = 0.75) {
+        const noteStr = typeof freq === 'number' ? Tone.Frequency(freq).toNote() : freq;
+        this.sf.start({
+            note: noteStr,
+            time: time,
+            duration: duration,
+            velocity: Math.max(1, Math.floor(velocity * 127))
+        });
     }
-    return fullUrl;
+
+    dispose() {
+        try {
+            // Optional: Handle cleanup if smplr exposes it
+        } catch (e) {}
+    }
 }
 
 export class SoundBankEngine {
     // Cache the reverb instance so it's only created once
     private static sharedReverb: Tone.Reverb | null = null;
     private static reverbReady = false;
+    private static soundfontCache = new Map<string, any>();
 
     /**
      * Bootstraps the audio engine for an instrument track, 
@@ -47,7 +47,6 @@ export class SoundBankEngine {
                 return;
             }
 
-
             // Mobile Optimization: Bypass expensive convolution reverb on mobile
             const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 
@@ -61,7 +60,6 @@ export class SoundBankEngine {
                         wet: wetAmount
                      }).connect(masterBus);
 
-                    // console.log("[SoundBank] Generating High-Quality Reverb IR...");
                     await this.sharedReverb.generate();
                     this.reverbReady = true;
                 } catch (e) {
@@ -73,52 +71,19 @@ export class SoundBankEngine {
             // On mobile, we use masterBus directly (Dry) to save CPU
             const connectTarget = (isMobile ? masterBus : (this.sharedReverb || masterBus));
 
-            // Piano Sampler Engine — use fewer samples for faster loading
-            console.log(`[SoundBankEngine] Preloading piano samples for trackId=${trackId}...`);
+            const channel = new Tone.Channel(0, 0).connect(connectTarget);
+            const meter = new Tone.Meter().connect(channel);
 
-            const baseUrl = "https://tonejs.github.io/audio/salamander/";
-            const files = {
-                A0: "A0.mp3",
-                C1: "C1.mp3",
-                "F#1": "Fs1.mp3",
-                A1: "A1.mp3",
-                C2: "C2.mp3",
-                "F#2": "Fs2.mp3",
-                A2: "A2.mp3",
-                C3: "C3.mp3",
-                "F#3": "Fs3.mp3",
-                A3: "A3.mp3",
-                C4: "C4.mp3",
-                "F#4": "Fs4.mp3",
-                A4: "A4.mp3",
-                C5: "C5.mp3",
-                "F#5": "Fs5.mp3",
-                A5: "A5.mp3",
-                C6: "C6.mp3",
-                A6: "A6.mp3",
-                C7: "C7.mp3",
-            };
+            const instrumentName = settings?.instrument || 'acoustic_grand_piano';
+            console.log(`[SoundBankEngine] Loading smplr instrument: ${instrumentName} for trackId=${trackId}...`);
 
-            const keys = Object.keys(files) as Array<keyof typeof files>;
-            const resolvedUrls: Record<string, string> = {};
-
-            let sampler: any = null;
             let resolved = false;
 
             const timeoutId = setTimeout(() => {
                 if (!resolved) {
                     resolved = true;
                     console.warn(`[SoundBankEngine] ⚠️ Sampler loading timed out (8s) for trackId=${trackId}, falling back to basic Synth`);
-                    if (sampler) {
-                        try {
-                            sampler.dispose();
-                        } catch (err) {
-                            console.warn("[SoundBankEngine] Failed to dispose timed-out sampler:", err);
-                        }
-                    }
-
-                    const channel = new Tone.Channel(0, 0).connect(connectTarget);
-                    const meter = new Tone.Meter().connect(channel);
+                    
                     const fallbackSynth = new Tone.PolySynth(Tone.Synth, {
                         oscillator: { type: "triangle" },
                         envelope: { attack: 0.02, decay: 0.3, sustain: 0.4, release: 1.0 }
@@ -133,67 +98,42 @@ export class SoundBankEngine {
             }, 8000);
 
             try {
-                await Promise.all(
-                    keys.map(async (key) => {
-                        resolvedUrls[key] = await getCachedSampleUrl(baseUrl, files[key]);
-                    })
-                );
-            } catch (err) {
-                if (resolved) return;
-                console.warn("[SoundBankEngine] Preload failed, falling back to direct URLs", err);
-                keys.forEach(key => {
-                    resolvedUrls[key] = baseUrl + files[key];
-                });
-            }
+                const ctx = Tone.getContext().rawContext as AudioContext;
+                
+                // We use a native GainNode to bridge smplr's native AudioNode output into Tone.js's channel
+                const nativeGain = ctx.createGain();
+                Tone.connect(nativeGain, channel);
 
-            if (resolved) return;
+                let sf = this.soundfontCache.get(instrumentName);
+                if (!sf) {
+                    sf = new Soundfont(ctx, { instrument: instrumentName as any });
+                    this.soundfontCache.set(instrumentName, sf);
+                }
 
-            console.log(`[SoundBankEngine] Creating Tone.Sampler for trackId=${trackId}...`);
-            try {
-                sampler = new Tone.Sampler({
-                    urls: resolvedUrls,
-                    release: 1.2,
-                    baseUrl: "",
-                    onload: () => {
-                        if (resolved) return;
-                        resolved = true;
-                        clearTimeout(timeoutId);
-                        console.log(`[SoundBankEngine] Tone.Sampler loaded successfully for trackId=${trackId}`);
-                        const channel = new Tone.Channel(0, 0).connect(connectTarget);
-                        const meter = new Tone.Meter().connect(channel);
-                        sampler.connect(channel);
+                await sf.loaded();
 
-                        trackSamplers.set(trackId, sampler);
-                        trackChannels.set(trackId, channel);
-                        trackMeters.set(trackId, meter);
-                        resolve();
-                    },
-                    onerror: (e) => {
-                        if (resolved) return;
-                        resolved = true;
-                        clearTimeout(timeoutId);
-                        console.error(`[SoundBankEngine] Sampler loading failed for trackId=${trackId}, falling back to basic Synth:`, e);
-                        const channel = new Tone.Channel(0, 0).connect(connectTarget);
-                        const meter = new Tone.Meter().connect(channel);
-                        const fallbackSynth = new Tone.PolySynth(Tone.Synth, {
-                            oscillator: { type: "triangle" },
-                            envelope: { attack: 0.02, decay: 0.3, sustain: 0.4, release: 1.0 }
-                        });
-                        fallbackSynth.connect(channel);
-
-                        trackSamplers.set(trackId, fallbackSynth);
-                        trackChannels.set(trackId, channel);
-                        trackMeters.set(trackId, meter);
-                        resolve();
-                    }
-                });
-            } catch (samplerCreateErr) {
                 if (resolved) return;
                 resolved = true;
                 clearTimeout(timeoutId);
-                console.error(`[SoundBankEngine] Failed to create Tone.Sampler for trackId=${trackId}:`, samplerCreateErr);
-                const channel = new Tone.Channel(0, 0).connect(connectTarget);
-                const meter = new Tone.Meter().connect(channel);
+
+                // Add the nativeGain to smplr's output destinations
+                sf.output.addAudioNode(nativeGain);
+
+                const wrapper = new SmplrWrapper(sf);
+                
+                trackSamplers.set(trackId, wrapper);
+                trackChannels.set(trackId, channel);
+                trackMeters.set(trackId, meter);
+                
+                console.log(`[SoundBankEngine] Successfully loaded and connected smplr instrument: ${instrumentName}`);
+                resolve();
+
+            } catch (err) {
+                if (resolved) return;
+                resolved = true;
+                clearTimeout(timeoutId);
+                console.error(`[SoundBankEngine] Failed to load smplr instrument ${instrumentName}:`, err);
+                
                 const fallbackSynth = new Tone.PolySynth(Tone.Synth, {
                     oscillator: { type: "triangle" },
                     envelope: { attack: 0.02, decay: 0.3, sustain: 0.4, release: 1.0 }
@@ -208,4 +148,3 @@ export class SoundBankEngine {
         });
     }
 }
-

@@ -360,12 +360,12 @@ const StudioPage: React.FC<StudioPageProps> = ({
     const unregUndo = nimoBrain.registerAction('undo', () => {
       console.log('[StudioPage] Nimo requested undo');
       handleUndoRef.current();
-    });
+    }, { th: 'ย้อนกลับการแก้ไขล่าสุดใน Studio', en: 'Undo last edit in Studio', category: 'studio' });
 
     const unregRedo = nimoBrain.registerAction('redo', () => {
       console.log('[StudioPage] Nimo requested redo');
       handleRedoRef.current();
-    });
+    }, { th: 'ทำซ้ำการแก้ไขที่ย้อนกลับ', en: 'Redo last undone edit', category: 'studio' });
 
     const unregExportSong = nimoBrain.registerAction('export_song', (params) => {
       console.log('[StudioPage] Nimo requested export_song', params);
@@ -387,7 +387,7 @@ const StudioPage: React.FC<StudioPageProps> = ({
         // No format specified — open the export modal for the user to choose
         setShowExportModal(true);
       }
-    });
+    }, { th: 'ส่งออกเพลง', en: 'Export song', params: "{ format?: 'musicxml' | 'midi' | 'pdf' | 'wav' }", category: 'studio' });
 
     return () => {
       unregUndo();
