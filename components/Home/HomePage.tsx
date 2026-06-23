@@ -627,7 +627,10 @@ const HomePage: React.FC<HomePageProps> = ({
       );
     }
 
-    if (filterGenre) list = list.filter(i => i.metadata.genre?.toLowerCase() === filterGenre.toLowerCase());
+    if (filterGenre) list = list.filter(i => {
+      const g = i.metadata.genre || i.metadata.category || '';
+      return g.toLowerCase().trim() === filterGenre.toLowerCase().trim();
+    });
     if (filterEra) list = list.filter(i => i.metadata.era?.toLowerCase() === filterEra.toLowerCase());
     if (filterComposer) list = list.filter(i => i.metadata.composer?.toLowerCase() === filterComposer.toLowerCase() || i.metadata.artist?.toLowerCase() === filterComposer.toLowerCase());
     if (filterYear) list = list.filter(i => String(i.metadata.year) === String(filterYear));
