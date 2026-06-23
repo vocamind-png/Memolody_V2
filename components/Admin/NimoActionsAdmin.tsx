@@ -258,7 +258,7 @@ const NimoActionsAdmin: React.FC = () => {
                     <div className="flex items-center gap-2 mb-1">
                       <h3 className="text-sm font-mono text-white font-bold">{action.name}</h3>
                       <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase ${action.is_active ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}>
-                        {action.is_active ? 'Active' : 'Disabled'}
+                        {action.is_active ? 'Active' : 'Pending / Disabled'}
                       </span>
                     </div>
                     <p className="text-[10px] text-zinc-400 mb-3 leading-relaxed">{action.description}</p>

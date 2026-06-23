@@ -643,6 +643,55 @@ export const nimoBrain = typeof window !== 'undefined'
   ? ((window as any).NimoBrain as NimoBrainRegistry) 
   : new NimoBrainRegistry();
 
+// Auto-Learning & Feedback Actions
+if (typeof window !== 'undefined') {
+  nimoBrain.registerAction('report_feedback', async (params) => {
+    try {
+      const uid = localStorage.getItem('mock_user_id');
+      let email = 'anonymous';
+      if (uid) {
+        const { data } = await supabase.from('profiles').select('email').eq('id', uid).single();
+        if (data?.email) email = data.email;
+      }
+      await supabase.from('nimo_feedback').insert({
+        user_email: email,
+        category: params.category || 'other',
+        title: params.title || 'Feedback',
+        content: params.content || '',
+        sentiment_score: params.sentiment_score || 0.0,
+        urgency_level: params.urgency_level || 1
+      });
+      console.log('[NimoBrain] Feedback reported:', params.title);
+    } catch(e) {
+      console.error('[NimoBrain] Failed to report feedback:', e);
+    }
+  }, {
+    th: 'บันทึกคำติชม ข้อเสนอแนะ หรือบั๊กที่ผู้ใช้พบเจอ พร้อมจัดระดับความเร่งด่วน',
+    en: 'Log user feedback, bug reports, or feature requests with urgency scoring',
+    params: "{ category: 'bug'|'feature_request'|'complaint'|'praise'|'other', title: string, content: string, sentiment_score: number (-1.0 to 1.0), urgency_level: number (1 to 10) }",
+    category: 'system'
+  });
+
+  nimoBrain.registerAction('propose_dynamic_action', async (params) => {
+    try {
+      await supabase.from('nimo_dynamic_actions').insert({
+        name: params.name,
+        description: params.description,
+        script: params.script,
+        is_active: false // Explicitly false for security approval
+      });
+      console.log('[NimoBrain] Proposed new dynamic action:', params.name);
+    } catch(e) {
+      console.error('[NimoBrain] Failed to propose dynamic action:', e);
+    }
+  }, {
+    th: 'เขียนสคริปต์ JavaScript ใหม่เพื่อตอบสนองความต้องการของผู้ใช้ (สถานะรอ Admin อนุมัติ)',
+    en: 'Write and propose a new JavaScript action script to fulfill a missing feature request (pending admin approval)',
+    params: "{ name: string (snake_case), description: string, script: string (JavaScript code) }",
+    category: 'system'
+  });
+}
+
 // Auto-load configs and dynamic actions on startup
 if (typeof window !== 'undefined') {
   nimoBrain.loadOverrides();
