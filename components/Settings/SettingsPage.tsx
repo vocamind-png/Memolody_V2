@@ -871,6 +871,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, on
                             </div>
 
                             {/* ── Nimo Remote Control & Security ── */}
+                            {false && (
                             <div className="mt-12 p-6 rounded-[28px] bg-gradient-to-br from-zinc-950/80 via-black/90 to-zinc-950/80 border border-cyan-500/20 hover:border-cyan-500/40 transition-all shadow-[0_0_30px_rgba(6,182,212,0.05)] relative overflow-hidden group">
                                 <div className="absolute top-0 right-0 w-64 h-64 bg-cyan-500/5 rounded-full blur-[80px] pointer-events-none group-hover:bg-cyan-500/10 transition-all" />
                                 
@@ -990,6 +991,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, on
                                     </div>
                                 </div>
                             </div>
+                            )}
 
                             {/* ── NEW: Neural Link Advanced Settings ── */}
                             <div className="mt-12 mb-12 border-t border-white/5 pt-12">
