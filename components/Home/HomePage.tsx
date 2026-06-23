@@ -628,8 +628,12 @@ const HomePage: React.FC<HomePageProps> = ({
     }
 
     if (filterGenre) list = list.filter(i => {
-      const g = i.metadata.genre || i.metadata.category || '';
-      return g.toLowerCase().trim() === filterGenre.toLowerCase().trim();
+      const g = (i.metadata.genre || i.metadata.category || '').toLowerCase().trim();
+      const fg = filterGenre.toLowerCase().trim();
+      if (!g) return false;
+      if (g === fg) return true;
+      if ((fg === 'classical' && g === 'classic') || (fg === 'classic' && g === 'classical')) return true;
+      return g.includes(fg) || fg.includes(g);
     });
     if (filterEra) list = list.filter(i => i.metadata.era?.toLowerCase() === filterEra.toLowerCase());
     if (filterComposer) list = list.filter(i => i.metadata.composer?.toLowerCase() === filterComposer.toLowerCase() || i.metadata.artist?.toLowerCase() === filterComposer.toLowerCase());
