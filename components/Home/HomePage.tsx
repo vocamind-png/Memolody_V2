@@ -666,7 +666,7 @@ const HomePage: React.FC<HomePageProps> = ({
       default: list.reverse(); break;
     }
     return list;
-  }, [userLibrary, searchQuery, activeTab, sortMode, activeFolder]);
+  }, [userLibrary, searchQuery, activeTab, sortMode, activeFolder, aiFilteredIds, filterGenre, filterEra, filterComposer, filterYear, filterInstrument, filterGrade]);
 
   const recentSongs = useMemo(() => {
     try {
