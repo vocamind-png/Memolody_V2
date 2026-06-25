@@ -75,46 +75,46 @@ export const useScoreLens = () => {
       let layoutBundleResult: any = null;
 
       if (isPdf) {
-        // ── Primary: ScoreLens V3 pipeline (injects <print new-system/new-page> for exact layout matching) ──
-        setProgress('🔬 ScoreLens V3 กำลังอ่าน PDF และวิเคราะห์โครงสร้างโน้ต...');
-        console.log('[ScoreLens] PDF → ScoreLens V3 pipeline (primary)...');
+        // ── Primary: Gemini Vision (3.1 Pro via SheetMusicOCR) ──
+        setProgress(preferredLanguage === 'th' ? '📄 กำลังให้ AI วิเคราะห์และอ่านโน้ตจาก PDF... (รอสักครู่)' : '📄 AI is analyzing and reading notes from PDF... (please wait)');
+        console.log('[ScoreLens] PDF → Gemini Vision pipeline (primary)...');
         try {
-          const v3Result = await omrWithOemer(file);
-          xmlContent = v3Result.xml;
-          layoutBundleResult = v3Result.bundle;
-          console.log('[ScoreLens] ✅ ScoreLens V3 PDF:', v3Result.message);
-          setProgress(`✨ ScoreLens V3 อ่าน PDF สำเร็จ — ${v3Result.message}`);
-        } catch (v3Err: any) {
-          console.warn('[ScoreLens] ⚠️ ScoreLens V3 failed, falling back to Gemini:', v3Err.message);
-          // ── Fallback 1: Gemini Vision ──
-          setProgress('📄 กำลังให้ Gemini AI อ่านโน้ตจาก PDF... (รอสักครู่)');
+          const result = await recognizePDF(file);
+          xmlContent = result.xml;
+          console.log('[ScoreLens] ✅ Gemini PDF:', result.message);
+          setProgress(preferredLanguage === 'th' ? `✨ AI อ่าน PDF สำเร็จ — ${result.message}` : `✨ AI read PDF successfully — ${result.message}`);
+        } catch (geminiErr: any) {
+          console.warn('[ScoreLens] ⚠️ Gemini PDF failed, falling back to ScoreLens V3:', geminiErr.message);
+          // ── Fallback 1: ScoreLens V3 pipeline ──
+          setProgress(preferredLanguage === 'th' ? '🔬 AI กำลังอ่านโครงสร้างโน้ตจาก PDF...' : '🔬 AI is analyzing structural notes from PDF...');
           try {
-            const result = await recognizePDF(file);
-            xmlContent = result.xml;
-            console.log('[ScoreLens] ✅ Gemini PDF:', result.message);
-            setProgress(`✨ Gemini อ่าน PDF สำเร็จ — ${result.message}`);
-          } catch (geminiErr: any) {
-            console.warn('[ScoreLens] ⚠️ Gemini PDF failed:', geminiErr.message);
+            const v3Result = await omrWithOemer(file);
+            xmlContent = v3Result.xml;
+            layoutBundleResult = v3Result.bundle;
+            console.log('[ScoreLens] ✅ ScoreLens V3 PDF:', v3Result.message);
+            setProgress(preferredLanguage === 'th' ? `✨ AI อ่าน PDF สำเร็จ — ${v3Result.message}` : `✨ AI read PDF successfully — ${v3Result.message}`);
+          } catch (v3Err: any) {
+            console.warn('[ScoreLens] ⚠️ ScoreLens V3 PDF failed:', v3Err.message);
             // ── Fallback 2: Gemini Melody-Only ──
             try {
-              setProgress('🎵 Gemini อ่านทำนองหลัก...');
+              setProgress(preferredLanguage === 'th' ? '🎵 AI กำลังอ่านทำนองหลัก...' : '🎵 AI is reading main melody...');
               const melodyResult = await recognizeMelodyOnly(file);
               xmlContent = melodyResult.xml;
               console.log('[ScoreLens] ✅ Melody-Only:', melodyResult.message);
               setProgress(`✨ ${melodyResult.message}`);
             } catch (melodyErr: any) {
-              throw new Error(`ไม่สามารถอ่าน PDF ได้จากทุก engine:\n• ScoreLens V3: ${v3Err.message}\n• Gemini: ${geminiErr.message}\n• Melody: ${melodyErr.message}`);
+              throw new Error(`ไม่สามารถอ่าน PDF ได้จากทุก engine:\n• Gemini: ${geminiErr.message}\n• ScoreLens V3: ${v3Err.message}\n• Melody: ${melodyErr.message}`);
             }
           }
         }
       } else if (isImg) {
-        setProgress('🎵 กำลังให้ Gemini AI วิเคราะห์โน้ตเพลง (Pass 1/2)...');
+        setProgress(preferredLanguage === 'th' ? '🎵 กำลังให้ AI วิเคราะห์โน้ตเพลง (Pass 1/2)...' : '🎵 AI is analyzing sheet music (Pass 1/2)...');
         console.log('[ScoreLens] Image → Gemini Vision Dual-Pass...');
         try {
           const result = await recognizeSheetMusic(file);
           xmlContent = result.xml;
           console.log('[ScoreLens] ✅ Gemini Image:', result.message);
-          setProgress(`✨ ${result.message} — กำลังตรวจสอบและแก้ไขความแม่นยำ...`);
+          setProgress(preferredLanguage === 'th' ? `✨ ${result.message} — กำลังตรวจสอบและแก้ไขความแม่นยำ...` : `✨ ${result.message} — Checking and correcting accuracy...`);
           
           // ── Force Correction Pass Loop (Iterative Fix) ──
           for (let iter = 1; iter <= 2; iter++) {
@@ -124,12 +124,12 @@ export const useScoreLens = () => {
               break;
             }
             
-            setProgress(`✨ ตรวจพบข้อผิดพลาด ${report.errors.length} จุด... สั่ง AI ให้แก้ไข (รอบที่ ${iter}/2)`);
+            setProgress(preferredLanguage === 'th' ? `✨ ตรวจพบข้อผิดพลาด ${report.errors.length} จุด... สั่ง AI ให้แก้ไข (รอบที่ ${iter}/2)` : `✨ Detected ${report.errors.length} errors... AI is correcting (Pass ${iter}/2)`);
             try {
               const corrected = await recognizeCorrectionPass(file, xmlContent, report.errors.map(e => e.message));
               xmlContent = corrected.xml;
               console.log(`[ScoreLens] ✅ Correction Pass ${iter} successful`);
-              setProgress(`✨ ตรวจสอบและแก้ไขโน้ตให้ตรงต้นฉบับสำเร็จ`);
+              setProgress(preferredLanguage === 'th' ? `✨ ตรวจสอบและแก้ไขโน้ตให้ตรงต้นฉบับสำเร็จ` : `✨ Checked and corrected notes successfully`);
             } catch (err: any) {
               console.warn(`[ScoreLens] Correction Pass ${iter} failed:`, err.message);
               break; // Stop loop on API failure
@@ -146,7 +146,7 @@ export const useScoreLens = () => {
           console.warn('[ScoreLens] ⚠️ Gemini Image failed:', geminiErr.message);
           // ── Fallback 1: Gemini Melody-Only ──
           try {
-            setProgress('🎵 Gemini อ่านทำนองหลัก (ไม่รวมเปียโน)...');
+            setProgress(preferredLanguage === 'th' ? '🎵 AI อ่านทำนองหลัก (ไม่รวมเปียโน)...' : '🎵 AI is reading main melody (excluding piano)...');
             const melodyResult = await recognizeMelodyOnly(file);
             xmlContent = melodyResult.xml;
             console.log('[ScoreLens] ✅ Melody-Only:', melodyResult.message);
@@ -155,17 +155,17 @@ export const useScoreLens = () => {
             console.warn('[ScoreLens] Melody-Only failed:', melodyErr.message);
             // ── Fallback 2: Oemer + verification ──
             try {
-              setProgress('⚠️ กำลังลอง Oemer AI...');
+              setProgress(preferredLanguage === 'th' ? '⚠️ กำลังลอง AI ทางเลือก...' : '⚠️ Trying alternative AI...');
               const oemerResult = await omrWithOemer(file);
-              xmlContent = oemerResult.xml;
+              console.log('[ScoreLens] ✅ Oemer Image:', oemerResult.message);
+              setProgress(preferredLanguage === 'th' ? '🔍 ตรวจสอบและแก้ไขโน้ตด้วย AI...' : '🔍 Checking and correcting notes with AI...');
               try {
-                setProgress('🔍 ตรวจสอบและแก้ไขโน้ตด้วย Gemini AI...');
-                const verified = await recognizeVerificationPass(file, oemerResult.xml);
+                const verified = await recognizeCorrectionPass(file, oemerResult.xml, []);
                 xmlContent = verified.xml;
-                setProgress(`✨ Gemini ตรวจสอบภาพสำเร็จ — ${verified.message}`);
+                setProgress(preferredLanguage === 'th' ? `✨ AI ตรวจสอบภาพสำเร็จ — ${verified.message}` : `✨ AI verified image successfully — ${verified.message}`);
               } catch (verifyErr: any) {
                 console.warn('[ScoreLens] Verification failed, using Oemer XML:', verifyErr.message);
-                setProgress(`🧠 Oemer สำเร็จ (ไม่สามารถตรวจสอบด้วย Gemini)`);
+                setProgress(preferredLanguage === 'th' ? `🧠 AI ตัวสำรองทำงานสำเร็จ (ข้ามการตรวจสอบ)` : `🧠 Alternative AI succeeded (Skipped verification)`);
               }
             } catch (oemerErr: any) {
               throw new Error(
@@ -240,7 +240,7 @@ export const useScoreLens = () => {
       // Extract metadata using Gemini OCR (Highest priority for real title)
       let metadata: MetadataResult = { title: '', artist: '', text: '', timeSignature: '', fifths: undefined };
       try {
-        setProgress('🔍 Gemini อ่านข้อมูลไล่เพลง...');
+        setProgress(preferredLanguage === 'th' ? '🔍 AI กำลังอ่านข้อมูลไล่เพลง...' : '🔍 AI is reading sequence data...');
         metadata = await extractMetadataWithGemini(file);
         console.log('[ScoreLens] Gemini Metadata:', metadata);
 

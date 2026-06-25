@@ -488,6 +488,110 @@ export class SongStorage {
       await new Promise(resolve => setTimeout(resolve, 0));
     }
   }
+
+  /**
+   * [LIGHTWEIGHT INDEX IMPORT V1.0]
+   * Fast-path import for manifest_index.json — contains metadata only (no xmlData).
+   * Sets xmlData to '' for every entry. Skips songs already in DB or in deleted list.
+   * Much faster than importNeuralCore because entries are ~100x smaller.
+   */
+  async importLightweightIndex(jsonStringOrObject: string | any, onProgress?: (percent: number) => void): Promise<void> {
+    let bundle: any;
+    if (typeof jsonStringOrObject === 'string') {
+      try {
+        bundle = JSON.parse(jsonStringOrObject);
+      } catch (e) {
+        throw new Error("Invalid JSON format");
+      }
+    } else {
+      bundle = jsonStringOrObject;
+    }
+
+    const db = await this.init();
+
+    // Extract songs array — same flexible logic as importNeuralCore
+    let songsToImport: any[] = [];
+    if (bundle.protocol === 'NIMO-CORE' && bundle.data?.songs) {
+      songsToImport = bundle.data.songs;
+    } else if (Array.isArray(bundle)) {
+      songsToImport = bundle;
+    } else if (bundle.songs && Array.isArray(bundle.songs)) {
+      songsToImport = bundle.songs;
+    } else if (bundle.data?.songs && Array.isArray(bundle.data.songs)) {
+      songsToImport = bundle.data.songs;
+    }
+
+    if (songsToImport.length === 0) return;
+
+    // Fetch existing keys and deleted IDs to avoid duplicates
+    const { existingKeys, deletedKeys } = await new Promise<{ existingKeys: Set<string>, deletedKeys: Set<string> }>((resolve, reject) => {
+      const tx = db.transaction([this.storeName, this.deletedStore], 'readonly');
+      const songStore = tx.objectStore(this.storeName);
+      const delStore = tx.objectStore(this.deletedStore);
+
+      const existingReq = songStore.getAllKeys();
+      const deletedReq = delStore.getAll();
+
+      tx.oncomplete = () => {
+        const eKeys = new Set((existingReq.result || []).map((k: any) => String(k)));
+        const dKeys = new Set((deletedReq.result || []).map((d: any) => String(d.id)));
+        resolve({ existingKeys: eKeys, deletedKeys: dKeys });
+      };
+      tx.onerror = () => reject(tx.error);
+    });
+
+    const ignoreTombstones = existingKeys.size === 0;
+    const newSongs: StoredSong[] = [];
+
+    for (const s of songsToImport) {
+      // Each entry in the index may be a flat object (id, title, artist, ...)
+      // or wrapped in { metadata: {...} }
+      const meta = s.metadata || s;
+      const rawId = meta.id;
+      if (!rawId) continue;
+      const idStr = String(rawId);
+
+      if (existingKeys.has(idStr) || (!ignoreTombstones && deletedKeys.has(idStr))) {
+        continue;
+      }
+
+      newSongs.push({
+        metadata: {
+          ...meta,
+          id: idStr
+        } as Song,
+        xmlData: '' // No xmlData in the index — will be loaded lazily via chunks
+      });
+    }
+
+    console.log(`[importLightweightIndex] Found ${newSongs.length} new songs out of ${songsToImport.length} total.`);
+    if (newSongs.length === 0) return;
+
+    // Batch-write in chunks of 5,000 — same strategy as importNeuralCore
+    const BATCH_SIZE = 5000;
+    for (let i = 0; i < newSongs.length; i += BATCH_SIZE) {
+      const chunk = newSongs.slice(i, i + BATCH_SIZE);
+
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction([this.storeName], 'readwrite');
+        const songStore = tx.objectStore(this.storeName);
+
+        chunk.forEach(s => {
+          songStore.put(s);
+        });
+
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+
+      if (onProgress) {
+        const progressPercent = Math.min(100, Math.round(((i + chunk.length) / newSongs.length) * 100));
+        onProgress(progressPercent);
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+  }
 }
 
 export const songStorage = new SongStorage();

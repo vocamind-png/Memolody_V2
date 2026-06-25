@@ -1,27 +1,31 @@
 
 /**
- * [SCORELENS v1.0] — Camera & File Upload Bar
- * Provides camera capture and file picker buttons for the Nimo AI chat input area.
+ * [SCORELENS v2.0] — OMR Camera + File Upload + Music Import Bar
+ * Provides camera capture for OMR, file picker for images/PDF, 
+ * and music file import buttons for the Nimo AI chat input area.
  */
 
 import React, { useRef } from 'react';
-import { Camera, Paperclip, X, Loader2 } from 'lucide-react';
+import { Camera, Paperclip, X, Loader2, PlusCircle } from 'lucide-react';
 
 interface ScoreLensBarProps {
   onFileSelected: (file: File) => void;
   isProcessing: boolean;
   previewUrl: string | null;
   onClearPreview: () => void;
+  onMusicFileImported?: (file: File) => void;
 }
 
 const ScoreLensBar: React.FC<ScoreLensBarProps> = ({
   onFileSelected,
   isProcessing,
   previewUrl,
-  onClearPreview
+  onClearPreview,
+  onMusicFileImported
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const musicInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -31,23 +35,43 @@ const ScoreLensBar: React.FC<ScoreLensBarProps> = ({
     }
   };
 
+  const handleMusicFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (onMusicFileImported) {
+        onMusicFileImported(file);
+      } else {
+        // Fallback: treat as regular file selection so ScoreLens can handle it
+        onFileSelected(file);
+      }
+      e.target.value = '';
+    }
+  };
+
   return (
     <>
       {/* Hidden file inputs */}
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/png,image/jpeg,image/jpg,image/webp,image/heic,image/heif,.heic,.heif,application/pdf"
+        accept="image/png,image/jpeg,image/jpg,image/webp,image/heic,image/heif,.heic,.heif,application/pdf,.pdf"
         className="hidden"
         onChange={handleFileChange}
       />
       <input
         ref={cameraInputRef}
         type="file"
-        accept="image/*"
+        accept="image/*,application/pdf,.pdf"
         capture="environment"
         className="hidden"
         onChange={handleFileChange}
+      />
+      <input
+        ref={musicInputRef}
+        type="file"
+        accept=".emk,.mid,.midi,.xml,.musicxml,.mxl"
+        className="hidden"
+        onChange={handleMusicFileChange}
       />
 
       {/* Image Preview (shown above the input bar when an image is selected) */}
@@ -73,25 +97,25 @@ const ScoreLensBar: React.FC<ScoreLensBarProps> = ({
       )}
 
       {/* Action Buttons */}
-      <div className="flex items-center gap-1">
-        {/* Camera Button */}
+      <div className="flex items-center gap-0">
+        {/* Import Music File (+) Button */}
+        <button
+          onClick={() => musicInputRef.current?.click()}
+          disabled={isProcessing}
+          className="w-8 h-8 shrink-0 rounded-full flex items-center justify-center text-zinc-500 hover:text-emerald-400 hover:bg-emerald-500/10 transition-all disabled:opacity-30 disabled:hover:text-zinc-600 disabled:hover:bg-transparent"
+          title="📥 Import: นำเข้าไฟล์เพลง (.emk, .mid, .musicxml)"
+        >
+          <PlusCircle size={18} />
+        </button>
+
+        {/* OMR Camera Button - Opens device camera for sheet music scanning */}
         <button
           onClick={() => cameraInputRef.current?.click()}
           disabled={isProcessing}
-          className="w-10 h-10 rounded-full flex items-center justify-center text-zinc-600 hover:text-cyan-400 hover:bg-cyan-500/10 transition-all disabled:opacity-30 disabled:hover:text-zinc-600 disabled:hover:bg-transparent"
-          title="Take Photo of Sheet Music"
+          className="w-8 h-8 shrink-0 rounded-full flex items-center justify-center text-zinc-500 hover:text-cyan-400 hover:bg-cyan-500/10 transition-all disabled:opacity-30 disabled:hover:text-zinc-600 disabled:hover:bg-transparent"
+          title="📷 OMR: ถ่ายภาพโน้ตเพลง / Take Photo of Sheet Music"
         >
           <Camera size={18} />
-        </button>
-
-        {/* File Attach Button */}
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={isProcessing}
-          className="w-10 h-10 rounded-full flex items-center justify-center text-zinc-600 hover:text-amber-400 hover:bg-amber-500/10 transition-all disabled:opacity-30 disabled:hover:text-zinc-600 disabled:hover:bg-transparent"
-          title="Attach Image / PDF"
-        >
-          <Paperclip size={16} />
         </button>
       </div>
     </>

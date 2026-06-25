@@ -3,7 +3,7 @@ import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { midiInputManager } from '../../lib/MidiInputManager';
 import {
   ArrowLeft, X, PlusCircle, Settings2, Play, Square, Pause,
-  Cpu, Bot, FileText, FileCode, Download,
+  Cpu, Bot, FileText, FileCode, Download, Search,
   Music, Layers, RotateCcw, RotateCw, Headphones, SlidersHorizontal, VolumeX, Volume2, SkipBack, Bell, Zap, Sparkles
 } from 'lucide-react';
 import { Song, TrackState } from '../../types';
@@ -21,6 +21,7 @@ import ArrangerPage from '../Arranger/ArrangerPage';
 import ComposerPage from '../Composer/ComposerPage';
 import { AudioConverter } from '../../lib/AudioConverter';
 import { nimoBrain } from '../../lib/NimoBrain';
+import { useScoreLens } from '../ScoreLens/useScoreLens';
 
 interface StudioPageProps {
   selectedSong: Song | null;
@@ -69,6 +70,23 @@ const StudioPage: React.FC<StudioPageProps> = ({
   const [plugins] = useState(PluginManager.getInstance().listPlugins());
   const [studioMode, setStudioMode] = useState<'composer' | 'arranger' | 'editor' | 'pianoroll'>(initialStudioMode);
   const [pianorollTrackId, setPianorollTrackId] = useState<string | null>(null);
+
+  const { processImage, isProcessing: omrProcessing, progress: omrProgress, error: omrError } = useScoreLens();
+
+  useEffect(() => {
+    if (omrProcessing) {
+      setIsPreparing(true);
+      if (omrProgress) setPrepLabel(omrProgress);
+    } else {
+      setIsPreparing(false);
+    }
+  }, [omrProcessing, omrProgress]);
+
+  useEffect(() => {
+    if (omrError) {
+      alert(`❌ OMR/Import Failed: ${omrError}`);
+    }
+  }, [omrError]);
 
   // Sync initialStudioMode prop changes (e.g. from Nimo AI)
   useEffect(() => {
@@ -591,6 +609,38 @@ const StudioPage: React.FC<StudioPageProps> = ({
             onClick={() => {
               const input = document.createElement('input');
               input.type = 'file';
+              input.multiple = false;
+              input.accept = 'image/*,application/pdf,.pdf,.emk,.mid,.midi,.xml,.musicxml,.mxl';
+              input.onchange = async (e: any) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                
+                try {
+                  const result = await processImage(file, 'th');
+                  if (result && !('error' in result)) {
+                    // Update current project with the new imported song
+                    setCurrentProject(result.song);
+                    setXmlHistory([result.xmlData]);
+                    setHistoryIndex(0);
+                    setStudioMode('editor');
+                    onPublish();
+                    alert(`✅ OMR / Import Success!`);
+                  }
+                } catch (err) {
+                  console.error('[OMR]', err);
+                }
+              };
+              input.click();
+            }}
+            className="px-3 h-8 bg-purple-500/10 border border-purple-500/30 text-purple-400 flex items-center gap-2 rounded-xl text-[8px] font-black uppercase hover:bg-purple-500 hover:text-black transition-all"
+          >
+            <Search size={12}/> OMR SCAN
+          </button>
+
+          <button
+            onClick={() => {
+              const input = document.createElement('input');
+              input.type = 'file';
               input.multiple = true;
               input.accept = '.emk,.mid,.midi,.xml,.musicxml';
               input.onchange = async (e: any) => {
@@ -603,11 +653,8 @@ const StudioPage: React.FC<StudioPageProps> = ({
                 
                 for (const file of files) {
                   try {
-                    // Parse Metadata (handles EMK, MIDI, XML, MXL internally via extractXmlString)
                     const { metadata, xmlData, layoutBundle } = await parseMusicXMLMetadata(file);
-                    
-                    // 4. Save to Database
-                    metadata.origin = 'load'; // Mark as user-imported
+                    metadata.origin = 'load'; 
                     await songStorage.saveSong(metadata, xmlData, layoutBundle);
                     successCount++;
                   } catch (err) {
@@ -617,7 +664,7 @@ const StudioPage: React.FC<StudioPageProps> = ({
                 
                 setIsPreparing(false);
                 if (successCount > 0) {
-                  onPublish(); // Trigger refresh in App
+                  onPublish(); 
                   alert(`✅ Successfully imported ${successCount} songs to your library!`);
                 } else {
                   alert(`❌ Failed to import files. Please check format.`);
@@ -661,7 +708,8 @@ const StudioPage: React.FC<StudioPageProps> = ({
                 tracks={tracks}
                 setTracks={setTracks}
                 onTrackCreated={(trackId) => {
-                  setStudioMode('arranger');
+                  // Do not automatically navigate to arranger
+                  // setStudioMode('arranger');
                 }}
               />
             );

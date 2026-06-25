@@ -1,13 +1,16 @@
 import { NimoBrainRegistry, ActionMeta } from './NimoBrain';
 
 export interface GeminiLiveClientOptions {
-  apiKey: string;
+  apiKey?: string;
+  proxyUrl?: string;
   nimoBrain: NimoBrainRegistry;
   onStateChange: (state: 'idle' | 'connecting' | 'connected' | 'listening' | 'speaking' | 'error') => void;
   onMessage: (role: 'user' | 'nimo', text: string) => void;
   onLog: (msg: string) => void;
   language?: 'th' | 'en';
   onVolumeChange?: (micVolume: number, speakerVolume: number) => void;
+  audioContext?: AudioContext;
+  micStream?: MediaStream;
 }
 
 export class GeminiLiveClient {
@@ -29,6 +32,12 @@ export class GeminiLiveClient {
   
   constructor(options: GeminiLiveClientOptions) {
     this.options = options;
+    if (options.audioContext) {
+      this.audioContext = options.audioContext;
+    }
+    if (options.micStream) {
+      this.micStream = options.micStream;
+    }
   }
 
   async connect() {
@@ -36,15 +45,19 @@ export class GeminiLiveClient {
     this.options.onLog("Initializing audio contexts...");
 
     try {
-      this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({
-        sampleRate: 24000 // Gemini outputs 24kHz PCM
-      });
+      if (!this.audioContext) {
+        this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({
+          sampleRate: 24000 // Gemini outputs 24kHz PCM
+        });
+      }
       
-      this.micStream = await navigator.mediaDevices.getUserMedia({ audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      }});
+      if (!this.micStream) {
+        this.micStream = await navigator.mediaDevices.getUserMedia({ audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        }});
+      }
 
       this.micAnalyser = this.audioContext.createAnalyser();
       this.micAnalyser.fftSize = 256;
@@ -53,7 +66,10 @@ export class GeminiLiveClient {
       
       this.startAnalysisLoop();
 
-      const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${this.options.apiKey}`;
+      const wsUrl = this.options.proxyUrl 
+          ? this.options.proxyUrl 
+          : `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${this.options.apiKey}`;
+          
       this.ws = new WebSocket(wsUrl);
 
       this.ws.onopen = () => {

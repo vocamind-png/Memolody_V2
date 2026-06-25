@@ -344,6 +344,14 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
   useEffect(() => {
     let checkCount = 0;
     const initVrv = () => {
+      // Dynamic injection of Verovio
+      if (!document.querySelector('script[src="/verovio-toolkit.js"]')) {
+        const script = document.createElement('script');
+        script.src = '/verovio-toolkit.js';
+        script.defer = true;
+        document.body.appendChild(script);
+      }
+
       const verovio = (window as any).verovio;
 
       // If a global instance already exists, reuse it to prevent WASM memory leaks
@@ -364,11 +372,11 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
           setLoadingStep("");
         } catch (e) {
           console.warn("Verovio toolkit instantiation failed, waiting for WASM...", e);
-          if (checkCount++ < 30) setTimeout(initVrv, 1000);
+          if (checkCount++ < 100) setTimeout(initVrv, 500);
           else setError("Failed to initialize Verovio Toolkit.");
         }
       } else {
-        if (checkCount++ < 30) setTimeout(initVrv, 1000);
+        if (checkCount++ < 100) setTimeout(initVrv, 500);
         else setError("Music Library (Verovio) script not found.");
       }
     };
@@ -1256,16 +1264,16 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
   }, [renderScore]);
 
   useEffect(() => {
-    if (xmlData) {
+    if (xmlData && isReady) {
       const debounce = setTimeout(() => {
         if (renderScoreRef.current) renderScoreRef.current();
       }, 200);
       return () => clearTimeout(debounce);
-    } else {
+    } else if (!xmlData) {
       setSvgPages([]);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [xmlData, lyricMode, transpose, isEditable, musicFont, systemSpacing, stemThickness, barlineThickness, stafflineThickness, layoutBundle]);
+  }, [xmlData, isReady, lyricMode, transpose, isEditable, musicFont, systemSpacing, stemThickness, barlineThickness, stafflineThickness, layoutBundle]);
 
   // ══════════════════════════════════════════════════════════════
 
@@ -1908,7 +1916,8 @@ export default React.memo(ProScoreEditor, (prev, next) => {
       prev.isPlaying === next.isPlaying &&
       prev.transpose === next.transpose &&
       prev.lyricMode === next.lyricMode &&
-      prev.zoom === next.zoom;
+      prev.zoom === next.zoom &&
+      prev.songMetadata?.id === next.songMetadata?.id;
   }
 
   // When not playing (e.g. seeking while paused), we allow re-renders
@@ -1918,5 +1927,7 @@ export default React.memo(ProScoreEditor, (prev, next) => {
     prev.transpose === next.transpose &&
     prev.lyricMode === next.lyricMode &&
     prev.zoom === next.zoom &&
-    prev.currentTime === next.currentTime;
+    prev.currentTime === next.currentTime &&
+    prev.songMetadata?.id === next.songMetadata?.id;
 });
+

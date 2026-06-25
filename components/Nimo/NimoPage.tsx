@@ -823,6 +823,52 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
         setPendingFile(null);
     }, [previewUrl]);
 
+    // ── ScoreLens: Handle music file import (.emk, .mid, .musicxml) ──
+    const handleMusicFileImported = useCallback(async (file: File) => {
+        // Music files should be processed immediately (no need for preview)
+        setMessages(prev => [...prev, {
+            role: 'user',
+            content: preferredLanguage === 'th' ? `📥 นำเข้าไฟล์: ${file.name}` : `📥 Import file: ${file.name}`,
+            timestamp: Date.now()
+        }]);
+
+        setIsTyping(true);
+        setMessages(prev => [...prev, {
+            role: 'nimo',
+            content: preferredLanguage === 'th'
+                ? `🎵 กำลังประมวลผลไฟล์เพลง "${file.name}"... กรุณารอสักครู่${suffixKa}`
+                : `🎵 Processing music file "${file.name}"... Please wait.`,
+            timestamp: Date.now()
+        }]);
+
+        const result = await processImage(file, preferredLanguage);
+        setIsTyping(false);
+
+        if (result && 'song' in result) {
+            const noteCount = (result.xmlData.match(/<note/g) || []).length;
+            setMessages(prev => [...prev, {
+                role: 'nimo',
+                content: preferredLanguage === 'th'
+                    ? `✅ นำเข้าสำเร็จ${suffixKa}! เพลง **"${result.song.title}"** 🎶\n\n📊 Key: ${result.song.key} | BPM: ${result.song.bpm} | โน้ต: ${noteCount} ตัว\n\nกดปุ่มด้านล่างเพื่อฟังเลย${suffixKa} ▶️`
+                    : `✅ Import success! Song **"${result.song.title}"** 🎶\n\n📊 Key: ${result.song.key} | BPM: ${result.song.bpm} | Notes: ${noteCount}\n\nTap below to listen ▶️`,
+                timestamp: Date.now(),
+                actionData: { song: result.song, xmlData: result.xmlData }
+            }]);
+            onRefresh?.();
+            setTimeout(async () => {
+                try { await onSongSelect?.(result.song, result.xmlData, 'listen'); } catch {}
+            }, 3000);
+        } else {
+            setMessages(prev => [...prev, {
+                role: 'nimo',
+                content: preferredLanguage === 'th'
+                    ? `❌ ไม่สามารถประมวลผลไฟล์ได้${suffixKa} กรุณาตรวจสอบรูปแบบไฟล์`
+                    : `❌ Could not process the file. Please check the file format.`,
+                timestamp: Date.now()
+            }]);
+        }
+    }, [preferredLanguage, processImage, onSongSelect, onRefresh]);
+
     // ── ScoreLens: Handle clipboard paste (Ctrl+V / Cmd+V) ───────────
     const handlePaste = useCallback((e: React.ClipboardEvent) => {
         const items = e.clipboardData?.items;
@@ -885,10 +931,12 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
                            file.name.toLowerCase().endsWith('.musicxml') ||
                            file.name.toLowerCase().endsWith('.mxl');
 
-        if (isImageOrPdf || isMusicFile) {
+        if (isMusicFile) {
+            handleMusicFileImported(file);
+        } else if (isImageOrPdf) {
             handleFileSelected(file);
         }
-    }, [handleFileSelected]);
+    }, [handleFileSelected, handleMusicFileImported]);
 
     // ── ScoreLens: Handle process image when user sends ────────────────────
     const handleScoreLensSend = useCallback(async () => {
@@ -1788,10 +1836,11 @@ You must output valid JSON matching the schema. If no actions are needed, return
                             isProcessing={isProcessing}
                             previewUrl={previewUrl}
                             onClearPreview={handleClearPreview}
+                            onMusicFileImported={handleMusicFileImported}
                         />
                     )}
 
-                    <div className="bg-white/5 border border-white/10 rounded-[32px] p-2 flex items-center gap-1 focus-within:border-cyan-500/50 transition-all shadow-2xl backdrop-blur-2xl mb-4">
+                    <div className="bg-white/5 border border-white/10 rounded-[32px] p-1 flex items-center gap-0 focus-within:border-cyan-500/50 transition-all shadow-2xl backdrop-blur-2xl mb-4">
                         {/* ScoreLens: Camera & File buttons */}
                         {!previewUrl && (
                             <ScoreLensBar
@@ -1799,6 +1848,7 @@ You must output valid JSON matching the schema. If no actions are needed, return
                                 isProcessing={isProcessing}
                                 previewUrl={null}
                                 onClearPreview={handleClearPreview}
+                                onMusicFileImported={handleMusicFileImported}
                             />
                         )}
 
@@ -1817,7 +1867,7 @@ You must output valid JSON matching the schema. If no actions are needed, return
                         {listening && (
                             <button 
                                 onClick={stopListeningAndHandsFree}
-                                className="w-12 h-12 bg-rose-600 hover:bg-rose-500 text-white rounded-full flex items-center justify-center shadow-[0_0_15px_rgba(244,63,94,0.4)] active:scale-75 transition-all shrink-0 animate-pulse"
+                                className="w-8 h-8 bg-rose-600 hover:bg-rose-500 text-white rounded-full flex items-center justify-center shadow-[0_0_15px_rgba(244,63,94,0.4)] active:scale-75 transition-all shrink-0 animate-pulse"
                                 title={preferredLanguage === 'th' ? "หยุดฟังเสียงไมค์" : "Stop Listening"}
                             >
                                 <Square size={16} fill="white" />
@@ -1826,7 +1876,7 @@ You must output valid JSON matching the schema. If no actions are needed, return
 
                         <button 
                             onClick={toggleSpeakerMute}
-                            className="w-12 h-12 rounded-full flex items-center justify-center text-zinc-500 hover:text-cyan-400 transition-all shrink-0"
+                            className="w-8 h-8 rounded-full flex items-center justify-center text-zinc-500 hover:text-cyan-400 transition-all shrink-0"
                             title={speakerMuted ? (preferredLanguage === 'th' ? 'เปิดเสียงพูด Nimo' : 'Unmute Nimo Voice') : (preferredLanguage === 'th' ? 'ปิดเสียงพูด Nimo' : 'Mute Nimo Voice')}
                         >
                             {speakerMuted ? <VolumeX size={18} /> : <Volume2 size={18} />}
@@ -1836,7 +1886,7 @@ You must output valid JSON matching the schema. If no actions are needed, return
                         <button 
                             onClick={toggleMic}
                             disabled={isProcessing || isTyping}
-                            className={`w-12 h-12 rounded-full flex items-center justify-center transition-all shrink-0 ${
+                            className={`w-8 h-8 rounded-full flex items-center justify-center transition-all shrink-0 ${
                                 listening ? 'bg-red-500 text-white shadow-[0_0_15px_rgba(239,68,68,0.5)]' : 'text-zinc-500 hover:text-cyan-400'
                             }`}
                         >
@@ -1846,7 +1896,7 @@ You must output valid JSON matching the schema. If no actions are needed, return
                         <button
                             onClick={() => handleSend()}
                             disabled={(!input.trim() && !pendingFile) || isTyping || isProcessing}
-                            className={`w-12 h-12 rounded-full flex items-center justify-center hover:scale-105 active:scale-95 transition-all disabled:opacity-30 disabled:hover:scale-100 shrink-0 ${
+                            className={`w-8 h-8 rounded-full flex items-center justify-center hover:scale-105 active:scale-95 transition-all disabled:opacity-30 disabled:hover:scale-100 shrink-0 ${
                                 pendingFile ? 'bg-cyan-500 text-black shadow-[0_0_15px_rgba(0,229,255,0.4)]' : 'bg-white text-black'
                             }`}
                         >

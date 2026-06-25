@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
-import { Home, User, Music2, Play, Zap, RefreshCcw, Star, Shield, Sparkles, Mic2, Settings } from 'lucide-react';
+import { Home, User, Music2, Play, Zap, RefreshCcw, Star, Shield, Sparkles, Mic2, Settings, Gamepad2 } from 'lucide-react';
 // Lazy load Nimo - only loads JS bundle when user first clicks NIMO
 const FloatingNimo = lazy(() => import('./components/Nimo/FloatingNimo').then(m => ({ default: m.FloatingNimo })));
 
@@ -30,6 +30,7 @@ import AuthForm from './components/Profile/AuthForm';
 // ── Lazy-load ALL heavy page components ──
 const HomePage = lazy(() => import('./components/Home/HomePage'));
 const PlayerPage = lazy(() => import('./components/Player/PlayerPage'));
+import { mapPartNameToInstrument } from './components/Player/PlayerPage';
 const VaultPage = lazy(() => import('./components/Vault/VaultPage'));
 const StudioPage = lazy(() => import('./components/Studio/StudioPage'));
 const ProfilePage = lazy(() => import('./components/Profile/ProfilePage').then(m => ({ default: m.ProfilePage })));
@@ -121,6 +122,7 @@ const NAV_ITEMS: { id: ViewId; icon: any; label: string; minRole?: string; isNim
   { id: 'nimo', icon: Sparkles, label: 'NIMO', isNimo: true },
   { id: 'profile', icon: User, label: 'ME' },
   { id: 'settings', icon: Settings, label: 'SETTINGS' },
+  { id: 'game', icon: Gamepad2, label: 'GAME' },
   { id: 'admin', icon: Shield, label: 'CORE', minRole: 'admin' },
 ];
 
@@ -181,6 +183,22 @@ const App: React.FC = () => {
     document.body.classList.add(`theme-${uiTheme}`);
     localStorage.setItem('memo_ui_theme', uiTheme);
   }, [uiTheme]);
+
+  // Remove native HTML splash screen smoothly when React finishes initializing
+  useEffect(() => {
+    if (!isInitializing) {
+      const splash = document.getElementById('native-splash');
+      if (splash) {
+        splash.style.opacity = '0';
+        splash.style.visibility = 'hidden';
+        setTimeout(() => {
+          if (splash.parentNode) {
+            splash.parentNode.removeChild(splash);
+          }
+        }, 600);
+      }
+    }
+  }, [isInitializing]);
 
   // Save Nimo Position
   useEffect(() => {
@@ -321,8 +339,8 @@ const App: React.FC = () => {
                 userSongsRef.current = updatedSongs;
               }
             }).catch((syncErr) => {
-              console.warn('[App] Initial cloud sync failed:', syncErr);
-              setTimeout(() => triggerSync(), 1000); 
+              console.warn('[App] Initial cloud sync failed (non-blocking):', syncErr?.message || syncErr);
+              // Don't auto-retry — manifest.json is ~138MB, retrying on slow connections just times out again
             }).finally(() => {
               setIsSyncing(false);
             });
@@ -352,10 +370,18 @@ const App: React.FC = () => {
           }
 
           if (initialSong) {
-            setSelectedSong(initialSong.metadata);
-            setUploadedMusicXml(initialSong.xmlData || '');
-            setSelectedLayoutBundle(initialSong.layoutBundle || null);
-            console.log(`[App] 🎵 Restored/Selected song: "${initialSong.metadata.title}"`);
+            const xml = initialSong.xmlData || '';
+            // If we have local XML, set directly (fast path)
+            if (xml && xml.includes('<score-partwise')) {
+              setSelectedSong(initialSong.metadata);
+              setUploadedMusicXml(xml);
+              setSelectedLayoutBundle(initialSong.layoutBundle || null);
+              console.log(`[App] 🎵 Restored song (local XML): "${initialSong.metadata.title}"`);
+            } else {
+              // XML is missing or corrupted — use handleSongSelect to trigger cloud fetch
+              console.warn(`[App] ⚠️ xmlData empty for "${initialSong.metadata.title}", fetching from cloud...`);
+              handleSongSelect(initialSong.metadata, xml, 'studio', false, { main: 'player' });
+            }
           }
         } else {
           setCurrentView('home');
@@ -415,8 +441,8 @@ const App: React.FC = () => {
         console.log(`[GCS Sync] ✅ Successfully synced ${syncResult.total} songs from GCS`);
       }
     } catch (e: any) {
-      console.warn("Sync interrupted:", e.message);
-      alert("Sync failed: " + e.message);
+      console.warn('[GCS Sync] Sync failed (non-blocking):', e.message);
+      // Don't use alert() — it blocks the entire UI thread
     } finally {
       isSyncingRef.current = false;
       setIsSyncing(false);
@@ -541,7 +567,16 @@ const App: React.FC = () => {
           const url = finalXml;
           const urlWithoutQuery = url.split('?')[0];
           const isMxl = urlWithoutQuery.endsWith('.mxl');
-          const resp = await fetch(url);
+          
+          // Add timeout to prevent infinite loading
+          const fetchController = new AbortController();
+          const fetchTimeout = setTimeout(() => fetchController.abort(), 15000);
+          let resp: Response;
+          try {
+            resp = await fetch(url, { signal: fetchController.signal });
+          } finally {
+            clearTimeout(fetchTimeout);
+          }
           if (resp.ok) {
             if (isMxl) {
               const blob = await resp.blob();
@@ -639,7 +674,7 @@ const App: React.FC = () => {
         return {
           id, name, isMuted: false, isSolo: false, lyricMode: savedLyricMode as LyricMode, volume: 0.8, pan: 0,
           mode: isVocal ? 'vocal' as const : 'instrument' as const,
-          instrument: isVocal ? 'Auto' : 'Piano', 
+          instrument: isVocal ? 'Auto' : (mapPartNameToInstrument(name) || 'acoustic_grand_piano'), 
           effects: Array(6).fill(null)
         };
       });
@@ -766,6 +801,20 @@ const App: React.FC = () => {
       th: 'ค้นหาและเปิดเพลงจากคลัง',
       en: 'Search and play a song from library',
       params: '{ songTitle: string }',
+      category: 'player'
+    });
+
+    const unregLoadSongData = nimoBrain.registerAction('load_song_data', async (params) => {
+      const { metadata, xmlData } = params;
+      if (metadata && xmlData) {
+        await handleSongSelect(metadata, xmlData, 'listen');
+      } else {
+        throw new Error('Missing metadata or xmlData');
+      }
+    }, {
+      th: 'โหลดข้อมูลเพลงและเปิดเล่นทันที',
+      en: 'Load song data directly and play',
+      params: '{ metadata: any, xmlData: string }',
       category: 'player'
     });
 

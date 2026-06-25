@@ -1,5 +1,6 @@
 import { ParsedNote, TrackState } from '../types';
 import { getChromaticSolfege } from './SolfegeLogic';
+import { PatternExpander, ExpandedTrack } from './PatternExpander';
 
 export interface ArrangementConfig {
   key: string;
@@ -12,6 +13,7 @@ export interface ArrangementConfig {
   is4PartChorus?: boolean;
   chordProgression?: string;
   aiChords?: { name: string; measure: number; beat: number }[];
+  aiTracksConfig?: any[];
 }
 
 export class SymbolicArranger {
@@ -35,14 +37,46 @@ export class SymbolicArranger {
     let tracks: TrackState[] = [];
 
     // 1. Generate Rhythm Section (Bass, Piano/Guitar, Drums)
-    const rhythmTracks = this.generateRhythmSection(leadMelody, config);
-    tracks.push(...rhythmTracks);
+    if (config.aiTracksConfig && config.aiTracksConfig.length > 0 && config.aiChords && config.aiChords.length > 0) {
+      console.log(`[SymbolicArranger] Using PatternExpander with ${config.aiTracksConfig.length} tracks...`);
+      const beatsPerMeasure = config.timeSignature.beats;
+      let totalBeats = 16;
+      if (leadMelody.length > 0) {
+        totalBeats = leadMelody.reduce((max, note) => Math.max(max, (note.startTime || 0) + (note.duration || 0)), 0);
+      }
+      const totalMeasures = Math.max(4, Math.ceil(totalBeats / beatsPerMeasure));
+
+      const expanded = PatternExpander.expand(config.aiChords, config.aiTracksConfig, beatsPerMeasure, totalMeasures);
+      
+      expanded.forEach((extTrack, index) => {
+         const trackId = `track-ai-${Date.now()}-${index}`;
+         const newTrack: TrackState = {
+            id: trackId,
+            name: extTrack.trackName,
+            isMuted: false,
+            isSolo: false,
+            lyricMode: 'Ju Solfege Movable Doh',
+            volume: (config.aiTracksConfig![index].velocity || 80) / 100,
+            pan: extTrack.instrument === 'bass' || extTrack.instrument === 'drums' ? 0 : (index % 2 === 0 ? -0.3 : 0.3),
+            mode: 'instrument',
+            instrument: extTrack.instrument,
+            effects: []
+         };
+         // Set the generated notes back to the track
+         extTrack.notes.forEach(n => n.trackId = trackId);
+         (newTrack as any)._generatedNotes = extTrack.notes;
+         tracks.push(newTrack);
+      });
+    } else {
+      const rhythmTracks = this.generateRhythmSection(leadMelody, config);
+      tracks.push(...rhythmTracks);
+    }
 
     // 2. Generate Chorus (SATB)
     if (is4PartChorus) {
       const chorusTracks = this.generateSATBChorus(leadMelody, config);
       tracks.push(...chorusTracks);
-    } else {
+    } else if (!config.aiTracksConfig || config.aiTracksConfig.length === 0) {
       // Basic Harmony
       const harmonyTrackId = `track-harmony-${Date.now()}`;
       const harmonyNotes = this.generateHarmonyShift(leadMelody, config, harmonyTrackId, 2, 2);

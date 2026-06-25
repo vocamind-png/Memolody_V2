@@ -79,6 +79,9 @@ export class AIArrangerService {
   /**
    * Calls Gemini to generate an arrangement based on the melody and references.
    */
+  /**
+   * Calls Gemini to generate an arrangement based on the melody and references.
+   */
   public static async generateAIArrangement(
     melodyNotes: ParsedNote[],
     references: { metadata: Song, xmlData: string }[],
@@ -86,13 +89,12 @@ export class AIArrangerService {
     prompt: string,
     key: string,
     beatsPerMeasure: number
-  ): Promise<AIArrangementResult | null> {
+  ): Promise<any | null> {
     try {
       const apiKey = import.meta.env.VITE_GEMINI_API_KEY || (typeof __GEMINI_API_KEY__ !== 'undefined' ? __GEMINI_API_KEY__ : '');
       if (!apiKey) throw new Error('GEMINI_API_KEY is not configured');
       const ai = new GoogleGenAI({ apiKey });
 
-      // Build context from references
       let referenceContext = '';
       if (references.length > 0) {
         referenceContext = "Here are structural examples extracted from the user's library for this style:\n";
@@ -100,37 +102,42 @@ export class AIArrangerService {
           const extractedChords = this.extractStylisticFeatures(ref.xmlData);
           referenceContext += `Reference ${idx + 1} (${ref.metadata.title}): Typical chord progression: ${extractedChords || 'N/A'}\n`;
         });
-      } else {
-        referenceContext = 'No direct local references found, please use your general knowledge of this style.';
       }
 
-      // Summarize melody (to save tokens, summarize first 32 notes)
       const melodySummary = melodyNotes.slice(0, 32).map(n => 
         `M${Math.floor((n.startTime || 0) / beatsPerMeasure) + 1} B${((n.startTime || 0) % beatsPerMeasure) + 1}: ${n.pitch}`
       ).join(', ');
 
-      const systemPrompt = `You are a master music arranger. 
-Your task is to arrange a melody in the requested style.
+      const systemPrompt = `You are a master music arranger, similar to Suno or ACE Studio.
+Your task is to arrange a multi-instrument backing track in the requested style.
 Key: ${key}
 Time Signature: ${beatsPerMeasure}/4
 Style requested: ${style} ${prompt}
 
-${referenceContext}
-
 Melody (Measure and Beat: Pitch):
 ${melodySummary}
 
-Based on the style references and the melody, generate a chord progression that fits perfectly.
+Based on the style and melody, generate a highly musical chord progression.
+ALSO, choose 3-4 instruments (e.g., piano, bass, drums, strings) and assign a specific rhythmic "pattern" to each.
+Valid patterns for melodic instruments (Piano, Strings, Guitar): 'block_chords', 'arpeggio_8ths', 'arpeggio_16ths', 'comping_syncopated'.
+Valid patterns for Bass: 'walking_quarter', 'root_8ths', 'root_fifth_8ths'. (CRITICAL: DO NOT use 'block_chords' for Bass!).
+Valid patterns for Drums: 'rock_basic', 'pop_groove', 'jazz_swing'.
+
 Return ONLY a valid JSON object matching this TypeScript interface exactly:
 {
   "chords": [
-    { "name": "C", "measure": 1, "beat": 1 },
-    { "name": "Am", "measure": 2, "beat": 1 }
+    { "name": "Cmaj7", "measure": 1, "beat": 1 },
+    { "name": "Dm7", "measure": 2, "beat": 1 },
+    { "name": "G7", "measure": 3, "beat": 1 }
   ],
-  "bassPattern": "optional short description of rhythm"
+  "tracksConfig": [
+    { "instrument": "piano", "pattern": "comping_syncopated", "octaveOffset": 0, "velocity": 85 },
+    { "instrument": "bass", "pattern": "walking_quarter", "octaveOffset": -2, "velocity": 90 },
+    { "instrument": "drums", "pattern": "pop_groove", "octaveOffset": 0, "velocity": 100 }
+  ]
 }`;
 
-      const modelsToTry = ['gemini-3.5-flash', 'gemini-3.1-pro', 'gemini-2.5-flash', 'gemini-1.5-flash'];
+      const modelsToTry = ['gemini-3.1-pro-preview', 'gemini-3.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash'];
       let responseText = '{}';
       
       for (const modelName of modelsToTry) {
@@ -138,7 +145,7 @@ Return ONLY a valid JSON object matching this TypeScript interface exactly:
           const response = await ai.models.generateContent({ 
             model: modelName, 
             contents: systemPrompt, 
-            config: { responseMimeType: 'application/json', temperature: 0.2 } 
+            config: { responseMimeType: 'application/json', temperature: 0.4 } 
           });
           responseText = response.text || '{}';
           break;
@@ -148,8 +155,8 @@ Return ONLY a valid JSON object matching this TypeScript interface exactly:
       }
 
       const parsed = JSON.parse(responseText);
-      if (parsed.chords && Array.isArray(parsed.chords)) {
-        return parsed as AIArrangementResult;
+      if (parsed.chords && parsed.tracksConfig) {
+        return parsed; // Returns raw config to be expanded by caller
       }
       return null;
     } catch (e) {

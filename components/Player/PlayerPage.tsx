@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspense } from 'react';
 import * as Tone from 'tone';
+import { SongGradingEngine } from '../../lib/SongGradingEngine';
 import {
   Play, Pause, SlidersHorizontal,
   X, Volume2, SkipBack,
@@ -31,6 +32,8 @@ import { clientSvsEngine } from '../../lib/ClientSvsEngine';
 import { AudioBlobCache } from '../../lib/AudioBlobCache';
 import { vocalidoRenderService } from '../../lib/VocalidoRenderService';
 import { SongAnalyticsService } from '../../lib/SongAnalyticsService';
+import { renderQueueService } from '../../lib/RenderQueueService';
+import { RenderQueueCard } from './RenderQueueCard';
 export type PlayerCardType = 'score' | 'pianoroll' | 'trackview' | 'memochord' | 'practice' | 'vocalido';
 
 const saveRenderToLocalCache = async (
@@ -562,6 +565,12 @@ const PlayerPage: React.FC<{
   const [showAdvancedRenderSettings, setShowAdvancedRenderSettings] = useState(false);
   const hasPromptedRenderRef = useRef(false);
 
+  // ── Queue State ──────────────────────────────────────────
+  const [showAuthGate, setShowAuthGate] = useState(false);
+  const [queueJobId, setQueueJobId] = useState<string | null>(null);
+  const [showQueueCard, setShowQueueCard] = useState(false);
+  const [pendingRenderArgs, setPendingRenderArgs] = useState<{ selectedTrackIds?: string[], overrideLyricMode?: string } | null>(null);
+
   useEffect(() => {
     if (showRenderPrompt && tracks.length > 0) {
       setModalSelectedTracks([tracks[0].id]);
@@ -595,11 +604,24 @@ const PlayerPage: React.FC<{
 
   // Synchronize component states when rendering completes
   const prevIsRenderingRef = useRef(false);
+  const queueJobIdRef = useRef<string | null>(null);
+  useEffect(() => { queueJobIdRef.current = queueJobId; }, [queueJobId]);
+
   useEffect(() => {
     if (prevIsRenderingRef.current && !isRenderingVocal) {
-      // Synthesis finished
-      const activeKey = vocalidoRenderService.activeRenderKey || localStorage.getItem(`active_render_key_${song?.id}`);
+      // Synthesis finished (success or error) — mark queue job done
+      const jid = queueJobIdRef.current;
+      if (jid) {
+        renderQueueService.markJobDone(jid).catch(() => {});
+        setQueueJobId(null);
+      }
+
+      // Only restore render state on SUCCESS (service has activeRenderKey set)
+      // On cancel, cancelRender() sets activeRenderKey=null — skip to avoid overriding instrument mode
+      // NOTE: Don't fallback to localStorage here — it may have a stale key from a previous render
+      const activeKey = vocalidoRenderService.activeRenderKey;
       if (activeKey && !renderError) {
+
         try {
           setActiveRenderKey(activeKey);
           setRenderedTranspose(transpose);
@@ -1031,6 +1053,9 @@ const PlayerPage: React.FC<{
   // Active track for per-staff render
   const [activeRenderTrackId, setActiveRenderTrackId] = useState<string>('');
 
+  // Guard ref to prevent syncTracks effect from calling initSampler while loadSong is in progress
+  const loadSongInProgressRef = useRef(false);
+
   // Split View Resizer State
   const [sidebarWidth, setSidebarWidth] = useState(50); // 50% for equal comparison
   const [isResizing, setIsResizing] = useState(false);
@@ -1046,10 +1071,14 @@ const PlayerPage: React.FC<{
       return;
     }
 
-    // Record Play Event on first play
+    // Record Play Event on first play (fire-and-forget, skip non-UUID song IDs)
     if (musicEngine.transportState !== 'started' && !hasRecordedPlayRef.current && song?.id) {
       hasRecordedPlayRef.current = true;
-      SongAnalyticsService.recordPlayEvent(song.id, user?.id);
+      // Only record if song.id looks like a valid UUID (Supabase FK constraint)
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (uuidRegex.test(song.id)) {
+        SongAnalyticsService.recordPlayEvent(song.id, user?.id);
+      }
     }
     
     // 🔊 CRITICAL: Start/Resume Tone.js context SYNCHRONOUSLY in user gesture
@@ -1151,10 +1180,12 @@ const PlayerPage: React.FC<{
     // 6. Async path: load then start
     console.log("[PlayerPage] 📥 Song not loaded yet. Entering async load path...");
     setIsAudioLoading(true);
+    loadSongInProgressRef.current = true;
 
     const safetyTimeoutId = setTimeout(() => {
       console.warn("[PlayerPage] ⚠️ Safety timeout (15s): force-resetting isAudioLoading");
       setIsAudioLoading(false);
+      loadSongInProgressRef.current = false;
     }, 15000);
 
     try {
@@ -1192,6 +1223,7 @@ const PlayerPage: React.FC<{
       console.error("[PlayerPage] ❌ Playback Start Failed:", e);
     } finally {
       clearTimeout(safetyTimeoutId);
+      loadSongInProgressRef.current = false;
       setIsAudioLoading(false);
       console.log("[PlayerPage] 🏁 handleTogglePlay finished. isPlaying will be:", musicEngine.transportState === 'started');
     }
@@ -1378,6 +1410,17 @@ const PlayerPage: React.FC<{
     }
   }, [musicXml]);
 
+  // ── Auto-grade: compute difficulty grade from parsed notes ─────────────
+  const songGrade = useMemo(() => {
+    if (!parsedData.notes.length) return null;
+    try {
+      return SongGradingEngine.gradeSong(parsedData.notes, {
+        bpm: parsedData.metadata.bpm,
+        fifths: (parsedData.metadata as any).fifths
+      });
+    } catch { return null; }
+  }, [parsedData.notes, parsedData.metadata]);
+
   const allPlayableNotes = useMemo(() => {
     let combined = [...(parsedData?.notes || [])];
     if (tracks && tracks.length > 0) {
@@ -1435,8 +1478,9 @@ const PlayerPage: React.FC<{
     setRenderProgress(0);
     lastRenderedKeyRef.current = ''; 
     setIsRenderingVocal(false);
-    setTracks([]); // <-- ADD THIS: clear tracks so auto-assign runs for the new song
-    autoRestoredRef.current = ''; // Reset restoration guard
+    setTracks([]); 
+    setActiveCard('score');
+    autoRestoredRef.current = ''; 
     console.log(`[PlayerPage] 🎵 Song changed → engine cleared.`);
 
     // Load active render key from localStorage
@@ -1563,6 +1607,13 @@ const PlayerPage: React.FC<{
           restoredTracks = restoredTracks.map((t: any) => ({ ...t, lyricMode: savedLyricMode }));
         }
 
+        if (song?.mixerOverrides) {
+          restoredTracks = restoredTracks.map((t: any) => ({
+            ...t,
+            ...song.mixerOverrides![t.id]
+          }));
+        }
+
         setTracks(restoredTracks);
         return;
       }
@@ -1584,15 +1635,39 @@ const PlayerPage: React.FC<{
         engineId: activeEngineId,
         effects: Array(6).fill(null)
       }));
-      setTracks(newTracks);
+      let finalTracks = newTracks;
+      if (song?.mixerOverrides) {
+        finalTracks = finalTracks.map((t: any) => ({
+          ...t,
+          ...song.mixerOverrides![t.id]
+        }));
+      }
+      setTracks(finalTracks);
     }
   }, [parsedData.notes.length, parsedData.partNames, setTracks, activeVoiceName, activeLyricMode, tracks.length, song?.id]);
 
-  // Save tracks to localStorage whenever they change
+  // Save tracks to localStorage whenever they change, and also update song's mixerOverrides
   useEffect(() => {
-    if (song?.id && tracks.length > 0) {
+    if (song?.id && tracks.length > 0 && song.id !== '_unsaved_') {
       try {
         localStorage.setItem(`tracks_state_${song.id}`, JSON.stringify(tracks));
+        
+        // Debounce saving to the database to avoid performance issues during fast sliding
+        const timeoutId = setTimeout(() => {
+          const overrides: any = {};
+          tracks.forEach(t => {
+            overrides[t.id] = {
+              instrument: t.instrument,
+              volume: t.volume,
+              pan: t.pan,
+              isMuted: t.isMuted,
+              isSolo: t.isSolo,
+              mode: t.mode
+            };
+          });
+          songStorage.updateSongMetadata(song.id, { mixerOverrides: overrides }).catch(e => console.error("Failed to save mixer overrides", e));
+        }, 1000);
+        return () => clearTimeout(timeoutId);
       } catch (e) {}
     }
   }, [tracks, song?.id]);
@@ -1987,6 +2062,26 @@ const PlayerPage: React.FC<{
       setActiveCardRef.current((prev: PlayerCardType) => prev === 'vocalido' ? 'score' : 'vocalido');
     });
 
+    const unregChangeInstrument = nimoBrain.registerAction('change_instrument', (params) => {
+      console.log('[App] Nimo requested change_instrument', params);
+      const instrument = params?.instrument;
+      if (!instrument) return;
+      
+      setTracksRef.current((prevTracks: any) => prevTracks.map((t: any) => {
+        if (t.mode === 'instrument' || !t.mode) {
+          return { ...t, instrument: instrument };
+        }
+        return t;
+      }));
+      // Show mixer so the user can see the change
+      setShowMixerRef.current(true);
+    }, {
+      th: 'เปลี่ยนเสียงเครื่องดนตรีทั้งหมด',
+      en: 'Change all instrument track sounds',
+      params: "{ instrument: string /* Must be a valid GM snake_case id (e.g. acoustic_grand_piano, overdrive_guitar, synth_drum) or 'Instrumento AI' */ }",
+      category: 'player'
+    });
+
     return () => {
       unregPlay();
       unregPause();
@@ -2002,6 +2097,7 @@ const PlayerPage: React.FC<{
       unregSkipToStart();
       unregSetSingingSystem();
       unregToggleVocalido();
+      unregChangeInstrument();
     };
   }, []);
 
@@ -2236,6 +2332,14 @@ const PlayerPage: React.FC<{
 
   useEffect(() => {
     const syncTracks = async () => {
+      // Skip if loadSong is in progress — it handles its own sampler init.
+      // Running initSampler concurrently with loadSong causes a dispose/create race condition
+      // that makes the audio engine hang and triggers the 15s safety timeout.
+      if (loadSongInProgressRef.current) {
+        console.log('[PlayerPage] ⏭️ syncTracks skipped: loadSong is in progress');
+        return;
+      }
+
       const hasAnySolo = tracks.some(tr => tr.isSolo) || soloedTracks.size > 0;
 
       // Determine if the solo context is "vocal-only" — i.e., all soloed tracks are vocal.
@@ -2342,7 +2446,7 @@ const PlayerPage: React.FC<{
 
       if (e.code === 'Space') {
         e.preventDefault();
-        handleTogglePlay();
+        handleTogglePlayRef.current();
       } else if (e.code === 'Enter' || e.code === 'Return') {
         e.preventDefault();
         musicEngine.pause();
@@ -2366,7 +2470,7 @@ const PlayerPage: React.FC<{
         }
       } else if (e.altKey && e.code === 'KeyR') {
         e.preventDefault();
-        triggerVocalSynthesis(true);
+        triggerVocalSynthesisRef.current(true);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -2375,7 +2479,14 @@ const PlayerPage: React.FC<{
 
   const cancelVocalSynthesis = () => {
     vocalidoRenderService.cancelRender();
-    setTracks(prev => prev.map(t => t.mode === 'vocal' ? { ...t, mode: 'instrument', instrument: mapPartNameToInstrument(t.name) } as TrackState : t));
+    setIsPlaying(false);
+    musicEngine.pause();
+    setTracks(prev => prev.map(t => t.mode === 'vocal'
+      ? { ...t, mode: 'instrument', instrument: mapPartNameToInstrument(t.name) || 'acoustic_grand_piano' } as TrackState
+      : t
+    ));
+    // Force full engine reset so next Play reloads with instrument samplers
+    musicEngine.stopAndClear();
   };
 
   const handleClearCache = async () => {
@@ -2404,6 +2515,12 @@ const PlayerPage: React.FC<{
       selectedTrackIds, forceRender 
     });
     
+    // ── AUTH GATE: Require login before AI vocal render ──
+    if (!authUser) {
+      setShowAuthGate(true);
+      return;
+    }
+
     // If UI thinks we're rendering but service disagrees, force-reset stale state
     if (isRenderingVocal && !vocalidoRenderService.getState().isRendering) {
       console.warn('[Vocalido] ⚠️ isRenderingVocal was stale (true), but service says false. Force-resetting.');
@@ -2452,10 +2569,37 @@ const PlayerPage: React.FC<{
     // Allow React to paint the UI (closing modal, showing render card) before potential main thread blocking
     const capturedRenderTracks = [...renderTracks]; // Capture to avoid stale closure
     const capturedTrackEngineId = trackEngineId;
+    const capturedSong = song!;
+    const capturedSongTitle = song?.title || 'Song';
+    const capturedTrackName = renderTracks.find(t => t.mode === 'vocal')?.name || 'Track';
+
+    // ── Join render queue via Supabase ──
+    const jobId = await renderQueueService.joinQueue({
+      userId: authUser!.id,
+      userEmail: authUser!.email || undefined,
+      songTitle: capturedSongTitle,
+      trackName: capturedTrackName,
+    });
+
+    if (jobId) {
+      // Check if we need to wait (anyone else rendering or waiting ahead)
+      const qStatus = await renderQueueService.getQueueStatus();
+      if (qStatus.position > 0) {
+        // Someone is ahead — show queue card and wait for our turn
+        setQueueJobId(jobId);
+        setPendingRenderArgs({ selectedTrackIds, overrideLyricMode });
+        setShowQueueCard(true);
+        return; // render will be triggered by RenderQueueCard's onReadyToRender
+      }
+      // We're first — mark as rendering immediately
+      await renderQueueService.markJobRendering(jobId);
+      setQueueJobId(jobId);
+    }
+
     setTimeout(() => {
       try {
         vocalidoRenderService.startRender({
-        song: song!,
+        song: capturedSong,
         parsedData,
         tracks: capturedRenderTracks,
         transpose,
@@ -2481,7 +2625,23 @@ const PlayerPage: React.FC<{
 
   const closeRenderOverlay = () => {
     vocalidoRenderService.cancelRender();
+    setIsPlaying(false);
+    musicEngine.pause();
+
+    // Switch vocal tracks to soundbank instrument mode
+    const instrumentTracks = tracks.map(t =>
+      t.mode === 'vocal'
+        ? { ...t, mode: 'instrument' as const, instrument: mapPartNameToInstrument(t.name) || 'acoustic_grand_piano' } as TrackState
+        : t
+    );
+    setTracks(instrumentTracks);
+
+    // stopAndClear resets Part + samplers so next Play reloads with correct instrument samplers
+    // This prevents the "no sound / looping" bug after canceling a vocal render
+    musicEngine.stopAndClear();
   };
+
+
 
   const beatsPerMeasure = Math.max(1, parsedData?.timeSignature?.beats || 4);
   const writtenBar = musicEngine.currentMeasure;
@@ -3334,8 +3494,63 @@ const PlayerPage: React.FC<{
           </div>
         )}
 
+
+        {/* ── [AUTH GATE] Require login before AI Vocal Render ── */}
+        {showAuthGate && (
+          <div className="fixed inset-0 z-[7000] flex items-center justify-center bg-black/70 backdrop-blur-md pointer-events-auto animate-in zoom-in-95 duration-300">
+            <div className="relative flex flex-col items-center p-8 bg-zinc-950/98 border border-zinc-800 rounded-3xl w-[300px] shadow-[0_20px_60px_rgba(0,0,0,0.9)]">
+              <div className="w-16 h-16 rounded-full bg-gradient-to-br from-cyan-500 to-indigo-600 flex items-center justify-center mb-5 shadow-[0_0_30px_rgba(6,182,212,0.3)]">
+                <Mic2 size={28} className="text-black" />
+              </div>
+              <h3 className="text-sm font-black text-white text-center mb-2 uppercase tracking-widest">Sign In to Use AI Voice</h3>
+              <p className="text-[10px] text-zinc-400 text-center mb-6 px-2 leading-relaxed">
+                Create a free account to access AI vocal synthesis and join the GPU render queue.
+              </p>
+              <button
+                onClick={() => { setShowAuthGate(false); if (onNavigate) onNavigate('profile'); }}
+                className="w-full h-11 bg-gradient-to-r from-cyan-500 to-indigo-600 text-black font-black text-[10px] uppercase tracking-widest rounded-xl mb-2 flex items-center justify-center active:scale-98 transition-all"
+              >
+                Sign Up Free
+              </button>
+              <button
+                onClick={() => setShowAuthGate(false)}
+                className="w-full h-9 bg-transparent border border-zinc-800 text-zinc-500 font-black text-[9px] uppercase tracking-widest rounded-xl hover:border-zinc-700 hover:text-zinc-400 transition-all"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── [RENDER QUEUE CARD] Show queue position while waiting for GPU ── */}
+        {showQueueCard && queueJobId && (
+          <RenderQueueCard
+            jobId={queueJobId}
+            songTitle={song?.title || 'Song'}
+            trackName={tracks.find(t => t.mode === 'vocal')?.name || 'Track'}
+            voiceName={activeVoiceName || 'AI Voice'}
+            onReadyToRender={async () => {
+              setShowQueueCard(false);
+              await renderQueueService.markJobRendering(queueJobId);
+              // Resume the render with original args
+              if (pendingRenderArgs) {
+                triggerVocalSynthesis(true, pendingRenderArgs.selectedTrackIds, pendingRenderArgs.overrideLyricMode);
+                setPendingRenderArgs(null);
+              } else {
+                triggerVocalSynthesis(true);
+              }
+            }}
+            onCancel={() => {
+              setShowQueueCard(false);
+              setQueueJobId(null);
+              setPendingRenderArgs(null);
+            }}
+          />
+        )}
+
         {/* ── [SVS READY RENDER PROMPT] ── */}
         {showRenderPrompt && (
+
           <div className="fixed inset-0 z-[6000] flex items-center justify-center bg-black/70 backdrop-blur-md pointer-events-auto">
             <div className="relative flex flex-col items-center p-8 bg-zinc-950/95 border border-zinc-800 rounded-3xl w-[320px] shadow-[0_20px_50px_rgba(0,0,0,0.8)] animate-in zoom-in-95 duration-300">
               <div className="relative w-28 h-28 flex items-center justify-center mb-6">
@@ -3537,7 +3752,22 @@ const PlayerPage: React.FC<{
                   Render Now
                 </div>
               </button>
-              <button onClick={() => setShowRenderPrompt(false)} className="w-full mt-2.5 py-3 px-4 bg-transparent border border-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-white font-black text-[10px] uppercase tracking-widest rounded-xl active:scale-98 transition-all duration-200">
+              <button
+                onClick={() => {
+                  setShowRenderPrompt(false);
+                  setIsPlaying(false);
+                  // Switch all vocal tracks to soundbank instrument mode
+                  setTracks(prev => prev.map(t =>
+                    t.mode === 'vocal'
+                      ? { ...t, mode: 'instrument', instrument: mapPartNameToInstrument(t.name) || 'acoustic_grand_piano' } as TrackState
+                      : t
+                  ));
+                  // Reset engine so next Play reloads with correct instrument samplers
+                  musicEngine.stopAndClear();
+
+                }}
+                className="w-full mt-2.5 py-3 px-4 bg-transparent border border-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-white font-black text-[10px] uppercase tracking-widest rounded-xl active:scale-98 transition-all duration-200"
+              >
                 Close
               </button>
             </div>
@@ -3663,6 +3893,23 @@ const PlayerPage: React.FC<{
               soloedStems={soloedStems}
               onSoloStem={handleSoloStem}
               showStemControls={showStemControls}
+              onCycleLyricMode={() => {
+                const modes: LyricMode[] = [
+                  'American Movable Do', 'American Fixed Do', 
+                  'British Movable Doh', 'British Fixed Doh', 
+                  'Ju Solfege Movable Doh', 'Ju Solfege Fixed Doh', 
+                  'Jianpu', 'Kodaly', 'Kodaly Rhythm', 
+                  'Lyric', 'Close'
+                ];
+                const currentMode = tracks.length > 0 ? tracks[0].lyricMode : 'American Movable Do';
+                const currentIdx = Math.max(0, modes.indexOf(currentMode));
+                const nextMode = modes[(currentIdx + 1) % modes.length];
+                
+                setTracks((prevTracks: any) => prevTracks.map((t: any) => ({ ...t, lyricMode: nextMode as LyricMode })));
+                try { localStorage.setItem('memo_lyric_mode', nextMode); } catch {}
+                lastRenderedKeyRef.current = '';
+                setTimeout(() => triggerVocalSynthesis(true, undefined, nextMode), 150);
+              }}
             />
           </div>
         )}
@@ -3888,7 +4135,7 @@ const PlayerPage: React.FC<{
  
               {/* CENTER GROUP: Narrow LCD Display */}
               <div className="flex-1 flex justify-center px-1">
-                <div className="w-[130px] min-[350px]:w-[148px] min-[380px]:w-[168px] sm:w-[215px] md:w-[250px] h-[34px] min-[360px]:h-[40px] bg-[#0c0c0e] rounded-md flex items-center border border-black shadow-inner overflow-hidden">
+                <div className="w-[120px] min-[350px]:w-[135px] min-[380px]:w-[155px] sm:w-[200px] md:w-[230px] h-[34px] min-[360px]:h-[40px] bg-[#0c0c0e] rounded-md flex items-center border border-black shadow-inner overflow-hidden">
                   <div className="flex-1 h-full border-r border-white/[0.03] flex items-center justify-center">
                   <div data-nimo-target="set_transpose">
                     <KeyTransposeDisplay keySig={parsedData.metadata.key || localSong.key} transpose={transpose} onTransposeChange={setTranspose} />
@@ -3903,6 +4150,30 @@ const PlayerPage: React.FC<{
                     <BarBeatPositionDisplay bar={currentBar} beat={currentBeat} onSeek={(bar) => musicEngine.setTransportSeconds((bar - 1) * beatsPerMeasure * 60 / currentBpm)} />
                   </div>
                 </div>
+                {/* Grade Badge */}
+                {songGrade && (
+                  <div
+                    className="ml-1 h-[34px] min-[360px]:h-[40px] px-2 min-[360px]:px-2.5 flex flex-col items-center justify-center rounded-md font-bold tracking-wider select-none shadow-sm"
+                    style={{
+                      background: songGrade.numericScore <= 32 ? 'linear-gradient(135deg, #22c55e, #16a34a)'
+                        : songGrade.numericScore <= 54 ? 'linear-gradient(135deg, #eab308, #ca8a04)'
+                        : songGrade.numericScore <= 78 ? 'linear-gradient(135deg, #f97316, #ea580c)'
+                        : 'linear-gradient(135deg, #ef4444, #dc2626)',
+                      color: '#fff',
+                      textShadow: '0 1px 2px rgba(0,0,0,0.3)'
+                    }}
+                    title={`${songGrade.grade} (Score: ${songGrade.numericScore}/100, Confidence: ${(songGrade.confidence * 100).toFixed(0)}%)`}
+                  >
+                    {songGrade.grade === 'Diploma' ? (
+                      <span className="text-[9px] min-[360px]:text-[10px] leading-none uppercase tracking-widest mt-0.5">Diploma</span>
+                    ) : (
+                      <>
+                        <span className="text-[12px] min-[360px]:text-[14px] leading-none mb-[1px]">{songGrade.grade.replace(/Grade\s*/i, '')}</span>
+                        <span className="text-[6px] min-[360px]:text-[7px] leading-none opacity-85 font-medium tracking-widest uppercase">Grade</span>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
  
               {/* RIGHT GROUP: Large Back and Play/Pause Controls */}
@@ -4270,6 +4541,23 @@ const PlayerPage: React.FC<{
               onUpdateTrack={(id, update) => setTracks((prev: any) => prev.map((t: any) => t.id === id ? { ...t, ...update } : t))}
               onOpenPluginBrowser={(trackId, slotIndex) => setPluginBrowserTarget({ trackId, slotIndex })}
               onOpenPluginEditor={(trackId, slotIndex, plugin) => setEditingPlugin({ trackId, slotIndex, plugin })}
+              onCycleLyricMode={() => {
+                const modes: LyricMode[] = [
+                  'American Movable Do', 'American Fixed Do', 
+                  'British Movable Doh', 'British Fixed Doh', 
+                  'Ju Solfege Movable Doh', 'Ju Solfege Fixed Doh', 
+                  'Jianpu', 'Kodaly', 'Kodaly Rhythm', 
+                  'Lyric', 'Close'
+                ];
+                const currentMode = tracks.length > 0 ? tracks[0].lyricMode : 'American Movable Do';
+                const currentIdx = Math.max(0, modes.indexOf(currentMode));
+                const nextMode = modes[(currentIdx + 1) % modes.length];
+                
+                setTracks((prevTracks: any) => prevTracks.map((t: any) => ({ ...t, lyricMode: nextMode as LyricMode })));
+                try { localStorage.setItem('memo_lyric_mode', nextMode); } catch {}
+                lastRenderedKeyRef.current = '';
+                setTimeout(() => triggerVocalSynthesis(true, undefined, nextMode), 150);
+              }}
             />
           </div>
         </div>

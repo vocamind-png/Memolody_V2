@@ -58,6 +58,16 @@ export interface Song {
   likes?: number;
   commentCount?: number;
   isLiked?: boolean;
+  mixerOverrides?: {
+    [trackId: string]: {
+      instrument?: string;
+      volume?: number;
+      pan?: number;
+      isMuted?: boolean;
+      isSolo?: boolean;
+      mode?: 'instrument' | 'vocal';
+    }
+  };
   genre?: string;
   hasStory?: boolean;
   era?: string;

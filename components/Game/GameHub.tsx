@@ -1,9 +1,10 @@
 
-import React from 'react';
+import React, { useState } from 'react';
 import { 
   Rocket, Bird, Theater, UtensilsCrossed, 
   Play, Sparkles, Heart, Star
 } from 'lucide-react';
+import ForestConcert from './ForestConcert';
 
 interface GameTheme {
   id: string;
@@ -55,6 +56,12 @@ const THEMES: GameTheme[] = [
 ];
 
 const GameHub: React.FC = () => {
+  const [activeGame, setActiveGame] = useState<string | null>(null);
+
+  if (activeGame === 'forest') {
+    return <ForestConcert onBack={() => setActiveGame(null)} />;
+  }
+
   return (
     <div className="h-full flex flex-col bg-transparent overflow-y-auto no-scrollbar pb-32 pt-2">
       <style>{`
@@ -170,7 +177,10 @@ const GameHub: React.FC = () => {
 
             {/* BOTTOM AREA: PLAY BUTTON */}
             <div className="play-btn-area">
-               <button className="bg-[#1a233a] hover:bg-indigo-900 px-5 py-1 rounded-full flex items-center gap-1 transition-all active:scale-90 border border-transparent hover:border-white/10">
+               <button 
+                  onClick={() => setActiveGame(theme.id)}
+                  className="bg-[#1a233a] hover:bg-indigo-900 px-5 py-1 rounded-full flex items-center gap-1 transition-all active:scale-90 border border-transparent hover:border-white/10"
+               >
                   <span className="text-white text-[8px] sm:text-[10px] font-black uppercase tracking-widest">Play</span>
                </button>
             </div>

@@ -7,6 +7,7 @@ import { AIArrangerService } from '../../lib/AIArrangerService';
 import { songStorage } from '../../lib/SongStorage';
 import { NeuralRenderService } from '../../lib/NeuralRenderService';
 import { TrackVisualizer } from './TrackVisualizer';
+import { GM_INSTRUMENTS } from '../../lib/instruments';
 
 // Dummy data for sections for demonstration
 interface SongSection {
@@ -279,6 +280,10 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
             if (aiResult && aiResult.chords) {
               console.log("[RAG] AI Chords generated:", aiResult.chords);
               config.aiChords = aiResult.chords;
+              if (aiResult.tracksConfig) {
+                console.log("[RAG] AI Tracks Config generated:", aiResult.tracksConfig);
+                config.aiTracksConfig = aiResult.tracksConfig;
+              }
             } else {
               console.warn("[RAG] AI failed to generate chords, falling back to algorithmic.");
             }
@@ -956,33 +961,21 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
                             musicEngine.switchTrackMode(track.id, track.name, newMode, { instrument: val });
                           }}
                         >
-                          <optgroup label="Standard (Soundfont)">
-                            <option value="piano">Piano</option>
-                            <option value="bass">Bass</option>
-                            <option value="drums">Drums</option>
-                            <option value="guitar">Guitar</option>
-                            <option value="synth">Synth</option>
-                          </optgroup>
-                          <optgroup label="Instrumento AI (MIDI-DDSP)">
-                            <option value="violin">Violin</option>
-                            <option value="viola">Viola</option>
-                            <option value="cello">Cello</option>
-                            <option value="double bass">Double Bass</option>
-                            <option value="flute">Flute</option>
-                            <option value="oboe">Oboe</option>
-                            <option value="clarinet">Clarinet</option>
-                            <option value="saxophone">Saxophone</option>
-                            <option value="bassoon">Bassoon</option>
-                            <option value="trumpet">Trumpet</option>
-                            <option value="horn">Horn</option>
-                            <option value="trombone">Trombone</option>
-                            <option value="tuba">Tuba</option>
-                          </optgroup>
+                          <option value="">Default Instrument</option>
                           <optgroup label="Vocals">
-                            <option value="vocal">Vocal</option>
+                            <option value="vocal">🎤 Vocal</option>
                           </optgroup>
+                          {GM_INSTRUMENTS.map((group) => (
+                            <optgroup key={group.name} label={group.name}>
+                              {group.instruments.map((inst) => (
+                                <option key={inst.id} value={inst.id}>
+                                  {inst.name}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ))}
                         </select>
-                        {['vocal', 'violin', 'viola', 'cello', 'double bass', 'flute', 'oboe', 'clarinet', 'saxophone', 'bassoon', 'trumpet', 'horn', 'trombone', 'tuba'].includes(track.instrument || '') && (
+                        {['vocal', 'Instrumento AI'].includes(track.instrument || '') && (
                           <button 
                             onClick={(e) => { 
                               e.stopPropagation();

@@ -4,6 +4,7 @@ import { TrackState, LyricMode, EffectInstance, ParsedNote } from '../../types';
 import { musicEngine } from '../../lib/MusicEngine';
 import { PluginManager } from '../../plugins/core/manager';
 import LEDMeter from './LEDMeter';
+import { GM_INSTRUMENTS } from '../../lib/instruments';
 
 interface MixerPanelProps {
   tracks: TrackState[];
@@ -11,6 +12,7 @@ interface MixerPanelProps {
   onUpdateTrack: (id: string, update: Partial<TrackState>) => void;
   onOpenPluginBrowser?: (trackId: string, slotIndex: number) => void;
   onOpenPluginEditor?: (trackId: string, slotIndex: number, plugin: EffectInstance) => void;
+  onCycleLyricMode?: () => void;
 }
 
 const RotaryPan = ({ value, onChange }: { value: number; onChange: (val: number) => void }) => {
@@ -60,7 +62,7 @@ const RotaryPan = ({ value, onChange }: { value: number; onChange: (val: number)
   );
 };
 
-const MixerPanel: React.FC<MixerPanelProps> = ({ tracks, songKey = 'C', onUpdateTrack, onOpenPluginBrowser, onOpenPluginEditor }) => {
+const MixerPanel: React.FC<MixerPanelProps> = ({ tracks, songKey = 'C', onUpdateTrack, onOpenPluginBrowser, onOpenPluginEditor, onCycleLyricMode }) => {
   const [synthesizingTracks, setSynthesizingTracks] = useState<Set<string>>(new Set());
   const [singers, setSingers] = useState<any[]>([]);
 
@@ -81,15 +83,9 @@ const MixerPanel: React.FC<MixerPanelProps> = ({ tracks, songKey = 'C', onUpdate
   );
 
   const cycleLyricMode = (track: TrackState) => {
-    const modes: LyricMode[] = [
-      'American Movable Do', 'American Fixed Do', 
-      'British Movable Doh', 'British Fixed Doh', 
-      'Ju Solfege Movable Doh', 'Ju Solfege Fixed Doh', 
-      'Jianpu', 'Kodaly', 'Kodaly Rhythm', 
-      'Lyric', 'Close'
-    ];
-    const currentIdx = modes.indexOf(track.lyricMode);
-    onUpdateTrack(track.id, { lyricMode: modes[(currentIdx + 1) % modes.length] });
+    if (onCycleLyricMode) {
+      onCycleLyricMode();
+    }
   };
 
   const toggleInstrumentVocal = (track: TrackState) => {
@@ -220,6 +216,29 @@ const MixerPanel: React.FC<MixerPanelProps> = ({ tracks, songKey = 'C', onUpdate
                   <option value="">Default Singer</option>
                   {singers.map((s, idx) => (
                     <option key={idx} value={s.name}>{s.emoji} {s.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Instrument Select */}
+            {(track.mode === 'instrument' || !track.mode) && (
+              <div className="flex flex-col gap-1 shrink-0 px-3 border-r border-white/5 items-start justify-center min-w-[100px]">
+                <span className="text-[6px] font-black uppercase text-cyan-400 tracking-widest">INSTRUMENT</span>
+                <select
+                  value={track.instrument || ''}
+                  onChange={(e) => onUpdateTrack(track.id, { instrument: e.target.value })}
+                  className="bg-black/50 border border-cyan-500/30 text-[9px] text-zinc-300 font-bold rounded p-1 w-[90px] outline-none"
+                >
+                  <option value="">Default Instrument</option>
+                  {GM_INSTRUMENTS.map((group) => (
+                    <optgroup key={group.name} label={group.name}>
+                      {group.instruments.map((inst) => (
+                        <option key={inst.id} value={inst.id}>
+                          {inst.name}
+                        </option>
+                      ))}
+                    </optgroup>
                   ))}
                 </select>
               </div>

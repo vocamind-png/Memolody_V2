@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Send, Mic, MicOff, MessageCircle, Sparkles, Camera, Trash2, Volume2, VolumeX, Maximize2, Copy, Check } from 'lucide-react';
+import { X, Send, Mic, MicOff, MessageCircle, Sparkles, Camera, Trash2, Volume2, VolumeX, Maximize2, Copy, Check, PlusCircle } from 'lucide-react';
 import { NIMO_IDENTITY_IMAGE } from '../../constants';
 import { NimoBrainRegistry, nimoBrain } from '../../lib/NimoBrain';
 import { GeminiLiveClient } from '../../lib/GeminiLiveClient';
+import { useScoreLens } from '../ScoreLens/useScoreLens';
 
 const WaveformIndicator = ({ isListening, isSpeaking, userLevel }: { isListening: boolean, isSpeaking: boolean, userLevel: number }) => {
     const [simLevel, setSimLevel] = useState([4, 4, 4]);
@@ -193,6 +194,9 @@ export const FloatingNimoContent: React.FC<Props> = ({
     const liveClientRef = useRef<GeminiLiveClient | null>(null);
     const [liveState, setLiveState] = useState<'idle' | 'connecting' | 'connected' | 'listening' | 'speaking' | 'error'>('idle');
     
+    // OMR Camera and Music Import refs
+    const omrCameraRef = useRef<HTMLInputElement>(null);
+    const musicImportRef = useRef<HTMLInputElement>(null);
     
     // usedMic tracks if the last message was voice input
     const usedMic = useRef(false);
@@ -207,6 +211,8 @@ export const FloatingNimoContent: React.FC<Props> = ({
     const msgsRef = useRef(msgs);
     const speakerMutedRef = useRef(speakerMuted);
 
+    const { processImage, isProcessing: omrProcessing, progress: omrProgress, error: omrError } = useScoreLens();
+
     useEffect(() => { handsFreeRef.current = handsFree; }, [handsFree]);
     useEffect(() => { busyRef.current = busy; }, [busy]);
     useEffect(() => { speakingRef.current = speaking; }, [speaking]);
@@ -215,6 +221,19 @@ export const FloatingNimoContent: React.FC<Props> = ({
     useEffect(() => { preferredLanguageRef.current = preferredLanguage; }, [preferredLanguage]);
     useEffect(() => { msgsRef.current = msgs; }, [msgs]);
     useEffect(() => { speakerMutedRef.current = speakerMuted; }, [speakerMuted]);
+
+    useEffect(() => {
+        if (omrProgress) setStatus(omrProgress);
+        else if (omrProcessing) setStatus(preferredLanguage === 'th' ? 'กำลังประมวลผล...' : 'Processing...');
+        else setStatus('');
+    }, [omrProgress, omrProcessing, preferredLanguage]);
+
+    useEffect(() => {
+        if (omrError) {
+            setMsgs(prev => [...prev, { role: 'nimo', text: preferredLanguage === 'th' ? `❌ ไม่สามารถอ่านโน้ตเพลงได้: ${omrError}` : `❌ Failed to read sheet music: ${omrError}` }]);
+            setStatus('');
+        }
+    }, [omrError, preferredLanguage]);
 
     useEffect(() => {
         if (isOpen) {
@@ -242,44 +261,6 @@ export const FloatingNimoContent: React.FC<Props> = ({
         animationFrameRef.current = requestAnimationFrame(analyzeAudio);
     }, []);
 
-    // Commented out to prevent microphone resource capture conflict with SpeechRecognition API on Chrome/macOS
-    /*
-    useEffect(() => {
-        if (listening) {
-            navigator.mediaDevices.getUserMedia({ audio: true })
-                .then(stream => {
-                    micStreamRef.current = stream;
-                    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-                    audioContextRef.current = ctx;
-                    const source = ctx.createMediaStreamSource(stream);
-                    const analyser = ctx.createAnalyser();
-                    analyser.fftSize = 256;
-                    source.connect(analyser);
-                    analyserRef.current = analyser;
-                    analyzeAudio();
-                })
-                .catch(err => console.error("Mic access failed for analyzer:", err));
-        } else {
-            if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
-            if (micStreamRef.current) {
-                micStreamRef.current.getTracks().forEach(t => t.stop());
-                micStreamRef.current = null;
-            }
-            if (audioContextRef.current) {
-                audioContextRef.current.close().catch(() => {});
-                audioContextRef.current = null;
-            }
-            setUserAudioLevel(0);
-        }
-        return () => {
-            if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
-            if (micStreamRef.current) {
-                micStreamRef.current.getTracks().forEach(t => t.stop());
-            }
-        }
-    }, [listening, analyzeAudio]);
-    */
-
     // Initial permission check
     useEffect(() => {
         if (navigator.permissions && (navigator.permissions as any).query) {
@@ -292,19 +273,31 @@ export const FloatingNimoContent: React.FC<Props> = ({
         }
     }, []);
 
-    const startLiveMode = () => {
+    const startLiveMode = (stream?: MediaStream, ctx?: AudioContext) => {
         if (liveClientRef.current) return;
         
-        const apiKey = localStorage.getItem('gemini_api_key');
-        if (!apiKey) {
-            setStatus(preferredLanguage === 'th' ? '⚠️ กรุณาตั้งค่า Gemini API Key' : '⚠️ Please set Gemini API Key');
+        // @ts-ignore
+        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+        let proxyUrl = undefined;
+        const apiKey = localStorage.getItem('gemini_api_key') || undefined;
+
+        if (supabaseUrl) {
+            const wsBase = supabaseUrl.replace(/^http/, 'ws');
+            proxyUrl = `${wsBase}/functions/v1/gemini-live`;
+        }
+
+        if (!proxyUrl && !apiKey) {
+            setStatus(preferredLanguage === 'th' ? '⚠️ กรุณาตั้งค่า Gemini API Key หรือเปิดใช้งาน Supabase' : '⚠️ Please set Gemini API Key or enable Supabase');
             return;
         }
 
         const client = new GeminiLiveClient({
             apiKey,
+            proxyUrl,
             nimoBrain,
             language: preferredLanguage,
+            audioContext: ctx,
+            micStream: stream,
             onStateChange: (state) => {
                 setLiveState(state);
                 if (state === 'listening' || state === 'connected') {
@@ -604,7 +597,7 @@ export const FloatingNimoContent: React.FC<Props> = ({
         }
     }, [permState, listening, speaking, busy]);
 
-    const toggleMic = () => {
+    const toggleMic = async () => {
         hasPermissionErrorRef.current = false;
         
         if (liveClientRef.current) {
@@ -612,20 +605,44 @@ export const FloatingNimoContent: React.FC<Props> = ({
         } else {
             setStatus(preferredLanguage === 'th' ? '⏳ กำลังเปิดไมค์...' : '⏳ Opening...');
             
-            // Force permission check via getUserMedia on toggle as well
-            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia && permState !== 'granted') {
-                navigator.mediaDevices.getUserMedia({ audio: true })
-                    .then(stream => {
-                        stream.getTracks().forEach(track => track.stop());
-                        setPermState('granted');
-                        startLiveMode();
-                    })
-                    .catch(() => {
-                        setPermState('denied');
-                        setStatus(preferredLanguage === 'th' ? '🔴 กรุณาปลดล็อกไมค์ 🔒' : '🔴 Please unblock mic 🔒');
-                    });
-            } else {
-                startLiveMode();
+            try {
+                // Must be executed synchronously in the click handler for iOS Safari
+                const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+                const ctx = new AudioContextClass({ sampleRate: 24000 });
+                if (ctx.state === 'suspended') {
+                    await ctx.resume();
+                }
+
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    throw new Error("HTTPS_REQUIRED");
+                }
+
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true,
+                }});
+
+                setPermState('granted');
+                startLiveMode(stream, ctx);
+            } catch (err: any) {
+                console.error('[Mic Access Error]', err);
+                setPermState('denied');
+                
+                const ua = navigator.userAgent || navigator.vendor || (window as any).opera;
+                const isInAppBrowser = (ua.indexOf("Line/") > -1) || (ua.indexOf("FBAV") > -1) || (ua.indexOf("Instagram") > -1);
+
+                if (isInAppBrowser) {
+                    setStatus(preferredLanguage === 'th' ? '⚠️ เปิดในแอป LINE ไม่ได้ กรุณากดปุ่ม ⠇ เลือก "เปิดในเบราว์เซอร์"' : '⚠️ In-app browser not supported. Please open in Safari/Chrome.');
+                } else if (err.message === "HTTPS_REQUIRED" || err.name === "NotAllowedError") {
+                    if (err.message === "HTTPS_REQUIRED") {
+                        setStatus(preferredLanguage === 'th' ? '⚠️ ต้องใช้ HTTPS หรือ Localhost' : '⚠️ Requires HTTPS or Localhost');
+                    } else {
+                        setStatus(preferredLanguage === 'th' ? '🔴 กรุณาอนุญาตไมค์ในการตั้งค่าเบราว์เซอร์' : '🔴 Please allow mic in browser settings');
+                    }
+                } else {
+                    setStatus(`🔴 Mic Error: ${err.name || err.message || 'Unknown'}`);
+                }
             }
         }
     };
@@ -710,19 +727,6 @@ export const FloatingNimoContent: React.FC<Props> = ({
             if (containerDivRef.current) {
                 containerDivRef.current.style.display = originalDisplay;
             }
-        }
-    };
-
-    const handleManualScreenshot = async () => {
-        setStatus(preferredLanguage === 'th' ? '📸 กำลังจับภาพหน้าจอ...' : '📸 Capturing screen...');
-        const base64 = await captureScreen();
-        if (base64) {
-            setAttachedScreenshot(base64);
-            setStatus(preferredLanguage === 'th' ? '✅ จับภาพหน้าจอสำเร็จ!' : '✅ Screen captured!');
-            setTimeout(() => setStatus(''), 2000);
-        } else {
-            setStatus(preferredLanguage === 'th' ? '❌ จับภาพหน้าจอล้มเหลว' : '❌ Capture failed');
-            setTimeout(() => setStatus(''), 2000);
         }
     };
 
@@ -892,10 +896,18 @@ If no actions are needed, return "actions": []`;
 
             const currentParts: any[] = [{ text: text }];
             if (imageToUse) {
-                const base64Data = imageToUse.replace(/^data:image\/[a-z]+;base64,/, '');
+                const match = imageToUse.match(/^data:([^;]+);base64,(.*)$/);
+                let mimeType = "image/png";
+                let base64Data = imageToUse;
+                if (match) {
+                    mimeType = match[1];
+                    base64Data = match[2];
+                } else {
+                    base64Data = imageToUse.replace(/^data:image\/[a-z]+;base64,/, '');
+                }
                 currentParts.push({
                     inlineData: {
-                        mimeType: "image/png",
+                        mimeType: mimeType,
                         data: base64Data
                     }
                 });
@@ -1183,7 +1195,7 @@ If no actions are needed, return "actions": []`;
                     </div>
                     <div>
                         <p className="text-white font-black italic uppercase text-xs tracking-tighter flex items-center gap-1.5">
-                            NIMO BRAIN <span className="text-[9px] text-cyan-400 font-bold tracking-widest">v2.0</span>
+                            NIMO BRAIN <span className="text-[9px] text-cyan-400 font-bold tracking-widest">v2.2</span>
                         </p>
                         <p className="text-cyan-400 text-[9px] font-bold uppercase tracking-widest flex items-center gap-1">
                             <span className={`w-1.5 h-1.5 rounded-full ${busy ? 'bg-amber-500 animate-pulse' : (listening ? 'bg-red-500 animate-ping' : 'bg-cyan-500')}`} />
@@ -1394,8 +1406,12 @@ If no actions are needed, return "actions": []`;
                 {/* Screenshot preview area if attached */}
                 {attachedScreenshot && (
                     <div className="flex items-center gap-2 mb-2 p-2 bg-white/5 border border-white/10 rounded-xl animate-in fade-in slide-in-from-bottom-2 duration-200">
-                        <div className="relative w-12 h-12 rounded overflow-hidden border border-white/20">
-                            <img src={attachedScreenshot} alt="preview" className="w-full h-full object-cover" />
+                        <div className="relative w-12 h-12 rounded overflow-hidden border border-white/20 flex items-center justify-center bg-black">
+                            {attachedScreenshot.startsWith('data:application/pdf') ? (
+                                <span className="text-[10px] font-bold text-zinc-400">PDF</span>
+                            ) : (
+                                <img src={attachedScreenshot} alt="preview" className="w-full h-full object-cover" />
+                            )}
                         </div>
                         <span className="text-[10px] text-zinc-400 flex-1 truncate">
                             {preferredLanguage === 'th' ? 'แนบภาพหน้าจอแล้ว' : 'Screenshot attached'}
@@ -1409,7 +1425,75 @@ If no actions are needed, return "actions": []`;
                     </div>
                 )}
 
-                <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-full pl-4 pr-1 py-1 focus-within:border-cyan-500/30 transition-colors">
+                <div className="flex items-center gap-0 bg-white/5 border border-white/10 rounded-full pl-2 pr-1 py-1 focus-within:border-cyan-500/30 transition-colors">
+                    {/* Hidden file inputs for OMR Camera and Music Import */}
+                    <input
+                        ref={omrCameraRef}
+                        type="file"
+                        accept="image/*,application/pdf,.pdf"
+                        capture="environment"
+                        className="hidden"
+                        onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            
+                            setMsgs(prev => [...prev, { role: 'user', text: preferredLanguage === 'th' ? `📷 สแกนภาพ: ${file.name}` : `📷 Scan: ${file.name}` }]);
+                            const result = await processImage(file, preferredLanguage);
+                            
+                            if (result && !('error' in result)) {
+                                setMsgs(prev => [...prev, { role: 'nimo', text: preferredLanguage === 'th' ? '✨ สแกนโน้ตเพลงสำเร็จ! กำลังเปิดหน้าเล่นเพลง...' : '✨ Scan successful! Opening player...' }]);
+                                setTimeout(() => {
+                                    window.NimoBrain?.executeAction('load_song_data', { metadata: result.song, xmlData: result.xmlData });
+                                }, 1000);
+                            }
+                            
+                            e.target.value = '';
+                        }}
+                    />
+                    <input
+                        ref={musicImportRef}
+                        type="file"
+                        // Accept image, pdf, and common music file extensions
+                        accept="image/*,application/pdf,.pdf,.emk,.mid,.midi,.xml,.musicxml,.mxl"
+                        className="hidden"
+                        onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            const isImageOrPdf = file.type.startsWith('image/') || file.type === 'application/pdf';
+                            if (isImageOrPdf) {
+                                // Treat like OMR – preview image and set scan message
+                                const reader = new FileReader();
+                                reader.onloadend = () => {
+                                    setAttachedScreenshot(reader.result as string);
+                                    setInput(preferredLanguage === 'th' ? '📷 สแกนโน้ตเพลงจากภาพ' : '📷 Scan sheet music from photo');
+                                };
+                                reader.readAsDataURL(file);
+                            } else {
+                                // Music import – show import message and auto‑send
+                                setInput(preferredLanguage === 'th' ? `📥 นำเข้า: ${file.name}` : `📥 Import: ${file.name}`);
+                                setTimeout(() => sendMsg(), 100);
+                            }
+                            e.target.value = '';
+                        }}
+                    />
+                    {/* Import Music File (+) Button */}
+                    <button 
+                        onClick={() => musicImportRef.current?.click()}
+                        disabled={busy}
+                        className="w-8 h-8 rounded-full flex items-center justify-center text-zinc-500 hover:text-emerald-400 active:scale-75 transition-all shrink-0"
+                        title={preferredLanguage === 'th' ? '📥 นำเข้าไฟล์เพลง (.emk, .mid, .musicxml)' : '📥 Import Music File'}
+                    >
+                        <PlusCircle size={18} />
+                    </button>
+                    {/* OMR Camera Button — Opens device camera to photograph sheet music */}
+                    <button 
+                        onClick={() => omrCameraRef.current?.click()}
+                        disabled={busy}
+                        className="w-8 h-8 rounded-full flex items-center justify-center text-zinc-500 hover:text-cyan-400 active:scale-75 transition-all shrink-0"
+                        title={preferredLanguage === 'th' ? '📷 OMR: ถ่ายภาพโน้ตเพลง' : '📷 OMR: Take Photo of Sheet Music'}
+                    >
+                        <Camera size={18} />
+                    </button>
                     <input
                         value={input}
                         onChange={e => setInput(e.target.value)}
@@ -1419,17 +1503,9 @@ If no actions are needed, return "actions": []`;
                         className="flex-1 bg-transparent border-none outline-none text-white text-sm placeholder:text-zinc-600 disabled:opacity-50 min-w-0"
                     />
                     <button 
-                        onClick={handleManualScreenshot}
-                        disabled={busy}
-                        className="w-9 h-9 rounded-full flex items-center justify-center text-zinc-500 hover:text-cyan-400 active:scale-75 transition-all"
-                        title={preferredLanguage === 'th' ? 'จับภาพหน้าจอ' : 'Capture Screen'}
-                    >
-                        <Camera size={18} />
-                    </button>
-                    <button 
                         onClick={toggleMic}
                         disabled={busy}
-                        className={`w-9 h-9 rounded-full flex items-center justify-center transition-all ${
+                        className={`w-8 h-8 rounded-full flex items-center justify-center transition-all shrink-0 ${
                             listening ? 'bg-red-500 text-white shadow-[0_0_15px_rgba(239,68,68,0.5)]' : 'text-zinc-500 hover:text-cyan-400'
                         }`}
                     >
@@ -1438,7 +1514,7 @@ If no actions are needed, return "actions": []`;
                     <button 
                         onClick={() => sendMsg()}
                         disabled={(!input.trim() && !attachedScreenshot) || busy}
-                        className={`w-9 h-9 rounded-full flex items-center justify-center transition-all ${
+                        className={`w-8 h-8 rounded-full flex items-center justify-center transition-all shrink-0 ${
                             (input.trim() || attachedScreenshot) ? 'bg-cyan-500 text-black shadow-[0_0_15px_rgba(0,229,255,0.4)]' : 'bg-white/5 text-zinc-700'
                         }`}
                     >

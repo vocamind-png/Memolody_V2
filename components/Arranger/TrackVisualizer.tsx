@@ -178,9 +178,24 @@ export const TrackVisualizer: React.FC<TrackVisualizerProps> = ({ track, notes, 
       setLoading(true);
       setError('');
       try {
+        // Dynamic injection of Verovio
+        if (!document.querySelector('script[src="/verovio-toolkit.js"]')) {
+          const script = document.createElement('script');
+          script.src = '/verovio-toolkit.js';
+          script.defer = true;
+          document.body.appendChild(script);
+        }
+
+        // Wait until window.verovio is available
+        let checkCount = 0;
+        while (!(window as any).verovio && checkCount < 100) {
+          await new Promise(r => setTimeout(r, 100));
+          checkCount++;
+        }
+
         const verovio = (window as any).verovio;
         if (!verovio) {
-          throw new Error('Verovio not loaded');
+          throw new Error('Verovio script failed to load');
         }
 
         // Wait for WASM if needed

@@ -1,5 +1,6 @@
 
 import { Song } from '../types';
+import { SongGradingEngine } from './SongGradingEngine';
 import { getChromaticSolfege } from './SolfegeLogic';
 import { CoverGenerator } from './CoverGenerator';
 import { MidiParser } from './MidiParser';
@@ -236,6 +237,19 @@ export const parseMusicXMLMetadata = async (
           xmlDoc.querySelector("copyright")?.textContent?.match(/\d{4}/)?.[0] || "",
     instruments: Array.from(xmlDoc.querySelectorAll("part-name")).map(p => p.textContent?.trim() || "").filter(Boolean)
   };
+
+  // ── [SongGradingEngine] Auto-grade difficulty from parsed XML notes ──────
+  // จัดเกรดความยากอัตโนมัติจากโน้ตใน XML แทนที่ค่า 'Intermediate' แบบ hardcode
+  try {
+    const extractedNotes = SongGradingEngine.extractNotesFromXmlDoc(xmlDoc);
+    const gradingResult = SongGradingEngine.gradeSong(extractedNotes, { bpm: metadata.bpm, fifths });
+    metadata.difficulty = gradingResult.grade;
+    metadata.difficultyGrade = gradingResult.grade;
+    console.log(`[MusicXmlParser] 🎼 Auto-grade: ${gradingResult.grade} (score: ${gradingResult.numericScore}, confidence: ${gradingResult.confidence.toFixed(2)})`);
+  } catch (e) {
+    console.warn('[MusicXmlParser] Auto-grading failed, using default:', e);
+    metadata.difficulty = 'Intermediate';
+  }
 
   if (generateCover) {
     // Extract up to 50 words of lyrics for the cover generator

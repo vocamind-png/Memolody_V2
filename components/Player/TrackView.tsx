@@ -23,6 +23,7 @@ interface TrackViewProps {
   musicXml: string | null;
   tracks: TrackState[];
   setTracks: React.Dispatch<React.SetStateAction<TrackState[]>>;
+  onCycleLyricMode?: () => void;
   isPreviewMode?: boolean;
   onTrackDoubleClick?: () => void;
   loopPresets: LoopPreset[];
@@ -99,7 +100,7 @@ const MiniRotaryPan = ({ value, onChange }: { value: number; onChange: (val: num
   );
 };
 
-const TrackView: React.FC<TrackViewProps> = ({ song, musicXml, tracks, setTracks, onTrackDoubleClick, loopPresets, setLoopPresets, onExitTrackView, soloedStems, onSoloStem, showStemControls }) => {
+const TrackView: React.FC<TrackViewProps> = ({ song, musicXml, tracks, setTracks, onCycleLyricMode, onTrackDoubleClick, loopPresets, setLoopPresets, onExitTrackView, soloedStems, onSoloStem, showStemControls }) => {
   const [pixelsPerSecond, setPixelsPerSecond] = useState(60);
   const [trackHeight, setTrackHeight] = useState(220); // 👈 changed to 220 to fit channel strip items
   const [currentTime, setCurrentTime] = useState(0);
@@ -280,24 +281,9 @@ const TrackView: React.FC<TrackViewProps> = ({ song, musicXml, tracks, setTracks
   };
 
   const cycleTrackMode = (track: TrackState) => {
-    const modes: LyricMode[] = [
-      'American Movable Do', 'American Fixed Do', 
-      'British Movable Doh', 'British Fixed Doh', 
-      'Ju Solfege Movable Doh', 'Ju Solfege Fixed Doh', 
-      'Jianpu', 'Kodaly', 'Kodaly Rhythm', 
-      'Lyric', 'Close'
-    ];
-    const currentIdx = modes.indexOf(track.lyricMode);
-    const nextLyricMode = modes[(currentIdx + 1) % modes.length];
-    
-    const nextMode: 'instrument' | 'vocal' = nextLyricMode === 'Close' ? 'instrument' : 'vocal';
-    const nextPluginId = nextMode === 'vocal' ? 'svs-vocal' : 'memolody-sampler';
-
-    // Update UI state
-    setTracks(prev => prev.map(t => {
-      if (t.id !== track.id) return t;
-      return { ...t, lyricMode: nextLyricMode, mode: nextMode, pluginId: nextPluginId as any };
-    }));
+    if (onCycleLyricMode) {
+      onCycleLyricMode();
+    }
   };
 
   const formatTime = (s: number) => `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, '0')}`;

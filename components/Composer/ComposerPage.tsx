@@ -53,10 +53,12 @@ const ComposerPage: React.FC<ComposerPageProps> = ({ parsedData, tracks, setTrac
   const [lyriaPrompt, setLyriaPrompt] = useState('');
   const [lyrics, setLyrics] = useState('');
   const [isLyriaGenerating, setIsLyriaGenerating] = useState(false);
+  const [generationTime, setGenerationTime] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   
   // New State for Selectors
   const [genMode, setGenMode] = useState<'full' | 'backing'>('full');
+  const [numGenerations, setNumGenerations] = useState<number>(1);
   const [selectedMood, setSelectedMood] = useState<string>('');
   const [selectedTempo, setSelectedTempo] = useState<string>('');
   const [selectedStyles, setSelectedStyles] = useState<string[]>([]);
@@ -128,6 +130,19 @@ const ComposerPage: React.FC<ComposerPageProps> = ({ parsedData, tracks, setTrac
     };
   }, []);
 
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isLyriaGenerating) {
+      setGenerationTime(0);
+      interval = setInterval(() => {
+        setGenerationTime(prev => prev + 1);
+      }, 1000);
+    } else {
+      setGenerationTime(0);
+    }
+    return () => clearInterval(interval);
+  }, [isLyriaGenerating]);
+
   const handleLyriaGenerate = async () => {
     if (genMode === 'backing' && (!parsedData || !parsedData.notes || parsedData.notes.length === 0)) {
       setErrorMsg("No notes found in the current song to create a backing track.");
@@ -159,88 +174,99 @@ const ComposerPage: React.FC<ComposerPageProps> = ({ parsedData, tracks, setTrac
         ? `[FULL ORIGINAL SONG] ${finalPrompt || 'Auto'}` 
         : (finalPrompt || 'Auto');
 
-      const response = await fetch('/vocalido/api/ai/lyria-render', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          mode: genMode,
-          notes: payloadNotes, 
-          prompt: finalPromptForLyria,
-          lyrics: lyrics,
-          key: parsedData?.keySignature || 'C',
-          bpm: parsedData?.tempo || 120,
-          style: 'auto'
-        })
-      });
-      
-      const data = await response.json();
-      if (!response.ok || !data.success) {
-        throw new Error(data.message || 'Failed to request composition');
-      }
-      
-      let audioSrc = '';
-      if (data.task_id) {
-        let isComplete = false;
-        let pollCount = 0;
-        const MAX_POLLS = 60; // Max 3 minutes
-        while (!isComplete && pollCount < MAX_POLLS) {
-          pollCount++;
-          await new Promise(r => setTimeout(r, 3000));
-          const pollRes = await fetch('/vocalido/api/ai/lyria-poll', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ task_id: data.task_id })
-          });
-          const pollData = await pollRes.json();
-          if (!pollRes.ok || !pollData.success) {
-            if (pollData.status !== 'processing') {
+      const generateSingleTrack = async (index: number) => {
+        const response = await fetch('/vocalido/api/ai/lyria-render', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            mode: genMode,
+            notes: payloadNotes, 
+            prompt: finalPromptForLyria,
+            lyrics: lyrics,
+            key: parsedData?.keySignature || 'C',
+            bpm: parsedData?.tempo || 120,
+            style: 'auto'
+          })
+        });
+        
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+          throw new Error(data.message || 'Failed to request composition');
+        }
+        
+        let audioSrc = '';
+        if (data.task_id) {
+          let isComplete = false;
+          let pollCount = 0;
+          const MAX_POLLS = 60; // Max 3 minutes
+          while (!isComplete && pollCount < MAX_POLLS) {
+            pollCount++;
+            await new Promise(r => setTimeout(r, 3000));
+            const pollRes = await fetch('/vocalido/api/ai/lyria-poll', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ task_id: data.task_id })
+            });
+            const pollData = await pollRes.json();
+            if (!pollRes.ok || !pollData.success) {
+              if (pollData.status !== 'processing') {
+                throw new Error(pollData.message || pollData.error || 'Composition failed during generation');
+              }
+            }
+
+            if (pollData.status === 'completed' || pollData.status === 'success') {
+              isComplete = true;
+              audioSrc = pollData.data?.base64 ? `data:audio/mp3;base64,${pollData.data.base64}` : pollData.data?.url;
+            } else if (pollData.status === 'failed' || pollData.error) {
               throw new Error(pollData.message || pollData.error || 'Composition failed during generation');
             }
           }
-
-          if (pollData.status === 'completed' || pollData.status === 'success') {
-            isComplete = true;
-            audioSrc = pollData.data?.base64 ? `data:audio/mp3;base64,${pollData.data.base64}` : pollData.data?.url;
-          } else if (pollData.status === 'failed' || pollData.error) {
-            throw new Error(pollData.message || pollData.error || 'Composition failed during generation');
+          if (!isComplete) {
+            throw new Error('Composition timed out. The server took too long to respond.');
           }
+        } else if (data.data) {
+          audioSrc = data.data.base64 ? `data:audio/mp3;base64,${data.data.base64}` : data.data.url;
+        } else {
+          throw new Error('Invalid response from AI Composer');
         }
-        if (!isComplete) {
-          throw new Error('Composition timed out. The server took too long to respond.');
-        }
-      } else if (data.data) {
-        audioSrc = data.data.base64 ? `data:audio/mp3;base64,${data.data.base64}` : data.data.url;
-      } else {
-        throw new Error('Invalid response from AI Composer');
-      }
-      
-      const newTrackId = `composer-${Date.now()}`;
-      
-      // Generate dynamic name based on selections
-      const mainStyle = selectedStyles.length > 0 ? selectedStyles[0] : 'MusicGen';
-      const mainMood = selectedMood ? selectedMood.replace(/[\u1000-\uFFFF]+/g, '').trim().split(' ')[0] : 'Track';
-      const randomNum = Math.floor(Math.random() * 999) + 1;
-      const trackName = `${mainMood} ${mainStyle} #${randomNum}`;
+        
+        const newTrackId = `composer-${Date.now()}-${index}`;
+        
+        // Generate dynamic name based on selections
+        const mainStyle = selectedStyles.length > 0 ? selectedStyles[0] : 'MusicGen';
+        const mainMood = selectedMood ? selectedMood.replace(/[\u1000-\uFFFF]+/g, '').trim().split(' ')[0] : 'Track';
+        const randomNum = Math.floor(Math.random() * 999) + 1;
+        const trackName = `${mainMood} ${mainStyle} #${randomNum}`;
 
-      const newTrack: TrackState = {
-        id: newTrackId,
-        name: trackName,
-        isMuted: false,
-        isSolo: false,
-        lyricMode: 'phoneme' as any,
-        volume: 0,
-        pan: 0,
-        mode: 'vocal',
-        audioSrc: audioSrc,
-        effects: []
+        const newTrack: TrackState = {
+          id: newTrackId,
+          name: trackName,
+          isMuted: false,
+          isSolo: false,
+          lyricMode: 'phoneme' as any,
+          volume: 0,
+          pan: 0,
+          mode: 'vocal',
+          audioSrc: audioSrc,
+          effects: []
+        };
+        
+        const lyriaBpm = data.data?.detectedBpm || (parsedData.tempo || 120);
+        return { newTrack, lyriaBpm };
       };
+
+      const promises = Array.from({ length: numGenerations }).map((_, i) => generateSingleTrack(i));
+      const results = await Promise.all(promises);
       
-      setTracks(prev => [...prev, newTrack]);
+      setTracks(prev => [...prev, ...results.map(r => r.newTrack)]);
       
       try {
-        const lyriaBpm = data.data.detectedBpm || (parsedData.tempo || 120);
-        await musicEngine.addVocalLayer(newTrackId, audioSrc, undefined, lyriaBpm);
-        onTrackCreated(newTrackId);
+        for (const res of results) {
+          await musicEngine.addVocalLayer(res.newTrack.id, res.newTrack.audioSrc, undefined, res.lyriaBpm);
+        }
+        if (results.length > 0) {
+          onTrackCreated(results[results.length - 1].newTrack.id);
+        }
       } catch (e) {
         console.error('Failed to load AI audio layer:', e);
       }
@@ -411,6 +437,14 @@ const ComposerPage: React.FC<ComposerPageProps> = ({ parsedData, tracks, setTrac
             </div>
           )}
 
+          <div className="flex items-center justify-between bg-black/30 p-4 rounded-2xl border border-white/5 mt-4">
+            <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Number of Variations</label>
+            <div className="flex bg-black/40 rounded-full p-1 border border-white/10">
+              <button onClick={() => setNumGenerations(1)} className={`px-4 py-1.5 text-xs font-bold rounded-full transition-all ${numGenerations === 1 ? 'bg-cyan-500/20 text-cyan-300' : 'text-zinc-500 hover:text-zinc-300'}`}>1 Track</button>
+              <button onClick={() => setNumGenerations(2)} className={`px-4 py-1.5 text-xs font-bold rounded-full transition-all ${numGenerations === 2 ? 'bg-indigo-500/20 text-indigo-300' : 'text-zinc-500 hover:text-zinc-300'}`}>2 Tracks</button>
+            </div>
+          </div>
+
           <button
             onClick={handleLyriaGenerate}
             disabled={isLyriaGenerating}
@@ -423,7 +457,7 @@ const ComposerPage: React.FC<ComposerPageProps> = ({ parsedData, tracks, setTrac
               {isLyriaGenerating ? (
                 <>
                   <div className="w-5 h-5 rounded-full border-2 border-white/20 border-t-white animate-spin" />
-                  <span className="text-white drop-shadow-md">COMPOSING MUSIC...</span>
+                  <span className="text-white drop-shadow-md">COMPOSING MUSIC... ({generationTime}s)</span>
                 </>
               ) : (
                 <>
