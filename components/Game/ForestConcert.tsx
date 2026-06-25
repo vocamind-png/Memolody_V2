@@ -5,6 +5,7 @@ import { LyricMode } from '../../types';
 
 interface ForestConcertProps {
   onBack: () => void;
+  bgmUrl?: string;
 }
 
 const NOTES = ['C4', 'D4', 'E4', 'F4', 'G4', 'A4', 'B4', 'C5'];
@@ -24,7 +25,7 @@ const NOTE_Y_MAP: Record<string, number> = {
   'C5': 100, // 3rd space
 };
 
-const ForestConcert: React.FC<ForestConcertProps> = ({ onBack }) => {
+const ForestConcert: React.FC<ForestConcertProps> = ({ onBack, bgmUrl }) => {
   const [lyricMode] = useState<LyricMode>(() => (localStorage.getItem('memo_lyric_mode') as LyricMode) || 'Ju Solfege Fixed Doh');
   const { playNote, playWrong } = useVocalSampler(lyricMode);
   
@@ -54,30 +55,36 @@ const ForestConcert: React.FC<ForestConcertProps> = ({ onBack }) => {
   };
   const rank = getRank(score);
   
+  const bgmRef = useRef<HTMLAudioElement | null>(null);
+  const [hasInteracted, setHasInteracted] = useState(false);
+
   useEffect(() => {
     pickRandomNote();
     
-    // Play BGM (Playlist of Lyria Generated Tracks)
-    const tracks = ['/audio/forest_bgm0.mp3', '/audio/forest_bgm1.mp3'];
+    // Play BGM (Playlist of Lyria Generated Tracks or Dynamic Cloud BGM)
+    const tracks = bgmUrl ? [bgmUrl] : ['/audio/forest_bgm0.mp3', '/audio/forest_bgm1.mp3'];
     let currentTrackIdx = Math.floor(Math.random() * tracks.length);
     const bgm = new Audio(tracks[currentTrackIdx]);
     bgm.volume = 0.3;
+    bgmRef.current = bgm;
     
     const playNext = () => {
-      currentTrackIdx = (currentTrackIdx + 1) % tracks.length;
-      bgm.src = tracks[currentTrackIdx];
-      bgm.play().catch(e => console.log("BGM autoplay prevented."));
+      if (tracks.length > 1) {
+        currentTrackIdx = (currentTrackIdx + 1) % tracks.length;
+        bgm.src = tracks[currentTrackIdx];
+        bgm.play().catch(e => console.log("BGM playback prevented."));
+      }
     };
     
     bgm.addEventListener('ended', playNext);
-    bgm.play().catch(e => console.log("BGM autoplay prevented. Waiting for interaction."));
+    bgm.play().then(() => setHasInteracted(true)).catch(e => console.log("BGM autoplay prevented. Waiting for interaction."));
     
     return () => {
       bgm.removeEventListener('ended', playNext);
       bgm.pause();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [bgmUrl]);
 
   const pickRandomNote = () => {
     const next = NOTES[Math.floor(Math.random() * NOTES.length)];
@@ -85,7 +92,11 @@ const ForestConcert: React.FC<ForestConcertProps> = ({ onBack }) => {
     setSungText('');
   };
 
-  const handleGuess = (noteName: string) => {
+  const handleGuess = async (noteName: string) => {
+    if (!hasInteracted) {
+      setHasInteracted(true);
+      bgmRef.current?.play().catch(console.error);
+    }
     const correctName = currentNote.replace(/\d/, '');
     if (noteName === correctName) {
       const syllable = playNote(currentNote);
