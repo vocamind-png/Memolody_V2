@@ -22,7 +22,10 @@ dist/
 *.tar.gz
 *.tgz
 *.wav
+!public/audio/*.wav
 *.mp3
+!public/audio/*.mp3
+!public/audio/**/*.mp3
 *.onnx
 *.ckpt
 *.safetensors
