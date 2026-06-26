@@ -66,6 +66,7 @@ const ForestConcert: React.FC<ForestConcertProps> = ({ onBack, bgmUrl }) => {
     handleCorrect,
     handleWrong,
     restart,
+    changeGrade,
     nextNote
   } = useForestGame();
 
@@ -229,9 +230,15 @@ const ForestConcert: React.FC<ForestConcertProps> = ({ onBack, bgmUrl }) => {
             </button>
             
             <div className="bg-emerald-500/20 px-5 py-1.5 rounded-full border border-emerald-500/30 backdrop-blur-md flex items-center gap-3">
-              <span className="text-emerald-300 font-black text-sm uppercase tracking-widest">
-                Grade {grade}
-              </span>
+              <select 
+                value={grade}
+                onChange={(e) => changeGrade(Number(e.target.value))}
+                className="bg-transparent text-emerald-300 font-black text-sm uppercase tracking-widest outline-none cursor-pointer appearance-none text-center"
+              >
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(g => (
+                  <option key={g} value={g} className="bg-[#0a1122] text-emerald-300">Grade {g}</option>
+                ))}
+              </select>
               <div className="w-px h-4 bg-emerald-500/50" />
               <span className="text-white font-black text-xl">{score}</span>
             </div>

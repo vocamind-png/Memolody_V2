@@ -170,6 +170,17 @@ export const useForestGame = () => {
     startTimer();
   }, [nextNote, startTimer]);
 
+  const changeGrade = useCallback((newGrade: number) => {
+    setGrade(newGrade);
+    setScore((newGrade - 1) * 15); // Set score to the base of that grade
+    setCombo(0);
+    setTimeLeft(MAX_TIME);
+    setIsGameOver(false);
+    // Note: We need to use newGrade directly here because nextNote uses state 'grade' which hasn't updated yet
+    setCurrentNote(generateNote(newGrade));
+    startTimer();
+  }, [generateNote, startTimer]);
+
   useEffect(() => {
     // Load inventory from local storage
     const saved = localStorage.getItem('forest_inventory');
@@ -200,6 +211,7 @@ export const useForestGame = () => {
     handleCorrect,
     handleWrong,
     restart,
+    changeGrade,
     nextNote
   };
 };
