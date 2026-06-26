@@ -1622,19 +1622,29 @@ const PlayerPage: React.FC<{
       console.log('[PlayerPage] 🎹 Auto-assigning track roles based on parsed notes');
       // Restore last-used lyric mode from localStorage
       const savedLyricMode = (() => { try { return localStorage.getItem('memo_lyric_mode') || ''; } catch { return ''; } })();
-      const newTracks = partIds.map((id, index) => ({
-        id,
-        name: currentPartNames[id] || `Track ${index + 1}`,
-        volume: 1.0,
-        pan: 0,
-        isMuted: false,
-        isSolo: false,
-        mode: index === 0 ? 'vocal' : 'instrument',
-        instrument: index === 0 ? (activeVoiceName || 'Alto Female') : mapPartNameToInstrument(currentPartNames[id] || ''),
-        lyricMode: (savedLyricMode || activeLyricMode || 'British Fixed Doh') as LyricMode,
-        engineId: activeEngineId,
-        effects: Array(6).fill(null)
-      }));
+      // Determine which track should be vocal based on part names
+      const hasExplicitVocal = partIds.some(id => /voice|vocal|chant|choir|soprano|alto|tenor|singer/i.test(currentPartNames[id] || ''));
+
+      const newTracks = partIds.map((id, index) => {
+        const pName = currentPartNames[id] || `Track ${index + 1}`;
+        const isVocal = hasExplicitVocal 
+          ? /voice|vocal|chant|choir|soprano|alto|tenor|singer/i.test(pName) 
+          : index === 0;
+
+        return {
+          id,
+          name: pName,
+          volume: 1.0,
+          pan: 0,
+          isMuted: false,
+          isSolo: false,
+          mode: isVocal ? 'vocal' : 'instrument',
+          instrument: isVocal ? (activeVoiceName || 'Alto Female') : mapPartNameToInstrument(pName),
+          lyricMode: (savedLyricMode || activeLyricMode || 'British Fixed Doh') as LyricMode,
+          engineId: activeEngineId,
+          effects: Array(6).fill(null)
+        };
+      });
       let finalTracks = newTracks;
       if (song?.mixerOverrides) {
         finalTracks = finalTracks.map((t: any) => ({
@@ -3145,6 +3155,24 @@ const PlayerPage: React.FC<{
                   className="absolute left-1 z-[6000] flex flex-col gap-1 pointer-events-auto items-start opacity-75 hover:opacity-100 transition-opacity duration-200 animate-in fade-in duration-300"
                   style={{ top: `${Math.max(2, baseTop - 56)}px` }}
                 >
+                  {/* Grade Badge */}
+                  {songGrade && (
+                    <div
+                      className="px-1.5 py-0.5 rounded-md font-black tracking-wider select-none shadow-md border flex items-center justify-center gap-1 text-[7px]"
+                      style={{
+                        background: songGrade.numericScore <= 32 ? 'linear-gradient(135deg, #22c55e, #16a34a)'
+                          : songGrade.numericScore <= 54 ? 'linear-gradient(135deg, #eab308, #ca8a04)'
+                          : songGrade.numericScore <= 78 ? 'linear-gradient(135deg, #f97316, #ea580c)'
+                          : 'linear-gradient(135deg, #ef4444, #dc2626)',
+                        borderColor: 'rgba(255,255,255,0.2)',
+                        color: '#fff',
+                        textShadow: '0 1px 2px rgba(0,0,0,0.3)'
+                      }}
+                      title={`${songGrade.grade} (Score: ${songGrade.numericScore}/100, Confidence: ${(songGrade.confidence * 100).toFixed(0)}%)`}
+                    >
+                      {songGrade.grade === 'Diploma' ? 'DIPLOMA' : `GRADE ${songGrade.grade.replace(/Grade\s*/i, '')}`}
+                    </div>
+                  )}
                   <button
                     data-nimo-target="toggle_favorite"
                     onClick={handleToggleFavorite}
@@ -4150,30 +4178,7 @@ const PlayerPage: React.FC<{
                     <BarBeatPositionDisplay bar={currentBar} beat={currentBeat} onSeek={(bar) => musicEngine.setTransportSeconds((bar - 1) * beatsPerMeasure * 60 / currentBpm)} />
                   </div>
                 </div>
-                {/* Grade Badge */}
-                {songGrade && (
-                  <div
-                    className="ml-1 h-[34px] min-[360px]:h-[40px] px-2 min-[360px]:px-2.5 flex flex-col items-center justify-center rounded-md font-bold tracking-wider select-none shadow-sm"
-                    style={{
-                      background: songGrade.numericScore <= 32 ? 'linear-gradient(135deg, #22c55e, #16a34a)'
-                        : songGrade.numericScore <= 54 ? 'linear-gradient(135deg, #eab308, #ca8a04)'
-                        : songGrade.numericScore <= 78 ? 'linear-gradient(135deg, #f97316, #ea580c)'
-                        : 'linear-gradient(135deg, #ef4444, #dc2626)',
-                      color: '#fff',
-                      textShadow: '0 1px 2px rgba(0,0,0,0.3)'
-                    }}
-                    title={`${songGrade.grade} (Score: ${songGrade.numericScore}/100, Confidence: ${(songGrade.confidence * 100).toFixed(0)}%)`}
-                  >
-                    {songGrade.grade === 'Diploma' ? (
-                      <span className="text-[9px] min-[360px]:text-[10px] leading-none uppercase tracking-widest mt-0.5">Diploma</span>
-                    ) : (
-                      <>
-                        <span className="text-[12px] min-[360px]:text-[14px] leading-none mb-[1px]">{songGrade.grade.replace(/Grade\s*/i, '')}</span>
-                        <span className="text-[6px] min-[360px]:text-[7px] leading-none opacity-85 font-medium tracking-widest uppercase">Grade</span>
-                      </>
-                    )}
-                  </div>
-                )}
+
               </div>
  
               {/* RIGHT GROUP: Large Back and Play/Pause Controls */}

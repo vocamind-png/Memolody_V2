@@ -834,7 +834,11 @@ export class MusicEngine {
         if (!audioUrl.startsWith('blob:')) {
           fetch(audioUrl)
             .then(res => res.blob())
-            .then(blob => setupAudio(URL.createObjectURL(blob)))
+            .then(blob => {
+              const blobUrl = URL.createObjectURL(blob);
+              this.vocalBlobUrls.set(trackId, blobUrl);
+              setupAudio(blobUrl);
+            })
             .catch(e => {
                console.warn('[MusicEngine] Failed to fetch audioUrl as blob, falling back to remote URL', e);
                setupAudio(audioUrl);
@@ -889,7 +893,11 @@ export class MusicEngine {
           if (!url.startsWith('blob:')) {
             fetch(url)
               .then(res => res.blob())
-              .then(blob => setupAudio(URL.createObjectURL(blob)))
+              .then(blob => {
+                const blobUrl = URL.createObjectURL(blob);
+                this.vocalBlobUrls.set(`${trackId}:stem:${index}`, blobUrl);
+                setupAudio(blobUrl);
+              })
               .catch(e => {
                  console.warn(`[MusicEngine] Failed to fetch stem ${index} as blob, falling back to remote URL`, e);
                  setupAudio(url);

@@ -63,7 +63,7 @@ export class SongStorage {
 
   async getUsageStats(): Promise<NeuralStats> {
     const db = await this.init();
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const request = db.transaction([this.statsStore], 'readonly').objectStore(this.statsStore).get('main');
       request.onsuccess = () => {
         if (request.result) resolve(request.result);
@@ -74,6 +74,7 @@ export class SongStorage {
           lastUpdated: new Date().toISOString()
         });
       };
+      request.onerror = () => reject(request.error);
     });
   }
 
@@ -90,12 +91,38 @@ export class SongStorage {
     });
   }
 
+  /** Helper to normalize metadata grades and other fields when importing/saving so we don't have to do it on the fly */
+  private normalizeSongMetadata(meta: any): Song {
+    const finalMeta = { ...meta };
+    
+    // Normalize Grade
+    const rawGrade = finalMeta.difficulty_grade || finalMeta.difficultyGrade || finalMeta.difficulty || finalMeta.grade;
+    if (rawGrade) {
+      let dGrade = String(rawGrade).trim();
+      if (/^[1-8]$/.test(dGrade)) dGrade = `Grade ${dGrade}`;
+      finalMeta.difficulty_grade = dGrade;
+      // remove old redundant fields
+      delete finalMeta.difficultyGrade;
+      delete finalMeta.difficulty;
+      delete finalMeta.grade;
+    }
+    
+    // Normalize Genre
+    const rawGenre = finalMeta.genre || finalMeta.category;
+    if (rawGenre) {
+      finalMeta.genre = String(rawGenre).trim();
+      delete finalMeta.category;
+    }
+    
+    return finalMeta as Song;
+  }
+
   async saveSong(metadata: Song, xmlData: string, layoutBundle?: any | null): Promise<void> {
     const db = await this.init();
     return new Promise((resolve, reject) => {
       const transaction = db.transaction([this.storeName, this.deletedStore], 'readwrite');
-      // Ensure ID is a string for consistent indexing
-      const finalMetadata = { ...metadata, id: String(metadata.id) };
+      // Ensure ID is a string for consistent indexing and normalize metadata
+      const finalMetadata = { ...this.normalizeSongMetadata(metadata), id: String(metadata.id) };
       transaction.objectStore(this.storeName).put({ metadata: finalMetadata, xmlData, layoutBundle });
       transaction.objectStore(this.deletedStore).delete(finalMetadata.id); // Remove from deleted list if re-added
       transaction.oncomplete = () => {
@@ -227,14 +254,22 @@ export class SongStorage {
 
   async saveMemo(memo: MusicalMemo): Promise<void> {
     const db = await this.init();
-    const transaction = db.transaction([this.memoStore], 'readwrite');
-    transaction.objectStore(this.memoStore).put(memo);
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction([this.memoStore], 'readwrite');
+      transaction.objectStore(this.memoStore).put(memo);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+    });
   }
 
   async deleteMemo(id: string): Promise<void> {
     const db = await this.init();
-    const transaction = db.transaction([this.memoStore], 'readwrite');
-    transaction.objectStore(this.memoStore).delete(id);
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction([this.memoStore], 'readwrite');
+      transaction.objectStore(this.memoStore).delete(id);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+    });
   }
 
   async getMemos(): Promise<MusicalMemo[]> {
@@ -247,20 +282,24 @@ export class SongStorage {
 
   async deleteAllSongs(): Promise<void> {
     const db = await this.init();
-    const tx = db.transaction([
-      this.storeName,
-      this.favoritesStore,
-      this.memoStore,
-      this.foldersStore,
-      this.historyStore,
-      this.deletedStore
-    ], 'readwrite');
-    tx.objectStore(this.storeName).clear();
-    tx.objectStore(this.favoritesStore).clear();
-    tx.objectStore(this.memoStore).clear();
-    tx.objectStore(this.foldersStore).clear();
-    tx.objectStore(this.historyStore).clear();
-    tx.objectStore(this.deletedStore).clear();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction([
+        this.storeName,
+        this.favoritesStore,
+        this.memoStore,
+        this.foldersStore,
+        this.historyStore,
+        this.deletedStore
+      ], 'readwrite');
+      tx.objectStore(this.storeName).clear();
+      tx.objectStore(this.favoritesStore).clear();
+      tx.objectStore(this.memoStore).clear();
+      tx.objectStore(this.foldersStore).clear();
+      tx.objectStore(this.historyStore).clear();
+      tx.objectStore(this.deletedStore).clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
   }
 
   // ── Favorite Management ──────────────────────────────────────────
@@ -268,7 +307,7 @@ export class SongStorage {
     const db = await this.init();
     const tx = db.transaction([this.storeName], 'readwrite');
     const store = tx.objectStore(this.storeName);
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const request = store.get(songId);
       request.onsuccess = () => {
         const song = request.result;
@@ -278,6 +317,7 @@ export class SongStorage {
           resolve(song.metadata.isFavorite);
         } else resolve(false);
       };
+      request.onerror = () => reject(request.error);
     });
   }
 
@@ -307,7 +347,7 @@ export class SongStorage {
     const db = await this.init();
     const tx = db.transaction([this.storeName], 'readwrite');
     const store = tx.objectStore(this.storeName);
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const request = store.get(songId);
       request.onsuccess = () => {
         const song = request.result;
@@ -317,6 +357,7 @@ export class SongStorage {
         }
         resolve();
       };
+      request.onerror = () => reject(request.error);
     });
   }
 
@@ -325,7 +366,7 @@ export class SongStorage {
     const db = await this.init();
     const tx = db.transaction([this.storeName], 'readwrite');
     const store = tx.objectStore(this.storeName);
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const request = store.get(songId);
       request.onsuccess = () => {
         const song = request.result;
@@ -335,6 +376,7 @@ export class SongStorage {
         }
         resolve();
       };
+      request.onerror = () => reject(request.error);
     });
   }
 
@@ -444,14 +486,14 @@ export class SongStorage {
         newSongs.push({
           ...s,
           metadata: {
-            ...s.metadata,
+            ...this.normalizeSongMetadata(s.metadata),
             id: idStr
           }
         });
       } else if (s.id && s.title) {
         newSongs.push({
           metadata: {
-            ...s,
+            ...this.normalizeSongMetadata(s),
             id: idStr
           },
           xmlData: s.xmlData || ''
@@ -557,7 +599,7 @@ export class SongStorage {
 
       newSongs.push({
         metadata: {
-          ...meta,
+          ...this.normalizeSongMetadata(meta),
           id: idStr
         } as Song,
         xmlData: '' // No xmlData in the index — will be loaded lazily via chunks

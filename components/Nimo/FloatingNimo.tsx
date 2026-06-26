@@ -298,6 +298,7 @@ export const FloatingNimoContent: React.FC<Props> = ({
             language: preferredLanguage,
             audioContext: ctx,
             micStream: stream,
+            enableMic: !!stream,
             onStateChange: (state) => {
                 setLiveState(state);
                 if (state === 'listening' || state === 'connected') {
@@ -765,7 +766,7 @@ export const FloatingNimoContent: React.FC<Props> = ({
                 window.speechSynthesis.cancel();
                 setSpeaking(true);
                 const u = new SpeechSynthesisUtterance(prepareTextForSpeech(confirmationText));
-                const isThai = /[\\u0E00-\\u0E7F]/.test(confirmationText);
+                const isThai = /[\u0E00-\u0E7F]/.test(confirmationText);
                 u.lang = isThai ? 'th-TH' : 'en-US';
                 if (isThai) {
                     const thVoice = getBestThaiVoice();
@@ -1070,7 +1071,7 @@ If no actions are needed, return "actions": []`;
                 window.speechSynthesis.cancel();
                 setSpeaking(true);
                 const u = new SpeechSynthesisUtterance(prepareTextForSpeech(cleanReply));
-                const isThai = /[\\u0E00-\\u0E7F]/.test(cleanReply);
+                const isThai = /[\u0E00-\u0E7F]/.test(cleanReply);
                 u.lang = isThai ? 'th-TH' : 'en-US';
                 
                 if (isThai) {

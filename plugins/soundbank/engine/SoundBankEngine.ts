@@ -183,7 +183,8 @@ export class SoundBankEngine {
 
             let resolved = false;
 
-            const LOAD_TIMEOUT_MS = 3000; // 3s timeout — fallback to basic synth on slow networks
+            // 15s timeout — heavy samples like Salamander Piano need time to load over network.
+            const LOAD_TIMEOUT_MS = 15000; 
 
             const timeoutId = setTimeout(() => {
                 if (!resolved) {

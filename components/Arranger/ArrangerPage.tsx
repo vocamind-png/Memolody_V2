@@ -1043,15 +1043,7 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
 
               {/* Section Blocks Overlay - NOW INSIDE TRACK LANES CONTAINER */}
               <div className="absolute top-0 left-[100px] right-0 bottom-0 pointer-events-none z-[20] overflow-hidden">
-                {isSimpleMode ? (
-                  <div className="absolute inset-0 flex items-center justify-center p-8 z-30 pointer-events-none">
-                    <div className="bg-black/60 backdrop-blur-md border border-cyan-500/30 rounded-2xl p-6 flex flex-col items-center justify-center shadow-[0_0_30px_rgba(34,211,238,0.15)] text-center max-w-md">
-                      <Wand2 size={32} className="text-cyan-400 mb-3 animate-pulse" />
-                      <h3 className="text-white font-black text-lg tracking-widest uppercase mb-2 text-shadow">✨ Auto-Structure is Active</h3>
-                      <p className="text-cyan-100/70 text-xs leading-relaxed">Nimo (Agentic AI) will automatically detect the best verse/chorus transitions for this song based on the original melody. Just pick your style and press Arrange!</p>
-                    </div>
-                  </div>
-                ) : (
+                {isSimpleMode ? null : (
                   sections.map(section => {
                     const isSelected = selectedSectionIds.includes(section.id);
                     return (

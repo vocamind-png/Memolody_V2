@@ -51,7 +51,8 @@ export class CoverGenerator {
 
   public static async generateCover(song: Song, lyricsText?: string, retryCount = 0): Promise<string | null> {
     try {
-      const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY || (typeof __GEMINI_API_KEY__ !== 'undefined' ? __GEMINI_API_KEY__ : '');
+      const ai = new GoogleGenAI({ apiKey });
       const prompt = this.getPromptForSong(song, lyricsText);
 
       const response = await ai.models.generateContent({

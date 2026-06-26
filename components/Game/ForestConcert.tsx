@@ -1,20 +1,21 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, Bird } from 'lucide-react';
+import { ArrowLeft, Bird, Timer, Sparkles, Gem } from 'lucide-react';
 import { useVocalSampler } from './useVocalSampler';
 import { LyricMode } from '../../types';
+import { useForestGame, MAX_TIME, REWARDS } from './useForestGame';
+import { RewardModal } from './RewardModal';
 
 interface ForestConcertProps {
   onBack: () => void;
   bgmUrl?: string;
 }
 
-const NOTES = ['C4', 'D4', 'E4', 'F4', 'G4', 'A4', 'B4', 'C5'];
-
-// Using a 500x250 viewBox for SVG
 // 5 lines starting at Y=70, spacing=20
-// Line 1 (F5) = 30 (not used yet)
-// Line 5 (E4) = 150
 const NOTE_Y_MAP: Record<string, number> = {
+  'F3': 200, // below ledger lines
+  'G3': 190,
+  'A3': 180,
+  'B3': 170,
   'C4': 170, // ledger line below
   'D4': 160, // space below
   'E4': 150, // 1st line (bottom)
@@ -23,45 +24,68 @@ const NOTE_Y_MAP: Record<string, number> = {
   'A4': 120, // 2nd space
   'B4': 110, // 3rd line (middle)
   'C5': 100, // 3rd space
+  'D5': 90,  // 4th line
+  'E5': 80,  // 4th space
+  'F5': 70,  // 5th line (top)
+  'G5': 60,  // space above
+  'A5': 50,  // ledger line above
 };
+
+const PIANO_KEYS = [
+  { note: 'C', type: 'white' },
+  { note: 'C#', type: 'black' },
+  { note: 'D', type: 'white' },
+  { note: 'D#', type: 'black' },
+  { note: 'E', type: 'white' },
+  { note: 'F', type: 'white' },
+  { note: 'F#', type: 'black' },
+  { note: 'G', type: 'white' },
+  { note: 'G#', type: 'black' },
+  { note: 'A', type: 'white' },
+  { note: 'Bb', type: 'black' },
+  { note: 'B', type: 'white' },
+  { note: 'C', type: 'white' }
+];
 
 const ForestConcert: React.FC<ForestConcertProps> = ({ onBack, bgmUrl }) => {
   const [lyricMode] = useState<LyricMode>(() => (localStorage.getItem('memo_lyric_mode') as LyricMode) || 'Ju Solfege Fixed Doh');
   const { playNote, playWrong } = useVocalSampler(lyricMode);
   
-  const [currentNote, setCurrentNote] = useState('C4');
-  const [score, setScore] = useState(0);
+  const {
+    grade,
+    score,
+    combo,
+    timeLeft,
+    isGameOver,
+    inventory,
+    showRewardQueue,
+    setShowRewardQueue,
+    currentNote,
+    startTimer,
+    stopTimer,
+    handleCorrect,
+    handleWrong,
+    restart,
+    nextNote
+  } = useForestGame();
+
   const [sungText, setSungText] = useState('');
   const [shake, setShake] = useState(false);
   const [lightning, setLightning] = useState(false);
   const [birds, setBirds] = useState<{id: number, x: number, y: number, color: string}[]>([]);
-  
-  // Reward System: Pre-calculate firefly positions
-  const fireflies = React.useMemo(() => {
-    return Array.from({ length: 100 }).map((_, i) => ({
-      id: i,
-      left: `${Math.random() * 90 + 5}%`,
-      top: `${Math.random() * 80 + 10}%`,
-      delay: `${-Math.random() * 5}s`,
-      duration: `${Math.random() * 3 + 3}s`
-    }));
-  }, []);
-
-  const getRank = (s: number) => {
-    if (s < 5) return { title: 'Sound Explorer', icon: '🌱' };
-    if (s < 15) return { title: 'Bird Companion', icon: '🐦' };
-    if (s < 30) return { title: 'Forest Maestro', icon: '🦊' };
-    return { title: 'Woodland Virtuoso', icon: '🦄' };
-  };
-  const rank = getRank(score);
+  const [showInventory, setShowInventory] = useState(false);
   
   const bgmRef = useRef<HTMLAudioElement | null>(null);
   const [hasInteracted, setHasInteracted] = useState(false);
 
   useEffect(() => {
-    pickRandomNote();
-    
-    // Play BGM (Playlist of Lyria Generated Tracks or Dynamic Cloud BGM)
+    // Initial start
+    nextNote();
+    startTimer();
+    return () => stopTimer();
+  }, [nextNote, startTimer, stopTimer]);
+
+  useEffect(() => {
     const tracks = bgmUrl ? [bgmUrl] : ['/audio/forest_bgm0.mp3', '/audio/forest_bgm1.mp3'];
     let currentTrackIdx = Math.floor(Math.random() * tracks.length);
     const bgm = new Audio(tracks[currentTrackIdx]);
@@ -86,30 +110,32 @@ const ForestConcert: React.FC<ForestConcertProps> = ({ onBack, bgmUrl }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bgmUrl]);
 
-  const pickRandomNote = () => {
-    const next = NOTES[Math.floor(Math.random() * NOTES.length)];
-    setCurrentNote(next);
-    setSungText('');
-  };
-
-  const handleGuess = async (noteName: string) => {
+  const onGuess = async (guessedBaseOrAccidental: string) => {
+    if (isGameOver) return;
+    
     if (!hasInteracted) {
       setHasInteracted(true);
       bgmRef.current?.play().catch(console.error);
     }
-    const correctName = currentNote.replace(/\d/, '');
-    if (noteName === correctName) {
-      const syllable = playNote(currentNote);
-      setSungText(syllable);
-      setScore(s => s + 1);
-      
-      // Play Lyria Generated Bird Choir
-      const choir = new Audio('/audio/bird_choir.mp3');
-      choir.volume = 0.5;
-      choir.play().catch(e => console.log("Choir audio not found or prevented"));
+    
+    if (!currentNote) return;
 
+    // We compare against the full name without octave for complex keys, 
+    // but the piano keyboard passes "C", "C#", etc.
+    const noteWithoutOctave = currentNote.name.replace(/\d/, '');
+    
+    // For Grade 1-2 (No accidentals expected from user, so comparing baseNote is fine)
+    // For Grade 3+ (Piano keys pass "C#", "Bb", etc.)
+    const isCorrect = (guessedBaseOrAccidental === noteWithoutOctave) || (grade < 3 && guessedBaseOrAccidental === currentNote.baseNote);
+
+    if (isCorrect) {
+      const syllable = playNote(currentNote.name);
+      setSungText(syllable);
+      
+      handleCorrect();
+      
       // Spawn Bird EFX
-      const newBirds = Array.from({length: 6}).map((_, i) => ({
+      const newBirds = Array.from({length: 3}).map((_, i) => ({
         id: Date.now() + i,
         x: (Math.random() - 0.5) * 300,
         y: (Math.random() - 0.5) * 200 - 150,
@@ -118,15 +144,14 @@ const ForestConcert: React.FC<ForestConcertProps> = ({ onBack, bgmUrl }) => {
       setBirds(prev => [...prev, ...newBirds]);
       setTimeout(() => {
         setBirds(prev => prev.filter(b => !newBirds.includes(b)));
-      }, 2000);
-
-      setTimeout(() => {
-        pickRandomNote();
+        setSungText('');
       }, 1000);
+
     } else {
-      playWrong(); // fallback Tone.js beep
+      playWrong();
+      handleWrong();
       
-      // Play Thunder and Rain SFX
+      // Visual feedback
       const thunder = new Audio('/audio/thunder.mp3');
       thunder.volume = 0.8;
       thunder.play().catch(e => console.log("Thunder audio not found or prevented"));
@@ -136,19 +161,26 @@ const ForestConcert: React.FC<ForestConcertProps> = ({ onBack, bgmUrl }) => {
       setTimeout(() => {
         setShake(false);
         setLightning(false);
-      }, 800);
+      }, 500);
     }
+  };
+
+  // Determine Background based on Grade
+  const getBackground = () => {
+    if (grade >= 7) return 'https://images.unsplash.com/photo-1519681393784-d120267933ba?w=1200&auto=format&fit=crop'; // Starry night forest
+    if (grade >= 4) return 'https://images.unsplash.com/photo-1425082661705-1834bfd09dca?w=1200&auto=format&fit=crop'; // Golden hour / magical
+    return 'https://images.unsplash.com/photo-1511497584788-876760111969?w=1200&auto=format&fit=crop'; // Morning tropical
   };
 
   return (
     <div className="flex flex-col h-full w-full bg-[#0a1122] overflow-hidden rounded-3xl relative">
       {/* Background artwork */}
       <img 
-        src="https://images.unsplash.com/photo-1511497584788-876760111969?w=1200&auto=format&fit=crop" 
-        className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ${lightning ? 'opacity-5' : 'opacity-30'}`}
-        alt="Tropical Rainforest"
+        src={getBackground()} 
+        className={`absolute inset-0 w-full h-full object-cover transition-all duration-1000 ${lightning ? 'opacity-5 blur-none' : 'opacity-40 blur-[2px]'}`}
+        alt="Forest Background"
       />
-      <div className={`absolute inset-0 transition-colors duration-300 ${lightning ? 'bg-slate-900/90' : 'bg-gradient-to-b from-emerald-900/60 to-transparent'}`} />
+      <div className={`absolute inset-0 transition-colors duration-300 ${lightning ? 'bg-slate-900/90' : 'bg-gradient-to-b from-emerald-950/80 via-transparent to-black/80'}`} />
       
       {/* Lightning Flash & Rain Overlay */}
       {lightning && (
@@ -171,43 +203,88 @@ const ForestConcert: React.FC<ForestConcertProps> = ({ onBack, bgmUrl }) => {
           </div>
         </>
       )}
-      
-      <header className="relative z-10 flex items-center justify-between p-6">
-        <button onClick={onBack} className="w-10 h-10 bg-white/10 rounded-full flex items-center justify-center hover:bg-white/20 transition backdrop-blur-md">
-          <ArrowLeft className="text-white" />
-        </button>
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-full bg-emerald-500/20 flex items-center justify-center">
-            <Bird className="text-emerald-400" size={18} />
+
+      {/* Rewards Queue Modal */}
+      {showRewardQueue && (
+        <RewardModal 
+          reward={showRewardQueue} 
+          onClose={() => setShowRewardQueue(null)} 
+        />
+      )}
+
+      {/* Header */}
+      <header className="relative z-20 flex flex-col gap-4 p-6 shrink-0">
+        <div className="flex items-center justify-between">
+          <button onClick={onBack} className="w-10 h-10 bg-white/10 rounded-full flex items-center justify-center hover:bg-white/20 transition backdrop-blur-md">
+            <ArrowLeft className="text-white" />
+          </button>
+          
+          <div className="flex items-center gap-4">
+            <button 
+              onClick={() => setShowInventory(!showInventory)}
+              className="bg-purple-500/20 px-4 py-1.5 rounded-full border border-purple-500/30 backdrop-blur-md flex items-center gap-2 hover:bg-purple-500/40 transition"
+            >
+              <Gem size={16} className="text-purple-300" />
+              <span className="text-purple-100 font-bold text-sm">Vault ({inventory.length})</span>
+            </button>
+            
+            <div className="bg-emerald-500/20 px-5 py-1.5 rounded-full border border-emerald-500/30 backdrop-blur-md flex items-center gap-3">
+              <span className="text-emerald-300 font-black text-sm uppercase tracking-widest">
+                Grade {grade}
+              </span>
+              <div className="w-px h-4 bg-emerald-500/50" />
+              <span className="text-white font-black text-xl">{score}</span>
+            </div>
           </div>
-          <h2 className="text-white font-black text-xl tracking-wider uppercase">Forest Concert</h2>
         </div>
-        <div className="bg-emerald-500/20 px-4 py-1.5 rounded-full border border-emerald-500/30 backdrop-blur-md flex items-center gap-2">
-          <span className="text-xl animate-bounce">{rank.icon}</span>
-          <span className="text-emerald-300 font-black text-sm uppercase tracking-widest">
-            {rank.title} <span className="text-white">({score})</span>
-          </span>
+
+        {/* Time Progress Bar */}
+        <div className="w-full h-3 bg-black/40 rounded-full border border-white/10 overflow-hidden backdrop-blur-sm flex relative">
+          <div 
+            className={`h-full transition-all duration-300 ease-linear ${timeLeft < 25 ? 'bg-rose-500 animate-pulse' : 'bg-gradient-to-r from-emerald-400 to-teal-400'}`}
+            style={{ width: `${(timeLeft / MAX_TIME) * 100}%` }}
+          />
+          <Timer size={14} className="absolute top-1/2 -translate-y-1/2 left-2 text-white/50 mix-blend-overlay" />
         </div>
       </header>
 
-      {/* Magical Fireflies Reward System */}
-      <div className="absolute inset-0 pointer-events-none z-10 overflow-hidden">
-        {fireflies.slice(0, Math.min(score, 100)).map((ff) => (
-          <div
-            key={`firefly-${ff.id}`}
-            className="absolute w-1.5 h-1.5 bg-yellow-200 rounded-full animate-float-firefly mix-blend-screen"
-            style={{
-              left: ff.left,
-              top: ff.top,
-              boxShadow: '0 0 12px 6px rgba(253, 224, 71, 0.4)',
-              animationDelay: ff.delay,
-              animationDuration: ff.duration
-            }}
-          />
-        ))}
-      </div>
+      {/* Inventory Panel */}
+      {showInventory && (
+        <div className="absolute inset-x-4 top-24 z-40 bg-black/80 backdrop-blur-xl border border-purple-500/30 rounded-2xl p-4 shadow-2xl animate-in slide-in-from-top-4">
+          <h3 className="text-white font-black text-lg mb-3 flex items-center gap-2">
+            <Sparkles className="text-purple-400" size={18} /> Forest Vault
+          </h3>
+          <div className="flex gap-3 overflow-x-auto pb-2 no-scrollbar">
+            {REWARDS.map(r => {
+              const unlocked = inventory.includes(r.id);
+              return (
+                <div key={r.id} className={`shrink-0 w-20 flex flex-col items-center gap-1 ${unlocked ? 'opacity-100' : 'opacity-30 grayscale'}`}>
+                  <div className={`w-14 h-14 rounded-full flex items-center justify-center text-3xl border-2 ${unlocked ? 'border-purple-400/50 bg-white/10' : 'border-white/10 bg-black/50'}`}>
+                    {unlocked ? r.icon : '?'}
+                  </div>
+                  <span className="text-[10px] text-white/80 text-center font-bold">{unlocked ? r.name : `Grade ${r.unlockedAtGrade}`}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
-      <div className="relative z-10 flex-1 flex flex-col items-center justify-center">
+      {/* Game Over Screen */}
+      {isGameOver && (
+        <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center p-6 animate-in fade-in">
+          <h2 className="text-4xl font-black text-white mb-2 uppercase tracking-widest text-center">Time's Up!</h2>
+          <p className="text-emerald-400 font-bold mb-8 text-lg">Final Score: {score} | Reached Grade {grade}</p>
+          <button 
+            onClick={restart}
+            className="px-8 py-3 bg-white text-black font-black uppercase tracking-widest rounded-full hover:scale-105 active:scale-95 transition"
+          >
+            Play Again
+          </button>
+        </div>
+      )}
+
+      <div className="relative z-10 flex-1 flex flex-col items-center justify-center pb-6">
         {/* SVG Staff Engine */}
         <div className={`w-full max-w-2xl px-4 ${shake ? 'animate-shake' : ''}`}>
           <div className="relative w-full aspect-[2/1] bg-black/40 rounded-3xl border border-white/10 backdrop-blur-md shadow-2xl overflow-hidden">
@@ -220,29 +297,41 @@ const ForestConcert: React.FC<ForestConcertProps> = ({ onBack, bgmUrl }) => {
               {/* Treble Clef */}
               <text x="35" y="165" fill="rgba(255,255,255,0.7)" style={{ fontSize: '160px', fontFamily: 'serif' }}>𝄞</text>
               
-              {/* Ledger Line for C4 */}
-              {currentNote === 'C4' && (
+              {/* Ledger Lines */}
+              {currentNote && NOTE_Y_MAP[currentNote.name] >= 170 && (
                 <line x1="220" y1="170" x2="280" y2="170" stroke="rgba(255,255,255,0.8)" strokeWidth="3" strokeLinecap="round" />
               )}
+              {currentNote && NOTE_Y_MAP[currentNote.name] >= 190 && (
+                <line x1="220" y1="190" x2="280" y2="190" stroke="rgba(255,255,255,0.8)" strokeWidth="3" strokeLinecap="round" />
+              )}
 
-              {/* Note / Bird rendering */}
-              <g transform={`translate(250, ${NOTE_Y_MAP[currentNote]})`} className="transition-transform duration-500 ease-out">
-                {/* Note head (drawn as a cute bird/egg) */}
-                <ellipse cx="0" cy="0" rx="14" ry="10" fill={sungText ? "#10b981" : "white"} />
-                {sungText ? (
-                  <>
-                    <circle cx="-5" cy="-2" r="2" fill="black" />
-                    <polygon points="12,-2 20,0 12,2" fill="#fbbf24" />
-                  </>
-                ) : null}
+              {/* Note rendering */}
+              {currentNote && (
+                <g transform={`translate(250, ${NOTE_Y_MAP[currentNote.name] || 130})`} className="transition-transform duration-500 ease-out">
+                  {/* Accidental Symbol */}
+                  {currentNote.isAccidentalExplicit && (
+                    <text x="-35" y="12" fill="white" style={{ fontSize: '40px', fontFamily: 'serif', fontWeight: 'bold' }}>
+                      {currentNote.accidental === 'sharp' ? '♯' : currentNote.accidental === 'flat' ? '♭' : '♮'}
+                    </text>
+                  )}
 
-                {/* Stem */}
-                {NOTE_Y_MAP[currentNote] >= 110 ? (
-                  <line x1="12" y1="0" x2="12" y2="-40" stroke={sungText ? "#10b981" : "white"} strokeWidth="2" />
-                ) : (
-                  <line x1="-12" y1="0" x2="-12" y2="40" stroke={sungText ? "#10b981" : "white"} strokeWidth="2" />
-                )}
-              </g>
+                  {/* Note head */}
+                  <ellipse cx="0" cy="0" rx="14" ry="10" fill={sungText ? "#10b981" : "white"} />
+                  {sungText ? (
+                    <>
+                      <circle cx="-5" cy="-2" r="2" fill="black" />
+                      <polygon points="12,-2 20,0 12,2" fill="#fbbf24" />
+                    </>
+                  ) : null}
+
+                  {/* Stem */}
+                  {(NOTE_Y_MAP[currentNote.name] || 130) >= 110 ? (
+                    <line x1="12" y1="0" x2="12" y2="-40" stroke={sungText ? "#10b981" : "white"} strokeWidth="2" />
+                  ) : (
+                    <line x1="-12" y1="0" x2="-12" y2="40" stroke={sungText ? "#10b981" : "white"} strokeWidth="2" />
+                  )}
+                </g>
+              )}
             </svg>
 
             {/* Sung Syllable Popup */}
@@ -256,8 +345,16 @@ const ForestConcert: React.FC<ForestConcertProps> = ({ onBack, bgmUrl }) => {
                 </div>
               </div>
             )}
+            
+            {/* Combo Multiplier */}
+            {combo > 3 && (
+              <div className="absolute top-4 right-4 animate-pulse">
+                <span className="text-yellow-400 font-black italic text-2xl drop-shadow-lg">{combo}x</span>
+              </div>
+            )}
           </div>
         </div>
+
         {/* Bird Particle EFX */}
         <div className="absolute inset-0 pointer-events-none overflow-hidden z-20">
           {birds.map(bird => (
@@ -274,21 +371,56 @@ const ForestConcert: React.FC<ForestConcertProps> = ({ onBack, bgmUrl }) => {
           ))}
         </div>
         
-        {/* Keyboard Input */}
-        <div className="mt-12 flex gap-1 sm:gap-2 justify-center px-2 w-full max-w-4xl mx-auto z-30">
-          {['C', 'D', 'E', 'F', 'G', 'A', 'B', 'C'].map((note, idx) => (
-            <button
-              key={`${note}-${idx}`}
-              onClick={() => handleGuess(note)}
-              className="flex-1 max-w-[4rem] aspect-[3/4] sm:aspect-square rounded-xl sm:rounded-2xl bg-white/10 border-2 border-white/20 text-white font-black text-xl sm:text-2xl hover:bg-emerald-500 hover:border-emerald-400 hover:scale-110 active:scale-95 transition-all shadow-xl backdrop-blur-md flex items-center justify-center"
-            >
-              {note}
-            </button>
-          ))}
+        {/* Keyboard Input - Dynamic based on level */}
+        <div className="mt-8 flex justify-center px-4 w-full max-w-4xl mx-auto z-30">
+          {grade < 3 ? (
+            // Simple Keyboard (Naturals only)
+            <div className="flex gap-2 w-full max-w-md justify-center">
+              {['C', 'D', 'E', 'F', 'G', 'A', 'B', 'C'].map((note, idx) => (
+                <button
+                  key={`simple-${note}-${idx}`}
+                  onClick={() => onGuess(note)}
+                  className="flex-1 max-w-[3.5rem] aspect-[3/4] rounded-xl bg-white/10 border-2 border-white/20 text-white font-black text-xl hover:bg-emerald-500 hover:border-emerald-400 hover:scale-110 active:scale-95 transition-all shadow-xl backdrop-blur-md"
+                >
+                  {note}
+                </button>
+              ))}
+            </div>
+          ) : (
+            // Piano Keyboard Layout (Grade 3+)
+            <div className="flex relative h-32 w-full max-w-lg bg-black/20 p-2 rounded-2xl backdrop-blur-md border border-white/10">
+              {PIANO_KEYS.map((key, idx) => {
+                if (key.type === 'white') {
+                  return (
+                    <button
+                      key={`piano-${idx}`}
+                      onClick={() => onGuess(key.note)}
+                      className="flex-1 h-full bg-white text-slate-800 font-bold text-lg rounded-b-lg border-x border-slate-300 hover:bg-emerald-200 active:bg-emerald-400 focus:outline-none flex items-end justify-center pb-2 transition-colors relative z-10"
+                    >
+                      {key.note}
+                    </button>
+                  );
+                } else {
+                  return (
+                    <button
+                      key={`piano-${idx}`}
+                      onClick={() => onGuess(key.note)}
+                      className="absolute top-2 w-[8%] h-20 bg-slate-900 text-white font-bold text-xs rounded-b-md shadow-xl hover:bg-emerald-600 active:bg-emerald-500 focus:outline-none flex items-end justify-center pb-2 transition-colors z-20"
+                      style={{ 
+                        left: `${(idx / PIANO_KEYS.length) * 100}%`,
+                        transform: 'translateX(-50%)'
+                      }}
+                    >
+                      {key.note}
+                    </button>
+                  );
+                }
+              })}
+            </div>
+          )}
         </div>
       </div>
       
-      {/* Required for the shake animation class */}
       <style>{`
         @keyframes shake {
           0%, 100% { transform: translateX(0); }
@@ -315,15 +447,6 @@ const ForestConcert: React.FC<ForestConcertProps> = ({ onBack, bgmUrl }) => {
         }
         .animate-rain {
           animation: rain linear infinite;
-        }
-        @keyframes float-firefly {
-          0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.4; }
-          25% { transform: translate(15px, -20px) scale(1.3); opacity: 1; }
-          50% { transform: translate(-10px, -35px) scale(0.8); opacity: 0.6; }
-          75% { transform: translate(-20px, -15px) scale(1.2); opacity: 0.9; }
-        }
-        .animate-float-firefly {
-          animation: float-firefly ease-in-out infinite;
         }
         @keyframes fly {
           0% { transform: translate(0, 0) scale(0.5); opacity: 1; }

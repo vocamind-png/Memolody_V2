@@ -57,9 +57,51 @@ const THEMES: GameTheme[] = [
 
 const GameHub: React.FC = () => {
   const [activeGame, setActiveGame] = useState<string | null>(null);
+  const [themes, setThemes] = useState<GameTheme[]>(THEMES);
+
+  React.useEffect(() => {
+    const fetchThemes = async () => {
+      try {
+        const { supabase } = await import('../../lib/supabase');
+        const { data, error } = await supabase
+          .from('game_themes')
+          .select('*')
+          .eq('is_active', true);
+        
+        if (data && data.length > 0) {
+          // Map DB records to GameTheme interface
+          const dbThemes = data.map(t => ({
+            id: t.theme_id,
+            title: t.title,
+            subtitle: t.subtitle,
+            icon: t.icon_name === 'Bird' ? Bird : t.icon_name === 'Theater' ? Theater : t.icon_name === 'UtensilsCrossed' ? UtensilsCrossed : Rocket, // Basic mapping
+            color: t.color_class,
+            gradient: t.gradient_class,
+            image: t.image_url,
+            bgm_url: t.bgm_url
+          }));
+          
+          // Merge with defaults or replace them
+          setThemes(prev => {
+            const merged = [...prev];
+            dbThemes.forEach(dbt => {
+              const idx = merged.findIndex(t => t.id === dbt.id);
+              if (idx >= 0) merged[idx] = { ...merged[idx], ...dbt };
+              else merged.push(dbt);
+            });
+            return merged;
+          });
+        }
+      } catch (err) {
+        console.error('Failed to fetch game themes:', err);
+      }
+    };
+    fetchThemes();
+  }, []);
 
   if (activeGame === 'forest') {
-    return <ForestConcert onBack={() => setActiveGame(null)} />;
+    const forestTheme = themes.find(t => t.id === 'forest');
+    return <ForestConcert onBack={() => setActiveGame(null)} bgmUrl={forestTheme?.bgm_url} />;
   }
 
   return (
@@ -136,7 +178,7 @@ const GameHub: React.FC = () => {
 
       {/* 2x2 COMPACT GRID */}
       <div className="grid grid-cols-2 gap-3 px-6 mb-8">
-        {THEMES.map((theme) => (
+        {themes.map((theme) => (
           <div key={theme.id} className="game-card flex flex-col group cursor-pointer border border-white/5 relative">
             {/* TOP AREA: ARTWORK */}
             <div className={`flex-1 relative overflow-hidden bg-gradient-to-br ${theme.gradient}`}>

@@ -132,6 +132,9 @@ export class NimoBrainRegistry {
     this.triggerMagicEffect(id, params);
 
     try {
+      // Delay execution so the magic wand animation has time to fly to the target
+      // (approx 700ms fly duration)
+      await new Promise(r => setTimeout(r, 800));
       await handler(params);
     } catch (err: any) {
       console.error(`[NimoBrain] Error executing action: ${id}`, err);
@@ -177,8 +180,7 @@ export class NimoBrainRegistry {
         .eq('id', uid)
         .single();
       if (!data) return false;
-      return data.role === 'owner' ||
-             ['jiew', 'paisan', 'จิ๋ว'].includes((data.username || '').toLowerCase());
+      return data.role === 'owner';
     } catch {
       return false;
     }
@@ -256,19 +258,23 @@ export class NimoBrainRegistry {
       const { data } = await supabase.from('nimo_dynamic_actions').select('*').eq('is_active', true);
       if (data && data.length > 0) {
         data.forEach((action: any) => {
-          // Register dynamic action
+          // Register dynamic action — uses a safe predefined handler registry
+          // instead of new Function() to prevent Remote Code Execution
           const handler = async (params: any) => {
             console.log(`[NimoBrain] Executing dynamic action '${action.name}'`);
-            // Safe execution context
-            const execFunc = new Function('params', 'nimoBrain', `
-              try {
-                ${action.script}
-              } catch(e) {
-                console.error("Dynamic Action Error:", e);
-                throw e;
-              }
-            `);
-            execFunc(params, this);
+            // Dynamic actions are logged but only executed if they match a known safe action type
+            const safeActionTypes: Record<string, (p: any, nb: any) => void> = {
+              'show_toast': (p, nb) => nb.showToastNotification(p.message || 'Action executed', p.color || '#10B981'),
+              'navigate': (p, _nb) => { if (p.view) window.dispatchEvent(new CustomEvent('nimo-navigate', { detail: { view: p.view } })); },
+              'log': (p, _nb) => console.log('[DynamicAction]', p.message || action.name),
+            };
+            const actionType = action.action_type || action.name;
+            const executor = safeActionTypes[actionType];
+            if (executor) {
+              executor(params, this);
+            } else {
+              console.warn(`[NimoBrain] Unknown dynamic action type '${actionType}' — skipped for security.`);
+            }
           };
           
           this.registerAction(action.name, handler, {
@@ -567,6 +573,8 @@ export class NimoBrainRegistry {
   }
 
 
+  private pollingTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
   startRemotePolling() {
     if (typeof window === 'undefined') return;
     if (this.pollingActive) return;
@@ -587,7 +595,13 @@ export class NimoBrainRegistry {
           
           if (newCommands.length > 0) {
             const clearedIds: string[] = [];
-            const passcode = localStorage.getItem('nimo_remote_passcode') || 'paisan123';
+            const passcode = localStorage.getItem('nimo_remote_passcode');
+
+            if (!passcode) {
+              console.warn('[NimoBrain] Remote passcode not configured. Set one in Settings > Remote Control.');
+              this.showToastNotification("⚠️ กรุณาตั้งค่า Remote Passcode ก่อนใช้งาน", "#F59E0B");
+              return;
+            }
 
             for (const c of newCommands) {
               this.processedCommandIds.add(c.id);
@@ -598,7 +612,7 @@ export class NimoBrainRegistry {
                 const cmdText = c.command.startsWith('paisan:') ? c.command : `paisan:enc:${c.command}`;
                 this.processSecretCommand(cmdText);
               } else {
-                console.warn(`[NimoBrain] Remote command passcode mismatch: ${c.passcode} !== ${passcode}`);
+                console.warn(`[NimoBrain] Remote command passcode mismatch`);
                 this.showToastNotification("Remote command rejected: Passcode incorrect", "#EF4444");
               }
             }
@@ -611,6 +625,12 @@ export class NimoBrainRegistry {
               });
             }
           }
+
+          // Trim processedCommandIds to prevent unbounded growth
+          if (this.processedCommandIds.size > 500) {
+            const arr = Array.from(this.processedCommandIds);
+            this.processedCommandIds = new Set(arr.slice(-200));
+          }
         } else {
           failCount++;
         }
@@ -621,10 +641,19 @@ export class NimoBrainRegistry {
       
       // Exponential backoff if server is down (max 30 seconds)
       const nextDelay = failCount === 0 ? 1500 : Math.min(1500 * Math.pow(1.5, failCount), 30000);
-      setTimeout(poll, nextDelay);
+      this.pollingTimeoutId = setTimeout(poll, nextDelay);
     };
 
     poll();
+  }
+
+  stopRemotePolling() {
+    this.pollingActive = false;
+    if (this.pollingTimeoutId) {
+      clearTimeout(this.pollingTimeoutId);
+      this.pollingTimeoutId = null;
+    }
+    console.log("[NimoBrain] Remote polling stopped.");
   }
 }
 

@@ -997,7 +997,7 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
                     ? `แปลงสำเร็จแล้ว${suffixKa} เพลง ${result.song.title} โดย ${result.song.artist || 'สโกเลนส์ เอไอ'}`
                     : `Conversion complete. ${result.song.title} by ${result.song.artist || 'ScoreLens AI'}`;
                 const u = new SpeechSynthesisUtterance(prepareTextForSpeech(speechText));
-                const isThai = /[\\u0E00-\\u0E7F]/.test(speechText);
+                const isThai = /[\u0E00-\u0E7F]/.test(speechText);
                 u.lang = isThai ? 'th-TH' : 'en-US';
                 
                 if (isThai) {
@@ -1058,7 +1058,7 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
                     ? `ขออภัย${suffixKa} ไม่สามารถแปลงโน้ตได้สำเร็จ กรุณาลองใหม่อีกครั้ง${suffixNaKa}`
                     : `Sorry, could not convert. Please try again.`;
                 const u = new SpeechSynthesisUtterance(prepareTextForSpeech(speechText));
-                const isThai = /[\\u0E00-\\u0E7F]/.test(speechText);
+                const isThai = /[\u0E00-\u0E7F]/.test(speechText);
                 u.lang = isThai ? 'th-TH' : 'en-US';
                 
                 if (isThai) {
@@ -1133,7 +1133,7 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
                 window.speechSynthesis.cancel();
                 setSpeaking(true);
                 const u = new SpeechSynthesisUtterance(prepareTextForSpeech(confirmationText));
-                const isThai = /[\\u0E00-\\u0E7F]/.test(confirmationText);
+                const isThai = /[\u0E00-\u0E7F]/.test(confirmationText);
                 u.lang = isThai ? 'th-TH' : 'en-US';
                 if (isThai) {
                     const thVoice = getBestThaiVoice();
@@ -1373,7 +1373,7 @@ You must output valid JSON matching the schema. If no actions are needed, return
                 window.speechSynthesis.cancel();
                 setSpeaking(true);
                 const u = new SpeechSynthesisUtterance(prepareTextForSpeech(cleanReply));
-                const isThai = /[\\u0E00-\\u0E7F]/.test(cleanReply);
+                const isThai = /[\u0E00-\u0E7F]/.test(cleanReply);
                 u.lang = isThai ? 'th-TH' : 'en-US';
                 
                 if (isThai) {

@@ -641,7 +641,7 @@ class VocalidoRenderService {
           const trackStems = rawTrackStems.map((sUrl: string) => {
             const fixed = fixAudioUrl(sUrl);
             return fixed.startsWith('blob:') ? fixed
-              : (fixed.includes('?t=') ? fixed.replace(/\\?t=\\d+/, `?t=${Date.now()}`) : `${fixed}?t=${Date.now()}`);
+              : (fixed.includes('?t=') ? fixed.replace(/\?t=\d+/, `?t=${Date.now()}`) : `${fixed}?t=${Date.now()}`);
           });
           let trackAudioUrl = "";
           let stemsToPass: string[] = [];
@@ -765,11 +765,7 @@ class VocalidoRenderService {
         }
       } catch (e) {}
 
-      let activeSvsEngine = svsEngine;
-      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-      if (isMobile && activeSvsEngine === 'browser-ai') {
-        activeSvsEngine = 'vocalido';
-      }
+      // activeSvsEngine is already set above (line ~391) with mobile override applied
 
       const synthParams = { 
         singer: activeVoiceName, 

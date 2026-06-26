@@ -61,6 +61,8 @@ vocalido_server/static/verovio-toolkit.js
 
 # Sensitive files
 .env.production
+.env.vercel
+.env.vercel.prod
 RUNPOD_SECRETS.txt
 runpod-key.json
 # Large files

@@ -578,6 +578,31 @@ const HomePage: React.FC<HomePageProps> = ({
 
   const allFolders = useMemo(() => folders, [folders]);
 
+  // Precompute unique values for dropdowns to avoid freezing the UI when there are 200k songs
+  const uniqueGenres = useMemo(() => {
+    return ['Classical', 'Baroque', 'Romantic', 'Modern', 'Contemporary', 'Jazz', 'Pop', 'Rock', 'Blues', 'R&B', 'Hip Hop', 'Electronic', 'Acoustic', 'Folk', 'Country', 'Latin', 'World', 'Soundtrack', 'Anime', 'K-Pop', 'J-Pop', 'Bossa Nova', 'Lo-Fi', 'Metal', 'Soul', 'Funk', 'Disco', 'Reggae'].sort();
+  }, []);
+
+  const uniqueEras = useMemo(() => {
+    return ['Medieval', 'Renaissance', 'Baroque', 'Classical', 'Romantic', '20th Century', 'Modern', 'Contemporary', '1920s', '1930s', '1940s', '1950s', '1960s', '1970s', '1980s', '1990s', '2000s', '2010s', '2020s'].sort();
+  }, []);
+
+  const uniqueComposers = useMemo(() => {
+    return ['J.S. Bach', 'W.A. Mozart', 'L.v. Beethoven', 'F. Chopin', 'C. Debussy', 'P.I. Tchaikovsky', 'A. Vivaldi', 'J. Brahms', 'F. Schubert', 'G.F. Handel', 'J. Haydn', 'F. Liszt', 'R. Schumann', 'S. Rachmaninoff', 'I. Stravinsky', 'C. Saint-Saëns', 'A. Dvořák', 'E. Grieg', 'G. Verdi', 'R. Wagner', 'G. Puccini', 'Joe Hisaishi', 'Hans Zimmer', 'John Williams', 'Ennio Morricone', 'Ryuichi Sakamoto', 'Yiruma'].sort();
+  }, []);
+
+  const uniqueYears = useMemo(() => {
+    return ['2024', '2023', '2022', '2021', '2020', '2019', '2018', '2015', '2010', '2000', '1990', '1980', '1970', '1960', '1950', '1900', '1850', '1800', '1750', '1700', '1650', '1600'].sort((a, b) => Number(b) - Number(a));
+  }, []);
+
+  const uniqueInstruments = useMemo(() => {
+    return ['Piano', 'Acoustic Guitar', 'Electric Guitar', 'Bass Guitar', 'Violin', 'Viola', 'Cello', 'Double Bass', 'Harp', 'Flute', 'Clarinet', 'Oboe', 'Bassoon', 'Saxophone', 'Trumpet', 'Trombone', 'French Horn', 'Tuba', 'Drums', 'Percussion', 'Timpani', 'Marimba', 'Synthesizer', 'Keyboard', 'Organ', 'Accordion', 'Ukulele', 'Vocals', 'Choir'].sort();
+  }, []);
+
+  const uniqueGrades = useMemo(() => {
+    return ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6', 'Grade 7', 'Grade 8', 'Diploma'].sort();
+  }, []);
+
   // Counts
   const totalCount = useMemo(() => userLibrary.filter(i => !i.metadata.isDeleted).length, [userLibrary]);
   const homeCount = useMemo(() => userLibrary.filter(item => !item.metadata.isDeleted && (item.metadata.origin !== 'load' || item.metadata.isPublic)).length, [userLibrary]);
@@ -641,8 +666,11 @@ const HomePage: React.FC<HomePageProps> = ({
     if (filterInstrument) list = list.filter(i => i.metadata.instruments?.some(inst => inst.toLowerCase() === filterInstrument.toLowerCase()));
     if (filterGrade && filterGrade !== 'All') {
       list = list.filter(i => {
-        const dGrade = i.metadata.difficultyGrade || i.metadata.difficulty || '';
-        if (filterGrade === 'None') return !dGrade || dGrade === 'none';
+        const dGradeRaw = i.metadata.difficulty_grade || i.metadata.difficultyGrade || i.metadata.difficulty || i.metadata.grade || '';
+        let dGrade = String(dGradeRaw).trim();
+        if (/^[1-8]$/.test(dGrade)) dGrade = `Grade ${dGrade}`;
+        
+        if (filterGrade === 'None') return !dGrade || dGrade.toLowerCase() === 'none';
         if (filterGrade === 'Diploma') return dGrade.toLowerCase() === 'diploma';
         if (filterGrade.includes('-')) {
           const match = filterGrade.match(/Grade\s+(\d+)-(\d+)/i);
@@ -653,7 +681,7 @@ const HomePage: React.FC<HomePageProps> = ({
             return grade >= min && grade <= max;
           }
         }
-        return dGrade === filterGrade;
+        return dGrade.toLowerCase() === filterGrade.toLowerCase();
       });
     }
 
@@ -981,7 +1009,7 @@ Note: "hasChords" is true if user asks for songs with chords (คอร์ด). 
                     });
                   }
                   
-                  setAiFilteredIds(matches.map(m => m.id));
+                  setAiFilteredIds(matches.map(m => m.metadata.id));
                   setSearchQuery(searchInput);
                 } catch (err) {
                   console.error(err);
@@ -1031,7 +1059,7 @@ If a field is not relevant, leave the array empty. Translate concepts into Engli
                       });
                     }
                     
-                    setAiFilteredIds(matches.map(m => m.id));
+                    setAiFilteredIds(matches.map(m => m.metadata.id));
                     setSearchQuery(searchInput);
                   } catch (e) {
                     console.error(e);
@@ -1070,7 +1098,7 @@ If a field is not relevant, leave the array empty. Translate concepts into Engli
                 className="w-full bg-[#111] border border-white/5 rounded-xl px-3 py-2 text-[10px] font-bold text-zinc-400 outline-none focus:border-cyan-500/50 transition-colors"
               >
                 <option value="">All Genres</option>
-                {Array.from(new Set([...userLibrary.map(i => i.metadata.genre).filter(Boolean), 'Classical', 'Baroque', 'Romantic', 'Modern', 'Contemporary', 'Jazz', 'Pop', 'Rock', 'Blues', 'R&B', 'Hip Hop', 'Electronic', 'Acoustic', 'Folk', 'Country', 'Latin', 'World', 'Soundtrack', 'Anime', 'K-Pop', 'J-Pop', 'Bossa Nova', 'Lo-Fi', 'Metal', 'Soul', 'Funk', 'Disco', 'Reggae'])).sort().map(g => (
+                {uniqueGenres.map(g => (
                   <option key={g} value={g}>{g}</option>
                 ))}
               </select>
@@ -1084,7 +1112,7 @@ If a field is not relevant, leave the array empty. Translate concepts into Engli
                 className="w-full bg-[#111] border border-white/5 rounded-xl px-3 py-2 text-[10px] font-bold text-zinc-400 outline-none focus:border-cyan-500/50 transition-colors"
               >
                 <option value="">All Eras</option>
-                {Array.from(new Set([...userLibrary.map(i => i.metadata.era).filter(Boolean), 'Medieval', 'Renaissance', 'Baroque', 'Classical', 'Romantic', '20th Century', 'Modern', 'Contemporary', '1920s', '1930s', '1940s', '1950s', '1960s', '1970s', '1980s', '1990s', '2000s', '2010s', '2020s'])).sort().map(e => (
+                {uniqueEras.map(e => (
                   <option key={e} value={e}>{e}</option>
                 ))}
               </select>
@@ -1098,7 +1126,7 @@ If a field is not relevant, leave the array empty. Translate concepts into Engli
                 className="w-full bg-[#111] border border-white/5 rounded-xl px-3 py-2 text-[10px] font-bold text-zinc-400 outline-none focus:border-cyan-500/50 transition-colors"
               >
                 <option value="">All Composers</option>
-                {Array.from(new Set([...userLibrary.map(i => i.metadata.composer || i.metadata.artist).filter(Boolean), 'J.S. Bach', 'W.A. Mozart', 'L.v. Beethoven', 'F. Chopin', 'C. Debussy', 'P.I. Tchaikovsky', 'A. Vivaldi', 'J. Brahms', 'F. Schubert', 'G.F. Handel', 'J. Haydn', 'F. Liszt', 'R. Schumann', 'S. Rachmaninoff', 'I. Stravinsky', 'C. Saint-Saëns', 'A. Dvořák', 'E. Grieg', 'G. Verdi', 'R. Wagner', 'G. Puccini', 'Joe Hisaishi', 'Hans Zimmer', 'John Williams', 'Ennio Morricone', 'Ryuichi Sakamoto', 'Yiruma'])).sort().map(c => (
+                {uniqueComposers.map(c => (
                   <option key={c} value={c}>{c}</option>
                 ))}
               </select>
@@ -1112,7 +1140,7 @@ If a field is not relevant, leave the array empty. Translate concepts into Engli
                 className="w-full bg-[#111] border border-white/5 rounded-xl px-3 py-2 text-[10px] font-bold text-zinc-400 outline-none focus:border-cyan-500/50 transition-colors"
               >
                 <option value="">All Years</option>
-                {Array.from(new Set([...userLibrary.map(i => i.metadata.year).filter(Boolean), '2024', '2023', '2022', '2021', '2020', '2019', '2018', '2015', '2010', '2000', '1990', '1980', '1970', '1960', '1950', '1900', '1850', '1800', '1750', '1700', '1650', '1600'])).sort((a, b) => Number(b) - Number(a)).map(y => (
+                {uniqueYears.map(y => (
                   <option key={y} value={y}>{y}</option>
                 ))}
               </select>
@@ -1126,7 +1154,7 @@ If a field is not relevant, leave the array empty. Translate concepts into Engli
                 className="w-full bg-[#111] border border-white/5 rounded-xl px-3 py-2 text-[10px] font-bold text-zinc-400 outline-none focus:border-cyan-500/50 transition-colors"
               >
                 <option value="">All Instruments</option>
-                {Array.from(new Set([...userLibrary.flatMap(i => i.metadata.instruments || []), 'Piano', 'Acoustic Guitar', 'Electric Guitar', 'Bass Guitar', 'Violin', 'Viola', 'Cello', 'Double Bass', 'Harp', 'Flute', 'Clarinet', 'Oboe', 'Bassoon', 'Saxophone', 'Trumpet', 'Trombone', 'French Horn', 'Tuba', 'Drums', 'Percussion', 'Timpani', 'Marimba', 'Synthesizer', 'Keyboard', 'Organ', 'Accordion', 'Ukulele', 'Vocals', 'Choir'])).sort().map(inst => (
+                {uniqueInstruments.map(inst => (
                   <option key={inst} value={inst}>{inst}</option>
                 ))}
               </select>
@@ -1140,7 +1168,7 @@ If a field is not relevant, leave the array empty. Translate concepts into Engli
                 className="w-full bg-[#111] border border-white/5 rounded-xl px-3 py-2 text-[10px] font-bold text-zinc-400 outline-none focus:border-cyan-500/50 transition-colors"
               >
                 <option value="All">All</option>
-                {Array.from(new Set([...userLibrary.map(i => i.metadata.difficulty_grade).filter(Boolean), 'Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6', 'Grade 7', 'Grade 8', 'Diploma'])).sort().map(g => (
+                {uniqueGrades.map(g => (
                   <option key={g} value={g}>{g}</option>
                 ))}
               </select>

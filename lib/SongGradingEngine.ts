@@ -269,8 +269,12 @@ export class SongGradingEngine {
   private static scorePitchRange(midiNumbers: number[]): number {
     if (midiNumbers.length === 0) return 0;
 
-    const minMidi = Math.min(...midiNumbers);
-    const maxMidi = Math.max(...midiNumbers);
+    // Use loop instead of Math.min(...arr) to prevent stack overflow on songs with 65k+ notes
+    let minMidi = Infinity, maxMidi = -Infinity;
+    for (const m of midiNumbers) {
+      if (m < minMidi) minMidi = m;
+      if (m > maxMidi) maxMidi = m;
+    }
     const range = maxMidi - minMidi;
 
     // Semitone range → difficulty score mapping

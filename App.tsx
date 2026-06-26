@@ -253,7 +253,7 @@ const App: React.FC = () => {
         setInitProgress(35);
 
         // 🚨 AUTO-CLEAR CACHE ON NEW BUILD/REINSTALL
-        const APP_VERSION = '2.4.1-build-20260622-1322';
+        const APP_VERSION = '2.4.1-build-20260626-0001';
         const savedVersion = localStorage.getItem('memo_app_version');
         if (savedVersion !== APP_VERSION) {
           setInitStatus('Wiping Old Cache');
@@ -657,18 +657,11 @@ const App: React.FC = () => {
         // Auto-logic for vocal tracks:
         // 1. If only one track total, it's vocal.
         // 2. Check if part name matches typical vocal names (SATB, voice, vocal, etc.)
-        // 3. Fallback: first Treble Clef (G) track, or first track if no clefs.
         let isVocal = false;
         if (trackIds.length === 1) {
           isVocal = true;
-        } else if (/soprano|alto|tenor|bass|voice|vocal|choir|lead|harmony|melody|singer/.test(low)) {
+        } else if (/(soprano|alto|tenor|voice|vocal|choir|lead|harmony|melody|singer)/.test(low) || (low.includes('bass') && !low.includes('piano') && !low.includes('double'))) {
           isVocal = true;
-        } else if (!vocalTrackSelected && clef === 'G') {
-          isVocal = true;
-          vocalTrackSelected = true;
-        } else if (!vocalTrackSelected && index === 0 && !clef) {
-          isVocal = true;
-          vocalTrackSelected = true;
         }
 
         return {
