@@ -600,7 +600,7 @@ const HomePage: React.FC<HomePageProps> = ({
   }, []);
 
   const uniqueGrades = useMemo(() => {
-    return ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6', 'Grade 7', 'Grade 8', 'Diploma'].sort();
+    return ['Beginner', 'Intermediate', 'Advanced', 'Expert', 'Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6', 'Grade 7', 'Grade 8', 'Diploma'];
   }, []);
 
   // Counts
@@ -672,6 +672,9 @@ const HomePage: React.FC<HomePageProps> = ({
         
         if (filterGrade === 'None') return !dGrade || dGrade.toLowerCase() === 'none';
         if (filterGrade === 'Diploma') return dGrade.toLowerCase() === 'diploma';
+        if (['Beginner', 'Intermediate', 'Advanced', 'Expert'].includes(filterGrade)) {
+          return dGrade.toLowerCase() === filterGrade.toLowerCase();
+        }
         if (filterGrade.includes('-')) {
           const match = filterGrade.match(/Grade\s+(\d+)-(\d+)/i);
           if (match) {

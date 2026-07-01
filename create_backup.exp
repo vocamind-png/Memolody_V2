@@ -1,0 +1,8 @@
+#!/usr/bin/expect -f
+set timeout 600
+spawn ssh -o StrictHostKeyChecking=no u2txyroyplqko8-6441192e@ssh.runpod.io -i ~/.ssh/id_ed25519
+expect "# "
+send "cd /workspace && tar -czvf vocalido_server/renders/runpod_backup_essential.tar.gz checkpoints/ vocalido_server/renders/ vocalido_server/training/*.sh vocalido_server/training/*.py vocalido_server/training/notebooks/ vocalido_server/training/colab/ vocalido_server/training/configs/ vocalido_server/training/credentials/ vocalido_server/training/musicxml_organized/ vocalido_server/*.py vocalido_server/*.sh vocalido_server/*.json vocalido_server/*.txt vocalido_server/*.md vocalido_server/voicebanks/ > /dev/null 2>&1\r"
+expect "# "
+send "exit\r"
+expect eof

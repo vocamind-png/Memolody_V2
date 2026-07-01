@@ -1,0 +1,11 @@
+#!/usr/bin/expect -f
+set timeout 600
+spawn ssh -o StrictHostKeyChecking=no u2txyroyplqko8-6441192e@ssh.runpod.io -i ~/.ssh/id_ed25519
+expect "# "
+set send_slow {1 .05}
+send -s "cd /workspace\r"
+expect "# "
+send -s "tar -czvf vocalido_server/renders/backup.tar.gz --exclude=vocalido_server/training/DiffSinger checkpoints/ vocalido_server/training/ vocalido_server/voicebanks/ vocalido_server/*.py > /dev/null 2>&1\r"
+expect "# "
+send -s "exit\r"
+expect eof

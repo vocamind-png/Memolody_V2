@@ -1,0 +1,8 @@
+#!/usr/bin/expect -f
+set timeout 60
+spawn ssh -o StrictHostKeyChecking=no u2txyroyplqko8-6441192e@ssh.runpod.io -i ~/.ssh/id_ed25519
+expect "# "
+send "du -sh /workspace/* /workspace/vocalido_server/training/* 2>/dev/null > /workspace/vocalido_server/renders/runpod_disk_info.txt\r"
+expect "# "
+send "exit\r"
+expect eof

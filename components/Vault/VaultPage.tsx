@@ -96,6 +96,15 @@ const VaultPage: React.FC<VaultPageProps> = ({
   const [sortMode, setSortMode] = useState<SortMode>('default');
   const [showSortDropdown, setShowSortDropdown] = useState(false);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  
+  // Advanced Filters
+  const [filterGenre, setFilterGenre] = useState('');
+  const [filterEra, setFilterEra] = useState('');
+  const [filterComposer, setFilterComposer] = useState('');
+  const [filterYear, setFilterYear] = useState('');
+  const [filterInstrument, setFilterInstrument] = useState('');
+  const [filterGrade, setFilterGrade] = useState('All');
+  const [showFilters, setShowFilters] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -107,7 +116,7 @@ const VaultPage: React.FC<VaultPageProps> = ({
   // Reset visible count when filters change
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
-  }, [searchQuery, activeCategory, sortMode]);
+  }, [searchQuery, activeCategory, sortMode, filterGenre, filterEra, filterComposer, filterYear, filterInstrument, filterGrade]);
 
   const doSearch = useCallback(() => {
     setSearchQuery(searchInput);
@@ -126,6 +135,42 @@ const VaultPage: React.FC<VaultPageProps> = ({
       );
     }
 
+    if (filterGenre) list = list.filter(i => {
+      const g = (i.metadata.genre || i.metadata.category || '').toLowerCase().trim();
+      const fg = filterGenre.toLowerCase().trim();
+      if (!g) return false;
+      if (g === fg) return true;
+      if ((fg === 'classical' && g === 'classic') || (fg === 'classic' && g === 'classical')) return true;
+      return g.includes(fg) || fg.includes(g);
+    });
+    if (filterEra) list = list.filter(i => i.metadata.era?.toLowerCase() === filterEra.toLowerCase());
+    if (filterComposer) list = list.filter(i => i.metadata.composer?.toLowerCase() === filterComposer.toLowerCase() || i.metadata.artist?.toLowerCase() === filterComposer.toLowerCase());
+    if (filterYear) list = list.filter(i => String(i.metadata.year) === String(filterYear));
+    if (filterInstrument) list = list.filter(i => i.metadata.instruments?.some(inst => inst.toLowerCase() === filterInstrument.toLowerCase()));
+    if (filterGrade && filterGrade !== 'All') {
+      list = list.filter(i => {
+        const dGradeRaw = i.metadata.difficulty_grade || i.metadata.difficultyGrade || i.metadata.difficulty || i.metadata.grade || '';
+        let dGrade = String(dGradeRaw).trim();
+        if (/^[1-8]$/.test(dGrade)) dGrade = `Grade ${dGrade}`;
+        
+        if (filterGrade === 'None') return !dGrade || dGrade.toLowerCase() === 'none';
+        if (filterGrade === 'Diploma') return dGrade.toLowerCase() === 'diploma';
+        if (['Beginner', 'Intermediate', 'Advanced', 'Expert'].includes(filterGrade)) {
+          return dGrade.toLowerCase() === filterGrade.toLowerCase();
+        }
+        if (filterGrade.includes('-')) {
+          const match = filterGrade.match(/Grade\s+(\d+)-(\d+)/i);
+          if (match) {
+            const min = parseInt(match[1]);
+            const max = parseInt(match[2]);
+            const grade = parseInt(dGrade.replace(/Grade\s*/i, '') || '0');
+            return grade >= min && grade <= max;
+          }
+        }
+        return dGrade.toLowerCase() === filterGrade.toLowerCase();
+      });
+    }
+
     switch (sortMode) {
       case 'az': list.sort((a, b) => a.metadata.title.localeCompare(b.metadata.title)); break;
       case 'za': list.sort((a, b) => b.metadata.title.localeCompare(a.metadata.title)); break;
@@ -142,7 +187,7 @@ const VaultPage: React.FC<VaultPageProps> = ({
       default: list.reverse(); break;
     }
     return list;
-  }, [userLibrary, searchQuery, activeCategory, sortMode]);
+  }, [userLibrary, searchQuery, activeCategory, sortMode, filterGenre, filterEra, filterComposer, filterYear, filterInstrument, filterGrade]);
 
   // Only render visible items
   const visibleItems = useMemo(() => filteredLibrary.slice(0, visibleCount), [filteredLibrary, visibleCount]);
@@ -251,14 +296,92 @@ const VaultPage: React.FC<VaultPageProps> = ({
             onKeyDown={e => e.key === 'Enter' && doSearch()}
             className="w-full h-11 bg-white/[0.02] border border-white/5 rounded-lg pl-10 pr-8 text-base text-white outline-none focus:border-cyan-500/30 placeholder:text-zinc-600"
           />
-          {searchInput && (
-            <button onClick={() => { setSearchInput(''); setSearchQuery(''); onSearchClear?.(); }}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-600 hover:text-white">
-              <X size={12} />
+          <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+            {searchInput && (
+              <button onClick={() => { setSearchInput(''); setSearchQuery(''); onSearchClear?.(); }}
+                className="text-zinc-600 hover:text-white p-1">
+                <X size={12} />
+              </button>
+            )}
+            <button 
+              onClick={() => setShowFilters(!showFilters)}
+              className={`p-1.5 rounded-lg transition-colors ${showFilters || filterGenre || filterInstrument || filterEra || filterYear || filterComposer || filterGrade !== 'All' ? 'text-cyan-400' : 'text-zinc-600 hover:text-white'}`}
+              title="Styles & Filters"
+            >
+              <Database size={14} /> 
             </button>
-          )}
+          </div>
         </div>
       </div>
+
+      {/* ── ADVANCED FILTERS PANEL ── */}
+      {showFilters && (
+        <div className="px-6 py-4 bg-white/[0.02] border-b border-white/[0.03]">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 animate-in slide-in-from-top-2 duration-200">
+            {/* Genre */}
+            <div className="space-y-1">
+              <label className="text-[7px] font-black text-zinc-600 uppercase tracking-widest ml-2">Genre</label>
+              <select value={filterGenre} onChange={e => setFilterGenre(e.target.value)} className="w-full bg-[#111] border border-white/5 rounded-xl px-3 py-2 text-[10px] font-bold text-zinc-400 outline-none focus:border-cyan-500/50">
+                <option value="">All Genres</option>
+                {uniqueGenres.map(g => <option key={g} value={g}>{g}</option>)}
+              </select>
+            </div>
+            {/* Era */}
+            <div className="space-y-1">
+              <label className="text-[7px] font-black text-zinc-600 uppercase tracking-widest ml-2">Era</label>
+              <select value={filterEra} onChange={e => setFilterEra(e.target.value)} className="w-full bg-[#111] border border-white/5 rounded-xl px-3 py-2 text-[10px] font-bold text-zinc-400 outline-none focus:border-cyan-500/50">
+                <option value="">All Eras</option>
+                {uniqueEras.map(e => <option key={e} value={e}>{e}</option>)}
+              </select>
+            </div>
+            {/* Composer */}
+            <div className="space-y-1">
+              <label className="text-[7px] font-black text-zinc-600 uppercase tracking-widest ml-2">Composer</label>
+              <select value={filterComposer} onChange={e => setFilterComposer(e.target.value)} className="w-full bg-[#111] border border-white/5 rounded-xl px-3 py-2 text-[10px] font-bold text-zinc-400 outline-none focus:border-cyan-500/50">
+                <option value="">All Composers</option>
+                {uniqueComposers.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            {/* Year */}
+            <div className="space-y-1">
+              <label className="text-[7px] font-black text-zinc-600 uppercase tracking-widest ml-2">Year</label>
+              <select value={filterYear} onChange={e => setFilterYear(e.target.value)} className="w-full bg-[#111] border border-white/5 rounded-xl px-3 py-2 text-[10px] font-bold text-zinc-400 outline-none focus:border-cyan-500/50">
+                <option value="">All Years</option>
+                {uniqueYears.map(y => <option key={y} value={y}>{y}</option>)}
+              </select>
+            </div>
+            {/* Instruments */}
+            <div className="space-y-1">
+              <label className="text-[7px] font-black text-zinc-600 uppercase tracking-widest ml-2">Instruments</label>
+              <select value={filterInstrument} onChange={e => setFilterInstrument(e.target.value)} className="w-full bg-[#111] border border-white/5 rounded-xl px-3 py-2 text-[10px] font-bold text-zinc-400 outline-none focus:border-cyan-500/50">
+                <option value="">All Instruments</option>
+                {uniqueInstruments.map(inst => <option key={inst} value={inst}>{inst}</option>)}
+              </select>
+            </div>
+            {/* Grade */}
+            <div className="space-y-1">
+              <label className="text-[7px] font-black text-zinc-600 uppercase tracking-widest ml-2">Grade</label>
+              <select value={filterGrade} onChange={e => setFilterGrade(e.target.value)} className="w-full bg-[#111] border border-white/5 rounded-xl px-3 py-2 text-[10px] font-bold text-zinc-400 outline-none focus:border-cyan-500/50">
+                <option value="All">All</option>
+                {uniqueGrades.map(g => <option key={g} value={g}>{g}</option>)}
+              </select>
+            </div>
+
+            {/* Clear All */}
+            {(filterGenre || filterEra || filterComposer || filterYear || filterInstrument || filterGrade !== 'All') && (
+              <button 
+                onClick={() => {
+                  setFilterGenre(''); setFilterEra(''); setFilterComposer(''); setFilterYear(''); setFilterInstrument(''); setFilterGrade('All');
+                }}
+                className="col-span-full mt-2 text-[8px] font-black text-rose-500 uppercase tracking-[0.2em] hover:text-rose-400 transition-colors flex items-center justify-center gap-1 py-2 border-t border-white/5"
+              >
+                <RotateCcw size={10} />
+                Reset All Filters
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ── SONG LIST — virtualized: only renders visibleCount items ── */}
       <div ref={listRef} className="flex-1 overflow-y-auto" onScroll={handleScroll}>

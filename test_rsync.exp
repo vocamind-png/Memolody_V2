@@ -1,0 +1,4 @@
+#!/usr/bin/expect -f
+set timeout 30
+spawn rsync -avz --dry-run -e "ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_ed25519" u2txyroyplqko8-6441192e@ssh.runpod.io:/workspace/README.md /Users/paisan/vocamind-projects/Memolody_V2/scratch/
+expect eof
