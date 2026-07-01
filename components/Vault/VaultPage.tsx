@@ -122,6 +122,13 @@ const VaultPage: React.FC<VaultPageProps> = ({
     setSearchQuery(searchInput);
   }, [searchInput]);
 
+  const uniqueGenres = useMemo(() => ['Classical', 'Baroque', 'Romantic', 'Modern', 'Contemporary', 'Jazz', 'Pop', 'Rock', 'Blues', 'R&B', 'Hip Hop', 'Electronic', 'Acoustic', 'Folk', 'Country', 'Latin', 'World', 'Soundtrack', 'Anime', 'K-Pop', 'J-Pop', 'Bossa Nova', 'Lo-Fi', 'Metal', 'Soul', 'Funk', 'Disco', 'Reggae'].sort(), []);
+  const uniqueEras = useMemo(() => ['Medieval', 'Renaissance', 'Baroque', 'Classical', 'Romantic', '20th Century', 'Modern', 'Contemporary', '1920s', '1930s', '1940s', '1950s', '1960s', '1970s', '1980s', '1990s', '2000s', '2010s', '2020s'].sort(), []);
+  const uniqueComposers = useMemo(() => ['J.S. Bach', 'W.A. Mozart', 'L.v. Beethoven', 'F. Chopin', 'C. Debussy', 'P.I. Tchaikovsky', 'A. Vivaldi', 'J. Brahms', 'F. Schubert', 'G.F. Handel', 'J. Haydn', 'F. Liszt', 'R. Schumann', 'S. Rachmaninoff', 'I. Stravinsky', 'C. Saint-Saëns', 'A. Dvořák', 'E. Grieg', 'G. Verdi', 'R. Wagner', 'G. Puccini', 'Joe Hisaishi', 'Hans Zimmer', 'John Williams', 'Ennio Morricone', 'Ryuichi Sakamoto', 'Yiruma'].sort(), []);
+  const uniqueYears = useMemo(() => ['2024', '2023', '2022', '2021', '2020', '2019', '2018', '2015', '2010', '2000', '1990', '1980', '1970', '1960', '1950', '1900', '1850', '1800', '1750', '1700', '1650', '1600'].sort((a, b) => Number(b) - Number(a)), []);
+  const uniqueInstruments = useMemo(() => ['Piano', 'Acoustic Guitar', 'Electric Guitar', 'Bass Guitar', 'Violin', 'Viola', 'Cello', 'Double Bass', 'Harp', 'Flute', 'Clarinet', 'Oboe', 'Bassoon', 'Saxophone', 'Trumpet', 'Trombone', 'French Horn', 'Tuba', 'Drums', 'Percussion', 'Timpani', 'Marimba', 'Synthesizer', 'Keyboard', 'Organ', 'Accordion', 'Ukulele', 'Vocals', 'Choir'].sort(), []);
+  const uniqueGrades = useMemo(() => ['Beginner', 'Intermediate', 'Advanced', 'Expert', 'Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6', 'Grade 7', 'Grade 8', 'Diploma'], []);
+
   const filteredLibrary = useMemo(() => {
     let list = activeCategory === 'total'
       ? userLibrary.filter(item => !item.metadata.isDeleted)
