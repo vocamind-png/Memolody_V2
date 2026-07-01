@@ -56,8 +56,9 @@ const StudioPage: React.FC<StudioPageProps> = ({
   const [historyIndex, setHistoryIndex] = useState(0);
   
   // Lifted state from ArrangerPage
-  const [arrangerVisualType, setArrangerVisualType] = useState<'score' | 'pianoroll'>('pianoroll');
+  const [arrangerVisualType, setArrangerVisualType] = useState<'score' | 'pianoroll'>('score');
 
+  const [activeTab, setActiveTab] = useState('arranger');
   const currentXml = xmlHistory[historyIndex];
 
   const [isPreparing, setIsPreparing] = useState(false);
@@ -294,7 +295,16 @@ const StudioPage: React.FC<StudioPageProps> = ({
           combined = combined.concat((t as any)._generatedNotes);
         }
       });
-      musicEngine.loadSong(combined, tracks, transpose, parsedData.timeSignature || { beats: 4 }, isMetronomeOn).catch(e => console.warn('Failed to load song into engine:', e));
+      musicEngine.loadSong(combined, tracks, transpose, parsedData.timeSignature || { beats: 4 }, isMetronomeOn, true)
+        .then(() => {
+          // Re-attach audio sources if they exist in state but not in engine
+          tracks.forEach(t => {
+            if (t.audioSrc && !musicEngine.hasVocalLayer(t.id)) {
+              musicEngine.addVocalLayer(t.id, t.audioSrc).catch(e => console.warn('Failed to restore vocal layer:', e));
+            }
+          });
+        })
+        .catch(e => console.warn('Failed to load song into engine:', e));
     }
   }, [parsedData, tracks, transpose, isMetronomeOn]);
 

@@ -220,3 +220,27 @@ export const GM_INSTRUMENTS: InstrumentGroup[] = [
     ]
   }
 ];
+
+export const mapPartNameToInstrument = (partName: string): string => {
+  if (!partName) return 'acoustic_grand_piano';
+  const name = partName.toLowerCase();
+  if (name.includes('violin')) return 'violin';
+  if (name.includes('viola')) return 'viola';
+  if (name.includes('cello') || name.includes('violoncello')) return 'cello';
+  if (name.includes('bass') || name.includes('contrabass')) return 'acoustic_bass';
+  if (name.includes('flute')) return 'flute';
+  if (name.includes('oboe')) return 'oboe';
+  if (name.includes('clarinet')) return 'clarinet';
+  if (name.includes('bassoon')) return 'bassoon';
+  if (name.includes('trumpet')) return 'trumpet';
+  if (name.includes('horn') || name.includes('french horn')) return 'french_horn';
+  if (name.includes('trombone')) return 'trombone';
+  if (name.includes('tuba')) return 'tuba';
+  if (name.includes('sax') || name.includes('saxophone')) return 'alto_sax';
+  if (name.includes('guitar')) return 'acoustic_guitar_nylon';
+  if (name.includes('harp')) return 'orchestral_harp';
+  if (name.includes('choir') || name.includes('voice') || name.includes('vocal') || name.includes('soprano') || name.includes('alto') || name.includes('tenor')) return 'choir_aahs';
+  if (name.includes('synth')) return 'synth_strings_1';
+  if (name.includes('drum') || name.includes('percussion')) return 'synth_drum';
+  return 'acoustic_grand_piano';
+};

@@ -97,6 +97,7 @@ export interface TrackState {
   isArmed?: boolean;
   mode?: 'instrument' | 'vocal';
   audioSrc?: string;
+  lyrics?: string; // lyrics string with chords if available
   instrument?: string;
   pluginId?: 'memolody-sampler' | 'svs-vocal' | null;
   pluginSettings?: any;

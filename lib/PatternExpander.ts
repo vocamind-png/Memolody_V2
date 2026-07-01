@@ -25,7 +25,11 @@ export class PatternExpander {
   private static parseChord(chordName: string, rootOctave: number = 4): number[] {
     // Very basic chord parser. Returns array of MIDI pitches.
     const notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-    const rootName = chordName.replace(/m|dim|aug|maj7|m7|7/g, '');
+    const flatToSharp: { [key: string]: string } = { 'Db': 'C#', 'Eb': 'D#', 'Gb': 'F#', 'Ab': 'G#', 'Bb': 'A#' };
+    let rootName = chordName.replace(/m|dim|aug|maj7|m7|7/g, '');
+    if (flatToSharp[rootName]) {
+      rootName = flatToSharp[rootName];
+    }
     let rootIdx = notes.indexOf(rootName);
     if (rootIdx === -1) rootIdx = 0; // fallback to C
     
@@ -80,9 +84,9 @@ export class PatternExpander {
 
         // Apply Pattern
         if (isDrum) {
-          this.applyDrumPattern(notes, config.pattern, measureStartTime, beatsPerMeasure);
+          this.applyDrumPattern(notes, config.pattern, measureStartTime, beatsPerMeasure, m.toString());
         } else {
-          this.applyMelodicPattern(notes, pitches, rootPitch, config.pattern, measureStartTime, beatsPerMeasure);
+          this.applyMelodicPattern(notes, pitches, rootPitch, config.pattern, measureStartTime, beatsPerMeasure, m.toString());
         }
       }
 
@@ -96,56 +100,56 @@ export class PatternExpander {
     return result;
   }
 
-  private static applyMelodicPattern(notes: ParsedNote[], chordPitches: number[], rootPitch: number, pattern: PatternType, measureStartTime: number, beatsPerMeasure: number) {
+  private static applyMelodicPattern(notes: ParsedNote[], chordPitches: number[], rootPitch: number, pattern: PatternType, measureStartTime: number, beatsPerMeasure: number, m: string) {
     // Add a slight gap between notes to prevent legato droning
     const NOTE_GAP = 0.9;
 
     if (pattern === 'block_chords') {
       // Whole note block chord
       chordPitches.forEach(p => {
-        notes.push(this.createNote(p, measureStartTime, beatsPerMeasure * NOTE_GAP));
+        notes.push(this.createNote(p, measureStartTime, beatsPerMeasure * NOTE_GAP, m.toString()));
       });
     } else if (pattern === 'arpeggio_8ths') {
       for (let b = 0; b < beatsPerMeasure * 2; b++) {
         const p = chordPitches[b % chordPitches.length];
-        notes.push(this.createNote(p, measureStartTime + b * 0.5, 0.5 * NOTE_GAP));
+        notes.push(this.createNote(p, measureStartTime + b * 0.5, 0.5 * NOTE_GAP, m.toString()));
       }
     } else if (pattern === 'arpeggio_16ths') {
       for (let b = 0; b < beatsPerMeasure * 4; b++) {
         const p = chordPitches[b % chordPitches.length];
-        notes.push(this.createNote(p, measureStartTime + b * 0.25, 0.25 * NOTE_GAP));
+        notes.push(this.createNote(p, measureStartTime + b * 0.25, 0.25 * NOTE_GAP, m.toString()));
       }
     } else if (pattern === 'comping_syncopated') {
       // Beat 1.5 and Beat 3
       chordPitches.forEach(p => {
-        notes.push(this.createNote(p, measureStartTime + 0.5, 1 * NOTE_GAP));
-        notes.push(this.createNote(p, measureStartTime + 2, 1.5 * NOTE_GAP));
+        notes.push(this.createNote(p, measureStartTime + 0.5, 1 * NOTE_GAP, m.toString()));
+        notes.push(this.createNote(p, measureStartTime + 2, 1.5 * NOTE_GAP, m.toString()));
       });
     } else if (pattern === 'walking_quarter') {
       // Root, Third, Fifth, Octave
       const walk = [chordPitches[0], chordPitches[1] || chordPitches[0]+3, chordPitches[2] || chordPitches[0]+7, chordPitches[0]+12];
       for (let b = 0; b < beatsPerMeasure; b++) {
-        notes.push(this.createNote(walk[b % walk.length], measureStartTime + b, 1 * NOTE_GAP));
+        notes.push(this.createNote(walk[b % walk.length], measureStartTime + b, 1 * NOTE_GAP, m.toString()));
       }
     } else if (pattern === 'root_8ths') {
       for (let b = 0; b < beatsPerMeasure * 2; b++) {
-        notes.push(this.createNote(rootPitch, measureStartTime + b * 0.5, 0.5 * NOTE_GAP));
+        notes.push(this.createNote(rootPitch, measureStartTime + b * 0.5, 0.5 * NOTE_GAP, m.toString()));
       }
     } else if (pattern === 'root_fifth_8ths') {
       for (let b = 0; b < beatsPerMeasure * 2; b++) {
         const p = (b % 2 === 0) ? rootPitch : (chordPitches[2] || rootPitch + 7) - 12;
-        notes.push(this.createNote(p, measureStartTime + b * 0.5, 0.5 * NOTE_GAP));
+        notes.push(this.createNote(p, measureStartTime + b * 0.5, 0.5 * NOTE_GAP, m.toString()));
       }
     } else {
       // Fallback: If AI passes an invalid pattern, do basic comping
-      notes.push(this.createNote(rootPitch, measureStartTime, 1 * NOTE_GAP));
-      notes.push(this.createNote(chordPitches[1] || rootPitch+4, measureStartTime + 1, 1 * NOTE_GAP));
-      notes.push(this.createNote(rootPitch, measureStartTime + 2, 1 * NOTE_GAP));
-      notes.push(this.createNote(chordPitches[2] || rootPitch+7, measureStartTime + 3, 1 * NOTE_GAP));
+      notes.push(this.createNote(rootPitch, measureStartTime, 1 * NOTE_GAP, m.toString()));
+      notes.push(this.createNote(chordPitches[1] || rootPitch+4, measureStartTime + 1, 1 * NOTE_GAP, m.toString()));
+      notes.push(this.createNote(rootPitch, measureStartTime + 2, 1 * NOTE_GAP, m.toString()));
+      notes.push(this.createNote(chordPitches[2] || rootPitch+7, measureStartTime + 3, 1 * NOTE_GAP, m.toString()));
     }
   }
 
-  private static applyDrumPattern(notes: ParsedNote[], pattern: PatternType, measureStartTime: number, beatsPerMeasure: number) {
+  private static applyDrumPattern(notes: ParsedNote[], pattern: PatternType, measureStartTime: number, beatsPerMeasure: number, m: string) {
     // Basic GM Drum Map: 36 Kick, 38 Snare, 42 Closed Hi-Hat
     const kick = 36;
     const snare = 38;
@@ -156,36 +160,36 @@ export class PatternExpander {
     if (pattern === 'rock_basic') {
       // 8th note hi-hats
       for (let b = 0; b < beatsPerMeasure * 2; b++) {
-        notes.push(this.createNote(hihat, measureStartTime + b * 0.5, 0.25 * NOTE_GAP));
+        notes.push(this.createNote(hihat, measureStartTime + b * 0.5, 0.25 * NOTE_GAP, m));
       }
       // Kick on 1 and 3
-      notes.push(this.createNote(kick, measureStartTime + 0, 0.5 * NOTE_GAP));
-      notes.push(this.createNote(kick, measureStartTime + 2, 0.5 * NOTE_GAP));
+      notes.push(this.createNote(kick, measureStartTime + 0, 0.5 * NOTE_GAP, m));
+      notes.push(this.createNote(kick, measureStartTime + 2, 0.5 * NOTE_GAP, m));
       // Snare on 2 and 4
-      notes.push(this.createNote(snare, measureStartTime + 1, 0.5 * NOTE_GAP));
-      notes.push(this.createNote(snare, measureStartTime + 3, 0.5 * NOTE_GAP));
+      notes.push(this.createNote(snare, measureStartTime + 1, 0.5 * NOTE_GAP, m));
+      notes.push(this.createNote(snare, measureStartTime + 3, 0.5 * NOTE_GAP, m));
     } else if (pattern === 'pop_groove') {
       // 16th hi-hats
       for (let b = 0; b < beatsPerMeasure * 4; b++) {
-        notes.push(this.createNote(hihat, measureStartTime + b * 0.25, 0.125 * NOTE_GAP));
+        notes.push(this.createNote(hihat, measureStartTime + b * 0.25, 0.125 * NOTE_GAP, m));
       }
       // Kick on 1, 2.5, 3
-      notes.push(this.createNote(kick, measureStartTime + 0, 0.5 * NOTE_GAP));
-      notes.push(this.createNote(kick, measureStartTime + 1.5, 0.5 * NOTE_GAP));
-      notes.push(this.createNote(kick, measureStartTime + 2, 0.5 * NOTE_GAP));
+      notes.push(this.createNote(kick, measureStartTime + 0, 0.5 * NOTE_GAP, m));
+      notes.push(this.createNote(kick, measureStartTime + 1.5, 0.5 * NOTE_GAP, m));
+      notes.push(this.createNote(kick, measureStartTime + 2, 0.5 * NOTE_GAP, m));
       // Snare on 2 and 4
-      notes.push(this.createNote(snare, measureStartTime + 1, 0.5 * NOTE_GAP));
-      notes.push(this.createNote(snare, measureStartTime + 3, 0.5 * NOTE_GAP));
+      notes.push(this.createNote(snare, measureStartTime + 1, 0.5 * NOTE_GAP, m));
+      notes.push(this.createNote(snare, measureStartTime + 3, 0.5 * NOTE_GAP, m));
     } else {
       // Fallback simple beat
-      notes.push(this.createNote(kick, measureStartTime + 0, 1 * NOTE_GAP));
-      notes.push(this.createNote(snare, measureStartTime + 1, 1 * NOTE_GAP));
-      notes.push(this.createNote(kick, measureStartTime + 2, 1 * NOTE_GAP));
-      notes.push(this.createNote(snare, measureStartTime + 3, 1 * NOTE_GAP));
+      notes.push(this.createNote(kick, measureStartTime + 0, 1 * NOTE_GAP, m));
+      notes.push(this.createNote(snare, measureStartTime + 1, 1 * NOTE_GAP, m));
+      notes.push(this.createNote(kick, measureStartTime + 2, 1 * NOTE_GAP, m));
+      notes.push(this.createNote(snare, measureStartTime + 3, 1 * NOTE_GAP, m));
     }
   }
 
-  private static createNote(pitch: number, startTime: number, duration: number): ParsedNote {
+  private static createNote(pitch: number, startTime: number, duration: number, measure: string): ParsedNote {
     // Basic conversion back to solfege format for the visualizer
     const octave = Math.floor(pitch / 12) - 1;
     const notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
@@ -200,6 +204,7 @@ export class PatternExpander {
       alter,
       duration,
       startTime,
+      measure,
       solfege: `${step}${alter === 1 ? '#' : ''}`
     };
   }

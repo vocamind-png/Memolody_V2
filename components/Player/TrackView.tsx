@@ -17,6 +17,7 @@ import VerticalFader from './VerticalFader';
 import LEDMeter from './LEDMeter';
 import LoopMatrixModal, { LoopPreset } from './LoopMatrixModal';
 import { SoundBankModule } from '../../plugins/soundbank';
+import { TrackVisualizer } from '../Arranger/TrackVisualizer';
 
 interface TrackViewProps {
   song: Song | null;
@@ -540,7 +541,17 @@ const TrackView: React.FC<TrackViewProps> = ({ song, musicXml, tracks, setTracks
                     <div key={bi} className={`h-full border-l ${bi % beatsPerMeasure === 0 ? 'border-indigo-400 opacity-50' : 'border-white/20 opacity-30'}`} style={{ width: pixelsPerSecond, flexShrink: 0 }} />
                   ))}
                 </div>
-                <MIDIClip notes={parsedData.notes.filter(n => n.trackId === track.id)} pixelsPerSecond={pixelsPerSecond} isMuted={track.isMuted} trackHeight={trackHeight} onDoubleClick={onTrackDoubleClick} />
+                <TrackVisualizer 
+                  track={track} 
+                  notes={parsedData.notes.filter(n => n.trackId === track.id)}
+                  width={Math.max(totalDurationBeats * pixelsPerSecond + 1000, 2000)}
+                  height={trackHeight}
+                  visualType="score"
+                  pixelsPerBeat={pixelsPerSecond}
+                  songKey={song?.key || 'C'}
+                  totalMeasures={totalDurationBeats / beatsPerMeasure}
+                  pixelsPerMeasure={beatsPerMeasure * pixelsPerSecond}
+                />
                 <div onMouseDown={handleVerticalZoomDrag} onTouchStart={handleVerticalZoomDrag} className="v-resize-handle" />
               </div>
             ))}

@@ -88,7 +88,8 @@ export class AIArrangerService {
     style: string,
     prompt: string,
     key: string,
-    beatsPerMeasure: number
+    beatsPerMeasure: number,
+    previousOptions?: any[]
   ): Promise<any | null> {
     try {
       const apiKey = import.meta.env.VITE_GEMINI_API_KEY || (typeof __GEMINI_API_KEY__ !== 'undefined' ? __GEMINI_API_KEY__ : '');
@@ -108,36 +109,52 @@ export class AIArrangerService {
         `M${Math.floor((n.startTime || 0) / beatsPerMeasure) + 1} B${((n.startTime || 0) % beatsPerMeasure) + 1}: ${n.pitch}`
       ).join(', ');
 
+      let historyContext = '';
+      if (previousOptions && previousOptions.length > 0) {
+        historyContext = `\nPREVIOUS GENERATED OPTIONS (For Context):
+The user may have asked to mix and match or modify these previous options.
+Here are the previous 4 options (P1 to P4):
+${previousOptions.map((opt, i) => `P${i+1}:\nChords: ${JSON.stringify(opt.chords)}\nTracks: ${JSON.stringify(opt.tracksConfig)}\n`).join('\n')}\n
+Please consider the user's instructions regarding these previous options if applicable.`;
+      }
+
       const systemPrompt = `You are a master music arranger, similar to Suno or ACE Studio.
 Your task is to arrange a multi-instrument backing track in the requested style.
-Key: ${key}
+CRITICAL INSTRUCTION FOR KEY: The original song is in the key of ${key}. 
+You MUST generate chords strictly belonging to or harmonically appropriate for the key of ${key}. Do not output chords for C Major if the key is not C Major!
 Time Signature: ${beatsPerMeasure}/4
 Style requested: ${style} ${prompt}
-
+${historyContext}
 Melody (Measure and Beat: Pitch):
 ${melodySummary}
 
-Based on the style and melody, generate a highly musical chord progression.
-ALSO, choose 3-4 instruments (e.g., piano, bass, drums, strings) and assign a specific rhythmic "pattern" to each.
+Based on the style and melody (and any specific user instructions in the prompt), generate exactly 4 DIFFERENT highly musical chord progressions (and matching track configs) for this melody. 
+Provide 4 distinct variations (e.g. Option 1: Standard pop, Option 2: Syncopated, Option 3: Jazz-infused, Option 4: Alternative/Rhythmic).
+ALSO, for each option, choose 3-4 instruments (e.g., piano, bass, drums, strings) and assign a specific rhythmic "pattern" to each.
 Valid patterns for melodic instruments (Piano, Strings, Guitar): 'block_chords', 'arpeggio_8ths', 'arpeggio_16ths', 'comping_syncopated'.
 Valid patterns for Bass: 'walking_quarter', 'root_8ths', 'root_fifth_8ths'. (CRITICAL: DO NOT use 'block_chords' for Bass!).
 Valid patterns for Drums: 'rock_basic', 'pop_groove', 'jazz_swing'.
 
 Return ONLY a valid JSON object matching this TypeScript interface exactly:
 {
-  "chords": [
-    { "name": "Cmaj7", "measure": 1, "beat": 1 },
-    { "name": "Dm7", "measure": 2, "beat": 1 },
-    { "name": "G7", "measure": 3, "beat": 1 }
-  ],
-  "tracksConfig": [
-    { "instrument": "piano", "pattern": "comping_syncopated", "octaveOffset": 0, "velocity": 85 },
-    { "instrument": "bass", "pattern": "walking_quarter", "octaveOffset": -2, "velocity": 90 },
-    { "instrument": "drums", "pattern": "pop_groove", "octaveOffset": 0, "velocity": 100 }
+  "options": [
+    {
+      "chords": [
+        { "name": "Cmaj7", "measure": 1, "beat": 1 },
+        { "name": "Dm7", "measure": 2, "beat": 1 },
+        { "name": "G7", "measure": 3, "beat": 1 }
+      ],
+      "tracksConfig": [
+        { "instrument": "piano", "pattern": "comping_syncopated", "octaveOffset": 0, "velocity": 85 },
+        { "instrument": "bass", "pattern": "walking_quarter", "octaveOffset": -2, "velocity": 90 },
+        { "instrument": "drums", "pattern": "pop_groove", "octaveOffset": 0, "velocity": 100 }
+      ]
+    }
+    // IMPORTANT: Generate EXACTLY 4 distinct option objects in this array.
   ]
 }`;
 
-      const modelsToTry = ['gemini-3.1-pro-preview', 'gemini-3.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash'];
+      const modelsToTry = ['gemini-3.5-flash', 'gemini-3.1-pro-preview', 'gemini-2.5-pro', 'gemini-2.5-flash'];
       let responseText = '{}';
       
       for (const modelName of modelsToTry) {
@@ -153,10 +170,19 @@ Return ONLY a valid JSON object matching this TypeScript interface exactly:
           console.warn(`[AIArrangerService] Model ${modelName} failed, trying next...`);
         }
       }
+      // Clean up potential markdown formatting from Gemini
+      let cleanText = responseText.replace(/```json\s*/gi, '').replace(/```\s*$/gi, '').trim();
+      if (!cleanText.startsWith('{') && !cleanText.startsWith('[')) {
+        const match = cleanText.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
+        if (match) cleanText = match[0];
+      }
 
-      const parsed = JSON.parse(responseText);
-      if (parsed.chords && parsed.tracksConfig) {
-        return parsed; // Returns raw config to be expanded by caller
+      const parsed = JSON.parse(cleanText);
+      if (parsed.options && Array.isArray(parsed.options) && parsed.options.length > 0) {
+        return parsed.options; // Returns an array of options
+      } else if (parsed.chords && parsed.tracksConfig) {
+        // Fallback if the AI returned a single option
+        return [parsed];
       }
       return null;
     } catch (e) {

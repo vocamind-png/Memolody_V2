@@ -162,7 +162,7 @@ const getDirectServerUrl = (path: string) => {
   return cleanPath;
 };
 
-const svsFetch = (url: string, options?: RequestInit) => {
+export const svsFetch = (url: string, options?: RequestInit) => {
   const headers = new Headers(options?.headers || {});
   headers.set('serveo-skip-browser-warning', 'true');
   headers.set('bypass-tunnel-reminder', 'true');
@@ -172,6 +172,9 @@ const svsFetch = (url: string, options?: RequestInit) => {
 /**
  * Submit a render to /studio/preview-async → get job_id → poll /studio/job/{id}
  * until status === 'done' or 'error'. This bypasses ALL proxy timeouts.
+ * 
+ * FALLBACK: If /studio/preview-async returns 404 (endpoint not available on
+ * local servers), falls back to synchronous /studio/preview.
  */
 const serverFetchWithAsyncPolling = async (
   payload: object,
@@ -179,19 +182,53 @@ const serverFetchWithAsyncPolling = async (
   onProgress?: (msg: string) => void
 ): Promise<any> => {
   const asyncUrl = getDirectServerUrl('/studio/preview-async');
+  const syncUrl = getDirectServerUrl('/studio/preview');
   const pollBase = getDirectServerUrl('/studio/job/');
 
-  // 1. Submit job
-  const submitRes = await fetch(asyncUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-    signal
-  });
+  // 1. Try async endpoint first
+  let submitRes: Response;
+  try {
+    submitRes = await svsFetch(asyncUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal
+    });
+  } catch (networkErr) {
+    // Network error — fall through to sync fallback
+    console.warn('[AsyncJob] Async endpoint network error, falling back to sync:', networkErr);
+    submitRes = { ok: false, status: 0 } as Response;
+  }
+
+  // If async endpoint doesn't exist (404/405) or server error, fallback to sync
   if (!submitRes.ok) {
+    const statusCode = submitRes.status;
+    if (statusCode === 404 || statusCode === 405 || statusCode === 0) {
+      console.log(`[AsyncJob] Async endpoint returned ${statusCode}, falling back to synchronous /studio/preview`);
+      onProgress?.('Rendering on server (sync mode)...');
+
+      const syncRes = await svsFetch(syncUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal
+      });
+
+      if (!syncRes.ok) {
+        const txt = await syncRes.text().catch(() => String(syncRes.status));
+        throw new Error(`[SyncFallback] Server returned ${syncRes.status}: ${txt}`);
+      }
+
+      const data = await syncRes.json();
+      console.log('[AsyncJob] Sync fallback succeeded:', Object.keys(data));
+      return data;
+    }
+
+    // Other error — throw
     const txt = await submitRes.text().catch(() => String(submitRes.status));
     throw new Error(`[AsyncJob] Submit failed ${submitRes.status}: ${txt}`);
   }
+
   const { job_id } = await submitRes.json();
   if (!job_id) throw new Error('[AsyncJob] No job_id returned from server');
 
@@ -204,13 +241,14 @@ const serverFetchWithAsyncPolling = async (
     await new Promise(r => setTimeout(r, 3000));
     if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
 
-    const pollRes = await fetch(`${pollBase}${job_id}`, { signal });
+    const pollRes = await svsFetch(`${pollBase}${job_id}`, { signal });
     if (!pollRes.ok) continue;
     const data = await pollRes.json();
 
     if (data.status === 'done') return data;
     if (data.status === 'error') throw new Error(`[AsyncJob] Server error: ${data.error}`);
     // status is 'pending' or 'running' — keep polling
+
     onProgress?.(`GPU rendering... (${Math.round((Date.now() - startedAt) / 1000)}s)`);
   }
   throw new Error('[AsyncJob] Timeout waiting for render job');
@@ -477,7 +515,7 @@ class VocalidoRenderService {
     try {
       const stepMap: Record<string, number> = { 'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11 };
       
-      const vocalTrackIds = tracks.filter(t => t.mode === 'vocal').map(t => t.id);
+      const vocalTrackIds = tracks.map(t => t.id);
       
       // ─── DEBUG: Show all tracks with modes and note counts ───
       const allNoteTrackIds = [...new Set(parsedData.notes.map(n => n.trackId))];
@@ -491,7 +529,10 @@ class VocalidoRenderService {
       });
       // ─── END DEBUG ───
       
-      let sourceNotes = parsedData.notes.filter(n => vocalTrackIds.includes(n.trackId));
+      let sourceNotes = parsedData.notes.filter(n => {
+        const tid = n.trackId || (tracks[0]?.id);
+        return vocalTrackIds.includes(tid);
+      });
       console.log(`[VocalidoRenderService] 📊 sourceNotes after filter: ${sourceNotes.length} / ${parsedData.notes.length} total`);
       const sortedSource = [...sourceNotes].sort((a, b) => a.startTime - b.startTime);
       sourceNotes = sortedSource;
@@ -533,7 +574,7 @@ class VocalidoRenderService {
           duration: isNaN(n.duration) ? 0.5 : n.duration,
           startTime: isNaN(n.startTime) ? 0 : n.startTime,
           lyric,
-          trackId: n.trackId,
+          trackId: n.trackId || (tracks[0]?.id || 'P1'),
           staff: n.staff ?? 1,
           voice: n.voice ?? 1
         };
@@ -1100,7 +1141,7 @@ class VocalidoRenderService {
                 audioBlob = new Blob([array], { type: data.mime_type || 'audio/mpeg' });
               } else if (data.audio_url || data.saved_url) {
                 const audioUrl = fixAudioUrl(data.saved_url || data.audio_url);
-                const audioResp = await fetch(audioUrl, { signal: controller.signal });
+                const audioResp = await svsFetch(audioUrl, { signal: controller.signal });
                 if (audioResp.ok) {
                   audioBlob = await audioResp.blob();
                 } else {

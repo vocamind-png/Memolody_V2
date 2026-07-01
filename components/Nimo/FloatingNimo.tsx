@@ -746,6 +746,41 @@ export const FloatingNimoContent: React.FC<Props> = ({
         setAttachedScreenshot(null);
 
         setMsgs(prev => [...prev, { role: 'user', text }]);
+
+        // NATIVE YOUTUBE TRANSCRIPTION INTERCEPTOR
+        if ((text.includes('youtube.com/') || text.includes('youtu.be/')) && 
+            (text.includes('แกะ') || text.includes('เนื้อเพลง') || text.includes('transcribe') || text.includes('lyrics'))) {
+            const urlMatch = text.match(/(https?:\/\/[^\s]+)/);
+            if (urlMatch) {
+                const url = urlMatch[0];
+                setMsgs(prev => [...prev, { role: 'nimo', text: preferredLanguage === 'th' ? 'กำลังดาวน์โหลดและแกะเนื้อเพลงจาก YouTube ให้ค่ะ รอสักครู่นะคะ...' : 'Transcribing YouTube video, please wait...' }]);
+                
+                try {
+                    const res = await fetch('/vocalido/api/ai/transcribe-audio', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ youtube_url: url })
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        const successMsg = preferredLanguage === 'th' ? `✨ ได้เนื้อเพลงมาแล้วค่ะ คุณสามารถก๊อปปี้ไปวางในหน้า Composer ได้เลยนะคะ:\n\n${data.data.lyrics}` : `✨ Here are the lyrics. You can copy and paste them into the Composer:\n\n${data.data.lyrics}`;
+                        setMsgs(prev => [...prev, { role: 'nimo', text: successMsg }]);
+                        window.NimoBrain?.updateState('transcribed_lyrics', data.data.lyrics);
+                    } else {
+                        throw new Error(data.message);
+                    }
+                } catch (err: any) {
+                    const errMsg = preferredLanguage === 'th' ? `❌ ไม่สามารถแกะเนื้อเพลงได้: ${err.message}` : `❌ Transcription failed: ${err.message}`;
+                    setMsgs(prev => [...prev, { role: 'nimo', text: errMsg }]);
+                } finally {
+                    setBusy(false);
+                    if (handsFree) {
+                        setTimeout(() => startListening(), 500);
+                    }
+                }
+                return;
+            }
+        }
         
         if (liveClientRef.current) {
             // Forward to Live API if active
@@ -887,7 +922,7 @@ You must output valid JSON matching this exact schema:
 If no actions are needed, return "actions": []`;
 
             const contentsList: any[] = [];
-            const recentMsgs = msgs.slice(-6);
+            const recentMsgs = msgs.slice(-24);
             recentMsgs.forEach(m => {
                 contentsList.push({
                     role: m.role === 'user' ? 'user' : 'model',
@@ -1454,19 +1489,52 @@ If no actions are needed, return "actions": []`;
                     <input
                         ref={musicImportRef}
                         type="file"
-                        // Accept image, pdf, and common music file extensions
-                        accept="image/*,application/pdf,.pdf,.emk,.mid,.midi,.xml,.musicxml,.mxl"
+                        // Accept image, pdf, audio, and common music file extensions
+                        accept="image/*,application/pdf,.pdf,.emk,.mid,.midi,.xml,.musicxml,.mxl,audio/*"
                         className="hidden"
                         onChange={(e) => {
                             const file = e.target.files?.[0];
                             if (!file) return;
                             const isImageOrPdf = file.type.startsWith('image/') || file.type === 'application/pdf';
+                            const isAudio = file.type.startsWith('audio/');
+                            
                             if (isImageOrPdf) {
                                 // Treat like OMR – preview image and set scan message
                                 const reader = new FileReader();
                                 reader.onloadend = () => {
                                     setAttachedScreenshot(reader.result as string);
                                     setInput(preferredLanguage === 'th' ? '📷 สแกนโน้ตเพลงจากภาพ' : '📷 Scan sheet music from photo');
+                                };
+                                reader.readAsDataURL(file);
+                            } else if (isAudio) {
+                                // Audio transcription via Nimo
+                                setMsgs(prev => [...prev, { role: 'user', text: preferredLanguage === 'th' ? `🎵 แกะเนื้อเพลง: ${file.name}` : `🎵 Transcribe: ${file.name}` }]);
+                                setBusy(true);
+                                const reader = new FileReader();
+                                reader.onloadend = async () => {
+                                    try {
+                                        const base64 = (reader.result as string).split(',')[1];
+                                        const res = await fetch('/vocalido/api/ai/transcribe-audio', {
+                                            method: 'POST',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({ audio_base64: base64 })
+                                        });
+                                        const data = await res.json();
+                                        if (data.success) {
+                                            const successMsg = preferredLanguage === 'th' ? `✨ ได้เนื้อเพลงมาแล้วค่ะ คุณสามารถก๊อปปี้ไปวางในหน้า Composer ได้เลยนะคะ:\n\n${data.data.lyrics}` : `✨ Here are the lyrics. You can copy and paste them into the Composer:\n\n${data.data.lyrics}`;
+                                            setMsgs(prev => [...prev, { role: 'nimo', text: successMsg }]);
+                                            // Also update state in case other components want it
+                                            window.NimoBrain?.updateState('transcribed_lyrics', data.data.lyrics);
+                                        } else {
+                                            throw new Error(data.message);
+                                        }
+                                    } catch (err: any) {
+                                        const errorString = err?.message || String(err) || 'Unknown error';
+                                        const errMsg = preferredLanguage === 'th' ? `❌ ไม่สามารถแกะเนื้อเพลงได้: ${errorString}` : `❌ Transcription failed: ${errorString}`;
+                                        setMsgs(prev => [...prev, { role: 'nimo', text: errMsg }]);
+                                    } finally {
+                                        setBusy(false);
+                                    }
                                 };
                                 reader.readAsDataURL(file);
                             } else {

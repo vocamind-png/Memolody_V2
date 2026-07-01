@@ -1172,8 +1172,8 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
 
             // Construct chat history list for Gemini context
             const contentsList: any[] = [];
-            // Keep up to 6 recent messages from history
-            const recentMsgs = messages.slice(-6);
+            // Keep up to 24 recent messages from history (12 turns) to prevent Nimo from losing its identity/context
+            const recentMsgs = messages.slice(-24);
             recentMsgs.forEach(m => {
                 contentsList.push({
                     role: m.role === 'user' ? 'user' : 'model',
@@ -1189,7 +1189,7 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
             // Ensure system instructions contain actions 20-27
             const sys = preferredLanguage === 'th'
                 ? `คุณคือ Nimo เพื่อนและผู้ช่วยอัจฉริยะของแอพพลิเคชัน Memolody V2
-คุณต้องแทนตัวเองว่า "${pronoun}" เสมอ และใช้คำลงท้ายที่เหมาะสมกับเพศสภาพของคุณคือ "${suffix}" เสมอ ห้ามสับสนสลับกันเด็ดขาด (เช่น ห้ามใช้คำแทนตัวว่า "ผม" คู่กับหางเสียง "ค่ะ" โดยเด็ดขาด หรือกลับกัน)
+คุณต้องแทนตัวเองว่า "${pronoun}" เสมอ และใช้คำลงท้ายที่เหมาะสมกับเพศสภาพของคุณคือ "${suffix}" เสมอ ห้ามสับสนสลับกันเด็ดขาด (เช่น ห้ามใช้คำแทนตัวว่า "ผม" หรือ "ครับ" หากเพศสภาพเป็นหญิง หรือกลับกัน)
 
 คุยสนุก เป็นธรรมชาติเหมือนมนุษย์คุยกันจริงๆ ห้ามแข็งทื่อแบบหุ่นยนต์ และห้ามตอบแบบระบุหมายเลขข้อ (เช่น 1. 2. 3. หรือ - หัวข้อ) ถ้าไม่จำเป็น ให้คุยตอบรับกันสั้นๆ เป็นพารากราฟธรรมดา
 
@@ -1197,11 +1197,7 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
 - หากผู้ใช้ขอให้ช่วยแต่งเพลง ให้ทำการขึ้นบรรทัดใหม่ตามปกติในเนื้อเพลงแต่ละวรรค และแบ่งท่อนให้เห็นชัดเจน เช่น [ท่อนเวิร์ส 1], [ท่อนฮุค], [ท่อนเวิร์ส 2] เพื่อความสวยงามและอ่านง่าย ห้ามนำเนื้อเพลงมารวมเป็นบรรทัดเดียวหรือยัดรวมเป็นพารากราฟเดียวเด็ดขาด
 
 สำคัญมากเกี่ยวกับการเปล่งเสียงพูด (TTS):
-ในฟิลด์ 'reply' ห้ามใส่สัญลักษณ์ใดๆ ที่ระบบอ่านเสียงสังเคราะห์จะอ่านออกมาแล้วสะดุดหรือไม่เป็นธรรมชาติ เช่น:
-- ห้ามใช้ Emojis ทุกชนิด (เช่น 🎙️, ⏸️, 🔁, 🎵)
-- ห้ามใส่วงเล็บคำอธิบายหรือคำชี้แจงด้านเทคนิค เช่น (vocal), (Mute), (params: ...)
-- ห้ามใส่เครื่องหมายพิเศษ เช่น เครื่องหมายคำพูดเดี่ยว หรือเครื่องหมายคำพูดคู่ซ้อน หรือสัญลักษณ์มาร์กดาวน์ เช่น ** (ตัวหนา) หรือ * (ตัวเอียง)
-ให้ใช้เฉพาะข้อความอักษรภาษาไทยหรืออังกฤษปกติเท่านั้น เพื่อให้เสียงพูดออกมาเป็นธรรมชาติที่สุด
+In the 'reply' field, NEVER include emojis (e.g. 🎙️, ⏸️), markdown formatting (like **bold** or *italic*), or content inside parentheses (like (vocal), (Mute)) which makes the synthesized voice sound awkward. Use only plain text.
 
 เมื่อผู้ใช้สั่งงานหรือขอให้ทำอะไร:
 คุณต้องสร้างคำสั่งลงในฟิลด์ 'actions' เสมอให้ตรงกับความต้องการของผู้ใช้ (เช่น หากผู้ใช้พูดว่า "เล่นเพลง" หรือ "ปิดเสียงแทร็กแรก" คุณต้องส่ง action ที่เหมาะสมไปทันที ห้ามลืมเด็ดขาด)
@@ -1236,7 +1232,7 @@ ${typeof window !== 'undefined' && window.NimoBrain ? window.NimoBrain.generateA
 Speak naturally, keep your responses conversational, and do not use bullet points or numbered lists. 
 
 CRITICAL FOR SPEECH SYNTHESIS (TTS):
-In the 'reply' field, NEVER include emojis (e.g. 🎙️, ⏸️), markdown formatting (like **bold** or *italic*), or content inside parentheses (like (vocal), (Mute)) which makes the synthesized voice sound awkward. Use only plain text.
+In the 'reply' field, NEVER include emojis, markdown formatting, or content inside parentheses. Use only plain text.
 
 If the user gives a command, you MUST include the corresponding action in the 'actions' array.
 
@@ -1249,10 +1245,10 @@ ${typeof window !== 'undefined' && window.NimoBrain ? window.NimoBrain.generateA
 
 IMPORTANT: When user asks to compose/create a new song, you MUST use musicgen actions in this order (NEVER use arrange_song for new songs):
 1. navigate_to_page with view='forge'
-2. studio_set_tab with tab='composer' (MUST be 'composer', NOT 'arranger')
-3. musicgen_set_mood / musicgen_set_tempo / musicgen_set_prompt (configure as requested)
-4. musicgen_generate (trigger generation)
-DO NOT use 'arrange_song' for composing new songs — it opens the wrong tab.
+2. studio_set_tab with tab='composer'
+3. musicgen_set_mood / musicgen_set_tempo / musicgen_set_prompt
+4. musicgen_generate
+DO NOT use 'arrange_song' for composing new songs.
 
 You must output valid JSON matching the schema. If no actions are needed, return an empty array.`;
 
@@ -1305,7 +1301,28 @@ You must output valid JSON matching the schema. If no actions are needed, return
                 let cleanJsonStr = reply.replace(/```json/gi, '').replace(/```/g, '').trim();
                 parsedRes = JSON.parse(cleanJsonStr);
             } catch(e) {
-                parsedRes = { reply: reply, actions: [] };
+                console.error("[Nimo] Failed to parse JSON:", reply);
+                // Attempt to salvage text inside "reply": "..."
+                const replyMatch = reply.match(/"reply"\s*:\s*"([\s\S]*?)"\s*(?:,|\s*\})/);
+                if (replyMatch) {
+                    let salvaged = replyMatch[1];
+                    salvaged = salvaged
+                        .replace(/\\n/g, '\n')
+                        .replace(/\\"/g, '"')
+                        .replace(/\\\\/g, '\\')
+                        .replace(/\\t/g, '\t');
+                    parsedRes = { reply: salvaged, actions: [] };
+                } else {
+                    let fallback = reply.replace(/^\{\s*"reply"\s*:\s*"/, '').replace(/"\s*,\s*"actions"\s*:[\s\S]*\}\s*$/, '').trim();
+                    if (fallback.endsWith('"')) {
+                        fallback = fallback.slice(0, -1);
+                    }
+                    fallback = fallback
+                        .replace(/\\n/g, '\n')
+                        .replace(/\\"/g, '"')
+                        .replace(/\\\\/g, '\\');
+                    parsedRes = { reply: fallback, actions: [] };
+                }
             }
 
             let cleanReply = parsedRes.reply || reply;

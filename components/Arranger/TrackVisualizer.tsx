@@ -10,6 +10,8 @@ interface TrackVisualizerProps {
   visualType?: 'score' | 'pianoroll';
   pixelsPerBeat?: number;
   songKey?: string;
+  totalMeasures?: number;
+  pixelsPerMeasure?: number;
 }
 
 const getFifthsForKey = (keyStr: string): number => {
@@ -52,7 +54,8 @@ const generateSimpleMusicXml = (notes: ParsedNote[], trackName: string, instrume
   const measures: Record<string, ParsedNote[]> = {};
   if (notes && notes.length > 0) {
     notes.forEach(note => {
-      const m = note.measure || '1';
+      // If note.measure is missing, calculate it assuming 4/4 time (4 beats per measure)
+      const m = note.measure || Math.floor((note.startTime || 0) / 4) + 1;
       if (!measures[m]) measures[m] = [];
       measures[m].push(note);
     });
@@ -86,12 +89,12 @@ const generateSimpleMusicXml = (notes: ParsedNote[], trackName: string, instrume
       </note>`;
     } else {
       let currentBeat = 0; // Relative to the start of the measure in beats
-      mNotes.sort((a, b) => a.startTime - b.startTime).forEach(note => {
-        // Measure start time is (parseInt(m) - 1) * 4
-        const measureStartTime = (parseInt(m) - 1) * 4;
-        let noteStartBeat = note.startTime - measureStartTime;
+      
+      // Sort notes by start time, but if they start at the same time, it's a chord (we will just serialize them sequentially for now, which is a bit hacky for MusicXML but valid)
+      mNotes.sort((a, b) => (a.startTime || 0) - (b.startTime || 0)).forEach(note => {
+        let noteStartBeat = ((note.startTime || 0) % 4);
         
-        // Prevent overlaps (simple handling)
+        // Prevent overlaps by pushing the note later in the measure if needed
         if (noteStartBeat < currentBeat) {
           noteStartBeat = currentBeat;
         }
@@ -160,10 +163,11 @@ const generateSimpleMusicXml = (notes: ParsedNote[], trackName: string, instrume
   return xml;
 };
 
-export const TrackVisualizer: React.FC<TrackVisualizerProps> = ({ track, notes, width = 800, height = 150, visualType = 'score', pixelsPerBeat = 20, songKey = 'C' }) => {
+export const TrackVisualizer: React.FC<TrackVisualizerProps> = ({ track, notes, width = 800, height = 150, visualType = 'score', pixelsPerBeat = 20, songKey = 'C', totalMeasures = 32, pixelsPerMeasure = 80 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [svgs, setSvgs] = useState<string[]>([]);
 
   useEffect(() => {
     if (visualType === 'pianoroll') {
@@ -201,44 +205,41 @@ export const TrackVisualizer: React.FC<TrackVisualizerProps> = ({ track, notes, 
         // Wait for WASM if needed
         await verovio.moduleLoaded;
 
-        if (!instance) {
-          instance = new verovio.toolkit();
-          instance.setOptions({
-            pageWidth: Math.max(800, width * 2), // High res
-            pageHeight: height * 2,
-            scale: 40,
-            adjustPageHeight: 1,
-            header: 'none',
-            footer: 'none',
-            noJustification: 0,
-            font: 'Bravura',
-            spacingLinear: 1,
-            spacingNonLinear: 0,
-          });
+        // Reuse the global instance to prevent WASM OOM crashes
+        let globalInstance = (window as any).__globalVrvToolkit;
+        if (!globalInstance) {
+          globalInstance = new verovio.toolkit();
+          (window as any).__globalVrvToolkit = globalInstance;
         }
 
+        // Synchronously set options, load data, and render so it's safe for multiple tracks
+        globalInstance.setOptions({
+          pageWidth: width * 2, // High res, matched to timeline width
+          pageHeight: height * 2,
+          scale: 40,
+          adjustPageHeight: 0,
+          header: 'none',
+          footer: 'none',
+          noJustification: 0,
+          font: 'Bravura',
+          spacingLinear: 1, // Force proportional spacing!
+          spacingNonLinear: 0,
+          pageMarginTop: 10,
+          pageMarginBottom: 0,
+          pageMarginLeft: 0,
+          pageMarginRight: 0,
+        });
+
         const xml = generateSimpleMusicXml(notes || [], track.name, track.instrument || 'piano', songKey);
-        instance.loadData(xml);
-        const svg = instance.renderToSVG(1);
+        globalInstance.loadData(xml);
+        let svg = globalInstance.renderToSVG(1);
+        console.log('VEROVIO SVG LENGTH:', svg.length);
+        console.log('VEROVIO SVG HEAD:', svg.substring(0, 150));
         
-        if (isMounted && containerRef.current) {
-          containerRef.current.innerHTML = svg;
-          
-          // Fix SVG dimensions for responsive container
-          const svgEl = containerRef.current.querySelector('svg');
-          if (svgEl) {
-            svgEl.style.width = '100%';
-            svgEl.style.height = '100%';
-            
-            // Force Verovio notes to be white so they are visible on dark background
-            svgEl.setAttribute('fill', 'white');
-            svgEl.style.color = 'white';
-            const paths = svgEl.querySelectorAll('path, use, rect');
-            paths.forEach((p: any) => {
-              p.setAttribute('fill', 'white');
-              p.setAttribute('stroke', 'white');
-            });
-          }
+        svg = svg.replace('<svg ', '<svg class="verovio-track-svg" style="width:100%;height:100%;" ');
+        
+        if (isMounted) {
+          setSvgs([svg]);
         }
       } catch (err: any) {
         if (isMounted) setError(err.message || 'Error rendering track');
@@ -251,9 +252,7 @@ export const TrackVisualizer: React.FC<TrackVisualizerProps> = ({ track, notes, 
 
     return () => {
       isMounted = false;
-      if (instance) {
-        try { instance.destroy(); } catch (e) {}
-      }
+      // DO NOT destroy the global instance!
     };
   }, [track, notes, width, height, visualType]);
 
@@ -298,15 +297,19 @@ export const TrackVisualizer: React.FC<TrackVisualizerProps> = ({ track, notes, 
           <Loader2 className="w-5 h-5 text-cyan-500 animate-spin" />
         </div>
       )}
-      {error && (
-        <div className="absolute inset-0 flex items-center justify-center bg-rose-500/10 z-10">
-          <span className="text-xs text-rose-400">{error}</span>
+      {!loading && !error && visualType === 'score' && svgs.length > 0 && (
+        <div className="absolute inset-0 w-full h-full">
+          <div 
+            className="w-full h-full"
+            dangerouslySetInnerHTML={{ __html: svgs[0] }} 
+          />
         </div>
       )}
-      <div 
-        ref={containerRef} 
-        className="w-full h-full absolute inset-0 verovio-neural-svg overflow-hidden"
-      />
+      {error && (
+        <div className="absolute inset-0 flex items-center justify-center text-rose-500 text-xs px-4 text-center z-10">
+          {error}
+        </div>
+      )}
     </div>
   );
 };

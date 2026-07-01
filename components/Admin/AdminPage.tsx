@@ -14,7 +14,7 @@ import ServerAnalytics from './ServerAnalytics';
 import AdminAnalytics from './AdminAnalytics';
 import NimoActionsAdmin from './NimoActionsAdmin';
 import FeedbackMatrix from './FeedbackMatrix';
-import { GameAssetsManager } from './GameAssetsManager';
+// GameAssetsManager moved to Devel/ folder
 import { useAuth, hasAccess } from '../../lib/useAuth';
 import { supabase } from '../../lib/supabase';
 
@@ -24,7 +24,7 @@ interface AdminPageProps {
   onRefresh?: () => void;
 }
 
-type AdminTab = 'vault' | 'finance' | 'users' | 'servers' | 'promotions' | 'redemptions' | 'analytics' | 'headquarters' | 'nimo_actions' | 'feedback' | 'game_assets';
+type AdminTab = 'vault' | 'finance' | 'users' | 'servers' | 'promotions' | 'redemptions' | 'analytics' | 'headquarters' | 'nimo_actions' | 'feedback';
 
 interface PromoCode {
   id: string;
@@ -239,7 +239,6 @@ const AdminPage: React.FC<AdminPageProps> = ({ onMusicXmlUpload, onRestoreMaster
     { id: 'redemptions', label: 'Rewards redemptions', icon: Gift, color: 'text-purple-500' },
     { id: 'analytics', label: 'Analytics', icon: BarChart3, color: 'text-cyan-400' },
     { id: 'servers', label: 'Servers', icon: Server, color: 'text-zinc-500' },
-    { id: 'game_assets', label: 'Game Assets', icon: FileImage, color: 'text-lime-500' },
     { id: 'feedback', label: 'Feedback Matrix', icon: MessageSquare, color: 'text-orange-500' },
     { id: 'nimo_actions', label: 'Nimo Actions', icon: Sparkles, color: 'text-fuchsia-500' },
     ...(hasAccess(role, 'executive') ? [{ id: 'headquarters', label: 'HQ Analytics', icon: BrainCircuit, color: 'text-rose-500' }] : [])
@@ -300,7 +299,7 @@ const AdminPage: React.FC<AdminPageProps> = ({ onMusicXmlUpload, onRestoreMaster
             activeTab === 'servers' ? 'Infrastructure Matrix: Real-time service daemon monitoring, resource telemetry, and remote restart controls.' :
             activeTab === 'feedback' ? 'Feedback Matrix: Auto-categorized issues, feature requests, and complaints detected by Nimo AI.' :
             activeTab === 'nimo_actions' ? 'Dynamic Actions Registry: Manage Nimo AI autonomous actions and scripts. Owner access only.' :
-            activeTab === 'game_assets' ? 'Game Assets Manager: Upload and configure themes, backgrounds, and BGM for interactive modes.' :
+            activeTab === 'feedback' ? 'Feedback Matrix: User feedback and ratings.' :
             'Headquarters Matrix: Executive-level growth and retention metrics.'}
         </p>
       </header>
@@ -588,11 +587,7 @@ const AdminPage: React.FC<AdminPageProps> = ({ onMusicXmlUpload, onRestoreMaster
         </div>
       )}
 
-      {activeTab === 'game_assets' && hasAccess(role, 'admin') && (
-        <div className="flex-1 min-h-0 bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl overflow-y-auto shadow-2xl p-6 relative z-10 mx-6">
-          <GameAssetsManager />
-        </div>
-      )}
+
     </div>
   );
 };

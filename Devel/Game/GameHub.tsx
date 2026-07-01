@@ -5,6 +5,7 @@ import {
   Play, Sparkles, Heart, Star
 } from 'lucide-react';
 import ForestConcert from './ForestConcert';
+import { GameEngine as ItalianGame } from '../game-italian/GameEngine';
 
 interface GameTheme {
   id: string;
@@ -46,12 +47,12 @@ const THEMES: GameTheme[] = [
   },
   { 
     id: 'italian', 
-    title: 'Italian Ballot', 
-    subtitle: '3D Mean Style', 
+    title: 'Italian Brainrot', 
+    subtitle: 'Music Game', 
     icon: UtensilsCrossed, 
     color: 'text-rose-500',
     gradient: 'from-rose-600/60 via-white/10 to-emerald-600/60',
-    image: 'https://images.unsplash.com/photo-1534308983496-4fabb1a015ee?w=600&auto=format&fit=crop' // Bold Italian vibe
+    image: '/images/brainrot/movie_poster.png'
   }
 ];
 
@@ -86,7 +87,13 @@ const GameHub: React.FC = () => {
             const merged = [...prev];
             dbThemes.forEach(dbt => {
               const idx = merged.findIndex(t => t.id === dbt.id);
-              if (idx >= 0) merged[idx] = { ...merged[idx], ...dbt };
+              if (idx >= 0) {
+                if (dbt.id === 'italian') {
+                  merged[idx] = { ...merged[idx], ...dbt, title: 'Italian Brainrot', subtitle: 'Music Game', image: '/images/brainrot/movie_poster.png' };
+                } else {
+                  merged[idx] = { ...merged[idx], ...dbt };
+                }
+              }
               else merged.push(dbt);
             });
             return merged;
@@ -102,6 +109,10 @@ const GameHub: React.FC = () => {
   if (activeGame === 'forest') {
     const forestTheme = themes.find(t => t.id === 'forest');
     return <ForestConcert onBack={() => setActiveGame(null)} bgmUrl={forestTheme?.bgm_url} />;
+  }
+
+  if (activeGame === 'italian') {
+    return <ItalianGame onBack={() => setActiveGame(null)} />;
   }
 
   return (
@@ -184,7 +195,7 @@ const GameHub: React.FC = () => {
             <div className={`flex-1 relative overflow-hidden bg-gradient-to-br ${theme.gradient}`}>
                <img 
                  src={theme.image} 
-                 className={`absolute inset-0 w-full h-full object-cover mix-blend-overlay ${theme.id === 'forest' ? 'opacity-70' : 'opacity-40'} group-hover:scale-110 transition-transform duration-[2000ms]`} 
+                 className={`absolute inset-0 w-full h-full object-cover group-hover:scale-110 transition-transform duration-[2000ms] ${theme.id === 'italian' ? 'opacity-100' : 'mix-blend-overlay'} ${theme.id === 'forest' ? 'opacity-70' : theme.id === 'italian' ? '' : 'opacity-40'}`} 
                  alt="" 
                />
                
@@ -196,25 +207,29 @@ const GameHub: React.FC = () => {
                )}
 
                {/* THEME TITLE */}
-               <div className="absolute top-2.5 inset-x-0 text-center px-1">
-                  <h3 className={`text-white font-black text-[8px] sm:text-[10px] uppercase tracking-wider ${theme.id === 'forest' ? 'drop-shadow-md' : 'opacity-80'}`}>{theme.title}</h3>
-               </div>
+               {theme.id !== 'italian' && (
+                 <div className="absolute top-2.5 inset-x-0 text-center px-1">
+                    <h3 className={`text-white font-black text-[8px] sm:text-[10px] uppercase tracking-wider ${theme.id === 'forest' ? 'drop-shadow-md' : 'opacity-80'}`}>{theme.title}</h3>
+                 </div>
+               )}
 
                {/* MAIN ICON */}
-               <div className="absolute inset-0 flex flex-col items-center justify-center pt-2">
-                  <div className={`w-11 h-11 sm:w-16 sm:h-16 rounded-2xl bg-white/10 border border-white/20 backdrop-blur-md flex items-center justify-center mb-1.5 shadow-xl transition-transform group-hover:rotate-6 ${theme.color} ${theme.id === 'forest' ? 'forest-glow bg-emerald-400/20' : ''} ${theme.id === 'italian' ? 'italian-glow' : ''}`}>
-                     <theme.icon size={22} className="sm:w-[32px] sm:h-[32px]" strokeWidth={2} />
-                  </div>
-                  <div className="text-center">
-                     <p className={`text-white/80 font-black text-[6px] sm:text-[7px] uppercase tracking-[0.1em] mb-1 ${theme.id === 'forest' ? 'text-white' : ''}`}>{theme.subtitle}</p>
-                     <div className="dots-row flex items-center justify-center">
-                        <span className="active" />
-                        <span />
-                        <span />
-                        <span />
-                     </div>
-                  </div>
-               </div>
+               {theme.id !== 'italian' && (
+                 <div className="absolute inset-0 flex flex-col items-center justify-center pt-2">
+                    <div className={`w-11 h-11 sm:w-16 sm:h-16 rounded-2xl bg-white/10 border border-white/20 backdrop-blur-md flex items-center justify-center mb-1.5 shadow-xl transition-transform group-hover:rotate-6 ${theme.color} ${theme.id === 'forest' ? 'forest-glow bg-emerald-400/20' : ''}`}>
+                       <theme.icon size={22} className="sm:w-[32px] sm:h-[32px]" strokeWidth={2} />
+                    </div>
+                    <div className="text-center">
+                       <p className={`text-white/80 font-black text-[6px] sm:text-[7px] uppercase tracking-[0.1em] mb-1 ${theme.id === 'forest' ? 'text-white' : ''}`}>{theme.subtitle}</p>
+                       <div className="dots-row flex items-center justify-center">
+                          <span className="active" />
+                          <span />
+                          <span />
+                          <span />
+                       </div>
+                    </div>
+                 </div>
+               )}
             </div>
 
             {/* BOTTOM AREA: PLAY BUTTON */}

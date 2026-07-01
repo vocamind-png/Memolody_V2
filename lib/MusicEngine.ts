@@ -1,9 +1,11 @@
 
 import * as Tone from 'tone';
+import { connect as toneConnect } from 'tone';
 
 import { TrackState, ParsedNote } from '../types';
 
 import { SoundBankEngine } from '../plugins/soundbank';
+import { svsFetch } from './VocalidoRenderService';
 
 // Debug overlay disabled for production
 const debugOverlay = (_msg: string) => { /* no-op */ };
@@ -796,133 +798,75 @@ export class MusicEngine {
       this.trackChannels.set(trackId, channel);
       this.trackMeters.set(trackId, meter);
     }
-     // Load the main mix layer and any stems in parallel using HTMLAudioElement only
+     // Load the main mix layer and any stems in parallel using HTMLAudioElement
     const loadPromises: Promise<void>[] = [];
+    const stemAudios: HTMLAudioElement[] = [];
 
-    // 1. Load Main Mix Player (HTMLAudioElement)
-    if (audioUrl) {
-      loadPromises.push(new Promise<void>((resolve) => {
-        let isResolved = false;
-        const doResolve = () => { if (!isResolved) { isResolved = true; resolve(); } };
+    // Helper: fetch URL via svsFetch → blob → HTMLAudioElement
+    const loadAsHtmlAudio = (url: string): Promise<HTMLAudioElement> => {
+      return new Promise<HTMLAudioElement>(async (resolve) => {
+        let resolved = false;
+        const done = (audio: HTMLAudioElement) => { if (!resolved) { resolved = true; resolve(audio); } };
 
-        const setupAudio = (finalUrl: string) => {
+        try {
+          // Fetch via svsFetch to bypass CORS/proxy issues
+          const finalUrl = url.startsWith('blob:') ? url : await svsFetch(url)
+            .then(r => r.blob())
+            .then(b => URL.createObjectURL(b))
+            .catch(() => url);
+
           const audio = new Audio();
-          if (!finalUrl.startsWith('blob:')) {
-            audio.crossOrigin = 'anonymous';
-          }
-          audio.preservesPitch = true;
+          if (!finalUrl.startsWith('blob:')) audio.crossOrigin = 'anonymous';
+          audio.preservesPitch = true; // Pitch is controlled by PitchShift node, not playbackRate
           audio.preload = 'auto';
           audio.src = finalUrl;
-          
-          if (myGeneration === this._vocalGeneration) {
-            this.vocalAudioElements.set(trackId, audio);
-            
-            // ─── REMOVED Tone.js PitchShift routing ───
-            // We play the HTMLAudioElement directly natively to avoid Tone.js monkey-patch crashes.
+          if (renderBpm) (audio as any).renderBpm = renderBpm;
+
+          // Store blob URL for cleanup
+          if (finalUrl !== url && finalUrl.startsWith('blob:')) {
+            this.vocalBlobUrls.set(`${trackId}:${Date.now()}`, finalUrl);
           }
 
-          audio.oncanplaythrough = () => doResolve();
-          audio.onerror = (err) => {
-            console.error('[MusicEngine] ❌ Error loading main vocal HTMLAudioElement:', err);
-            doResolve();
-          };
-          
+          audio.oncanplaythrough = () => done(audio);
+          audio.onerror = () => done(audio);
           audio.load();
-          audio.play().then(() => audio.pause()).catch(e => console.warn(`[MusicEngine] Main unlock fallback failed:`, e));
-        };
-
-        if (!audioUrl.startsWith('blob:')) {
-          fetch(audioUrl)
-            .then(res => res.blob())
-            .then(blob => {
-              const blobUrl = URL.createObjectURL(blob);
-              this.vocalBlobUrls.set(trackId, blobUrl);
-              setupAudio(blobUrl);
-            })
-            .catch(e => {
-               console.warn('[MusicEngine] Failed to fetch audioUrl as blob, falling back to remote URL', e);
-               setupAudio(audioUrl);
-            });
-        } else {
-          setupAudio(audioUrl);
+          setTimeout(() => done(audio), 15000);
+        } catch (e) {
+          console.error('[MusicEngine] ❌ loadAsHtmlAudio failed:', e);
+          done(new Audio()); // resolve with empty audio to not block
         }
-        
-        const timeout = audioUrl.startsWith('blob:') ? 1000 : 8000;
-        setTimeout(() => {
-          if (!isResolved) {
-            console.warn(`[MusicEngine] ⚠️ Timeout loading vocal audio for ${trackId}. Safari might have blocked the event. Forcing resolve.`);
-            doResolve();
-          }
-        }, timeout);
-      }));
+      });
+    };
+
+    // 1. Load Main Mix
+    if (audioUrl) {
+      loadPromises.push((async () => {
+        const audio = await loadAsHtmlAudio(audioUrl);
+        if (myGeneration === this._vocalGeneration) {
+          this.vocalAudioElements.set(trackId, audio);
+          console.log(`[MusicEngine] ✅ Main mix loaded: duration=${audio.duration?.toFixed(2)}s, readyState=${audio.readyState}`);
+        }
+      })());
     }
 
-    // 2. Load Stems (HTMLAudioElement)
-    const stemAudios: HTMLAudioElement[] = [];
+    // 2. Load Stems
     if (stemUrls && stemUrls.length > 0) {
       stemUrls.forEach((url, index) => {
-        loadPromises.push(new Promise<void>((resolve) => {
-          let isResolved = false;
-          const doResolve = () => { if (!isResolved) { isResolved = true; resolve(); } };
-
-          const setupAudio = (finalUrl: string) => {
-            const audio = new Audio();
-            if (!finalUrl.startsWith('blob:')) {
-              audio.crossOrigin = 'anonymous';
-            }
-            audio.preservesPitch = true;
-            audio.preload = 'auto'; // CRITICAL: Force Android Chrome to buffer
-            audio.src = finalUrl;
-            
-            if (myGeneration === this._vocalGeneration) {
-              stemAudios[index] = audio;
-              
-              // Add PitchShift back for stems
-              let shifts = this.vocalStemPitchShifts.get(trackId);
-            }
-
-            audio.oncanplaythrough = () => doResolve();
-            audio.onerror = (err) => {
-              console.error(`[MusicEngine] ❌ Error loading stem audio ${index}:`, err);
-              doResolve();
-            };
-            audio.load();
-            audio.play().then(() => audio.pause()).catch(e => console.warn(`[MusicEngine] Stem ${index} unlock fallback failed:`, e));
-          };
-
-          if (!url.startsWith('blob:')) {
-            fetch(url)
-              .then(res => res.blob())
-              .then(blob => {
-                const blobUrl = URL.createObjectURL(blob);
-                this.vocalBlobUrls.set(`${trackId}:stem:${index}`, blobUrl);
-                setupAudio(blobUrl);
-              })
-              .catch(e => {
-                 console.warn(`[MusicEngine] Failed to fetch stem ${index} as blob, falling back to remote URL`, e);
-                 setupAudio(url);
-              });
-          } else {
-            setupAudio(url);
+        loadPromises.push((async () => {
+          const audio = await loadAsHtmlAudio(url);
+          if (myGeneration === this._vocalGeneration) {
+            stemAudios[index] = audio;
+            console.log(`[MusicEngine] ✅ Stem ${index} loaded: duration=${audio.duration?.toFixed(2)}s`);
           }
-          // CRITICAL: Unlock the audio element immediately within the current user gesture (moved inside setupAudio)
-          
-          const stemTimeout = url.startsWith('blob:') ? 1000 : 5000;
-          setTimeout(() => {
-            if (!isResolved) {
-              console.warn(`[MusicEngine] ⚠️ Timeout loading stem audio ${index} (${stemTimeout}ms). Safari might have blocked the event. Forcing resolve.`);
-              doResolve();
-            }
-          }, stemTimeout);
-        }));
+        })());
       });
     }
 
     await Promise.all(loadPromises);
 
-    // If generation changed during load, discard new nodes
+    // If generation changed during load, discard
     if (myGeneration !== this._vocalGeneration) {
-      console.log(`[MusicEngine] 🗑️ Stale gen=${myGeneration} after loading — discarding players`);
+      console.log(`[MusicEngine] 🗑️ Stale gen=${myGeneration} — discarding`);
       return;
     }
 
@@ -931,16 +875,64 @@ export class MusicEngine {
     }
 
     this.trackModes.set(trackId, 'vocal');
-    const htmlStems = stemAudios.length;
-    debugOverlay(`🎤 addVocalLayer(${trackId}): HTMLStems=${htmlStems}`);
 
-    // Re-sync states now that the HTML Audio element is fully loaded and readyState is > 0
+    // Route audio elements through Web Audio PitchShift for artifact-free pitch shifting
+    const connectToPitchShift = (audio: HTMLAudioElement, trackIdKey: string) => {
+      try {
+        // Skip if already connected
+        if (this.vocalAudioSources.has(trackIdKey)) return;
+
+        const rawCtx = Tone.context.rawContext;
+        const source = rawCtx.createMediaElementSource(audio);
+        const channel = this.trackChannels.get(trackId) || this.masterBus!;
+        const pitchShift = new Tone.PitchShift(0);
+
+        // Connect: source → pitchShift → channel
+        toneConnect(source, pitchShift);
+        pitchShift.connect(channel);
+
+        this.vocalAudioSources.set(trackIdKey, source);
+        this.vocalPitchShifts.set(trackIdKey, pitchShift);
+
+        console.log(`[MusicEngine] ✅ PitchShift connected for ${trackIdKey}`);
+      } catch (e) {
+        console.warn(`[MusicEngine] ⚠️ PitchShift connection failed for ${trackIdKey}:`, e);
+      }
+    };
+
+    // Connect main mix
+    const mainAudio = this.vocalAudioElements.get(trackId);
+    if (mainAudio) {
+      connectToPitchShift(mainAudio, trackId);
+    }
+
+    // Connect stems
+    const loadedStems = this.vocalStemAudioElements.get(trackId);
+    if (loadedStems) {
+      loadedStems.forEach((stemAudio, i) => {
+        if (stemAudio) {
+          connectToPitchShift(stemAudio, `${trackId}:stem:${i}`);
+        }
+      });
+    }
+
+    // Apply current transpose diff if any
+    const renderTp = this.trackVocalRenderTranspose.get(trackId) || 0;
+    const diff = this.currentTranspose - renderTp;
+    if (diff !== 0) {
+      this.setVocalTranspose(trackId, diff);
+    }
+
+    debugOverlay(`🎤 addVocalLayer(${trackId}): main=${this.vocalAudioElements.has(trackId)}, stems=${stemAudios.length}`);
+
+    // Re-sync states
     if (this.tracks && this.tracks.length > 0) {
       this.updateTrackStates(this.tracks);
     }
   }
 
   updateVocalPitchShifts() {
+    // Update Tone.js PitchShift nodes (if available)
     this.vocalPitchShifts.forEach((ps, trackId) => {
       const renderTp = this.trackVocalRenderTranspose.get(trackId) || 0;
       ps.pitch = this.currentTranspose - renderTp;
@@ -948,6 +940,13 @@ export class MusicEngine {
     this.vocalStemPitchShifts.forEach((shifts, trackId) => {
       const renderTp = this.trackVocalRenderTranspose.get(trackId) || 0;
       shifts.forEach(ps => { if (ps) ps.pitch = this.currentTranspose - renderTp; });
+    });
+
+    // Also apply HTMLAudioElement playbackRate pitch shift for all vocal tracks
+    this.vocalAudioElements.forEach((audio, trackId) => {
+      const renderTp = this.trackVocalRenderTranspose.get(trackId) || 0;
+      const diff = this.currentTranspose - renderTp;
+      this.setVocalTranspose(trackId, diff);
     });
   }
 
@@ -964,6 +963,17 @@ export class MusicEngine {
     if (sps) { sps.forEach(p => p && p.dispose()); this.vocalStemPitchShifts.delete(trackId); }
     this.vocalAudioSources.delete(trackId);
     this.vocalStemAudioSources.delete(trackId);
+    
+    // Clean up stem PitchShift entries (keyed as trackId:stem:N)
+    const stemAudiosForCleanup = this.vocalStemAudioElements.get(trackId);
+    if (stemAudiosForCleanup) {
+      stemAudiosForCleanup.forEach((_, i) => {
+        const stemKey = `${trackId}:stem:${i}`;
+        const stemPs = this.vocalPitchShifts.get(stemKey);
+        if (stemPs) { stemPs.dispose(); this.vocalPitchShifts.delete(stemKey); }
+        this.vocalAudioSources.delete(stemKey);
+      });
+    }
     const stemAudios = this.vocalStemAudioElements.get(trackId);
     if (stemAudios) {
       stemAudios.forEach(a => { a.pause(); a.src = ''; });
@@ -1036,13 +1046,11 @@ export class MusicEngine {
     
     this.vocalAudioElements.forEach((audio, tId) => {
       if (audio) {
-        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-        const hasTonePlayer = !isMobile && this.trackVocalLayers.has(tId) && 
-          this.trackVocalLayers.get(tId)!.some(p => p.buffer && p.buffer.loaded);
+        const hasTonePlayer = false; // HTMLAudioElement only
 
         const isMainLayerActive = !isAnySoloedGlobally;
-        const activeVol = isMainLayerActive && !hasTonePlayer ? 1 : 0;
-        const activeMuted = !(isMainLayerActive && !hasTonePlayer);
+        const activeVol = isMainLayerActive ? 1 : 0;
+        const activeMuted = !isMainLayerActive;
         this.setAudioVolume(audio, activeVol, activeMuted);
       }
     });
@@ -1065,17 +1073,16 @@ export class MusicEngine {
 
     // HTMLAudioElement stems — used as primary on mobile, fallback on desktop
     this.vocalStemAudioElements.forEach((audios, tId) => {
-      const hasToneStems = !isMobileSolo && this.trackVocalStems.has(tId) && 
-        this.trackVocalStems.get(tId)!.some(p => p.buffer && p.buffer.loaded);
+      const hasToneStems = false; // HTMLAudioElement only
 
       const activeIndices = this.trackActiveStem.get(tId) || new Set();
-      debugOverlay(`🔊 tId=${tId}: activeIndices=${Array.from(activeIndices)}, hasToneStems=${hasToneStems}, stems=${audios.length}`);
+      debugOverlay(`🔊 tId=${tId}: activeIndices=${Array.from(activeIndices)}, stems=${audios.length}`);
       
       audios.forEach((audio, i) => {
         if (audio) {
           const isStemActive = (activeIndices.size > 0 && activeIndices.has(i));
           
-          if (isStemActive && !hasToneStems) {
+          if (isStemActive) {
             // ACTIVE STEM: force unmute, but do NOT auto-play. Let updateVocalPlaybackState or transport handle playing.
             this.setAudioVolume(audio, 1.0, false);
           } else {
@@ -1109,7 +1116,7 @@ export class MusicEngine {
     console.log(`[MusicEngine] [initSampler] trackId=${trackId} currentMode=${currentMode} requestedMode=${requestedMode}`);
 
     // If requested mode is vocal AND we already have a vocal layer loaded, we don't need a sampler
-    if (requestedMode === 'vocal' && this.trackVocalLayers.has(trackId)) {
+    if (requestedMode === 'vocal' && (this.trackVocalLayers.has(trackId) || this.vocalAudioElements.has(trackId))) {
       if (this.trackSamplers.has(trackId)) {
         console.log(`[MusicEngine] [initSampler] disposing sampler for trackId=${trackId} because vocal layer is active`);
         // Only dispose the sampler, NOT the channel — the vocal Tone.GrainPlayer routes through the channel
@@ -1320,7 +1327,7 @@ export class MusicEngine {
       // Sync HTMLAudio vocal element volume and mute states dynamically
       const audio = this.vocalAudioElements.get(t.id);
       if (audio) {
-        const hasTonePlayer = false; // Forced to false to ensure HTMLAudioElement is always used for pitch preservation
+        const hasTonePlayer = false; // HTMLAudioElement is always used for vocal playback
 
         const isMainLayerActive = isVocalPlaying && (activeStemIndices.size === 0) && !isAnyStemSoloedGlobally;
         const vol = typeof t.volume === 'number' ? t.volume : 0.8;
@@ -1328,13 +1335,16 @@ export class MusicEngine {
         const activeMuted = !(isMainLayerActive && !hasTonePlayer);
         this.setAudioVolume(audio, activeVol, activeMuted);
 
+        // Sync playbackRate (BPM only — pitch is handled by PitchShift node)
+        audio.preservesPitch = true;
+        audio.playbackRate = this.getVocalPlaybackRate(audio, t.id);
+
         if (!hasTonePlayer && Tone.Transport.state === 'started' && audio.paused) {
-          const currentBpm = Tone.Transport.bpm.value;
-          const ratio = currentBpm / ((audio as any).renderBpm || currentBpm);
+          const rate = this.getVocalPlaybackRate(audio, t.id);
           const songTime = Tone.Transport.seconds - this.countInDuration;
           
           try {
-            audio.currentTime = Math.max(0, songTime * ratio);
+            audio.currentTime = Math.max(0, songTime * rate);
           } catch(e) {
             console.warn('[MusicEngine] main sync audio.currentTime seek failed:', e);
           }
@@ -1362,7 +1372,7 @@ export class MusicEngine {
 
       const stemAudios = this.vocalStemAudioElements.get(t.id);
       if (stemAudios) {
-        const hasToneStems = false; // Forced to false to ensure HTMLAudioElement is always used for pitch preservation
+        const hasToneStems = false; // HTMLAudioElement is always used for stem playback
 
         stemAudios.forEach((audio, i) => {
           const isStemActive = isVocalPlaying && activeStemIndices.has(i);
@@ -1371,15 +1381,14 @@ export class MusicEngine {
           const activeMuted = !(isStemActive && !hasToneStems);
           this.setAudioVolume(audio, activeVol, activeMuted);
 
+          // Sync playbackRate (BPM only — pitch is handled by PitchShift node)
+          audio.preservesPitch = true;
+          audio.playbackRate = this.getVocalPlaybackRate(audio, t.id);
+
           if (!hasToneStems && Tone.Transport.state === 'started' && audio.paused) {
-             const currentBpm = Tone.Transport.bpm.value;
-             const ratio = currentBpm / ((audio as any).renderBpm || currentBpm);
+             const rate = this.getVocalPlaybackRate(audio, t.id);
              const songTime = Tone.Transport.seconds - this.countInDuration;
-             
-             // TIMING FIX: Seek BEFORE play() to avoid jitter.
-             // Add 30ms lookahead to compensate for JS→audio scheduling delay.
-             const LOOKAHEAD = 0.03;
-             const targetTime = Math.max(0, songTime * ratio + LOOKAHEAD);
+             const targetTime = Math.max(0, songTime * rate);
              try {
                if (isFinite(audio.duration) && audio.duration > 0) {
                  audio.currentTime = Math.min(targetTime, audio.duration - 0.1);
@@ -1389,10 +1398,6 @@ export class MusicEngine {
              } catch(e) {
                console.warn(`[MusicEngine] stem ${i} seek failed:`, e);
              }
-             
-             try {
-               audio.currentTime = Math.max(0, songTime * ratio);
-             } catch(e) { }
 
              // Play AFTER seek
              const playPromise = audio.play().catch(e => console.warn(`[MusicEngine] stem ${i} play failed:`, e));
@@ -1406,21 +1411,75 @@ export class MusicEngine {
     });
   }
 
+  // Helper: compute BPM-only playbackRate for a vocal audio element
+  private getVocalPlaybackRate(audio: HTMLAudioElement, _trackId: string): number {
+    const currentBpm = Tone.Transport.bpm.value;
+    const renderBpm = (audio as any).renderBpm || currentBpm;
+    return currentBpm / renderBpm; // BPM ratio only — pitch is handled by PitchShift node
+  }
+
   public setVocalTranspose(trackId: string, diffSemitones: number) {
-    // Re-enabled real-time pitch shift
+    this.vocalPitchShiftSemitones.set(trackId, diffSemitones);
+    console.log(`[MusicEngine] 🎵 setVocalTranspose(${trackId}, ${diffSemitones}st)`);
+
+    // Set PitchShift node pitch for main mix
     const ps = this.vocalPitchShifts.get(trackId);
     if (ps) {
       ps.pitch = diffSemitones;
     }
-    const sps = this.vocalStemPitchShifts.get(trackId);
-    if (sps) {
-      sps.forEach(p => p && (p.pitch = diffSemitones));
+
+    // Set PitchShift node pitch for stems
+    const stemAudios = this.vocalStemAudioElements.get(trackId);
+    if (stemAudios) {
+      stemAudios.forEach((_, i) => {
+        const stemPs = this.vocalPitchShifts.get(`${trackId}:stem:${i}`);
+        if (stemPs) {
+          stemPs.pitch = diffSemitones;
+        }
+      });
     }
+
+    // Ensure preservesPitch = true (pitch is handled by PitchShift, not playbackRate)
+    const audio = this.vocalAudioElements.get(trackId);
+    if (audio) audio.preservesPitch = true;
+    if (stemAudios) stemAudios.forEach(sa => { if (sa) sa.preservesPitch = true; });
   }
 
   public updateVocalPlaybackState(time?: number) {
-    // Only HTMLAudioElement is used for playback to ensure native pitch preservation (preservesPitch = true)
-    // and to eliminate phase vocoder 'stuttering' (ไฟฟ้าช๊อต) artifacts.
+    const isTransportStarted = Tone.Transport.state === 'started';
+
+    // HTMLAudioElement main mix — play/pause sync
+    this.vocalAudioElements.forEach((audio, trackId) => {
+      // Sync playbackRate (BPM only — pitch is handled by PitchShift)
+      audio.preservesPitch = true;
+      audio.playbackRate = this.getVocalPlaybackRate(audio, trackId);
+
+      if (isTransportStarted && audio.paused) {
+        const rate = this.getVocalPlaybackRate(audio, trackId);
+        const songTime = Tone.Transport.seconds - this.countInDuration;
+        try { audio.currentTime = Math.max(0, songTime * rate); } catch (e) {}
+        audio.play().catch(e => console.warn('[MusicEngine] main play failed:', e));
+      } else if (!isTransportStarted && !audio.paused) {
+        audio.pause();
+      }
+    });
+
+    // HTMLAudioElement stems — play/pause sync
+    this.vocalStemAudioElements.forEach((stemAudios, trackId) => {
+      stemAudios.forEach((audio, i) => {
+        audio.preservesPitch = true;
+        audio.playbackRate = this.getVocalPlaybackRate(audio, trackId);
+
+        if (isTransportStarted && audio.paused) {
+          const rate = this.getVocalPlaybackRate(audio, trackId);
+          const songTime = Tone.Transport.seconds - this.countInDuration;
+          try { audio.currentTime = Math.max(0, songTime * rate); } catch (e) {}
+          audio.play().catch(e => console.warn(`[MusicEngine] stem ${i} play failed:`, e));
+        } else if (!isTransportStarted && !audio.paused) {
+          audio.pause();
+        }
+      });
+    });
   }
 
   getTrackLevel(trackId: string): number {
@@ -1452,18 +1511,9 @@ export class MusicEngine {
     }
     this.baseStartTime = Math.max(0, s);
     Tone.Transport.seconds = this.baseStartTime + this.countInDuration;
+    
     // 🎤 Sync HTMLAudio vocal elements to new position
     this.vocalAudioElements.forEach((audio, trackId) => {
-      // Check if Tone.GrainPlayer is loaded
-      const hasTonePlayer = this.trackVocalLayers.has(trackId) && 
-        this.trackVocalLayers.get(trackId)!.some(p => p.buffer && p.buffer.loaded);
-
-      if (hasTonePlayer) {
-        audio.pause();
-        return;
-      }
-
-      // Guard against NaN/Infinity from failed renders
       if (isFinite(s) && s >= 0) {
         try { audio.currentTime = s; } catch (e) {}
       }
@@ -1471,14 +1521,6 @@ export class MusicEngine {
     
     // Sync stems too
     this.vocalStemAudioElements.forEach((stemAudios, trackId) => {
-      const hasToneStems = this.trackVocalStems.has(trackId) && 
-        this.trackVocalStems.get(trackId)!.some(p => p.buffer && p.buffer.loaded);
-        
-      if (hasToneStems) {
-        stemAudios.forEach(a => a.pause());
-        return;
-      }
-      
       stemAudios.forEach(audio => {
         if (isFinite(s) && s >= 0) {
           try { audio.currentTime = s; } catch (e) {}

@@ -8,7 +8,8 @@ import {
   RefreshCw, Repeat, Music,
   VolumeX, Bell, BellOff, Eye, EyeOff, Lock,
   ChevronDown, Library, Languages, Mic2, Timer, Sparkles,
-  Heart, Folder, Trash2, Plus, ChevronLeft, ChevronRight, Star
+  Heart, Folder, Trash2, Plus, ChevronLeft, ChevronRight, Star,
+  Zap, Gift, GraduationCap
 } from 'lucide-react';
 import ProScoreEditor from './ProScoreEditor';
 import { KeyTransposeDisplay, BpmDisplay, BarBeatPositionDisplay } from './LCDDisplay';
@@ -34,6 +35,7 @@ import { vocalidoRenderService } from '../../lib/VocalidoRenderService';
 import { SongAnalyticsService } from '../../lib/SongAnalyticsService';
 import { renderQueueService } from '../../lib/RenderQueueService';
 import { RenderQueueCard } from './RenderQueueCard';
+import { mapPartNameToInstrument } from '../../lib/instruments';
 export type PlayerCardType = 'score' | 'pianoroll' | 'trackview' | 'memochord' | 'practice' | 'vocalido';
 
 const saveRenderToLocalCache = async (
@@ -76,29 +78,7 @@ const saveRenderToLocalCache = async (
   }
 };
 
-export const mapPartNameToInstrument = (partName: string): string => {
-  if (!partName) return 'acoustic_grand_piano';
-  const name = partName.toLowerCase();
-  if (name.includes('violin')) return 'violin';
-  if (name.includes('viola')) return 'viola';
-  if (name.includes('cello') || name.includes('violoncello')) return 'cello';
-  if (name.includes('bass') || name.includes('contrabass')) return 'acoustic_bass';
-  if (name.includes('flute')) return 'flute';
-  if (name.includes('oboe')) return 'oboe';
-  if (name.includes('clarinet')) return 'clarinet';
-  if (name.includes('bassoon')) return 'bassoon';
-  if (name.includes('trumpet')) return 'trumpet';
-  if (name.includes('horn') || name.includes('french horn')) return 'french_horn';
-  if (name.includes('trombone')) return 'trombone';
-  if (name.includes('tuba')) return 'tuba';
-  if (name.includes('sax') || name.includes('saxophone')) return 'alto_sax';
-  if (name.includes('guitar')) return 'acoustic_guitar_nylon';
-  if (name.includes('harp')) return 'orchestral_harp';
-  if (name.includes('choir') || name.includes('voice') || name.includes('vocal') || name.includes('soprano') || name.includes('alto') || name.includes('tenor')) return 'choir_aahs';
-  if (name.includes('synth')) return 'synth_strings_1';
-  if (name.includes('drum') || name.includes('percussion')) return 'synth_drum';
-  return 'acoustic_grand_piano';
-};
+
 
 export const getRenderKey = (entry: any) => {
   const tfStr = entry.timingFeel !== undefined ? `_tf${entry.timingFeel}` : '';
@@ -379,6 +359,37 @@ const PlayerPage: React.FC<{
   const [likeCount, setLikeCount] = useState(song?.likesCount || 0);
   const [favoriteCount, setFavoriteCount] = useState(song?.favoritesCount || 0);
   const hasRecordedPlayRef = useRef(false);
+
+  // Ad Rotation State
+  const ADS = [
+    { 
+      icon: <Zap size={16} className="text-amber-400" />,
+      text: <>EARLY BIRD PROMO: <strong className="text-amber-400 font-black">50% OFF</strong> for the first 100 subscribers!</>, 
+      cta: 'Upgrade' 
+    },
+    { 
+      icon: <Gift size={16} className="text-emerald-400" />,
+      text: <>AFFILIATE PROGRAM: <strong className="text-emerald-400 font-black">Earn commissions</strong> when your friends subscribe!</>, 
+      cta: 'Join Waitlist',
+      color: 'emerald'
+    },
+    { 
+      icon: <GraduationCap size={16} className="text-indigo-400" />,
+      text: <>EDUCATOR EXCLUSIVE: <strong className="text-indigo-400 font-black">Special Studio Plans</strong> for schools and teachers.</>, 
+      cta: 'Contact Us',
+      color: 'indigo'
+    }
+  ];
+  const [currentAdIndex, setCurrentAdIndex] = useState(0);
+
+  useEffect(() => {
+    if (isFree) {
+      const interval = setInterval(() => {
+        setCurrentAdIndex((prev) => (prev + 1) % ADS.length);
+      }, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [isFree]);
 
   useEffect(() => {
     if (song?.id && user?.id) {
@@ -802,12 +813,20 @@ const PlayerPage: React.FC<{
   // Card Navigation State
   const [activeCard, setActiveCard] = useState<PlayerCardType>(() => {
     try {
+      if (viewMode) return viewMode as PlayerCardType;
       const saved = localStorage.getItem('memo_active_card');
       return (saved as PlayerCardType) || 'score';
     } catch {
       return 'score';
     }
   });
+
+  // Keep activeCard in sync with viewMode prop when it changes
+  useEffect(() => {
+    if (viewMode && viewMode !== activeCard) {
+      setActiveCard(viewMode as PlayerCardType);
+    }
+  }, [viewMode]);
 
   useEffect(() => {
     try {
@@ -1167,8 +1186,8 @@ const PlayerPage: React.FC<{
     musicEngine.setBpm(currentBpm);
 
     // 5. If song is already loaded, start immediately (sync path)
-    if (musicEngine.isSongLoaded && musicEngine.lastLoadedNotes.length > 0) {
-      console.log("[PlayerPage] ▶️ Song already loaded. Starting immediately...");
+    if (musicEngine.isSongLoaded && musicEngine.lastLoadedNotes.length > 0 && musicEngine.currentTranspose === transpose) {
+      console.log("[PlayerPage] ▶️ Song already loaded with same transpose. Starting immediately...");
       musicEngine.updateTrackStates(updatedTracks);
       musicEngine.start();
       setIsPlaying(true);
@@ -2139,7 +2158,7 @@ const PlayerPage: React.FC<{
     const fetchEngines = async (manualCheck = false) => {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout — Vercel→RunPod proxy needs more time
+        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout — Proxies/Tunnels need more time
         const res = await svsFetch(getFetchUrl('/vocalido/studio/voices'), {
           signal: controller.signal
         });
@@ -2389,33 +2408,46 @@ const PlayerPage: React.FC<{
   }, [tracks, mutedVocalTracks, soloedTracks]);
 
   // ── Transpose change → reload engine with new semitone shift ──────────────
+  const prevTransposeRef = useRef(transpose);
   useEffect(() => {
-    const state = musicEngine.transportState;
-    if (state === 'stopped') return; // next Play will pick up transpose automatically
+    // Skip initial mount — loadSong will pick up transpose on first Play
+    if (prevTransposeRef.current === transpose) return;
+    prevTransposeRef.current = transpose;
 
+    console.log(`[PlayerPage] 🎹 Transpose changed to ${transpose}, reloading song...`);
+    
+    if (parsedData.notes.length === 0) {
+      console.log('[PlayerPage] 🎹 No notes to reload, skipping');
+      return;
+    }
+
+    const state = musicEngine.transportState;
     const wasPlaying = state === 'started';
     const savedPos = musicEngine.transportSeconds;
 
-    musicEngine.pause();
-    setIsPlaying(false);
-
-    // Reload for BOTH playing and paused states
-    if (parsedData.notes.length > 0) {
-      setIsAudioLoading(true);
-      const updatedTracks = tracks.map(t => ({
-        ...t,
-        mode: (mutedVocalTracks.has(t.id) ? 'instrument' : t.mode) as 'instrument' | 'vocal'
-      }));
-      musicEngine.ensureInitialized()
-        .then(() => musicEngine.loadSong(allPlayableNotes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn, true))
-        .then(() => {
-          musicEngine.setTransportSeconds(savedPos);
-          if (wasPlaying) return musicEngine.start();
-        })
-        .then(() => { if (wasPlaying) setIsPlaying(true); })
-        .catch(e => console.error('Transpose reload failed:', e))
-        .finally(() => setIsAudioLoading(false));
+    if (wasPlaying) {
+      musicEngine.pause();
+      setIsPlaying(false);
     }
+
+    setIsAudioLoading(true);
+    const updatedTracks = tracks.map(t => ({
+      ...t,
+      mode: (mutedVocalTracks.has(t.id) ? 'instrument' : t.mode) as 'instrument' | 'vocal'
+    }));
+    
+    console.log(`[PlayerPage] 🎹 Calling loadSong with transpose=${transpose}, notes=${allPlayableNotes.length}, tracks=${updatedTracks.length}`);
+    
+    musicEngine.ensureInitialized()
+      .then(() => musicEngine.loadSong(allPlayableNotes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn, true))
+      .then(() => {
+        console.log(`[PlayerPage] 🎹 loadSong done, currentTranspose=${musicEngine.currentTranspose}`);
+        musicEngine.setTransportSeconds(savedPos);
+        if (wasPlaying) return musicEngine.start();
+      })
+      .then(() => { if (wasPlaying) setIsPlaying(true); })
+      .catch(e => console.error('[PlayerPage] 🎹 Transpose reload failed:', e))
+      .finally(() => setIsAudioLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transpose]);
 
@@ -4018,19 +4050,55 @@ const PlayerPage: React.FC<{
             
             {/* MOCK SPONSOR AD FOR FREE USERS */}
             {isFree && (
-              <div className="w-full max-w-[500px] bg-[#0c0c0e]/90 border border-amber-500/20 backdrop-blur-3xl rounded-2xl p-2 px-3 flex items-center justify-between pointer-events-auto shadow-2xl select-none scale-[0.95] sm:scale-100 transition-all mb-0.5">
-                <div className="flex items-center gap-2">
-                  <span className="bg-amber-500/10 text-amber-500 text-[6.5px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border border-amber-500/20 shrink-0">AD</span>
-                  <p className="text-[7.5px] sm:text-[8px] text-zinc-300 font-bold uppercase tracking-widest leading-tight">
-                    Upgrade to <strong className="text-amber-400">PRO</strong> to save songs offline and remove ads!
-                  </p>
+              <div className="w-full max-w-[600px] mb-2 pointer-events-auto relative group overflow-hidden">
+                {/* Animated Gradient Border/Glow behind the ad */}
+                <div className={`absolute inset-0 opacity-40 blur-xl transition-all duration-1000 ${
+                  ADS[currentAdIndex].color === 'emerald' ? 'bg-emerald-500' :
+                  ADS[currentAdIndex].color === 'indigo' ? 'bg-indigo-500' :
+                  'bg-amber-500'
+                }`} />
+                
+                <div className={`relative bg-[#0c0c0e]/95 backdrop-blur-3xl rounded-[20px] p-3 px-4 flex items-center justify-between shadow-2xl select-none transition-all duration-500 border ${
+                  ADS[currentAdIndex].color === 'emerald' ? 'border-emerald-500/40' :
+                  ADS[currentAdIndex].color === 'indigo' ? 'border-indigo-500/40' :
+                  'border-amber-500/40'
+                }`}>
+                  
+                  {/* Glass Shimmer Effect */}
+                  <div className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/10 to-transparent group-hover:animate-[shimmer_2s_infinite]" />
+
+                  <div className="flex items-center gap-3.5 z-10">
+                    <div className="flex flex-col items-center gap-1 shrink-0">
+                      <span className={`text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded border bg-black/50 ${
+                        ADS[currentAdIndex].color === 'emerald' ? 'text-emerald-400 border-emerald-500/30' :
+                        ADS[currentAdIndex].color === 'indigo' ? 'text-indigo-400 border-indigo-500/30' :
+                        'text-amber-500 border-amber-500/30'
+                      }`}>
+                        AD
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2.5 transition-all duration-500 animate-in fade-in slide-in-from-bottom-2" key={currentAdIndex}>
+                      <div className="shrink-0 p-1.5 bg-white/5 rounded-full shadow-inner">
+                        {ADS[currentAdIndex].icon}
+                      </div>
+                      <p className="text-[10px] sm:text-[11px] text-zinc-200 uppercase tracking-wider leading-snug">
+                        {ADS[currentAdIndex].text}
+                      </p>
+                    </div>
+                  </div>
+                  
+                  <button 
+                    onClick={() => onNavigate?.('subscription')}
+                    className={`shrink-0 ml-4 px-4 py-2 text-[10px] sm:text-[11px] font-black uppercase tracking-widest rounded-xl transition-all active:scale-95 shadow-lg z-10 ${
+                      ADS[currentAdIndex].color === 'emerald' ? 'bg-emerald-500 text-black hover:bg-emerald-400 hover:shadow-emerald-500/25' :
+                      ADS[currentAdIndex].color === 'indigo' ? 'bg-indigo-500 text-white hover:bg-indigo-400 hover:shadow-indigo-500/25' :
+                      'bg-gradient-to-r from-amber-500 to-amber-400 text-black hover:from-amber-400 hover:to-amber-300 hover:shadow-amber-500/25'
+                    }`}
+                  >
+                    {ADS[currentAdIndex].cta}
+                  </button>
                 </div>
-                <button 
-                  onClick={() => onNavigate?.('subscription')}
-                  className="bg-amber-500 hover:bg-amber-600 text-black text-[7.5px] sm:text-[8px] font-black uppercase tracking-widest px-2.5 py-1 rounded-lg transition-all active:scale-95 shrink-0 ml-2"
-                >
-                  Upgrade
-                </button>
               </div>
             )}
 

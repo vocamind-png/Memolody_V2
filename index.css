@@ -394,3 +394,22 @@ body.theme-v1 .floating-nimo-container {
   100% { transform: scale(1); }
 }
 
+/* ═══ VEROVIO SCORE STYLING ═══ */
+.verovio-track-svg {
+  color: white; /* Forces currentColor to be white */
+}
+.verovio-track-svg * {
+  fill: currentColor;
+}
+.verovio-track-svg path.staffLine,
+.verovio-track-svg path.stem,
+.verovio-track-svg path.barLine,
+.verovio-track-svg path.legerLine,
+.verovio-track-svg path.tie,
+.verovio-track-svg path.slur,
+.verovio-track-svg path.dir {
+  fill: none !important;
+  stroke: currentColor;
+  stroke-width: 2px;
+}
+

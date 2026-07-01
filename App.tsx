@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
-import { Home, User, Music2, Play, Zap, RefreshCcw, Star, Shield, Sparkles, Mic2, Settings, Gamepad2 } from 'lucide-react';
+import { Home, User, Music2, Play, Zap, RefreshCcw, Star, Shield, Sparkles, Mic2, Settings } from 'lucide-react';
 // Lazy load Nimo - only loads JS bundle when user first clicks NIMO
 const FloatingNimo = lazy(() => import('./components/Nimo/FloatingNimo').then(m => ({ default: m.FloatingNimo })));
 
@@ -30,7 +30,7 @@ import AuthForm from './components/Profile/AuthForm';
 // ── Lazy-load ALL heavy page components ──
 const HomePage = lazy(() => import('./components/Home/HomePage'));
 const PlayerPage = lazy(() => import('./components/Player/PlayerPage'));
-import { mapPartNameToInstrument } from './components/Player/PlayerPage';
+import { mapPartNameToInstrument } from './lib/instruments';
 const VaultPage = lazy(() => import('./components/Vault/VaultPage'));
 const StudioPage = lazy(() => import('./components/Studio/StudioPage'));
 const ProfilePage = lazy(() => import('./components/Profile/ProfilePage').then(m => ({ default: m.ProfilePage })));
@@ -40,7 +40,7 @@ const NimoPage = lazy(() => import('./components/Nimo/NimoPage'));
 const BrandingPage = lazy(() => import('./components/Presentation/BrandingPage'));
 const AdminPage = lazy(() => import('./components/Admin/AdminPage'));
 const PricingPage = lazy(() => import('./components/Subscription/PricingPage'));
-const GameHub = lazy(() => import('./components/Game/GameHub'));
+// Game moved to Devel/ folder for future standalone app
 
 // ── Error Boundary for lazy-loaded pages ──
 interface EBState { hasError: boolean; error?: Error }
@@ -59,8 +59,8 @@ class PageErrorBoundary extends React.Component<EBProps, EBState> {
       const reloaded = sessionStorage.getItem('eb_chunk_reload');
       if (!reloaded) {
         sessionStorage.setItem('eb_chunk_reload', '1');
-        console.warn('[EB] Stale chunk detected, auto-reloading...');
-        window.location.reload();
+        console.warn('[EB] Stale chunk detected, auto-reloading (cache-busting)...');
+        window.location.href = window.location.href.split('?')[0] + '?v=' + Date.now();
       }
     }
   }
@@ -73,11 +73,14 @@ class PageErrorBoundary extends React.Component<EBProps, EBState> {
           <div className="p-4 bg-red-500/10 border border-red-500/30 text-red-400 font-mono text-xs w-full max-w-2xl overflow-auto rounded-xl">
             {err ? err.toString() : 'Unknown Error'}
             <br/><br/>
-            {err && err.stack ? err.stack.split('\\n').map((line: string, i: number) => <div key={i}>{line}</div>) : null}
+            {err && err.stack ? err.stack.split('\n').map((line: string, i: number) => <div key={i}>{line}</div>) : null}
           </div>
-          <button onClick={() => window.location.reload()}
+          <button onClick={() => {
+              sessionStorage.removeItem('eb_chunk_reload');
+              window.location.href = window.location.href.split('?')[0] + '?v=' + Date.now();
+            }}
             className="px-4 py-2 bg-cyan-500 text-black text-[9px] font-black uppercase rounded-xl">
-            Reload
+            Reload Force
           </button>
         </div>
       );
@@ -103,7 +106,7 @@ const PageLoader = () => {
   );
 };
 
-type ViewId = 'home' | 'library' | 'player' | 'profile' | 'forge' | 'distribution' | 'settings' | 'nimo' | 'presentation' | 'admin' | 'subscription' | 'game';
+type ViewId = 'home' | 'library' | 'player' | 'profile' | 'forge' | 'distribution' | 'settings' | 'nimo' | 'presentation' | 'admin' | 'subscription';
 
 const INITIAL_LOOP_PRESETS: LoopPreset[] = [
   { id: 'intro', label: 'Intro', color: '#00e5ff', startBar: 1, endBar: 4, isActive: false },
@@ -122,7 +125,6 @@ const NAV_ITEMS: { id: ViewId; icon: any; label: string; minRole?: string; isNim
   { id: 'nimo', icon: Sparkles, label: 'NIMO', isNimo: true },
   { id: 'profile', icon: User, label: 'ME' },
   { id: 'settings', icon: Settings, label: 'SETTINGS' },
-  { id: 'game', icon: Gamepad2, label: 'GAME' },
   { id: 'admin', icon: Shield, label: 'CORE', minRole: 'admin' },
 ];
 
@@ -766,7 +768,7 @@ const App: React.FC = () => {
 
     const unregTeachMe = nimoBrain.registerAction('teach_me', (params) => {
       console.log('[App] Nimo requested teach_me', params);
-      navigateTo('game');
+      navigateTo('home'); // Game moved to Devel/
     }, {
       th: 'เริ่มโหมดแบบฝึกหัดหรือการสอนดนตรี',
       en: 'Start a lesson or practice mode',
@@ -1068,8 +1070,7 @@ const App: React.FC = () => {
         return <DistributionPage userLibrary={userSongs} onRefresh={triggerSync} onBack={() => navigateTo('home')} />;
       case 'nimo':
         return <NimoPage selectedSong={selectedSong} xmlData={uploadedMusicXml} preferredLanguage={preferredLanguage} onSongSelect={handleSongSelect} onRefresh={triggerSync} initialFile={pendingImportFile} voiceType={nimoVoice} />;
-      case 'game':
-        return <GameHub />;
+      // Game moved to Devel/ folder
       case 'presentation':
         return <BrandingPage onEnter={() => navigateTo('home')} backgroundImage="/images/memolody_hero.png" />;
       case 'admin':

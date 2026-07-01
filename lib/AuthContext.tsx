@@ -21,11 +21,12 @@ interface AuthContextType {
   signIn: (email: string, password: string) => Promise<{ error?: string }>;
   signUp: (email: string, password: string, name: string) => Promise<{ error?: string }>;
   signOut: () => Promise<void>;
+  simulateSubscription: (tier: MemberTier) => Promise<void>;
 }
 
 export const TIER_QUOTAS: Record<MemberTier, Pick<AuthUserCore, 'rendersPerSong' | 'dailySongQuota'>> = {
-  free:    { rendersPerSong: 30,   dailySongQuota: 10   },
-  pro:     { rendersPerSong: 100,  dailySongQuota: 50   },
+  free:    { rendersPerSong: 5,    dailySongQuota: 5    },
+  pro:     { rendersPerSong: 200,  dailySongQuota: 200  },
   premium: { rendersPerSong: 9999, dailySongQuota: 9999 },
   admin:   { rendersPerSong: 9999, dailySongQuota: 9999 },
 };
@@ -44,52 +45,54 @@ export interface TierPrice {
 
 export const TIER_PRICING: Record<Exclude<MemberTier, 'admin'>, TierPrice> = {
   free: {
-    label: 'Free Trial',
-    description: 'ทดลองใช้งานฟรี 7 วันแรก',
+    label: 'Starter Plan',
+    description: 'ลองสัมผัสประสบการณ์ Nimo AI ได้ทุกวัน',
     monthlyThb: null,
     yearlyThb: null,
     yearlyDiscountPct: 0,
     color: 'text-zinc-400',
     accentBg: 'bg-zinc-800/60',
     features: [
-      'ทดลองเล่นฟรี 7 วันทุกฟีเจอร์ในแอป',
-      'เล่น/ซ้อมผ่านแอปพลิเคชันเท่านั้น',
-      'เก็บข้อมูลเฉพาะในเครื่อง (No Backup)',
-      'จำกัดการดาวน์โหลดหรือส่งออกเสียง',
+      'Render ทำนอง/เสียงร้อง 5 ครั้ง/วัน (ท่อนสั้น)',
+      'ใช้งานหน้าต่างแต่งเพลงพื้นฐาน',
+      'เก็บข้อมูลโปรเจกต์ 3 เพลง (Local/Cloud)',
+      'ฟังพรีวิวในแอป (ไม่สามารถ Export Stems ได้)',
+      'ทดลองคุยกับ Nimo AI 20 ข้อความ/วัน'
     ],
   },
   pro: {
     label: 'Pro Plan',
-    description: 'สำหรับซ้อมดนตรีส่วนบุคคล',
+    description: 'สำหรับนักสร้างสรรค์ ปลดล็อกไฟล์แยกชิ้นไปทำงานต่อ',
     monthlyThb: 149,
-    yearlyThb: 990,
-    yearlyDiscountPct: 45,
+    yearlyThb: 1490,
+    yearlyDiscountPct: 15,
     badge: 'คุ้มค่าที่สุด',
     color: 'text-indigo-400',
     accentBg: 'bg-indigo-500/10',
     features: [
-      'เรนเดอร์เสียงร้อง AI 100 ครั้ง / เดือน',
-      'สำรองข้อมูลคลาวด์สูงสุด 50 เพลง',
-      'ซิงก์ข้อมูลข้ามเครื่องมือถือ/คอมพิวเตอร์',
-      'ใช้งาน AI Voice Models ทั้งหมด (Lotte V)',
-      'ส่งออกไฟล์โน้ตเพลงและไฟล์เสียงพื้นฐาน',
+      'ปลดล็อก True Stems (WAV/MP3) นำไปมิกซ์ต่อได้',
+      'Render ทำนอง/เสียงร้อง 200 ครั้ง/เดือน (เพลงเต็ม 3 นาที)',
+      'ซิงค์คลาวด์สูงสุด 50 โปรเจกต์',
+      'ใช้งาน AI Voice Models แบบครบถ้วน',
+      'สิทธิ์การใช้งานเชิงพาณิชย์ (Commercial Use)',
     ],
   },
   premium: {
     label: 'Studio Plan',
-    description: 'สำหรับครูและโรงเรียนสอนดนตรี',
+    description: 'ไร้ขีดจำกัด คิวประมวลผลด่วนพิเศษ สำหรับมืออาชีพ',
     monthlyThb: 399,
-    yearlyThb: 2900,
-    yearlyDiscountPct: 40,
+    yearlyThb: 3990,
+    yearlyDiscountPct: 15,
     badge: '✦ Professional',
     color: 'text-amber-400',
     accentBg: 'bg-amber-500/10',
     features: [
-      'เรนเดอร์เสียงร้อง AI ไม่จำกัด (VIP Queue)',
+      'Render ทำนอง & เสียงร้อง ไม่จำกัดจำนวนครั้ง',
+      'VIP Queue คิวประมวลผล GPU ก่อนใคร',
+      'ใช้งาน Nimo AI Agentic อย่างอิสระ',
       'สำรองข้อมูลคลาวด์ไม่จำกัดจำนวนเพลง',
-      'ส่งออกแยกแทร็กไฟล์เสียง (WAV/MP3 Stems)',
-      'แชร์ลิงก์ส่งการบ้านหรือการสอนให้ผู้เรียน',
-      'ไม่มีโฆษณาและการเชื่อมต่อจำกัด',
+      'ส่งออกแยกแทร็ก True Stems คุณภาพสูงสุด (Lossless)',
+      'แชร์ลิงก์ส่งการบ้านหรือทำงานร่วมกับทีม'
     ],
   },
 };
@@ -225,8 +228,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem('mock_user_email');
   }, []);
 
+  const simulateSubscription = useCallback(async (tier: MemberTier) => {
+    localStorage.setItem('mock_membership_tier', tier);
+    
+    // Attempt to refresh the session so state updates
+    const { data: { session } } = await supabase.auth.getSession();
+    
+    if (session?.user) {
+      await syncSession(session.user);
+    } else {
+      // If no supabase session, manually patch the user state directly
+      setUser(prev => prev ? {
+        ...prev,
+        tier,
+        ...TIER_QUOTAS[tier]
+      } : {
+        id: 'mock_guest',
+        email: 'guest@example.com',
+        displayName: 'Guest User',
+        tier,
+        ...TIER_QUOTAS[tier]
+      });
+    }
+  }, [syncSession]);
+
   return (
-    <AuthContext.Provider value={{ user, isLoading, signIn, signUp, signOut }}>
+    <AuthContext.Provider value={{ user, isLoading, signIn, signUp, signOut, simulateSubscription }}>
       {children}
     </AuthContext.Provider>
   );

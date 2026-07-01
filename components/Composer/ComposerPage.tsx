@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Bot, Wand2, Music, Loader2, Play, X, Tags } from 'lucide-react';
+import { Bot, Wand2, Music, Loader2, Play, X, Tags, FileText, Copy, Check } from 'lucide-react';
 import { TrackState } from '../../types';
 import { musicEngine } from '../../lib/MusicEngine';
 import { nimoBrain } from '../../lib/NimoBrain';
@@ -69,9 +69,16 @@ const ComposerPage: React.FC<ComposerPageProps> = ({ parsedData, tracks, setTrac
   const [extractMode, setExtractMode] = useState<{[key: string]: string}>({});
   const [extractedStems, setExtractedStems] = useState<{[key: string]: any[]}>({});
   const [isExtracting, setIsExtracting] = useState<{[key: string]: boolean}>({});
+  const [expandedLyrics, setExpandedLyrics] = useState<{[key: string]: boolean}>({});
+  const [copiedLyrics, setCopiedLyrics] = useState<{[key: string]: boolean}>({});
+  const [isExtractingChords, setIsExtractingChords] = useState<{[key: string]: boolean}>({});
+  const [isTranscribing, setIsTranscribing] = useState(false);
 
   // Use refs to access latest state in NimoBrain callbacks without re-registering
   const generateRef = useRef<() => void>(() => {});
+  const extractChordsRef = useRef<(trackId?: string) => void>(() => {});
+  const extractStemsRef = useRef<(trackId?: string) => void>(() => {});
+  const transcribeRef = useRef<(url: string) => void>(() => {});
 
   useEffect(() => {
     nimoBrain.updateState('musicgenState', {
@@ -119,6 +126,18 @@ const ComposerPage: React.FC<ComposerPageProps> = ({ parsedData, tracks, setTrac
       if (params?.lyrics !== undefined) setLyrics(params.lyrics);
     }, { th: 'ใส่เนื้อร้อง', en: 'Set lyrics text', params: "{ lyrics: string }", category: 'composer' });
 
+    const unregExtractChords = nimoBrain.registerAction('musicgen_extract_chords', () => {
+      extractChordsRef.current();
+    }, { th: 'แกะคอร์ด, แยกคอร์ด', en: 'Extract chords for the latest song', category: 'composer' });
+
+    const unregExtractStems = nimoBrain.registerAction('musicgen_extract_stems', () => {
+      extractStemsRef.current();
+    }, { th: 'แยกสเต็มเพลงล่าสุด', en: 'Extract stems for the latest song', category: 'composer' });
+
+    const unregTranscribe = nimoBrain.registerAction('musicgen_transcribe_lyrics', (params) => {
+      if (params?.url) transcribeRef.current(params.url);
+    }, { th: 'แกะคำร้อง, แกะเนื้อเพลง, แยกคำร้อง, แยกเนื้อเพลง', en: 'Transcribe lyrics from YouTube', params: "{ url: string }", category: 'composer' });
+
     return () => {
       unregGenerate();
       unregSetMood();
@@ -127,6 +146,9 @@ const ComposerPage: React.FC<ComposerPageProps> = ({ parsedData, tracks, setTrac
       unregClearStyles();
       unregSetPrompt();
       unregSetLyrics();
+      unregExtractChords();
+      unregExtractStems();
+      unregTranscribe();
     };
   }, []);
 
@@ -249,6 +271,7 @@ const ComposerPage: React.FC<ComposerPageProps> = ({ parsedData, tracks, setTrac
           pan: 0,
           mode: 'vocal',
           audioSrc: audioSrc,
+          lyrics: lyrics,
           effects: []
         };
         
@@ -281,6 +304,127 @@ const ComposerPage: React.FC<ComposerPageProps> = ({ parsedData, tracks, setTrac
   useEffect(() => {
     generateRef.current = handleLyriaGenerate;
   }, [handleLyriaGenerate]);
+
+  const handleTranscribe = async (source: string | File) => {
+    try {
+      setIsTranscribing(true);
+      const payload: any = {};
+      
+      if (typeof source === 'string') {
+        payload.youtube_url = source;
+      } else {
+        // Read file as base64
+        const reader = new FileReader();
+        const b64 = await new Promise<string>((resolve) => {
+          reader.onloadend = () => {
+            const result = reader.result as string;
+            resolve(result.split(',')[1]);
+          };
+          reader.readAsDataURL(source);
+        });
+        payload.audio_base64 = b64;
+      }
+      
+      const res = await fetch('/vocalido/api/ai/transcribe-audio', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.message);
+      
+      setLyrics(data.data.lyrics);
+      setIsLyricsExpanded(true); // Open the lyrics panel
+    } catch (e: any) {
+      alert("Transcription Failed: " + e.message);
+    } finally {
+      setIsTranscribing(false);
+    }
+  };
+
+  const handleExtractStems = async (trackId?: string) => {
+    const targetId = trackId || (tracks.length > 0 ? tracks[tracks.length - 1].id : null);
+    if (!targetId) return;
+    const track = tracks.find(t => t.id === targetId);
+    if (!track || !track.audioSrc || !track.audioSrc.includes('base64,')) {
+      alert("Requires full audio data to extract stems.");
+      return;
+    }
+    
+    try {
+      setIsExtracting(prev => ({...prev, [targetId]: true}));
+      const mode = extractMode[targetId] || '2stems';
+      const b64 = track.audioSrc.split(',')[1];
+      const res = await fetch('/vocalido/api/ai/extract-stems-midi', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ audio_base64: b64, mode })
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.message);
+      
+      // Decode XML and create objects
+      const atobUTF8 = (b64: string) => decodeURIComponent(escape(atob(b64)));
+      const results: any[] = [];
+      
+      for (const [stemName, stemData] of Object.entries(data.data as Record<string, any>)) {
+          if (stemData?.xml) {
+            const xmlStr = atobUTF8(stemData.xml);
+            const parsed = (await import('../../lib/MusicEngine')).musicEngine.parseMusicXml(xmlStr);
+            results.push({
+              id: `${stemName}-${Date.now()}`,
+              name: `${track.name} (${stemName.toUpperCase()})`,
+              instrument: stemName === 'vocals' ? 'vocal' : stemName === 'drums' ? 'drums' : stemName === 'bass' ? 'bass' : 'piano',
+              mode: stemName === 'vocals' ? 'vocal' : 'piano',
+              _generatedNotes: parsed.notes
+            });
+          }
+      }
+      
+      setExtractedStems(prev => ({...prev, [targetId]: results}));
+    } catch (e: any) {
+      alert("Extraction Failed: " + e.message);
+    } finally {
+      setIsExtracting(prev => ({...prev, [targetId]: false}));
+    }
+  };
+
+  const handleExtractChords = async (trackId?: string) => {
+    const targetId = trackId || (tracks.length > 0 ? tracks[tracks.length - 1].id : null);
+    if (!targetId) return;
+    const track = tracks.find(t => t.id === targetId);
+    if (!track || !track.audioSrc || !track.lyrics) return;
+    if (!track.audioSrc.includes('base64,')) {
+      alert("Requires full audio data to extract chords.");
+      return;
+    }
+
+    try {
+      setIsExtractingChords(prev => ({...prev, [targetId]: true}));
+      setExpandedLyrics(prev => ({...prev, [targetId]: true})); // Open lyric window
+      const b64 = track.audioSrc.split(',')[1];
+      const res = await fetch('/vocalido/api/ai/extract-chords', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ audio_base64: b64, lyrics: track.lyrics })
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.message);
+      
+      // Update track with new lyrics
+      setTracks(prev => prev.map(t => t.id === targetId ? { ...t, lyrics: data.data.lyrics } : t));
+    } catch (e: any) {
+      alert("Chord Extraction Failed: " + e.message);
+    } finally {
+      setIsExtractingChords(prev => ({...prev, [targetId]: false}));
+    }
+  };
+
+  useEffect(() => {
+    extractStemsRef.current = handleExtractStems;
+    extractChordsRef.current = handleExtractChords;
+    transcribeRef.current = handleTranscribe;
+  }, [tracks, extractMode]);
 
   return (
     <div className="absolute inset-0 z-10 overflow-y-auto overflow-x-hidden bg-[#050507] pb-[160px] custom-scrollbar">
@@ -413,14 +557,35 @@ const ComposerPage: React.FC<ComposerPageProps> = ({ parsedData, tracks, setTrac
             </div>
             
             <div className="group relative">
-              <div className="flex justify-between items-end mb-2">
-                <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest">Lyrics (Optional)</label>
-                <button
-                  onClick={() => setIsLyricsExpanded(!isLyricsExpanded)}
-                  className="text-xs font-bold text-cyan-400 hover:text-cyan-300 transition-colors flex items-center gap-1"
-                >
-                  {isLyricsExpanded ? 'Collapse' : 'Expand'}
-                </button>
+              <div className="flex flex-col sm:flex-row justify-between sm:items-end gap-2 mb-2">
+                <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2">
+                  Lyrics (Optional)
+                  {isTranscribing && <div className="w-3 h-3 border-2 border-pink-500 border-t-transparent rounded-full animate-spin" title="Transcribing..." />}
+                </label>
+                <div className="flex gap-2 self-start sm:self-auto">
+                  <button
+                    onClick={() => {
+                      const url = prompt("Enter YouTube URL to transcribe:");
+                      if (url) handleTranscribe(url);
+                    }}
+                    className="text-[10px] font-bold text-pink-400 hover:text-pink-300 bg-pink-500/10 hover:bg-pink-500/20 px-2 py-1 rounded transition-colors flex items-center gap-1"
+                    disabled={isTranscribing}
+                  >
+                    YouTube
+                  </button>
+                  <label className="text-[10px] font-bold text-purple-400 hover:text-purple-300 bg-purple-500/10 hover:bg-purple-500/20 px-2 py-1 rounded transition-colors cursor-pointer flex items-center gap-1">
+                    Audio
+                    <input type="file" accept="audio/*" className="hidden" disabled={isTranscribing} onChange={e => {
+                      if (e.target.files && e.target.files[0]) handleTranscribe(e.target.files[0]);
+                    }} />
+                  </label>
+                  <button
+                    onClick={() => setIsLyricsExpanded(!isLyricsExpanded)}
+                    className="text-xs font-bold text-cyan-400 hover:text-cyan-300 transition-colors flex items-center gap-1 ml-2"
+                  >
+                    {isLyricsExpanded ? 'Collapse' : 'Expand'}
+                  </button>
+                </div>
               </div>
               <div className="absolute -inset-1 bg-gradient-to-r from-pink-500 to-purple-500 rounded-[20px] blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200 mt-6" />
               <textarea
@@ -481,18 +646,28 @@ const ComposerPage: React.FC<ComposerPageProps> = ({ parsedData, tracks, setTrac
                         <Music size={16} className="text-cyan-400" />
                         <span className="text-sm font-bold text-white">{track.name}</span>
                       </div>
-                      {/* Download Button */}
-                      {track.audioSrc && (
-                        <a 
-                          href={track.audioSrc} 
-                          download={`${track.name}.mp3`}
-                          className="text-[10px] font-bold uppercase bg-white/10 hover:bg-white/20 px-3 py-1 rounded text-white transition-colors flex items-center gap-1"
-                          title="Download MP3"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                          Save
-                        </a>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {track.lyrics && (
+                          <button
+                            onClick={() => setExpandedLyrics(prev => ({...prev, [track.id]: !prev[track.id]}))}
+                            className={`text-[10px] font-bold uppercase px-3 py-1 rounded transition-colors flex items-center gap-1 ${expandedLyrics[track.id] ? 'bg-cyan-500/30 text-cyan-300' : 'bg-white/10 text-white hover:bg-white/20'}`}
+                          >
+                            <FileText size={12} />
+                            Lyrics
+                          </button>
+                        )}
+                        {track.audioSrc && (
+                          <a 
+                            href={track.audioSrc} 
+                            download={`${track.name}.mp3`}
+                            className="text-[10px] font-bold uppercase bg-white/10 hover:bg-white/20 px-3 py-1 rounded text-white transition-colors flex items-center gap-1"
+                            title="Download MP3"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                            Save
+                          </a>
+                        )}
+                      </div>
                     </div>
                     {track.audioSrc ? (
                       <audio controls className="w-full h-10" src={track.audioSrc}>
@@ -500,6 +675,28 @@ const ComposerPage: React.FC<ComposerPageProps> = ({ parsedData, tracks, setTrac
                       </audio>
                     ) : (
                       <div className="text-xs text-zinc-500 italic">No audio source available</div>
+                    )}
+                    {expandedLyrics[track.id] && track.lyrics && (
+                      <div className="mt-2 bg-black/60 p-4 rounded-xl border border-white/10 relative">
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(track.lyrics || '');
+                            setCopiedLyrics(prev => ({...prev, [track.id]: true}));
+                            setTimeout(() => setCopiedLyrics(prev => ({...prev, [track.id]: false})), 2000);
+                          }}
+                          className="absolute top-3 right-3 text-zinc-400 hover:text-white bg-black/40 hover:bg-white/10 p-2 rounded-lg transition-colors flex items-center gap-1"
+                          title="Copy Lyrics"
+                        >
+                          {copiedLyrics[track.id] ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
+                        </button>
+                        <h4 className="text-[10px] font-bold text-cyan-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                          <FileText size={12} />
+                          Lyrics & Chords
+                        </h4>
+                        <div className="text-sm text-zinc-300 whitespace-pre-wrap leading-relaxed font-medium">
+                          {track.lyrics}
+                        </div>
+                      </div>
                     )}
                     <div className="flex flex-col gap-2 mt-2 bg-black/20 p-3 rounded-xl border border-white/5">
                       <div className="flex items-center gap-2">
@@ -516,48 +713,7 @@ const ComposerPage: React.FC<ComposerPageProps> = ({ parsedData, tracks, setTrac
                       
                       <button
                         disabled={isExtracting[track.id]}
-                        onClick={async () => {
-                          if (!track.audioSrc || !track.audioSrc.includes('base64,')) {
-                            alert("Requires full audio data to extract stems.");
-                            return;
-                          }
-                          try {
-                            setIsExtracting(prev => ({...prev, [track.id]: true}));
-                            const mode = extractMode[track.id] || '2stems';
-                            const b64 = track.audioSrc.split(',')[1];
-                            const res = await fetch('/vocalido/api/ai/extract-stems-midi', {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ audio_base64: b64, mode })
-                            });
-                            const data = await res.json();
-                            if (!data.success) throw new Error(data.message);
-                            
-                            // Decode XML and create objects
-                            const atobUTF8 = (b64: string) => decodeURIComponent(escape(atob(b64)));
-                            const results: any[] = [];
-                            
-                            for (const [stemName, stemData] of Object.entries(data.data as Record<string, any>)) {
-                                if (stemData?.xml) {
-                                  const xmlStr = atobUTF8(stemData.xml);
-                                  const parsed = (await import('../../lib/MusicEngine')).musicEngine.parseMusicXml(xmlStr);
-                                  results.push({
-                                    id: `${stemName}-${Date.now()}`,
-                                    name: `${track.name} (${stemName.toUpperCase()})`,
-                                    instrument: stemName === 'vocals' ? 'vocal' : stemName === 'drums' ? 'drums' : stemName === 'bass' ? 'bass' : 'piano',
-                                    mode: stemName === 'vocals' ? 'vocal' : 'piano',
-                                    _generatedNotes: parsed.notes
-                                  });
-                                }
-                            }
-                            
-                            setExtractedStems(prev => ({...prev, [track.id]: results}));
-                          } catch (e: any) {
-                            alert("Extraction Failed: " + e.message);
-                          } finally {
-                            setIsExtracting(prev => ({...prev, [track.id]: false}));
-                          }
-                        }}
+                        onClick={() => handleExtractStems(track.id)}
                         className={`w-full h-10 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${isExtracting[track.id] ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed' : 'bg-gradient-to-r from-purple-500/20 to-pink-500/20 hover:from-purple-500/40 hover:to-pink-500/40 border border-purple-500/30 text-purple-200'}`}
                       >
                         {isExtracting[track.id] ? (
@@ -566,6 +722,20 @@ const ComposerPage: React.FC<ComposerPageProps> = ({ parsedData, tracks, setTrac
                            <><span className="text-[14px]">✂️</span> Extract Stems & Notes</>
                         )}
                       </button>
+                      
+                      {track.lyrics && (
+                        <button
+                          disabled={isExtractingChords[track.id]}
+                          onClick={() => handleExtractChords(track.id)}
+                          className={`w-full h-10 mt-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${isExtractingChords[track.id] ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed' : 'bg-gradient-to-r from-emerald-500/20 to-cyan-500/20 hover:from-emerald-500/40 hover:to-cyan-500/40 border border-emerald-500/30 text-emerald-200'}`}
+                        >
+                          {isExtractingChords[track.id] ? (
+                             <><div className="w-3 h-3 border-2 border-zinc-500 border-t-transparent rounded-full animate-spin"/> LISTENING TO CHORDS...</>
+                          ) : (
+                             <><span className="text-[14px]">🎸</span> Extract Chords to Lyrics</>
+                          )}
+                        </button>
+                      )}
                     </div>
 
                     {/* Extracted Folder UI */}

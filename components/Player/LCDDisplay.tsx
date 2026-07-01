@@ -94,20 +94,43 @@ export const KeyTransposeDisplay: React.FC<{ keySig: string; transpose: number; 
 
   return (
     <div 
-      className={`flex flex-col items-center select-none cursor-ns-resize h-full justify-center transition-all w-full px-0.5 ${isDragging ? 'bg-white/5' : 'hover:bg-white/[0.02]'}`}
-      onMouseDown={handleStart}
-      onTouchStart={handleStart}
-      onClick={() => { if (!isDragging) { setIsEditing(true); setTempValue(transpose.toString()); } }}
+      className={`flex items-center select-none h-full justify-center transition-all w-full px-0.5 ${isDragging ? 'bg-white/5' : ''}`}
     >
-        <div className="flex items-baseline gap-0.5 leading-none">
-            <span className="text-[11px] min-[360px]:text-[14px] sm:text-[18px] font-black italic lcd-font text-[#ffab00] tracking-tighter">
-                {getTransposedKey(keySig, transpose)}
-            </span>
-            <span className="text-[8px] min-[360px]:text-[9px] sm:text-[10px] font-black text-[#ffab00]/50 italic ml-0.5">
-                {transpose >= 0 ? `+${transpose}` : transpose}
-            </span>
+        {/* ▼ Decrease transpose */}
+        <button
+          onClick={(e) => { e.stopPropagation(); onTransposeChange(Math.max(-12, transpose - 1)); }}
+          className="flex items-center justify-center w-5 h-full text-[10px] text-zinc-500 hover:text-amber-400 active:text-amber-300 transition-colors touch-manipulation"
+          aria-label="Transpose down"
+        >
+          ◀
+        </button>
+
+        {/* Center: Key display (drag or click to edit) */}
+        <div 
+          className="flex-1 flex flex-col items-center justify-center cursor-ns-resize h-full"
+          onMouseDown={handleStart}
+          onTouchStart={handleStart}
+          onClick={() => { if (!isDragging) { setIsEditing(true); setTempValue(transpose.toString()); } }}
+        >
+          <div className="flex items-baseline gap-0.5 leading-none">
+              <span className="text-[11px] min-[360px]:text-[14px] sm:text-[18px] font-black italic lcd-font text-[#ffab00] tracking-tighter">
+                  {getTransposedKey(keySig, transpose)}
+              </span>
+              <span className="text-[8px] min-[360px]:text-[9px] sm:text-[10px] font-black text-[#ffab00]/50 italic ml-0.5">
+                  {transpose >= 0 ? `+${transpose}` : transpose}
+              </span>
+          </div>
+          <span className="text-[5px] min-[360px]:text-[6px] sm:text-[7.5px] font-black text-zinc-600 uppercase tracking-widest mt-0.5">KEY</span>
         </div>
-        <span className="text-[5px] min-[360px]:text-[6px] sm:text-[7.5px] font-black text-zinc-600 uppercase tracking-widest mt-0.5">KEY</span>
+
+        {/* ▲ Increase transpose */}
+        <button
+          onClick={(e) => { e.stopPropagation(); onTransposeChange(Math.min(12, transpose + 1)); }}
+          className="flex items-center justify-center w-5 h-full text-[10px] text-zinc-500 hover:text-amber-400 active:text-amber-300 transition-colors touch-manipulation"
+          aria-label="Transpose up"
+        >
+          ▶
+        </button>
     </div>
   );
 };

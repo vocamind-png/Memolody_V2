@@ -28,7 +28,7 @@ interface ArrangerPageProps {
   visualType?: 'score' | 'pianoroll';
 }
 
-const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, setTracks, hideHeader, onTrackDoubleClick, visualType = 'pianoroll' }) => {
+const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, setTracks, hideHeader, onTrackDoubleClick, visualType = 'score' }) => {
   const localSong = useMemo(() => song || { title: 'Untitled Composition', artist: 'Nimo', bpm: 120, key: 'C', duration: 180 } as any, [song]);
   const [localXml, setLocalXml] = useState(musicXml || '');
   const parsedData = useMemo(() => musicEngine.parseMusicXml(localXml), [localXml]);
@@ -104,6 +104,9 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
   
   // UI Toggles
   const [localVisualType, setLocalVisualType] = useState<'score' | 'pianoroll'>(visualType);
+  useEffect(() => {
+    setLocalVisualType(visualType);
+  }, [visualType]);
   const [scrollMode, setScrollMode] = useState<'page' | 'continuous'>('continuous');
 
   const [aiEngine, setAiEngine] = useState('auto');
@@ -113,6 +116,8 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
   const [isAIStudioModalOpen, setIsAIStudioModalOpen] = useState(false);
   const [aiStudioTab, setAiStudioTab] = useState<'arrange' | 'lyria' | 'lyrics'>('arrange');
   const [lyricsPrompt, setLyricsPrompt] = useState('');
+  const [aiArrangementOptions, setAiArrangementOptions] = useState<any[]>([]);
+  const [activeOptionIndex, setActiveOptionIndex] = useState<number>(0);
 
   const [zoomLevel, setZoomLevel] = useState(1);
 
@@ -200,7 +205,7 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
       
       // Successfully generated. Update the track to use this audio URL and switch its mode to audio/vocal
       const newTracks = [...tracks];
-      newTracks[index] = { ...track, mode: 'vocal', instrument: track.instrument };
+      newTracks[index] = { ...track, mode: 'vocal', instrument: track.instrument, audioSrc: audioUrl };
       setTracks(newTracks);
       
       // Load into MusicEngine as an audio stem
@@ -210,6 +215,68 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
     } catch (e: any) {
       alert(`Instrumento Render Failed: ${e.message}`);
       console.error(e);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const applyOption = async (optIndex: number, optionsList: any[]) => {
+    if (!optionsList || optionsList.length === 0) return;
+    setIsGenerating(true);
+    setActiveOptionIndex(optIndex);
+    try {
+      const aiResult = optionsList[optIndex];
+      let config = {
+        key: arrangeKey,
+        bpm: arrangeBpm,
+        timeSignature: parsedData.timeSignature || { beats: 4, beatType: 4 },
+        style: arrangeStyle,
+        chordSource: chordSource,
+        prompt: aiPrompt,
+        sections: sections,
+        aiChords: aiResult.chords,
+        aiTracksConfig: aiResult.tracksConfig
+      } as any;
+      
+      const existingUserTracks = tracks.filter(t => !t.name.startsWith('AI '));
+      const userTrack = existingUserTracks[0];
+      const leadMelody = (userTrack as any)?._generatedNotes 
+        || parsedData.notes.filter(n => n.trackId === (userTrack?.id || tracks[0]?.id) || (!n.trackId && tracks.length <= 1));
+        
+      const newTracks = await SymbolicArranger.generateArrangement(leadMelody, config);
+      
+      // Filter out old AI tracks, keep user tracks
+      const updatedTracks = [...existingUserTracks, ...newTracks];
+      setTracks(updatedTracks);
+      
+      // Load into MusicEngine so it actually plays
+      const existingTrackIds = new Set(existingUserTracks.map(t => t.id));
+      let allNotes = parsedData.notes.filter(n => !n.trackId || existingTrackIds.has(n.trackId));
+      
+      // Ensure Composer generated notes are kept
+      existingUserTracks.forEach(t => {
+        if ((t as any)._generatedNotes) {
+          allNotes = allNotes.concat((t as any)._generatedNotes);
+        }
+      });
+      
+      newTracks.forEach(t => {
+        if ((t as any)._generatedNotes) {
+          allNotes = allNotes.concat((t as any)._generatedNotes);
+        }
+      });
+      
+      await musicEngine.loadSong(allNotes, updatedTracks, 0, parsedData.timeSignature || { beats: 4 }, false, true);
+      
+      // Re-attach audio sources if they exist in state but not in engine
+      for (const t of updatedTracks) {
+        if (t.audioSrc && !musicEngine.hasVocalLayer(t.id)) {
+          await musicEngine.addVocalLayer(t.id, t.audioSrc);
+        }
+      }
+    } catch (e: any) {
+      console.error('Failed to apply arrangement option:', e);
+      setTimeout(() => alert(`Error applying option: ${e.message}`), 100);
     } finally {
       setIsGenerating(false);
     }
@@ -263,7 +330,10 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
       }
       
       // Get lead melody
-      const leadMelody = parsedData.notes.filter(n => n.trackId === tracks[0]?.id || (!n.trackId && tracks.length <= 1));
+      const existingUserTracks = tracks.filter(t => !t.name.startsWith('AI '));
+      const userTrack = existingUserTracks[0];
+      const leadMelody = (userTrack as any)?._generatedNotes 
+        || parsedData.notes.filter(n => n.trackId === (userTrack?.id || tracks[0]?.id) || (!n.trackId && tracks.length <= 1));
       
       let newTracks: TrackState[] = [];
       
@@ -275,17 +345,16 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
             const references = AIArrangerService.retrieveReferences(library, arrangeStyle, aiPrompt, 3);
             
             console.log(`[RAG] Found ${references.length} references. Calling Gemini...`);
-            const aiResult = await AIArrangerService.generateAIArrangement(leadMelody, references, arrangeStyle, aiPrompt, arrangeKey, arrangeBpm);
+            const aiResults = await AIArrangerService.generateAIArrangement(leadMelody, references, arrangeStyle, aiPrompt, arrangeKey, arrangeBpm, aiArrangementOptions);
             
-            if (aiResult && aiResult.chords) {
-              console.log("[RAG] AI Chords generated:", aiResult.chords);
-              config.aiChords = aiResult.chords;
-              if (aiResult.tracksConfig) {
-                console.log("[RAG] AI Tracks Config generated:", aiResult.tracksConfig);
-                config.aiTracksConfig = aiResult.tracksConfig;
-              }
+            if (aiResults && aiResults.length > 0) {
+              console.log(`[RAG] AI generated ${aiResults.length} options.`);
+              setAiArrangementOptions(aiResults);
+              await applyOption(0, aiResults);
+              return; // applyOption handles the rest (SymbolicArranger & MusicEngine)
             } else {
               console.warn("[RAG] AI failed to generate chords, falling back to algorithmic.");
+              setTimeout(() => alert("AI could not generate multiple options at this time (too complex or rate limited). Falling back to basic generation."), 100);
             }
           }
           
@@ -335,7 +404,14 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
         }
       });
       try {
-        await musicEngine.loadSong(allNotes, updatedTracks, 0, parsedData.timeSignature || { beats: 4 });
+        await musicEngine.loadSong(allNotes, updatedTracks, 0, parsedData.timeSignature || { beats: 4 }, false, true);
+        
+        // Re-attach audio sources if they exist in state but not in engine
+        for (const t of updatedTracks) {
+          if (t.audioSrc && !musicEngine.hasVocalLayer(t.id)) {
+            await musicEngine.addVocalLayer(t.id, t.audioSrc);
+          }
+        }
       } catch (err) {
         console.error('Failed to load generated song into MusicEngine:', err);
       }
@@ -796,11 +872,31 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
                   onClick={() => {
                     const originalTracks = tracks.filter(t => !t.name.startsWith('AI '));
                     setTracks(originalTracks);
+                    setAiArrangementOptions([]);
                   }}
                   className="px-3 h-7 bg-red-500/10 border border-red-500/20 text-red-500 rounded-lg text-[9px] font-black uppercase hover:bg-red-500 hover:text-white transition-all flex items-center gap-1.5"
                 >
                   <Trash2 size={12} /> CLEAR AI
                 </button>
+                
+                {aiArrangementOptions.length > 0 && (
+                  <div className="flex items-center gap-1 ml-2 bg-zinc-900/80 p-1 rounded-lg border border-white/5">
+                    {aiArrangementOptions.map((opt, i) => (
+                      <button
+                        key={i}
+                        onClick={() => applyOption(i, aiArrangementOptions)}
+                        disabled={isGenerating}
+                        className={`px-3 h-6 rounded-md text-[10px] font-black transition-all ${
+                          activeOptionIndex === i
+                            ? 'bg-emerald-500 text-zinc-950 shadow-[0_0_10px_rgba(16,185,129,0.5)]'
+                            : 'bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700'
+                        } ${isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        P{i + 1}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1022,6 +1118,8 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
                         visualType={localVisualType}
                         pixelsPerBeat={pixelsPerMeasure / beatsPerMeasure}
                         songKey={arrangeKey}
+                        totalMeasures={totalMeasures}
+                        pixelsPerMeasure={pixelsPerMeasure}
                       />
                       {/* Overlay Measures Grid on top of Visualizer if needed */}
                       {localVisualType !== 'score' && (
