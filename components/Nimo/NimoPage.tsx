@@ -1209,6 +1209,14 @@ ${appStateStr}
 ${typeof window !== 'undefined' && window.NimoBrain ? window.NimoBrain.generateActionPrompt('th') : ''}
 
 
+หมายเหตุสำคัญเรื่อง Transpose (เปลี่ยนคีย์):
+- เมื่อผู้ใช้เลื่อนเปลี่ยนคีย์ ระบบใช้ PitchShift แบบ real-time เปลี่ยน pitch ทันทีโดยไม่กระทบความเร็ว
+- ถ้าเปลี่ยน 1 ถึง 3 semitones เสียงจะดี แต่ถ้ามากกว่านั้นอาจมี artifacts เสียงเป็นหุ่นยนต์เล็กน้อย
+- ถ้าผู้ใช้ต้องการเสียงดีที่สุดหลังเปลี่ยนคีย์ ให้แนะนำกด Render ใหม่ เพราะ Vocalido จะสังเคราะห์เสียงร้องใหม่ที่คีย์ใหม่โดยตรง ได้เสียงธรรมชาติไม่มี artifacts
+- สรุป PitchShift เอาไว้พรีวิวเร็ว ส่วน Re-render คือคุณภาพสูงสุด
+- คำสั่ง set_transpose ใช้เปลี่ยนคีย์ real-time ค่า transpose เป็น semitones ตั้งแต่ ลบ 12 ถึง บวก 12
+- คำสั่ง render_vocal ใช้สั่ง Vocalido สังเคราะห์เสียงใหม่ที่คีย์ปัจจุบัน
+
 หมายเหตุสำคัญ: เมื่อผู้ใช้ขอให้แต่งเพลงใหม่ หรือสร้างเพลงใหม่ ห้ามใช้ arrange_song เด็ดขาด ต้องใช้ musicgen actions ตามลำดับนี้เสมอ:
 1. navigate_to_page กับ view='forge' (เปิดหน้า Studio ก่อน)
 2. studio_set_tab กับ tab='composer' (สลับไปแท็บ Composer เท่านั้น ห้ามไปแท็บ arranger)
@@ -1249,6 +1257,14 @@ IMPORTANT: When user asks to compose/create a new song, you MUST use musicgen ac
 3. musicgen_set_mood / musicgen_set_tempo / musicgen_set_prompt
 4. musicgen_generate
 DO NOT use 'arrange_song' for composing new songs.
+
+Transpose Knowledge:
+- When user changes key using Transpose, the system uses real-time PitchShift which changes pitch instantly without affecting speed.
+- For 1 to 3 semitones quality is good, but larger intervals may produce artifacts with slightly robotic sound.
+- For best quality after key change, recommend pressing Render again because Vocalido will re-synthesize vocals at the new key natively producing natural sound without artifacts.
+- Summary: PitchShift equals quick preview, Re-render equals best quality.
+- Use set_transpose to change key in real-time with semitones from -12 to +12.
+- Use render_vocal to re-synthesize vocals at the current key.
 
 You must output valid JSON matching the schema. If no actions are needed, return an empty array.`;
 

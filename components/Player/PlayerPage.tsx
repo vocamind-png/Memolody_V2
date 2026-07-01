@@ -2031,8 +2031,8 @@ const PlayerPage: React.FC<{
         setTransposeRef.current(val);
       }
     }, {
-      th: 'ปรับคีย์ Transpose',
-      en: 'Adjust transpose key',
+      th: 'ปรับคีย์ Transpose แบบ real-time (PitchShift) ค่า -12 ถึง +12 semitones — ถ้าเปลี่ยนมากกว่า 3 semitones แนะนำ render_vocal ใหม่เพื่อคุณภาพเสียงดีที่สุด',
+      en: 'Adjust transpose key in real-time via PitchShift (-12 to +12 semitones). For shifts larger than 3 semitones, recommend using render_vocal for best quality.',
       params: "{ transpose: number }",
       category: 'player'
     });
