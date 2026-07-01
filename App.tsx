@@ -1059,7 +1059,7 @@ const App: React.FC = () => {
           currentUserId={authUser?.id}
         />;
       case 'player':
-        return <PlayerPage song={selectedSong} musicXml={uploadedMusicXml} layoutBundle={selectedLayoutBundle} tracks={tracks} setTracks={setTracks} viewMode={playerViewMode} setViewMode={setPlayerViewMode} loopPresets={loopPresets} setLoopPresets={setLoopPresets} performanceMode={performanceMode} vocalidoAutoRender={vocalidoAutoRender} renderCardStyle={vocalidoRenderCardStyle} autoPlay={autoPlayOnLoad} onAutoPlayConsumed={() => setAutoPlayOnLoad(false)} onSongUpdate={handleSongUpdate} onNavigate={(view) => setCurrentView(view)} />;
+        return null; // PlayerPage is rendered persistently outside this switch
       case 'forge':
         return <StudioPage selectedSong={selectedSong} xmlData={uploadedMusicXml} layoutBundle={selectedLayoutBundle} tracks={tracks} setTracks={setTracks} onPublish={triggerSync} onExit={() => navigateTo('home')} initialStudioMode={studioInitialMode} />;
       case 'profile':
@@ -1189,6 +1189,18 @@ const App: React.FC = () => {
               {renderPage()}
             </Suspense>
           </PageErrorBoundary>
+
+          {/* PlayerPage is always mounted (hidden when not active) to preserve vocal renders */}
+          {selectedSong && (
+            <div
+              className="absolute inset-0"
+              style={{ display: currentView === 'player' ? 'block' : 'none' }}
+            >
+              <Suspense fallback={<PageLoader />}>
+                <PlayerPage song={selectedSong} musicXml={uploadedMusicXml} layoutBundle={selectedLayoutBundle} tracks={tracks} setTracks={setTracks} viewMode={playerViewMode} setViewMode={setPlayerViewMode} loopPresets={loopPresets} setLoopPresets={setLoopPresets} performanceMode={performanceMode} vocalidoAutoRender={vocalidoAutoRender} renderCardStyle={vocalidoRenderCardStyle} autoPlay={autoPlayOnLoad} onAutoPlayConsumed={() => setAutoPlayOnLoad(false)} onSongUpdate={handleSongUpdate} onNavigate={(view) => setCurrentView(view)} />
+              </Suspense>
+            </div>
+          )}
 
           {/* Song Loading Overlay */}
           {isSongLoading && (
