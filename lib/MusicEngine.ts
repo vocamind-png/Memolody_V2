@@ -1628,6 +1628,26 @@ export class MusicEngine {
     // Cache the hash
     this.loadedSongHash = hash;
 
+    // ── Reconnect PitchShift nodes to new channels ──
+    // disposeOldData() disposes all trackChannels, and initSampler() recreates them.
+    // We must reconnect PitchShift outputs to the new channel instances.
+    if (preserveVocals) {
+      this.vocalPitchShifts.forEach((ps, key) => {
+        // Extract base trackId (key might be "trackId" or "trackId:stem:N")
+        const baseTrackId = key.includes(':stem:') ? key.split(':stem:')[0] : key;
+        const newChannel = this.trackChannels.get(baseTrackId) || this.masterBus;
+        if (newChannel) {
+          try {
+            ps.disconnect();  // Disconnect from old (disposed) channel
+            ps.connect(newChannel);  // Reconnect to new channel
+            console.log(`[MusicEngine] 🔄 Reconnected PitchShift(${key}) to new channel`);
+          } catch (e) {
+            console.warn(`[MusicEngine] ⚠️ PitchShift reconnect failed for ${key}:`, e);
+          }
+        }
+      });
+    }
+
     // Ensure initial volumes/pan/mute are set
     this.updateTrackStates(tracks);
 
