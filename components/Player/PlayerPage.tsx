@@ -2990,13 +2990,13 @@ const PlayerPage: React.FC<{
             {isRenderHistoryHidden ? (
               <button
                 onClick={() => setIsRenderHistoryHidden(false)}
-                className="absolute right-0 top-2 z-[3000] w-3.5 h-10 bg-[#0c0c0e]/90 border border-r-0 border-white/10 hover:bg-zinc-800 rounded-l-md flex items-center justify-center text-zinc-500 hover:text-white pointer-events-auto shadow-md transition-all active:scale-95"
+                className="absolute right-0 top-12 z-[3000] w-3.5 h-10 bg-[#0c0c0e]/90 border border-r-0 border-white/10 hover:bg-zinc-800 rounded-l-md flex items-center justify-center text-zinc-500 hover:text-white pointer-events-auto shadow-md transition-all active:scale-95"
                 title="Show Memo Renders"
               >
                 <ChevronLeft size={10} />
               </button>
             ) : (
-              <div className="absolute right-1 top-2 z-[3000] flex flex-col gap-1 pointer-events-auto bg-[#0c0c0e]/95 p-1 rounded-lg border border-white/10 backdrop-blur-xl shadow-2xl max-h-[70vh] overflow-y-auto scrollbar-hide w-[34px]">
+              <div className="absolute right-1 top-12 z-[3000] flex flex-col gap-1 pointer-events-auto bg-[#0c0c0e]/95 p-1 rounded-lg border border-white/10 backdrop-blur-xl shadow-2xl max-h-[70vh] overflow-y-auto scrollbar-hide w-[34px]">
                 <div className="flex items-center justify-between border-b border-white/5 pb-0.5 mb-0.5 w-full">
                   <span className="text-[4.2px] font-black text-zinc-400 uppercase tracking-widest pl-0.5">Renders</span>
                   <button
