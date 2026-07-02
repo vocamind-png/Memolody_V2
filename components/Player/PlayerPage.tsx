@@ -2990,15 +2990,15 @@ const PlayerPage: React.FC<{
             {isRenderHistoryHidden ? (
               <button
                 onClick={() => setIsRenderHistoryHidden(false)}
-                className="absolute right-0 top-12 z-[3000] w-3.5 h-10 bg-[#0c0c0e]/90 border border-r-0 border-white/10 hover:bg-zinc-800 rounded-l-md flex items-center justify-center text-zinc-500 hover:text-white pointer-events-auto shadow-md transition-all active:scale-95"
+                className="absolute right-0 top-12 z-[3000] w-3 h-7 bg-[#0c0c0e]/80 border border-r-0 border-white/10 hover:bg-zinc-800 rounded-l-md flex items-center justify-center text-zinc-500 hover:text-white pointer-events-auto shadow-md transition-all active:scale-95"
                 title="Show Memo Renders"
               >
                 <ChevronLeft size={10} />
               </button>
             ) : (
-              <div className="absolute right-1 top-12 z-[3000] flex flex-col gap-1 pointer-events-auto bg-[#0c0c0e]/95 p-1 rounded-lg border border-white/10 backdrop-blur-xl shadow-2xl max-h-[70vh] overflow-y-auto scrollbar-hide w-[34px]">
+              <div className="absolute right-0.5 top-12 z-[3000] flex flex-col gap-0.5 pointer-events-auto bg-[#0c0c0e]/85 p-0.5 rounded-md border border-white/10 backdrop-blur-xl shadow-2xl max-h-[70vh] overflow-y-auto scrollbar-hide w-[26px]">
                 <div className="flex items-center justify-between border-b border-white/5 pb-0.5 mb-0.5 w-full">
-                  <span className="text-[4.2px] font-black text-zinc-400 uppercase tracking-widest pl-0.5">Renders</span>
+                  <span className="text-[3.5px] font-black text-zinc-400 uppercase tracking-widest pl-0.5">Renders</span>
                   <button
                     onClick={() => setIsRenderHistoryHidden(true)}
                     className="w-2.5 h-2.5 flex items-center justify-center text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 rounded transition-colors"
@@ -3090,11 +3090,11 @@ const PlayerPage: React.FC<{
                             setIsAudioLoading(false);
                           }
                         }}
-                        className={`w-6 h-6 rounded-lg flex flex-col items-center justify-center border font-bold uppercase transition-all shadow-md relative leading-none select-none
-                          ${isActive ? 'bg-gradient-to-br from-cyan-400 to-indigo-600 text-black border-transparent shadow-[0_0_10px_rgba(0,229,255,0.4)]' : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700'}`}
+                        className={`w-[20px] h-[20px] rounded-md flex flex-col items-center justify-center border font-bold uppercase transition-all shadow-sm relative leading-none select-none
+                          ${isActive ? 'bg-gradient-to-br from-cyan-400 to-indigo-600 text-black border-transparent shadow-[0_0_6px_rgba(0,229,255,0.4)]' : 'bg-zinc-900/80 border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700'}`}
                         title={`เล่นประสานเสียง (${h.voiceName || 'Auto'} • ${h.lyricMode || 'SYS'} • Key ${h.songKey} • BPM ${h.bpmPercent}%)`}
                       >
-                        <span className="text-[12px] font-black leading-none mb-0.5">{`R${renderHistory.length - idx}`}</span>
+                        <span className="text-[8px] font-black leading-none">{`R${renderHistory.length - idx}`}</span>
                       </button>
     
                       <button
@@ -3190,13 +3190,13 @@ const PlayerPage: React.FC<{
               return (
                 <div 
                   ref={folderPopoverRef}
-                  className="absolute left-1 z-[6000] flex flex-col gap-1 pointer-events-auto items-start opacity-75 hover:opacity-100 transition-opacity duration-200 animate-in fade-in duration-300"
+                  className="absolute left-0.5 z-[6000] flex flex-col gap-0.5 pointer-events-auto items-start opacity-60 hover:opacity-100 transition-opacity duration-200 animate-in fade-in duration-300"
                   style={{ top: `${Math.max(2, baseTop - 56)}px` }}
                 >
                   {/* Grade Badge */}
                   {songGrade && (
                     <div
-                      className="px-1.5 py-0.5 rounded-md font-black tracking-wider select-none shadow-md border flex items-center justify-center gap-1 text-[7px]"
+                      className="px-1 py-px rounded font-black tracking-wider select-none shadow-sm border flex items-center justify-center gap-0.5 text-[6px]"
                       style={{
                         background: songGrade.numericScore <= 32 ? 'linear-gradient(135deg, #22c55e, #16a34a)'
                           : songGrade.numericScore <= 54 ? 'linear-gradient(135deg, #eab308, #ca8a04)'
@@ -3214,28 +3214,28 @@ const PlayerPage: React.FC<{
                   <button
                     data-nimo-target="toggle_favorite"
                     onClick={handleToggleFavorite}
-                    className={`h-4 px-1.5 rounded-md flex items-center gap-1 text-[7px] font-black uppercase tracking-wider transition-all border shadow-md active:scale-95 ${
+                    className={`h-3.5 px-1 rounded flex items-center gap-0.5 text-[6px] font-black uppercase tracking-wider transition-all border shadow-sm active:scale-95 ${
                       isFavorite
                         ? 'bg-rose-600 border-rose-500 text-white shadow-[0_0_8px_rgba(244,63,94,0.3)]'
                         : 'bg-[#1a1a1e] border-zinc-700 text-zinc-300 hover:text-rose-400 hover:border-rose-500/60'
                     }`}
                     title={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
                   >
-                    <Heart size={6.5} fill={isFavorite ? 'currentColor' : 'none'} className={isFavorite ? 'text-white' : ''} />
+                    <Heart size={5.5} fill={isFavorite ? 'currentColor' : 'none'} className={isFavorite ? 'text-white' : ''} />
                     {isFavorite ? 'Favorite' : 'Add Fav'}
                   </button>
 
                   <div className="relative">
                     <button
                       onClick={() => setIsFolderPopoverOpen(!isFolderPopoverOpen)}
-                      className={`h-4 px-1.5 rounded-md flex items-center gap-1 text-[7px] font-black uppercase tracking-wider transition-all border shadow-md active:scale-95 ${
+                      className={`h-3.5 px-1 rounded flex items-center gap-0.5 text-[6px] font-black uppercase tracking-wider transition-all border shadow-sm active:scale-95 ${
                         currentFolderId
                           ? 'bg-indigo-600 border-indigo-500 text-white shadow-[0_0_8px_rgba(99,102,241,0.3)]'
                           : 'bg-[#1a1a1e] border-zinc-700 text-zinc-300 hover:text-indigo-400 hover:border-indigo-400/60'
                       }`}
                       title="Manage Folder"
                     >
-                      <Folder size={6.5} />
+                      <Folder size={5.5} />
                       {currentFolderId ? (folders.find(f => f.id === currentFolderId)?.name || 'Folder') : 'Add Folder'}
                     </button>
 
@@ -3338,17 +3338,17 @@ const PlayerPage: React.FC<{
                   </div>
 
                   {/* Row 3: RENDER and ALL horizontally to save vertical space and prevent overlapping with tracks */}
-                  <div className="flex flex-row gap-1">
+                  <div className="flex flex-row gap-0.5">
                     <button
                       onClick={() => { setModalSelectedTracks(tracks.map(t => t.id)); setShowRenderPrompt(true); }}
-                      className="relative h-4 px-1.5 rounded-md flex items-center gap-1 text-[7px] font-black uppercase tracking-wider transition-all border-none shadow-[0_0_10px_rgba(0,229,255,0.3)] active:scale-95 group overflow-hidden"
+                      className="relative h-3.5 px-1 rounded-md flex items-center gap-0.5 text-[6px] font-black uppercase tracking-wider transition-all border-none shadow-[0_0_6px_rgba(0,229,255,0.2)] active:scale-95 group overflow-hidden"
                       title="Render AI Vocals"
                     >
                       <div className="absolute inset-0 bg-black/60 z-0" />
                       <div className="absolute -inset-[100%] bg-[conic-gradient(from_0deg,transparent_0_320deg,rgba(0,229,255,1)_360deg)] animate-[spin_1.5s_linear_infinite] z-0" />
-                      <div className="absolute inset-[1px] rounded-[5px] bg-zinc-900 z-0" />
-                      <div className="relative z-10 flex items-center gap-1 text-[#00e5ff] group-hover:text-white transition-colors">
-                        <Sparkles size={6.5} className="text-[#00e5ff] group-hover:text-white transition-colors" />
+                      <div className="absolute inset-[1px] rounded-[4px] bg-zinc-900 z-0" />
+                      <div className="relative z-10 flex items-center gap-0.5 text-[#00e5ff] group-hover:text-white transition-colors">
+                        <Sparkles size={5.5} className="text-[#00e5ff] group-hover:text-white transition-colors" />
                         Render
                       </div>
                     </button>
@@ -3365,14 +3365,14 @@ const PlayerPage: React.FC<{
                             tracks.forEach(t => musicEngine.soloStem(t.id, new Set()));
                             setTracks(prev => prev.map(t => ({ ...t, isSolo: false, isMuted: false })));
                           }}
-                          className={`h-4 px-2 rounded-md border flex items-center justify-center transition-all shadow-md active:scale-95 flex-shrink-0 ${
+                          className={`h-3.5 px-1.5 rounded-md border flex items-center justify-center transition-all shadow-sm active:scale-95 flex-shrink-0 ${
                             (isAnySoloed || mutedVocalTracks.size > 0)
-                              ? 'bg-yellow-500 border-yellow-300 text-black shadow-[0_0_8px_rgba(234,179,8,0.4)] hover:bg-yellow-400'
-                              : 'bg-[#1a1a1e] border-zinc-700 text-zinc-500 hover:text-yellow-400 hover:border-yellow-500/40'
+                              ? 'bg-yellow-500 border-yellow-300 text-black shadow-[0_0_6px_rgba(234,179,8,0.3)] hover:bg-yellow-400'
+                              : 'bg-[#1a1a1e]/80 border-zinc-700 text-zinc-500 hover:text-yellow-400 hover:border-yellow-500/40'
                           }`}
                           title="Reset All Solo & Mute (Play All)"
                         >
-                          <span className="text-[6.5px] font-black uppercase tracking-wider leading-none">ALL</span>
+                          <span className="text-[5.5px] font-black uppercase tracking-wider leading-none">ALL</span>
                         </button>
                       );
                     })()}
@@ -3432,16 +3432,16 @@ const PlayerPage: React.FC<{
 
 
                     <div 
-                      className="absolute left-1 z-50 flex flex-row flex-nowrap pointer-events-auto"
-                      style={{ top: `${yPos - 2}px` }}
+                      className="absolute left-0.5 z-50 flex flex-row flex-nowrap pointer-events-auto"
+                      style={{ top: `${yPos - 1}px` }}
                     >
-                      <div className="flex flex-row flex-nowrap gap-0.5 items-center bg-black/40 border border-white/10 p-0.5 rounded-lg backdrop-blur-sm pointer-events-auto w-fit">
+                      <div className="flex flex-row flex-nowrap gap-px items-center bg-black/30 border border-white/8 p-px rounded-md backdrop-blur-sm pointer-events-auto w-fit">
                         <button
                           onClick={(e) => { e.stopPropagation(); setTracks((prev: any) => prev.map((t: any) => t.id === track.id ? { ...t, mode: t.mode === 'vocal' ? 'instrument' : 'vocal' } : t)); }}
-                          className={`w-4 h-4 rounded-md flex items-center justify-center transition-all border shadow-lg flex-shrink-0 ${track.mode === 'vocal' ? 'bg-cyan-600 border-cyan-400 text-white shadow-[0_0_10px_rgba(34,211,238,0.4)]' : 'bg-[#1a1a1e] border-zinc-700 text-zinc-400 hover:text-cyan-400 hover:border-cyan-400/60'}`}
+                          className={`w-3 h-3 rounded flex items-center justify-center transition-all border shadow-sm flex-shrink-0 ${track.mode === 'vocal' ? 'bg-cyan-600/90 border-cyan-400 text-white shadow-[0_0_6px_rgba(34,211,238,0.3)]' : 'bg-[#1a1a1e]/80 border-zinc-700/80 text-zinc-400 hover:text-cyan-400 hover:border-cyan-400/60'}`}
                           title={track.mode === 'vocal' ? `Switch "${track.name}" to Instrument` : `Switch "${track.name}" to Vocal`}
                         >
-                          {track.mode === 'vocal' ? <Mic2 size={8} /> : <span className="text-[8px]">🎹</span>}
+                          {track.mode === 'vocal' ? <Mic2 size={6} /> : <span className="text-[6px]">🎹</span>}
                         </button>
 
                         {showStemControls && (() => {
@@ -3449,10 +3449,10 @@ const PlayerPage: React.FC<{
                           return (
                             <button
                               onClick={(e) => { e.stopPropagation(); handleSoloStem(track.id, 0); }}
-                              className={`w-4 h-4 rounded-md border flex items-center justify-center transition-all shadow-lg flex-shrink-0 ${isSoloed ? 'bg-yellow-500 border-yellow-300 text-black shadow-[0_0_8px_rgba(234,179,8,0.5)]' : 'bg-[#1a1a1e] border-zinc-700 text-zinc-400 hover:text-yellow-400 hover:border-yellow-500/60'}`}
+                              className={`w-3 h-3 rounded border flex items-center justify-center transition-all shadow-sm flex-shrink-0 ${isSoloed ? 'bg-yellow-500/90 border-yellow-300 text-black shadow-[0_0_5px_rgba(234,179,8,0.4)]' : 'bg-[#1a1a1e]/80 border-zinc-700/80 text-zinc-400 hover:text-yellow-400 hover:border-yellow-500/60'}`}
                               title={`Solo ${track.name}`}
                             >
-                              <span className="text-[8px] font-black leading-none pb-[1px]">S{visualNumber}</span>
+                              <span className="text-[6px] font-black leading-none">S{visualNumber}</span>
                             </button>
                           );
                         })()}
@@ -3460,10 +3460,10 @@ const PlayerPage: React.FC<{
                         {showStemControls && (
                           <button
                             onClick={(e) => { e.stopPropagation(); setMutedVocalTracks(prev => { const next = new Set(prev); if (next.has(track.id)) next.delete(track.id); else next.add(track.id); return next; }); }}
-                            className={`w-4 h-4 rounded-md border flex items-center justify-center transition-all shadow-lg flex-shrink-0 ${isMuted ? 'bg-red-500 border-red-300 text-white shadow-[0_0_8px_rgba(239,68,68,0.5)]' : 'bg-[#1a1a1e] border-zinc-700 text-zinc-400 hover:text-red-400 hover:border-red-500/60'}`}
+                            className={`w-3 h-3 rounded border flex items-center justify-center transition-all shadow-sm flex-shrink-0 ${isMuted ? 'bg-red-500/90 border-red-300 text-white shadow-[0_0_5px_rgba(239,68,68,0.4)]' : 'bg-[#1a1a1e]/80 border-zinc-700/80 text-zinc-400 hover:text-red-400 hover:border-red-500/60'}`}
                             title={`Mute ${track.name}`}
                           >
-                            <span className="text-[8px] font-black leading-none pb-[1px]">M</span>
+                            <span className="text-[6px] font-black leading-none">M</span>
                           </button>
                         )}
 

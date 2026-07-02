@@ -157,7 +157,18 @@ const App: React.FC = () => {
   const [performanceMode, setPerformanceMode] = useState(() => localStorage.getItem('nimo_perf_mode') === 'true');
   const [uiTheme, setUiTheme] = useState<'v1' | 'v2'>(() => (localStorage.getItem('memo_ui_theme') as 'v1' | 'v2') || 'v2');
   const [nimoPosition, setNimoPosition] = useState<'left' | 'right'>(() => (localStorage.getItem('nimo_position') as 'left' | 'right') || 'left');
-  const [layoutMode, setLayoutMode] = useState<'compact' | 'full'>(() => (localStorage.getItem('memo_layout_mode') as 'compact' | 'full') || 'compact');
+  const [layoutMode, setLayoutMode] = useState<'compact' | 'full'>(() => {
+    const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 1024;
+    const autoUpgraded = typeof window !== 'undefined' ? localStorage.getItem('memo_layout_auto_upgraded') : null;
+    let saved = typeof window !== 'undefined' ? (localStorage.getItem('memo_layout_mode') as 'compact' | 'full') : null;
+
+    if (isDesktop && !autoUpgraded) {
+      saved = 'full';
+      if (typeof window !== 'undefined') localStorage.setItem('memo_layout_auto_upgraded', 'true');
+    }
+    
+    return saved || (isDesktop ? 'full' : 'compact');
+  });
   const [studioInitialMode, setStudioInitialMode] = useState<'composer' | 'arranger' | 'editor'>('arranger');
   const [loopPresets, setLoopPresets] = useState<LoopPreset[]>(INITIAL_LOOP_PRESETS);
   const [pendingImportFile, setPendingImportFile] = useState<File | null>(null);
