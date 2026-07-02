@@ -1506,6 +1506,7 @@ class VocalidoRenderService {
           bpmPercent: bpmPct,
           songKey: songKey,
           transpose: transpose,
+          absoluteBpm: currentBpm,
           audioUrl: cacheBustedUrl,
           label: newLabel,
           filename: filenameFromUrl,
@@ -1518,6 +1519,15 @@ class VocalidoRenderService {
           timingFeel: svsTimingFeel,
           vocalTracks: vocalTrackIdsStr,
           stemsByTrack: stemsByTrack,
+          // ── Project Snapshot: capture all settings at render time ──
+          tracksSnapshot: tracks.map(t => ({
+            id: t.id, name: t.name, instrument: t.instrument,
+            mode: t.mode, volume: t.volume, pan: t.pan, muted: t.muted,
+          })),
+          svsEngine: activeSvsEngine,
+          svsSteps: svsSteps,
+          collapseChords: collapseChords,
+          isMetronomeOn: isMetronomeOn,
           version: 3
         }, ...filtered].slice(0, 12);
 

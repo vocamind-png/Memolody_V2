@@ -2831,7 +2831,103 @@ const PlayerPage: React.FC<{
         </div>
 
         {/* Right: PREMIUM CLOUD DROPDOWN SVS CONTROL */}
-        <div className="flex items-center bg-[#0c0c0e]/85 backdrop-blur-2xl border border-white/10 rounded-full pl-2 pr-1.5 py-0.5 shadow-2xl gap-2 hover:border-white/30 transition-all cursor-pointer group">
+        <div className="flex items-center bg-[#0c0c0e]/85 backdrop-blur-2xl border border-white/10 rounded-full pl-1.5 pr-1.5 py-0.5 shadow-2xl gap-1 hover:border-white/30 transition-all cursor-pointer group">
+          {/* ── INLINE RENDER HISTORY PILLS (R1, R2, R3...) ── */}
+          {renderHistory.length > 0 && (
+            <>
+              <div className="flex items-center gap-0.5">
+                {[...renderHistory].reverse().map((h, idx) => {
+                  const hKey = getRenderKey(h);
+                  const isActive = activeRenderKey === hKey;
+                  const rNum = idx + 1;
+                  return (
+                    <button
+                      key={hKey}
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        const wasPlaying = isPlaying || musicEngine.transportState === 'started';
+                        const currentPos = musicEngine.transportSeconds;
+                        if (wasPlaying) musicEngine.pause();
+                        setIsAudioLoading(true);
+                        try {
+                          await musicEngine.ensureInitialized();
+                          const origBpm = (parsedData?.metadata as any)?.bpm || song?.bpm || 120;
+                          const targetBpm = Math.round(((origBpm * h.bpmPercent) / 100) * 10) / 10;
+                          musicEngine.setBpm(targetBpm);
+                          setCurrentBpm(targetBpm);
+                          const origKey = parsedData.metadata.key || localSong.key || 'C';
+                          const tVal = getTransposeDiff(origKey, h.songKey);
+                          setTranspose(tVal);
+                          const cacheBusted = (url: string) => url.startsWith('blob:') ? url : (url.includes('?t=') ? url.replace(/\?t=\d+/, `?t=${Date.now()}`) : `${url}?t=${Date.now()}`);
+                          const stemsWithBust = (h.savedStemUrls || []).map(cacheBusted);
+                          const primaryTrackId = tracks.find(t => t.mode === 'vocal')?.id || tracks[0]?.id || 'P1';
+                          const vocalTracksArr = h.vocalTracks ? h.vocalTracks.split(',') : [primaryTrackId];
+                          await Promise.all(vocalTracksArr.map(async (tid: string) => {
+                            let trackAudioUrl = "";
+                            let stemsToPass: string[] = [];
+                            const hasSpecificStems = h.stemsByTrack && h.stemsByTrack[tid] && h.stemsByTrack[tid].length > 0;
+                            if (hasSpecificStems) {
+                              trackAudioUrl = cacheBusted(h.stemsByTrack[tid][0]);
+                              stemsToPass = h.stemsByTrack[tid].map(cacheBusted);
+                            } else if (tid === primaryTrackId) {
+                              trackAudioUrl = cacheBusted(fixAudioUrl(h.audioUrl));
+                              stemsToPass = stemsWithBust;
+                            } else {
+                              const sidx = vocalTracksArr.indexOf(tid);
+                              if (sidx > 0 && sidx < stemsWithBust.length) {
+                                trackAudioUrl = stemsWithBust[sidx];
+                                stemsToPass = [stemsWithBust[sidx]];
+                              }
+                            }
+                            if (trackAudioUrl) await musicEngine.addVocalLayer(tid, trackAudioUrl, stemsToPass, targetBpm);
+                          }));
+                          // Restore Full Project Snapshot
+                          let restoredTracks: TrackState[];
+                          if (h.tracksSnapshot && Array.isArray(h.tracksSnapshot)) {
+                            restoredTracks = h.tracksSnapshot.map((snap: any) => {
+                              const current = tracks.find(t => t.id === snap.id);
+                              return current ? { ...current, ...snap } : { ...snap } as TrackState;
+                            });
+                            restoredTracks = restoredTracks.map((t: any) => vocalTracksArr.includes(t.id) ? { ...t, mode: 'vocal' } as TrackState : t);
+                          } else {
+                            restoredTracks = tracks.map((t: any) => vocalTracksArr.includes(t.id) ? { ...t, mode: 'vocal' } as TrackState : t);
+                          }
+                          setTracks(restoredTracks);
+                          setAvailableStems(musicEngine.getAvailableStems(primaryTrackId) > 0 ? { [primaryTrackId]: musicEngine.getAvailableStems(primaryTrackId) } : {});
+                          setSoloedStems({});
+                          setActiveRenderKey(hKey);
+                          if (h.engineId) setActiveEngineId(h.engineId);
+                          setStoredSinger(h.voiceName && h.voiceName !== 'Auto' ? h.voiceName : null);
+                          if (h.lyricMode) { try { localStorage.setItem('memo_lyric_mode', h.lyricMode); } catch {} }
+                          if (typeof h.timingFeel === 'number') handleSvsTimingFeelChange(h.timingFeel);
+                          if (h.svsEngine) handleSvsEngineChange(h.svsEngine);
+                          if (typeof h.svsSteps === 'number') handleSvsStepsChange(h.svsSteps);
+                          if (typeof h.collapseChords === 'boolean') setCollapseChords(h.collapseChords);
+                          if (typeof h.isMetronomeOn === 'boolean') setIsMetronomeOn(h.isMetronomeOn);
+                          await musicEngine.loadSong(allPlayableNotes, restoredTracks, tVal, parsedData.timeSignature, h.isMetronomeOn ?? isMetronomeOn, true);
+                          musicEngine.setTransportSeconds(currentPos);
+                          if (wasPlaying) { await musicEngine.start(); setIsPlaying(true); }
+                        } catch (err) {
+                          console.error('Failed to load render:', err);
+                        } finally {
+                          setIsAudioLoading(false);
+                        }
+                      }}
+                      className={`w-5 h-5 rounded-md flex items-center justify-center text-[9px] font-black uppercase transition-all select-none leading-none ${
+                        isActive 
+                          ? 'bg-gradient-to-br from-cyan-400 to-indigo-500 text-black shadow-[0_0_8px_rgba(0,229,255,0.5)]' 
+                          : 'bg-zinc-800/80 text-zinc-500 hover:text-white hover:bg-zinc-700/80'
+                      }`}
+                      title={`R${rNum}: ${h.voiceName || 'Auto'} • Key ${h.songKey} • BPM ${h.bpmPercent}%`}
+                    >
+                      {`R${rNum}`}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="w-px h-3 bg-white/10" />
+            </>
+          )}
           {/* Main Display Area (Click to Toggle Studio) */}
           <button 
             className="flex items-center gap-2 pr-1"
@@ -2983,192 +3079,13 @@ const PlayerPage: React.FC<{
         {/* ── MAIN CONTENT AREA (RIGHT SIDE IN SPLIT VIEW) ── */}
         <div className="flex-1 flex flex-col relative overflow-hidden pointer-events-auto pb-[54px]">
 
-        {/* ── MEMO SONG RENDER: Speed Panel (left floating) ── */}
-        {renderHistory.length > 0 && activeCard === 'score' && (
-          <>
-            {isRenderHistoryHidden ? (
-              <button
-                onClick={() => setIsRenderHistoryHidden(false)}
-                className="absolute right-0 top-1/2 -translate-y-1/2 z-[3000] w-3.5 h-10 bg-[#0c0c0e]/90 border border-r-0 border-white/10 hover:bg-zinc-800 rounded-l-md flex items-center justify-center text-zinc-500 hover:text-white pointer-events-auto shadow-md transition-all active:scale-95"
-                title="Show Memo Renders"
-              >
-                <ChevronLeft size={10} />
-              </button>
-            ) : (
-              <div className="absolute right-1 top-1/2 -translate-y-1/2 z-[3000] flex flex-col gap-1 pointer-events-auto bg-[#0c0c0e]/95 p-1 rounded-lg border border-white/10 backdrop-blur-xl shadow-2xl max-h-[70vh] overflow-y-auto scrollbar-hide w-[34px]">
-                <div className="flex items-center justify-between border-b border-white/5 pb-0.5 mb-0.5 w-full">
-                  <span className="text-[4.2px] font-black text-zinc-400 uppercase tracking-widest pl-0.5">Renders</span>
-                  <button
-                    onClick={() => setIsRenderHistoryHidden(true)}
-                    className="w-2.5 h-2.5 flex items-center justify-center text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 rounded transition-colors"
-                    title="Hide Memo Renders"
-                  >
-                    <ChevronRight size={6} />
-                  </button>
-                </div>
-                {renderHistory.map((h, idx) => {
-                  const hKey = getRenderKey(h);
-                  const isActive = activeRenderKey === hKey;
-                  const isInfoOpen = memoInfoOpenKey === hKey;
-                  const shortDate = h.renderedAt ? new Date(h.renderedAt).toLocaleDateString('th-TH', { day:'2-digit', month:'2-digit' }) : null;
-                  const speedDiff = h.bpmPercent - 100;
-                  const diffStr = speedDiff > 0 ? `+${speedDiff}%` : speedDiff < 0 ? `${speedDiff}%` : '±0%';
-                  return (
-                    <div key={hKey} className="relative group">
-                      {/* Main render button */}
-                      <button
-                        onClick={async () => {
-                          const wasPlaying = isPlaying || musicEngine.transportState === 'started';
-                          const currentPos = musicEngine.transportSeconds;
-                          if (wasPlaying) {
-                            musicEngine.pause();
-                          }
-                          setIsAudioLoading(true);
-                          try {
-                            await musicEngine.ensureInitialized();
-  
-                            // Set BPM first to prevent sync mismatch
-                            const origBpm = (parsedData?.metadata as any)?.bpm || song?.bpm || 120;
-                            const targetBpm = Math.round(((origBpm * h.bpmPercent) / 100) * 10) / 10;
-                            musicEngine.setBpm(targetBpm);
-                            setCurrentBpm(targetBpm);
-  
-                            // Transpose to matching key
-                            const origKey = parsedData.metadata.key || localSong.key || 'C';
-                            const targetKey = h.songKey;
-                            const tVal = getTransposeDiff(origKey, targetKey);
-                            setTranspose(tVal);
-  
-                            // Load audio stem
-                            const cacheBusted = (url: string) => url.startsWith('blob:') ? url : (url.includes('?t=') ? url.replace(/\?t=\d+/, `?t=${Date.now()}`) : `${url}?t=${Date.now()}`);
-                            const stemsWithBust = (h.savedStemUrls || []).map(cacheBusted);
-                            const primaryTrackId = tracks.find(t => t.mode === 'vocal')?.id || tracks[0]?.id || 'P1';
-                            const vocalTracksArr = h.vocalTracks ? h.vocalTracks.split(',') : [primaryTrackId];
-                            
-                            await Promise.all(vocalTracksArr.map(async (tid: string) => {
-                              let trackAudioUrl = "";
-                              let stemsToPass: string[] = [];
-                              const hasSpecificStems = h.stemsByTrack && h.stemsByTrack[tid] && h.stemsByTrack[tid].length > 0;
-                              if (hasSpecificStems) {
-                                trackAudioUrl = cacheBusted(h.stemsByTrack[tid][0]);
-                                stemsToPass = h.stemsByTrack[tid].map(cacheBusted);
-                              } else if (tid === primaryTrackId) {
-                                trackAudioUrl = cacheBusted(fixAudioUrl(h.audioUrl));
-                                stemsToPass = stemsWithBust;
-                              } else {
-                                const idx = vocalTracksArr.indexOf(tid);
-                                if (idx > 0 && idx < stemsWithBust.length) {
-                                  trackAudioUrl = stemsWithBust[idx];
-                                  stemsToPass = [stemsWithBust[idx]];
-                                }
-                              }
-                              
-                              if (trackAudioUrl) {
-                                await musicEngine.addVocalLayer(tid, trackAudioUrl, stemsToPass, targetBpm);
-                              }
-                            }));
-  
-                            const updatedTracks = tracks.map((t: any) => vocalTracksArr.includes(t.id) ? { ...t, mode: 'vocal' } as TrackState : t);
-                            setTracks(updatedTracks);
-                            setAvailableStems(musicEngine.getAvailableStems(primaryTrackId) > 0 ? { [primaryTrackId]: musicEngine.getAvailableStems(primaryTrackId) } : {});
-                            setSoloedStems({});
-                            setActiveRenderKey(hKey);
-                            setMemoInfoOpenKey(null);
-                            if (h.engineId) setActiveEngineId(h.engineId);
-                            setStoredSinger(h.voiceName && h.voiceName !== 'Auto' ? h.voiceName : null);
-                            await musicEngine.loadSong(allPlayableNotes, updatedTracks, tVal, parsedData.timeSignature, isMetronomeOn, true);
-                            musicEngine.setTransportSeconds(currentPos);
-                            if (wasPlaying) { await musicEngine.start(); setIsPlaying(true); }
-                          } catch (err) {
-                            console.error('Failed to load render history stem:', err);
-                            alert("❌ ไม่สามารถโหลดไฟล์ร้องประสานเสียงนี้ได้");
-                          } finally {
-                            setIsAudioLoading(false);
-                          }
-                        }}
-                        className={`w-6 h-6 rounded-lg flex flex-col items-center justify-center border font-bold uppercase transition-all shadow-md relative leading-none select-none
-                          ${isActive ? 'bg-gradient-to-br from-cyan-400 to-indigo-600 text-black border-transparent shadow-[0_0_10px_rgba(0,229,255,0.4)]' : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700'}`}
-                        title={`เล่นประสานเสียง (${h.voiceName || 'Auto'} • ${h.lyricMode || 'SYS'} • Key ${h.songKey} • BPM ${h.bpmPercent}%)`}
-                      >
-                        <span className="text-[12px] font-black leading-none mb-0.5">{`R${renderHistory.length - idx}`}</span>
-                      </button>
-    
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setMemoInfoOpenKey(isInfoOpen ? null : hKey); }}
-                        className={`absolute top-0 right-0 w-2.5 h-2.5 rounded-full flex items-center justify-center text-[5px] font-black border transition-all pointer-events-auto ${isInfoOpen ? 'bg-amber-500 border-amber-400 text-white shadow-lg' : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-white'}`}
-                        title="ดูรายละเอียด / Show details"
-                      >&gt;</button>
-                      
-                      {/* Delete (x) Button */}
-                      <button
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          if (confirm('⚠️ ต้องการลบไฟล์ประสานเสียงที่บันทึกไว้นี้หรือไม่?')) {
-                            try {
-                              const newHistory = renderHistory.filter(x => x.id !== h.id);
-                              setRenderHistory(newHistory);
-                              localStorage.setItem(`memo_render_history_${song.id}`, JSON.stringify(newHistory));
-                              if (isActive) {
-                                setActiveRenderKey(null);
-                                const updatedTracks = tracks.map((t: any) => ({ ...t, mode: 'instrument' } as TrackState));
-                                setTracks(updatedTracks);
-                                musicEngine.loadSong(allPlayableNotes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn, true).catch(() => {});
-                              }
-                              if (memoInfoOpenKey === hKey) setMemoInfoOpenKey(null);
-                            } catch (delErr) { console.warn('[App] Failed to delete render cache:', delErr); }
-                          }
-                        }}
-                        className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded-full flex items-center justify-center text-[4px] font-bold shadow-lg pointer-events-auto opacity-0 group-hover:opacity-100 transition-opacity"
-                        title="Delete render"
-                      >✕</button>
-    
-                      {isInfoOpen && (() => {
-                        const filenameFromUrl = h.audioUrl.split('/').pop() || 'audio.wav';
-                        return (
-                        <div className="absolute right-12 top-0 w-44 bg-[#0c0c0e]/95 backdrop-blur-2xl border border-white/10 p-3 rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.8)] z-[8999] flex flex-col gap-1.5 text-[8px] animate-in fade-in slide-in-from-right-4 duration-150">
-                          <div className="flex justify-between border-b border-white/5 pb-1">
-                            <span className="font-black text-cyan-400 uppercase tracking-widest">Render Profile</span>
-                            <span className="text-[6.5px] text-zinc-500">{h.voiceName || 'Auto'}</span>
-                          </div>
-                          <div className="flex flex-col gap-1 text-zinc-300">
-                            <div className="flex justify-between"><span className="text-zinc-500">System:</span> <span>{h.lyricMode}</span></div>
-                            <div className="flex justify-between"><span className="text-zinc-500">Key:</span> <span className="font-bold">{h.songKey}</span></div>
-                            <div className="flex justify-between"><span className="text-zinc-500">Tempo:</span> <span>{h.bpmPercent === 100 ? 'Original' : `${h.bpmPercent}% (${diffStr})`}</span></div>
-                            <div className="flex justify-between"><span className="text-zinc-500">Engine:</span> <span>{h.engineId || 'vocalido'}</span></div>
-                            <div className="flex justify-between"><span className="text-zinc-500">Rendered:</span> <span>{shortDate || 'N/A'}</span></div>
-                            <div className="flex justify-between"><span className="text-zinc-500">File:</span> <span className="truncate max-w-[80px]" title={filenameFromUrl}>{filenameFromUrl || 'N/A'}</span></div>
-                          </div>
-                          <button
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              if (confirm('⚠️ ต้องการลบไฟล์ประสานเสียงที่บันทึกไว้นี้หรือไม่?')) {
-                                try {
-                                  const newHistory = renderHistory.filter(x => x.id !== h.id);
-                                  setRenderHistory(newHistory);
-                                  localStorage.setItem(`memo_render_history_${song.id}`, JSON.stringify(newHistory));
-                                  if (isActive) {
-                                    setActiveRenderKey(null);
-                                    const updatedTracks = tracks.map((t: any) => ({ ...t, mode: 'instrument' } as TrackState));
-                                    setTracks(updatedTracks);
-                                    musicEngine.loadSong(allPlayableNotes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn, true).catch(() => {});
-                                  }
-                                  if (memoInfoOpenKey === hKey) setMemoInfoOpenKey(null);
-                                } catch (delErr) { console.warn('[App] Failed to delete render cache:', delErr); }
-                              }
-                            }}
-                            className="w-full mt-2 py-0.5 bg-rose-950/80 hover:bg-rose-900 border border-rose-500/30 rounded text-rose-300 hover:text-white font-bold transition-all text-[7px]"
-                          >
-                            ลบการตั้งค่า / Delete
-                          </button>
-                        </div>
-                      )})()}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </>
-        )}
+        {/* ── MEMO RENDER HISTORY: Moved to VOCALIDO toolbar row ── */}
+
+
+
+
+
+
 
         {/* Close info popup when clicking outside */}
         {memoInfoOpenKey && (
