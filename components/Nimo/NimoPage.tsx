@@ -813,7 +813,8 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
         return preferredLanguage || 'en';
     };
 
-    const detectAndApplyUserGender = (userText: string) => {
+    const detectAndApplyUserGender = (userText: string): 'teen_girl' | 'adult_woman' | 'teen_boy' | 'adult_man' => {
+        const currentVoice = (localStorage.getItem('nimo_voice') as any) || 'teen_girl';
         const isOverride = localStorage.getItem('nimo_voice_override') === 'true';
         const lowerText = userText.toLowerCase().trim();
         const changeToMale = [
@@ -831,17 +832,17 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
             localStorage.setItem('nimo_voice', 'teen_boy');
             localStorage.setItem('nimo_voice_override', 'true');
             window.dispatchEvent(new Event('nimo_voice_changed'));
-            return;
+            return 'teen_boy';
         }
 
         if (changeToFemale.some(phrase => lowerText.includes(phrase))) {
             localStorage.setItem('nimo_voice', 'teen_girl');
             localStorage.setItem('nimo_voice_override', 'true');
             window.dispatchEvent(new Event('nimo_voice_changed'));
-            return;
+            return 'teen_girl';
         }
 
-        if (isOverride) return;
+        if (isOverride) return currentVoice;
 
         const maleMarkers = ['ครับ', 'นะครับ', 'ผม', 'กระผม', 'ครับผม', 'ฮะ'];
         const femaleMarkers = ['ค่ะ', 'คะ', 'นะคะ', 'หนู', 'ดิฉัน', 'จ้า', 'ค่ะแม่'];
@@ -852,13 +853,16 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
         if (hasMale && !hasFemale) {
             localStorage.setItem('nimo_voice', 'teen_girl');
             window.dispatchEvent(new Event('nimo_voice_changed'));
+            return 'teen_girl';
         } else if (hasFemale && !hasMale) {
             localStorage.setItem('nimo_voice', 'teen_boy');
             window.dispatchEvent(new Event('nimo_voice_changed'));
+            return 'teen_boy';
         }
+        return currentVoice;
     };
 
-    const stopSpeaking = () => {
+    function stopSpeaking() {
         if ('speechSynthesis' in window) {
             window.speechSynthesis.cancel();
         }
@@ -867,7 +871,7 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
             activeAudioRef.current = null;
         }
         setSpeaking(false);
-    };
+    }
 
     const playVoiceSpeech = (text: string, onEnd?: () => void, onError?: () => void) => {
         stopSpeaking();
@@ -1251,7 +1255,7 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
         const text = (override ?? input).trim();
         if (!text || isTyping) return;
 
-        detectAndApplyUserGender(text);
+        const activeVoiceType = detectAndApplyUserGender(text);
 
         const wasVoice = usedMic.current;
         usedMic.current = false;
@@ -1263,8 +1267,10 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
 
         // Check for secret command override
         if (typeof window !== 'undefined' && window.NimoBrain && window.NimoBrain.processSecretCommand(text)) {
+            const activeIsMale = activeVoiceType === 'teen_boy' || activeVoiceType === 'adult_man';
+            const localSuffix = activeIsMale ? 'ครับ' : 'ค่ะ';
             const confirmationText = preferredLanguage === 'th' 
-                ? `ดำเนินการคำสั่งลับสำเร็จแล้ว${suffixKa}`
+                ? `ดำเนินการคำสั่งลับสำเร็จแล้ว${localSuffix}`
                 : 'Secret command override executed.';
                 
             setMessages(prev => [...prev, { role: 'nimo', content: confirmationText, timestamp: Date.now() }]);
@@ -1294,8 +1300,9 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
                 : {};
             const appStateStr = JSON.stringify(appState, null, 2);
 
-            const suffix = suffixKa;
-            const pronoun = isMale ? 'ฉัน' : 'หนู';
+            const activeIsMale = activeVoiceType === 'teen_boy' || activeVoiceType === 'adult_man';
+            const suffix = activeIsMale ? 'ครับ' : 'ค่ะ';
+            const pronoun = activeIsMale ? 'ผม' : 'หนู';
 
             // Construct chat history list for Gemini context
             const contentsList: any[] = [];

@@ -677,7 +677,8 @@ export const FloatingNimoContent: React.FC<Props> = ({
         return preferredLanguage || 'en';
     };
 
-    const detectAndApplyUserGender = (userText: string) => {
+    const detectAndApplyUserGender = (userText: string): 'teen_girl' | 'adult_woman' | 'teen_boy' | 'adult_man' => {
+        const currentVoice = (localStorage.getItem('nimo_voice') as any) || 'teen_girl';
         const isOverride = localStorage.getItem('nimo_voice_override') === 'true';
         const lowerText = userText.toLowerCase().trim();
         const changeToMale = [
@@ -695,17 +696,17 @@ export const FloatingNimoContent: React.FC<Props> = ({
             localStorage.setItem('nimo_voice', 'teen_boy');
             localStorage.setItem('nimo_voice_override', 'true');
             window.dispatchEvent(new Event('nimo_voice_changed'));
-            return;
+            return 'teen_boy';
         }
 
         if (changeToFemale.some(phrase => lowerText.includes(phrase))) {
             localStorage.setItem('nimo_voice', 'teen_girl');
             localStorage.setItem('nimo_voice_override', 'true');
             window.dispatchEvent(new Event('nimo_voice_changed'));
-            return;
+            return 'teen_girl';
         }
 
-        if (isOverride) return;
+        if (isOverride) return currentVoice;
 
         const maleMarkers = ['ครับ', 'นะครับ', 'ผม', 'กระผม', 'ครับผม', 'ฮะ'];
         const femaleMarkers = ['ค่ะ', 'คะ', 'นะคะ', 'หนู', 'ดิฉัน', 'จ้า', 'ค่ะแม่'];
@@ -716,10 +717,13 @@ export const FloatingNimoContent: React.FC<Props> = ({
         if (hasMale && !hasFemale) {
             localStorage.setItem('nimo_voice', 'teen_girl');
             window.dispatchEvent(new Event('nimo_voice_changed'));
+            return 'teen_girl';
         } else if (hasFemale && !hasMale) {
             localStorage.setItem('nimo_voice', 'teen_boy');
             window.dispatchEvent(new Event('nimo_voice_changed'));
+            return 'teen_boy';
         }
+        return currentVoice;
     };
 
     const playVoiceSpeech = (text: string, onEnd?: () => void, onError?: () => void) => {
@@ -911,8 +915,8 @@ export const FloatingNimoContent: React.FC<Props> = ({
     const [attachedScreenshot, setAttachedScreenshot] = useState<string | null>(null);
 
     const executeSendMsg = async (text: string, base64ImageToUse?: string | null) => {
-        detectAndApplyUserGender(text);
-        const isMale = voiceType === 'teen_boy' || voiceType === 'adult_man';
+        const activeVoiceType = detectAndApplyUserGender(text);
+        const activeIsMale = activeVoiceType === 'teen_boy' || activeVoiceType === 'adult_man';
         const wasVoice = usedMic.current;
         usedMic.current = false; 
 
@@ -968,8 +972,9 @@ export const FloatingNimoContent: React.FC<Props> = ({
         }
 
         if (typeof window !== 'undefined' && window.NimoBrain && window.NimoBrain.processSecretCommand(text)) {
+            const localSuffix = activeIsMale ? 'ครับ' : 'ค่ะ';
             const confirmationText = preferredLanguage === 'th' 
-                ? (isMale ? 'ดำเนินการคำสั่งลับสำเร็จแล้วครับ' : 'ดำเนินการคำสั่งลับสำเร็จแล้วค่ะ') 
+                ? `ดำเนินการคำสั่งลับสำเร็จแล้ว${localSuffix}`
                 : 'Secret command override executed.';
                 
             setMsgs(prev => [...prev, { role: 'nimo', text: confirmationText }]);
@@ -977,7 +982,7 @@ export const FloatingNimoContent: React.FC<Props> = ({
 
             if ((wasVoice || handsFree) && !speakerMutedRef.current) {
                 const isThai = /[\u0E00-\u0E7F]/.test(confirmationText);
-                playVoiceSpeech(confirmationText, isThai ? 'th' : 'en', () => {
+                playVoiceSpeech(confirmationText, () => {
                     if (handsFreeRef.current) {
                         setTimeout(() => startListening(), 400);
                     }
@@ -999,8 +1004,8 @@ export const FloatingNimoContent: React.FC<Props> = ({
             const key = import.meta.env.VITE_GEMINI_API_KEY || (typeof __GEMINI_API_KEY__ !== 'undefined' ? __GEMINI_API_KEY__ : '');
             if (!key) throw new Error('System: API Key missing');
 
-            const suffix = isMale ? 'ครับ' : 'ค่ะ';
-            const pronoun = isMale ? 'ฉัน' : 'หนู';
+            const suffix = activeIsMale ? 'ครับ' : 'ค่ะ';
+            const pronoun = activeIsMale ? 'ผม' : 'หนู';
             
             const appState = typeof window !== 'undefined' && window.NimoBrain 
                 ? window.NimoBrain.getState() 
