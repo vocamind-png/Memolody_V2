@@ -1190,7 +1190,7 @@ const App: React.FC = () => {
 
       <div className={`flex-1 flex min-h-0 overflow-hidden relative ${nimoPosition === 'right' ? 'md:flex-row-reverse' : 'md:flex-row'}`}>
         {/* Persistent Nimo Sidebar (Desktop) */}
-        {nimoEnabled && nimoMounted && (
+        {nimoEnabled && nimoMounted && currentView !== 'nimo' && (
           <aside className={`w-[360px] flex-shrink-0 relative z-[50] hidden md:flex ${nimoPosition === 'right' ? 'border-l border-white/5' : 'border-r border-white/5'}`}>
             <Suspense fallback={null}>
               <FloatingNimo
@@ -1235,7 +1235,7 @@ const App: React.FC = () => {
         </main>
 
         {/* Floating Nimo AI (Mobile) */}
-        {nimoEnabled && nimoMounted && (
+        {nimoEnabled && nimoMounted && currentView !== 'nimo' && (
           <div className="md:hidden">
             <Suspense fallback={null}>
               <FloatingNimo
