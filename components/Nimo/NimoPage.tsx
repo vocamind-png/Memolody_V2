@@ -927,16 +927,22 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
                 audio.playbackRate = 1.05;
             }
 
+            let hasStarted = false;
+            audio.onplay = () => {
+                hasStarted = true;
+            };
             audio.onended = () => {
                 setSpeaking(false);
                 activeAudioRef.current = null;
                 onEnd?.();
             };
             audio.onerror = () => {
+                if (hasStarted) return;
                 activeAudioRef.current = null;
                 fallbackSpeakGoogleTranslate(cleanedText, tl, onEnd, onError);
             };
             audio.play().catch(() => {
+                if (hasStarted) return;
                 fallbackSpeakGoogleTranslate(cleanedText, tl, onEnd, onError);
             });
         })
