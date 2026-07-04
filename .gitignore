@@ -71,7 +71,9 @@ runpod-key.json
 nimo-core-export.json
 memolody_dataset.jsonl
 b64.txt
-vocalido_server/
+vocalido_server/*
+!vocalido_server/main.py
+!vocalido_server/requirements.txt
 vocalido_server.tar.gz
 runpod_server_logs*.txt
 runpod_server_logs*.b64
