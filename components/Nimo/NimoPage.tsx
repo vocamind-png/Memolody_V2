@@ -1302,7 +1302,7 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
             setMessages(prev => [...prev, { role: 'nimo', content: confirmationText, timestamp: Date.now() }]);
             setIsTyping(false);
 
-            if (!speakerMuted && (wasVoice || handsFree)) {
+            if (!speakerMuted && wasVoice) {
                 playVoiceSpeech(confirmationText, () => {
                     if (handsFreeRef.current) {
                         setTimeout(() => startListening(), 400);
@@ -1572,8 +1572,8 @@ You must output valid JSON matching the schema. If no actions are needed, return
                 }
             }
 
-            // Speak response if using voice or in hands-free mode
-            if (!speakerMuted && (wasVoice || handsFree)) {
+            // Speak response only if the user used voice input (mic)
+            if (!speakerMuted && wasVoice) {
                 playVoiceSpeech(cleanReply, () => {
                     if (handsFreeRef.current) {
                         setTimeout(() => startListening(), 400);

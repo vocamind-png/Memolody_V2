@@ -1017,7 +1017,7 @@ export const FloatingNimoContent: React.FC<Props> = ({
             setMsgs(prev => [...prev, { role: 'nimo', text: confirmationText }]);
             setBusy(false);
 
-            if ((wasVoice || handsFree) && !speakerMutedRef.current) {
+            if (wasVoice && !speakerMutedRef.current) {
                 const isThai = /[\u0E00-\u0E7F]/.test(confirmationText);
                 playVoiceSpeech(confirmationText, () => {
                     if (handsFreeRef.current) {
@@ -1343,7 +1343,7 @@ If no actions are needed, return \"actions\": []`;
                 }
             }
 
-            if ((wasVoice || handsFree) && !speakerMutedRef.current) {
+            if (wasVoice && !speakerMutedRef.current) {
                 const isThai = /[\u0E00-\u0E7F]/.test(cleanReply);
                 playVoiceSpeech(cleanReply, isThai ? 'th' : 'en', () => {
                     if (handsFreeRef.current) {
