@@ -190,6 +190,18 @@ const App: React.FC = () => {
   const [nimoVoice, setNimoVoice] = useState<'teen_girl' | 'adult_woman' | 'teen_boy' | 'adult_man'>(() => (localStorage.getItem('nimo_voice') as any) || 'teen_girl');
   const [nimoModel, setNimoModel] = useState<string>(() => localStorage.getItem('nimo_model') || 'gemini-3.5-flash');
 
+  // Listen for dynamic Nimo voice updates from other components
+  useEffect(() => {
+    const handleVoiceChange = () => {
+      const stored = localStorage.getItem('nimo_voice');
+      if (stored) {
+        setNimoVoice(stored as any);
+      }
+    };
+    window.addEventListener('nimo_voice_changed', handleVoiceChange);
+    return () => window.removeEventListener('nimo_voice_changed', handleVoiceChange);
+  }, []);
+
   // Apply UI Theme class to body
   useEffect(() => {
     document.body.classList.remove('theme-v1', 'theme-v2');

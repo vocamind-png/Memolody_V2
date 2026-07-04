@@ -202,6 +202,8 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
     const [voiceRecognitionEnabled, setVoiceRecognitionEnabled] = useState(() => localStorage.getItem('nimo_voice_recognition') === 'true');
     const [allowOthers, setAllowOthers] = useState(() => localStorage.getItem('nimo_allow_others') === 'true');
 
+    const nimoAvatarUrl = isMale ? '/NimoBoy.jpg' : '/Nimo.png';
+
     // Voice Enrollment
     const [voiceProfile, setVoiceProfile] = useState<VoiceProfile | null>(null);
     const [enrolling, setEnrolling] = useState(false);
@@ -347,6 +349,7 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
     */
 
     const usedMic = useRef(false);
+    const activeAudioRef = useRef<HTMLAudioElement | null>(null);
     const recRef = useRef<any>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -436,24 +439,12 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
                     setMessages(prev => [...prev, { role: 'nimo', content: greeting, timestamp: Date.now() }]);
                     setListening(false);
                     
-                    if ('speechSynthesis' in window && !speakerMutedRef.current) {
-                        window.speechSynthesis.cancel();
-                        setSpeaking(true);
-                        const u = new SpeechSynthesisUtterance(greeting);
-                        u.lang = lang === 'th' ? 'th-TH' : 'en-US';
-                        if (lang === 'th') {
-                            const thVoice = getBestThaiVoice();
-                            if (thVoice) u.voice = thVoice;
-                        }
-                        u.onend = () => {
-                            setSpeaking(false);
+                    if (!speakerMutedRef.current) {
+                        playVoiceSpeech(greeting, () => {
                             setTimeout(() => startListening(), 400);
-                        };
-                        u.onerror = () => {
-                            setSpeaking(false);
+                        }, () => {
                             setTimeout(() => startListening(), 400);
-                        };
-                        window.speechSynthesis.speak(u);
+                        });
                     } else {
                         setTimeout(() => startListening(), 400);
                     }
@@ -512,18 +503,8 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
                 const byeReply = lang === 'th' ? 'ไว้เจอกันใหม่นะคะ บ๊ายบายค่ะ!' : 'Goodbye! See you around!';
                 setMessages(prev => [...prev, { role: 'nimo', content: byeReply, timestamp: Date.now() }]);
                 
-                if ('speechSynthesis' in window && !speakerMutedRef.current) {
-                    window.speechSynthesis.cancel();
-                    setSpeaking(true);
-                    const u = new SpeechSynthesisUtterance(byeReply);
-                    u.lang = lang === 'th' ? 'th-TH' : 'en-US';
-                    if (lang === 'th') {
-                        const thVoice = getBestThaiVoice();
-                        if (thVoice) u.voice = thVoice;
-                    }
-                    u.onend = () => setSpeaking(false);
-                    u.onerror = () => setSpeaking(false);
-                    window.speechSynthesis.speak(u);
+                if (!speakerMutedRef.current) {
+                    playVoiceSpeech(byeReply);
                 }
                 return;
             }
@@ -548,24 +529,12 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
 
                 setMessages(prev => [...prev, { role: 'nimo', content: localCmd.reply, timestamp: Date.now() }]);
                 
-                if ('speechSynthesis' in window && !speakerMutedRef.current) {
-                    window.speechSynthesis.cancel();
-                    setSpeaking(true);
-                    const u = new SpeechSynthesisUtterance(localCmd.reply);
-                    u.lang = lang === 'th' ? 'th-TH' : 'en-US';
-                    if (lang === 'th') {
-                        const thVoice = getBestThaiVoice();
-                        if (thVoice) u.voice = thVoice;
-                    }
-                    u.onend = () => {
-                        setSpeaking(false);
+                if (!speakerMutedRef.current) {
+                    playVoiceSpeech(localCmd.reply, () => {
                         setTimeout(() => startListening(), 400);
-                    };
-                    u.onerror = () => {
-                        setSpeaking(false);
+                    }, () => {
                         setTimeout(() => startListening(), 400);
-                    };
-                    window.speechSynthesis.speak(u);
+                    });
                 } else {
                     setTimeout(() => startListening(), 400);
                 }
@@ -618,7 +587,7 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
     const startListening = () => {
         if (isRecognitionRunningRef.current || speakingRef.current || isTypingRef.current) return;
         try {
-            if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+            stopSpeaking();
             isRecognitionRunningRef.current = true;
             recRef.current?.start();
         } catch (e) {
@@ -668,9 +637,8 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
         const nextState = !speakerMuted;
         setSpeakerMuted(nextState);
         localStorage.setItem('nimo_speaker_muted', String(nextState));
-        if (nextState && 'speechSynthesis' in window) {
-            window.speechSynthesis.cancel();
-            setSpeaking(false);
+        if (nextState) {
+            stopSpeaking();
         }
     };
 
@@ -690,7 +658,7 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
 
     const startVoiceEnrollment = () => {
         if (enrolling) return;
-        if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+        stopSpeaking();
         try { recRef.current?.stop(); } catch(e){}
 
         setEnrolling(true);
@@ -793,6 +761,15 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
     const getBestThaiVoice = (): SpeechSynthesisVoice | null => {
         if (typeof window === 'undefined' || !window.speechSynthesis) return null;
         const voices = window.speechSynthesis.getVoices();
+        
+        // 1. Try saved user-selected voice
+        const savedVoiceName = localStorage.getItem('nimo_browser_voice_name');
+        if (savedVoiceName) {
+            const savedVoice = voices.find(v => v.name === savedVoiceName);
+            if (savedVoice) return savedVoice;
+        }
+
+        // 2. Fallbacks
         const thVoices = voices.filter(v => v.lang === 'th-TH' || v.lang.toLowerCase().includes('th'));
         if (thVoices.length === 0) return null;
 
@@ -802,6 +779,200 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
         const narisaVoice = thVoices.find(v => v.name.toLowerCase().includes('narisa'));
         
         return googleVoice || premwadeeVoice || kanyaVoice || narisaVoice || thVoices[0];
+    };
+
+    const applyVoiceSettings = (u: SpeechSynthesisUtterance) => {
+        switch (voiceType) {
+            case 'teen_girl':
+                u.pitch = 1.7; // Very high pitch, bright, teen girl!
+                u.rate = 1.25;  // Cheerful, fast-paced speed
+                break;
+            case 'adult_woman':
+                u.pitch = 1.05; // Natural adult woman
+                u.rate = 0.95;
+                break;
+            case 'teen_boy':
+                u.pitch = 1.25;  // Teen boy
+                u.rate = 1.1;
+                break;
+            case 'adult_man':
+                u.pitch = 0.85; // Deep male voice
+                u.rate = 0.95;
+                break;
+            default:
+                u.pitch = 1.0;
+                u.rate = 1.05;
+        }
+    };
+
+    const detectLanguageCode = (text: string): string => {
+        if (/[\u0E00-\u0E7F]/.test(text)) return 'th';
+        if (/[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]/.test(text)) return 'ja';
+        if (/[\u4E00-\u9FFF]/.test(text)) return 'zh';
+        if (/[\uAC00-\uD7AF]/.test(text)) return 'ko';
+        return preferredLanguage || 'en';
+    };
+
+    const detectAndApplyUserGender = (userText: string) => {
+        const isOverride = localStorage.getItem('nimo_voice_override') === 'true';
+        const lowerText = userText.toLowerCase().trim();
+        const changeToMale = [
+            'เปลี่ยนเป็นเสียงผู้ชาย', 'เปลี่ยนเป็นผู้ชาย', 'คุยกับผู้ชาย', 'ขอเสียงผู้ชาย', 'ขอผู้ชาย', 
+            'เปลี่ยนเป็นนีโมผู้ชาย', 'อยากคุยกับนีโมผู้ชาย', 'change to male voice', 'switch to male voice',
+            'change to boy voice', 'เปลี่ยนเป็นเพศชาย', 'เปลี่ยนเสียงเป็นผู้ชาย'
+        ];
+        const changeToFemale = [
+            'เปลี่ยนเป็นเสียงผู้หญิง', 'เปลี่ยนเป็นผู้หญิง', 'คุยกับผู้หญิง', 'ขอเสียงผู้หญิง', 'ขอผู้หญิง', 
+            'เปลี่ยนเป็นนีโมผู้หญิง', 'อยากคุยกับนีโมผู้หญิง', 'change to female voice', 'switch to female voice',
+            'change to girl voice', 'เปลี่ยนเป็นเพศหญิง', 'เปลี่ยนเสียงเป็นผู้หญิง'
+        ];
+
+        if (changeToMale.some(phrase => lowerText.includes(phrase))) {
+            localStorage.setItem('nimo_voice', 'teen_boy');
+            localStorage.setItem('nimo_voice_override', 'true');
+            window.dispatchEvent(new Event('nimo_voice_changed'));
+            return;
+        }
+
+        if (changeToFemale.some(phrase => lowerText.includes(phrase))) {
+            localStorage.setItem('nimo_voice', 'teen_girl');
+            localStorage.setItem('nimo_voice_override', 'true');
+            window.dispatchEvent(new Event('nimo_voice_changed'));
+            return;
+        }
+
+        if (isOverride) return;
+
+        const maleMarkers = ['ครับ', 'นะครับ', 'ผม', 'กระผม', 'ครับผม', 'ฮะ'];
+        const femaleMarkers = ['ค่ะ', 'คะ', 'นะคะ', 'หนู', 'ดิฉัน', 'จ้า', 'ค่ะแม่'];
+
+        const hasMale = maleMarkers.some(m => lowerText.includes(m));
+        const hasFemale = femaleMarkers.some(f => lowerText.includes(f));
+
+        if (hasMale && !hasFemale) {
+            localStorage.setItem('nimo_voice', 'teen_girl');
+            window.dispatchEvent(new Event('nimo_voice_changed'));
+        } else if (hasFemale && !hasMale) {
+            localStorage.setItem('nimo_voice', 'teen_boy');
+            window.dispatchEvent(new Event('nimo_voice_changed'));
+        }
+    };
+
+    const stopSpeaking = () => {
+        if ('speechSynthesis' in window) {
+            window.speechSynthesis.cancel();
+        }
+        if (activeAudioRef.current) {
+            activeAudioRef.current.pause();
+            activeAudioRef.current = null;
+        }
+        setSpeaking(false);
+    };
+
+    const playVoiceSpeech = (text: string, onEnd?: () => void, onError?: () => void) => {
+        stopSpeaking();
+        const cleanedText = prepareTextForSpeech(text);
+        if (!cleanedText) {
+            onEnd?.();
+            return;
+        }
+
+        const tl = detectLanguageCode(cleanedText);
+        const gender = (voiceType === 'teen_girl' || voiceType === 'adult_woman') ? 'female' : 'male';
+
+        setSpeaking(true);
+
+        // 1. Try our high-quality Cloud Neural TTS API via the Vocalido python backend
+        fetch('/vocalido/api/ai/tts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: cleanedText, gender, lang: tl })
+        })
+        .then(res => {
+            if (!res.ok) throw new Error('Cloud TTS endpoint error');
+            return res.json();
+        })
+        .then(data => {
+            if (!data.url) throw new Error('No URL returned');
+            
+            const audio = new Audio(data.url);
+            activeAudioRef.current = audio;
+            
+            if (voiceType === 'teen_girl') {
+                audio.playbackRate = 1.05;
+            } else if (voiceType === 'teen_boy') {
+                audio.playbackRate = 1.05;
+            }
+
+            audio.onended = () => {
+                setSpeaking(false);
+                activeAudioRef.current = null;
+                onEnd?.();
+            };
+            audio.onerror = () => {
+                activeAudioRef.current = null;
+                fallbackSpeakGoogleTranslate(cleanedText, tl, onEnd, onError);
+            };
+            audio.play().catch(() => {
+                fallbackSpeakGoogleTranslate(cleanedText, tl, onEnd, onError);
+            });
+        })
+        .catch(err => {
+            console.log('[Cloud TTS API Fallback]', err);
+            fallbackSpeakGoogleTranslate(cleanedText, tl, onEnd, onError);
+        });
+    };
+
+    const fallbackSpeakGoogleTranslate = (cleanedText: string, tl: string, onEnd?: () => void, onError?: () => void) => {
+        const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=${tl}&client=tw-ob&q=${encodeURIComponent(cleanedText)}`;
+        const audio = new Audio(url);
+        activeAudioRef.current = audio;
+
+        if (voiceType === 'teen_girl') {
+            audio.playbackRate = 1.15;
+        } else if (voiceType === 'teen_boy') {
+            audio.playbackRate = 1.12;
+        }
+
+        audio.onended = () => {
+            setSpeaking(false);
+            activeAudioRef.current = null;
+            onEnd?.();
+        };
+
+        audio.onerror = () => {
+            activeAudioRef.current = null;
+            fallbackSpeakLocal(cleanedText, tl, onEnd, onError);
+        };
+
+        audio.play().catch(() => {
+            fallbackSpeakLocal(cleanedText, tl, onEnd, onError);
+        });
+    };
+
+    const fallbackSpeakLocal = (cleanedText: string, langCode: string, onEnd?: () => void, onError?: () => void) => {
+        if (!('speechSynthesis' in window)) {
+            setSpeaking(false);
+            onError?.();
+            return;
+        }
+        setSpeaking(true);
+        const u = new SpeechSynthesisUtterance(cleanedText);
+        u.lang = langCode === 'th' ? 'th-TH' : (langCode === 'ja' ? 'ja-JP' : (langCode === 'zh' ? 'zh-CN' : (langCode === 'ko' ? 'ko-KR' : 'en-US')));
+        if (langCode === 'th') {
+            const thVoice = getBestThaiVoice();
+            if (thVoice) u.voice = thVoice;
+        }
+        applyVoiceSettings(u);
+        u.onend = () => {
+            setSpeaking(false);
+            onEnd?.();
+        };
+        u.onerror = () => {
+            setSpeaking(false);
+            onError?.();
+        };
+        window.speechSynthesis.speak(u);
     };
 
     useEffect(() => {
@@ -990,35 +1161,19 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
             }]);
 
             // Speak success
-            if (!speakerMuted && 'speechSynthesis' in window) {
-                window.speechSynthesis.cancel();
-                setSpeaking(true);
+            if (!speakerMuted) {
                 const speechText = preferredLanguage === 'th' 
                     ? `แปลงสำเร็จแล้ว${suffixKa} เพลง ${result.song.title} โดย ${result.song.artist || 'สโกเลนส์ เอไอ'}`
                     : `Conversion complete. ${result.song.title} by ${result.song.artist || 'ScoreLens AI'}`;
-                const u = new SpeechSynthesisUtterance(prepareTextForSpeech(speechText));
-                const isThai = /[\u0E00-\u0E7F]/.test(speechText);
-                u.lang = isThai ? 'th-TH' : 'en-US';
-                
-                if (isThai) {
-                    const thVoice = getBestThaiVoice();
-                    if (thVoice) u.voice = thVoice;
-                }
-                
-                u.rate = 1.05;
-                u.onend = () => {
-                    setSpeaking(false);
+                playVoiceSpeech(speechText, () => {
                     if (handsFreeRef.current) {
                         setTimeout(() => startListening(), 400);
                     }
-                };
-                u.onerror = () => {
-                    setSpeaking(false);
+                }, () => {
                     if (handsFreeRef.current) {
                         setTimeout(() => startListening(), 400);
                     }
-                };
-                window.speechSynthesis.speak(u);
+                });
             } else {
                 if (handsFree) {
                     setTimeout(() => startListening(), 400);
@@ -1051,35 +1206,19 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
             }]);
 
             // Speak failure
-            if (!speakerMuted && 'speechSynthesis' in window) {
-                window.speechSynthesis.cancel();
-                setSpeaking(true);
+            if (!speakerMuted) {
                 const speechText = preferredLanguage === 'th' 
                     ? `ขออภัย${suffixKa} ไม่สามารถแปลงโน้ตได้สำเร็จ กรุณาลองใหม่อีกครั้ง${suffixNaKa}`
                     : `Sorry, could not convert. Please try again.`;
-                const u = new SpeechSynthesisUtterance(prepareTextForSpeech(speechText));
-                const isThai = /[\u0E00-\u0E7F]/.test(speechText);
-                u.lang = isThai ? 'th-TH' : 'en-US';
-                
-                if (isThai) {
-                    const thVoice = getBestThaiVoice();
-                    if (thVoice) u.voice = thVoice;
-                }
-                
-                u.rate = 1.05;
-                u.onend = () => {
-                    setSpeaking(false);
+                playVoiceSpeech(speechText, () => {
                     if (handsFreeRef.current) {
                         setTimeout(() => startListening(), 400);
                     }
-                };
-                u.onerror = () => {
-                    setSpeaking(false);
+                }, () => {
                     if (handsFreeRef.current) {
                         setTimeout(() => startListening(), 400);
                     }
-                };
-                window.speechSynthesis.speak(u);
+                });
             } else {
                 if (handsFree) {
                     setTimeout(() => startListening(), 400);
@@ -1112,6 +1251,8 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
         const text = (override ?? input).trim();
         if (!text || isTyping) return;
 
+        detectAndApplyUserGender(text);
+
         const wasVoice = usedMic.current;
         usedMic.current = false;
 
@@ -1129,30 +1270,16 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
             setMessages(prev => [...prev, { role: 'nimo', content: confirmationText, timestamp: Date.now() }]);
             setIsTyping(false);
 
-            if (!speakerMuted && (wasVoice || handsFree) && 'speechSynthesis' in window) {
-                window.speechSynthesis.cancel();
-                setSpeaking(true);
-                const u = new SpeechSynthesisUtterance(prepareTextForSpeech(confirmationText));
-                const isThai = /[\u0E00-\u0E7F]/.test(confirmationText);
-                u.lang = isThai ? 'th-TH' : 'en-US';
-                if (isThai) {
-                    const thVoice = getBestThaiVoice();
-                    if (thVoice) u.voice = thVoice;
-                }
-                u.rate = 1.05;
-                u.onend = () => {
-                    setSpeaking(false);
+            if (!speakerMuted && (wasVoice || handsFree)) {
+                playVoiceSpeech(confirmationText, () => {
                     if (handsFreeRef.current) {
                         setTimeout(() => startListening(), 400);
                     }
-                };
-                u.onerror = () => {
-                    setSpeaking(false);
+                }, () => {
                     if (handsFreeRef.current) {
                         setTimeout(() => startListening(), 400);
                     }
-                };
-                window.speechSynthesis.speak(u);
+                });
             }
             return;
         }
@@ -1168,7 +1295,7 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
             const appStateStr = JSON.stringify(appState, null, 2);
 
             const suffix = suffixKa;
-            const pronoun = isMale ? 'ผม' : 'หนู';
+            const pronoun = isMale ? 'ฉัน' : 'หนู';
 
             // Construct chat history list for Gemini context
             const contentsList: any[] = [];
@@ -1189,7 +1316,7 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
             // Ensure system instructions contain actions 20-27
             const sys = preferredLanguage === 'th'
                 ? `คุณคือ Nimo เพื่อนและผู้ช่วยอัจฉริยะของแอพพลิเคชัน Memolody V2
-คุณต้องแทนตัวเองว่า "${pronoun}" เสมอ และใช้คำลงท้ายที่เหมาะสมกับเพศสภาพของคุณคือ "${suffix}" เสมอ ห้ามสับสนสลับกันเด็ดขาด (เช่น ห้ามใช้คำแทนตัวว่า "ผม" หรือ "ครับ" หากเพศสภาพเป็นหญิง หรือกลับกัน)
+คุณต้องแทนตัวเองว่า "${pronoun}" เสมอ และใช้คำลงท้ายที่เหมาะสมกับเพศสภาพของคุณคือ "${suffix}" เสมอ ห้ามสับสนสลับกันเด็ดขาด (เช่น ห้ามใช้คำแทนตัวว่า "ฉัน" หรือ "ครับ" หากเพศสภาพเป็นหญิง หรือกลับกัน)
 
 คุยสนุก เป็นธรรมชาติเหมือนมนุษย์คุยกันจริงๆ ห้ามแข็งทื่อแบบหุ่นยนต์ และห้ามตอบแบบระบุหมายเลขข้อ (เช่น 1. 2. 3. หรือ - หัวข้อ) ถ้าไม่จำเป็น ให้คุยตอบรับกันสั้นๆ เป็นพารากราฟธรรมดา
 
@@ -1201,6 +1328,7 @@ In the 'reply' field, NEVER include emojis (e.g. 🎙️, ⏸️), markdown form
 
 เมื่อผู้ใช้สั่งงานหรือขอให้ทำอะไร:
 คุณต้องสร้างคำสั่งลงในฟิลด์ 'actions' เสมอให้ตรงกับความต้องการของผู้ใช้ (เช่น หากผู้ใช้พูดว่า "เล่นเพลง" หรือ "ปิดเสียงแทร็กแรก" คุณต้องส่ง action ที่เหมาะสมไปทันที ห้ามลืมเด็ดขาด)
+- หากผู้ใช้บ่นว่า "เสียงไม่ออก", "เรนเดอร์ไม่ได้/ค้าง", หรือ "แอพค้าง/รวน" คุณต้องทำการแนะนำเพื่อตรวจสอบและแก้ไขปัญหา โดยแนบคำสั่ง 'run_diagnostics' และ 'self_repair_app' ในฟิลด์ actions ทันทีเพื่อวินิจฉัยและซ่อมแซมจุดบกพร่องในเบื้องหลัง
 
 สถานะปัจจุบันของแอพพลิเคชัน (Application State):
 ${appStateStr}
@@ -1243,6 +1371,7 @@ CRITICAL FOR SPEECH SYNTHESIS (TTS):
 In the 'reply' field, NEVER include emojis, markdown formatting, or content inside parentheses. Use only plain text.
 
 If the user gives a command, you MUST include the corresponding action in the 'actions' array.
+- If the user complains about "no sound", "rendering stuck", or "app frozen/buggy", suggest diagnosing and repairing the app. Include both 'run_diagnostics' and 'self_repair_app' in the actions array to inspect and reset the AudioContext and clear corrupt caches.
 
 Current Application State:
 ${appStateStr}
@@ -1345,18 +1474,20 @@ You must output valid JSON matching the schema. If no actions are needed, return
 
             // Programmatic Suffix & Pronoun Enforcement (force correct gender)
             if (isMale) {
-                // Force male: ค่ะ/คะ→ครับ, นะคะ→นะครับ, หนู→ผม
+                // Force male: ค่ะ/คะ→ครับ, นะคะ→นะครับ, หนู/ผม→ฉัน
                 cleanReply = cleanReply
                     .replace(/นะคะ/g, 'นะครับ')
                     .replace(/ค่ะ/g, 'ครับ')
                     .replace(/คะ/g, 'ครับ')
-                    .replace(/หนู/g, 'ผม');
+                    .replace(/หนู/g, 'ฉัน')
+                    .replace(/ผม/g, 'ฉัน');
             } else {
-                // Force female: ครับ→ค่ะ, นะครับ→นะคะ, ผม→หนู
+                // Force female: ครับ→ค่ะ, นะครับ→นะคะ, ผม/ฉัน→หนู
                 cleanReply = cleanReply
                     .replace(/นะครับ/g, 'นะคะ')
                     .replace(/ครับ/g, 'ค่ะ')
-                    .replace(/ผม/g, 'หนู');
+                    .replace(/ผม/g, 'หนู')
+                    .replace(/ฉัน/g, 'หนู');
             }
 
             setMessages(prev => [...prev, { role: 'nimo', content: cleanReply, timestamp: Date.now() }]);
@@ -1402,34 +1533,16 @@ You must output valid JSON matching the schema. If no actions are needed, return
             }
 
             // Speak response if using voice or in hands-free mode
-            if (!speakerMuted && (wasVoice || handsFree) && 'speechSynthesis' in window) {
-                window.speechSynthesis.cancel();
-                setSpeaking(true);
-                const u = new SpeechSynthesisUtterance(prepareTextForSpeech(cleanReply));
-                const isThai = /[\u0E00-\u0E7F]/.test(cleanReply);
-                u.lang = isThai ? 'th-TH' : 'en-US';
-                
-                if (isThai) {
-                    const thVoice = getBestThaiVoice();
-                    if (thVoice) {
-                        u.voice = thVoice;
-                    }
-                }
-                
-                u.rate = 1.05;
-                u.onend = () => {
-                    setSpeaking(false);
+            if (!speakerMuted && (wasVoice || handsFree)) {
+                playVoiceSpeech(cleanReply, () => {
                     if (handsFreeRef.current) {
                         setTimeout(() => startListening(), 400);
                     }
-                };
-                u.onerror = () => {
-                    setSpeaking(false);
+                }, () => {
                     if (handsFreeRef.current) {
                         setTimeout(() => startListening(), 400);
                     }
-                };
-                window.speechSynthesis.speak(u);
+                });
             } else {
                 if (handsFree) {
                     setTimeout(() => startListening(), 400);
@@ -1504,7 +1617,7 @@ You must output valid JSON matching the schema. If no actions are needed, return
                 <div className="bg-cyan-500/5 border border-cyan-500/10 rounded-[32px] p-5 flex items-center justify-between backdrop-blur-xl shrink-0 gap-4">
                     <div className="flex items-center gap-4">
                         <div data-nimo-target="nimo-avatar" className="w-14 h-14 rounded-2xl overflow-hidden border-2 border-cyan-500/30 shadow-[0_0_20px_rgba(0,229,255,0.2)] shrink-0">
-                            <img src={NIMO_IDENTITY_IMAGE} className="w-full h-full object-cover object-top scale-125" alt="Nimo" />
+                            <img src={nimoAvatarUrl} className="w-full h-full object-cover object-top scale-125" alt="Nimo" />
                         </div>
                         <div>
                             <div className="flex items-center gap-2">

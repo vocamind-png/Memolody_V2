@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import * as Tone from 'tone';
 import { Settings2, Volume2, Cpu, Mic, Activity, Keyboard, MonitorSpeaker, Command, Monitor, Zap, Bot, Play, Sparkles, Lock, Key, Copy, Check } from 'lucide-react';
 import VocalidoTrainingCard from './VocalidoTrainingCard';
@@ -32,6 +32,33 @@ interface SettingsPageProps {
 
 const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, onTogglePerformanceMode, nimoEnabled, onToggleNimoEnabled, nimoVoice, onChangeNimoVoice, vocalidoAutoRender, onToggleVocalidoAutoRender, renderCardStyle = 'compact', onSelectRenderCardStyle, nimoModel = 'gemini-3.5-flash', onChangeNimoModel, uiTheme = 'v2', onUiThemeChange, nimoPosition = 'left', onNimoPositionChange, layoutMode = 'compact', onLayoutModeChange }) => {
     const [activeTab, setActiveTab] = useState<'audio' | 'midi' | 'shortcuts' | 'visual' | 'ai'>('audio');
+
+    // Nimo Browser Voices
+    const [browserVoices, setBrowserVoices] = useState<SpeechSynthesisVoice[]>([]);
+    const [selectedVoiceName, setSelectedVoiceName] = useState(() => {
+        if (typeof window !== 'undefined') {
+            return localStorage.getItem('nimo_browser_voice_name') || '';
+        }
+        return '';
+    });
+
+    useEffect(() => {
+        if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+            const loadVoices = () => {
+                const all = window.speechSynthesis.getVoices();
+                const th = all.filter(v => v.lang.toLowerCase().includes('th'));
+                setBrowserVoices(th);
+                if (th.length > 0 && !localStorage.getItem('nimo_browser_voice_name')) {
+                    // Try to default kanya
+                    const def = th.find(v => v.name.toLowerCase().includes('kanya')) || th[0];
+                    setSelectedVoiceName(def.name);
+                    localStorage.setItem('nimo_browser_voice_name', def.name);
+                }
+            };
+            loadVoices();
+            window.speechSynthesis.onvoiceschanged = loadVoices;
+        }
+    }, []);
 
     // Audio Settings State
     const [audioInput, setAudioInput] = useState('default');
@@ -814,6 +841,25 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, on
                                         <option value="adult_man">ผู้ชายผู้ใหญ่ (Adult Man - เป็นทางการ มั่นคง)</option>
                                     </select>
 
+                                    <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2 block">ระบบเสียงสังเคราะห์ในเครื่อง (Browser Voice Engine)</label>
+                                    <select
+                                        value={selectedVoiceName}
+                                        onChange={e => {
+                                            setSelectedVoiceName(e.target.value);
+                                            localStorage.setItem('nimo_browser_voice_name', e.target.value);
+                                        }}
+                                        className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-sm text-zinc-300 focus:outline-none focus:border-cyan-500/50 transition-all appearance-none mb-4"
+                                    >
+                                        {browserVoices.map(v => (
+                                            <option key={v.name} value={v.name}>
+                                                {v.name} ({v.lang}) {v.localService ? '[Local]' : ''}
+                                            </option>
+                                        ))}
+                                        {browserVoices.length === 0 && (
+                                            <option value="">(ไม่พบเสียงภาษาไทยอื่นๆ ในระบบของคุณ)</option>
+                                        )}
+                                    </select>
+
                                     <button
                                         onClick={() => {
                                             if ('speechSynthesis' in window) {
@@ -821,25 +867,23 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, on
                                                 let text = '';
                                                 let pitch = 1.0;
                                                 let rate = 1.0;
-                                                let voiceTypeSearch = '';
-                                                let fallbackSearch = '';
 
                                                 switch (nimoVoice) {
                                                     case 'teen_girl':
                                                         text = "สวัสดีค่ะ Nimo พร้อมช่วยแล้วค่ะ";
-                                                        pitch = 1.3; rate = 1.05; voiceTypeSearch = 'Female'; fallbackSearch = 'หญิง';
+                                                        pitch = 1.7; rate = 1.25;
                                                         break;
                                                     case 'adult_woman':
                                                         text = "สวัสดีค่ะ ผู้ช่วยอัจฉริยะพร้อมให้บริการค่ะ";
-                                                        pitch = 1.0; rate = 0.95; voiceTypeSearch = 'Female'; fallbackSearch = 'หญิง';
+                                                        pitch = 1.05; rate = 0.95;
                                                         break;
                                                     case 'teen_boy':
-                                                        text = "สวัสดีครับ มีอะไรให้ผมช่วยไหมครับ";
-                                                        pitch = 1.2; rate = 1.05; voiceTypeSearch = 'Male'; fallbackSearch = 'ชาย';
+                                                        text = "สวัสดีครับ มีอะไรให้ฉันช่วยไหมครับ";
+                                                        pitch = 1.25; rate = 1.1;
                                                         break;
                                                     case 'adult_man':
                                                         text = "สวัสดีครับ ระบบ AI พร้อมให้คำแนะนำครับ";
-                                                        pitch = 0.9; rate = 0.95; voiceTypeSearch = 'Male'; fallbackSearch = 'ชาย';
+                                                        pitch = 0.85; rate = 0.95;
                                                         break;
                                                 }
                                                 const utterance = new SpeechSynthesisUtterance(text);
@@ -848,9 +892,9 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, on
                                                 utterance.rate = rate;
 
                                                 const voices = window.speechSynthesis.getVoices();
-                                                let thaiVoice = voices.find(v => v.lang.includes('th') && (v.name.includes(voiceTypeSearch) || v.name.includes(fallbackSearch)));
-                                                if (!thaiVoice) thaiVoice = voices.find(v => v.lang.includes('th'));
-                                                if (thaiVoice) utterance.voice = thaiVoice;
+                                                let selectedVoice = voices.find(v => v.name === selectedVoiceName);
+                                                if (!selectedVoice) selectedVoice = voices.find(v => v.lang.includes('th'));
+                                                if (selectedVoice) utterance.voice = selectedVoice;
                                                 window.speechSynthesis.speak(utterance);
                                             }
                                         }}

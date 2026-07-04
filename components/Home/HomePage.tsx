@@ -646,10 +646,40 @@ const HomePage: React.FC<HomePageProps> = ({
       list = list.filter(i => aiFilteredIds.includes(i.metadata.id));
     } else if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      list = list.filter(i =>
-        i.metadata.title.toLowerCase().includes(q) ||
-        i.metadata.artist.toLowerCase().includes(q)
-      );
+      
+      // Parse grade numbers to prevent substring matches (e.g., matching "Grade 1" inside "Grade 11")
+      const gradeMatch = q.match(/(?:grade|เกรด)\s*(\d+)\b/);
+      let targetGradeNum: number | null = null;
+      let cleanQuery = q;
+      
+      if (gradeMatch) {
+        targetGradeNum = parseInt(gradeMatch[1], 10);
+        // Remove the grade token from query to avoid matching it in song titles
+        cleanQuery = q.replace(gradeMatch[0], '').trim();
+      }
+
+      list = list.filter(i => {
+        // 1. Exact Grade Match (if specified in query)
+        if (targetGradeNum !== null) {
+          const dGradeRaw = i.metadata.difficulty_grade || i.metadata.difficultyGrade || i.metadata.difficulty || i.metadata.grade || '';
+          const dGrade = String(dGradeRaw).trim().toLowerCase();
+          const itemGradeNumMatch = dGrade.match(/\d+/);
+          const itemGradeNum = itemGradeNumMatch ? parseInt(itemGradeNumMatch[0], 10) : null;
+          
+          if (itemGradeNum !== targetGradeNum) {
+            return false;
+          }
+        }
+
+        // 2. Title/Artist match
+        if (cleanQuery) {
+          return (
+            i.metadata.title.toLowerCase().includes(cleanQuery) ||
+            i.metadata.artist.toLowerCase().includes(cleanQuery)
+          );
+        }
+        return true;
+      });
     }
 
     if (filterGenre) list = list.filter(i => {

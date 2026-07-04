@@ -136,10 +136,40 @@ const VaultPage: React.FC<VaultPageProps> = ({
 
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      list = list.filter(i =>
-        i.metadata.title.toLowerCase().includes(q) ||
-        i.metadata.artist.toLowerCase().includes(q)
-      );
+      
+      // Parse grade numbers to prevent substring matches (e.g. matching "Grade 1" inside "Grade 11")
+      const gradeMatch = q.match(/(?:grade|เกรด)\s*(\d+)\b/);
+      let targetGradeNum: number | null = null;
+      let cleanQuery = q;
+      
+      if (gradeMatch) {
+        targetGradeNum = parseInt(gradeMatch[1], 10);
+        // Remove the grade token from query to avoid matching it in song titles
+        cleanQuery = q.replace(gradeMatch[0], '').trim();
+      }
+
+      list = list.filter(i => {
+        // 1. Exact Grade Match (if specified in query)
+        if (targetGradeNum !== null) {
+          const dGradeRaw = i.metadata.difficulty_grade || i.metadata.difficultyGrade || i.metadata.difficulty || i.metadata.grade || '';
+          const dGrade = String(dGradeRaw).trim().toLowerCase();
+          const itemGradeNumMatch = dGrade.match(/\d+/);
+          const itemGradeNum = itemGradeNumMatch ? parseInt(itemGradeNumMatch[0], 10) : null;
+          
+          if (itemGradeNum !== targetGradeNum) {
+            return false;
+          }
+        }
+
+        // 2. Title/Artist match
+        if (cleanQuery) {
+          return (
+            i.metadata.title.toLowerCase().includes(cleanQuery) ||
+            i.metadata.artist.toLowerCase().includes(cleanQuery)
+          );
+        }
+        return true;
+      });
     }
 
     if (filterGenre) list = list.filter(i => {
@@ -277,12 +307,14 @@ const VaultPage: React.FC<VaultPageProps> = ({
 
           {/* Import */}
           <button onClick={() => setShowImportConsole(true)}
+            data-nimo-target="import_file"
             className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-[8px] font-black text-cyan-400 uppercase hover:bg-cyan-500/20 transition-colors duration-75">
             <Plus size={11} strokeWidth={3} /> Import
           </button>
 
           {/* Refresh */}
           <button onClick={onRefresh} disabled={isSyncing}
+            data-nimo-target="sync_cloud"
             className="w-7 h-7 rounded-lg bg-white/[0.03] border border-white/5 flex items-center justify-center text-zinc-600 hover:text-white transition-colors duration-75">
             {isSyncing ? <Loader2 size={12} className="animate-spin text-cyan-400" /> : <RefreshCcw size={12} />}
           </button>
@@ -296,6 +328,7 @@ const VaultPage: React.FC<VaultPageProps> = ({
             <Search size={14} />
           </button>
           <input
+            data-nimo-target="search_song"
             type="text"
             placeholder="Search songs..."
             value={searchInput}

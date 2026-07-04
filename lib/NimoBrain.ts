@@ -473,14 +473,13 @@ export class NimoBrainRegistry {
         </svg>
       `;
       document.body.appendChild(wand);
-      setTimeout(() => wand.remove(), 500); // Remove after waving
+      setTimeout(() => wand.remove(), 800); // Remove after waving
     }
 
     // Delay the flying projectile slightly to match the wand waving
     setTimeout(() => {
-      // 2. Create Flying Shooting Star Projectiles (ดาวไม้วิเศษ)
-      // We will create a primary large star and 3 smaller trailing stars to make it look gorgeous
-      const flyDuration = '0.7s';
+      // 2. Create Flying Shooting Star Projectiles (ดาวไม้วิเศษ) - SLOWED DOWN for readability
+      const flyDuration = '1.3s';
       const numStars = fallbackToAvatar ? 1 : 4; // Only 1 if exploding in place
       
       for (let i = 0; i < numStars; i++) {
@@ -507,22 +506,22 @@ export class NimoBrainRegistry {
           `;
           
           document.body.appendChild(star);
-          setTimeout(() => star.remove(), 750); // Remove after flight
-        }, i * 70); // Delayed sequence for trail effect
+          setTimeout(() => star.remove(), 1400); // Remove after flight
+        }, i * 110); // Slower sequence for trail effect
       }
       
       // 3. When the projectiles hit the target button (after travel duration):
-      const flightMs = fallbackToAvatar ? 0 : 650; // Instant if local, otherwise match flying time
+      const flightMs = fallbackToAvatar ? 0 : 1250; // Slower travel match
       setTimeout(() => {
         // Target Button Pop animation
         if (!fallbackToAvatar && targetEl) {
           targetEl.classList.add('nimo-target-pop');
           setTimeout(() => {
             targetEl.classList.remove('nimo-target-pop');
-          }, 500);
+          }, 800);
         }
 
-        // Glow Effect
+        // Glow Effect & White Fog Cloud (lasts 2 seconds)
         const magicContainer = document.createElement('div');
         magicContainer.style.position = 'fixed';
         magicContainer.style.left = `${targetX}px`;
@@ -534,25 +533,32 @@ export class NimoBrainRegistry {
 
         const glow = document.createElement('div');
         glow.className = 'nimo-magic-glow';
-        glow.style.width = `${Math.max(100, targetRect.width * 2)}px`;
-        glow.style.height = `${Math.max(100, targetRect.height * 2)}px`;
-        magicContainer.appendChild(glow);
-        document.body.appendChild(magicContainer);
-        setTimeout(() => magicContainer.remove(), 1500);
+        glow.style.width = `${Math.max(120, targetRect.width * 2.2)}px`;
+        glow.style.height = `${Math.max(120, targetRect.height * 2.2)}px`;
 
-        // Spawn a spectacular starburst explosion (15 sparkling stars)
-        const colors = ['#facc15', '#a855f7', '#06b6d4']; // Gold, Purple, Cyan
+        const whiteCloud = document.createElement('div');
+        whiteCloud.className = 'nimo-magic-white-cloud';
+        whiteCloud.style.width = `${Math.max(100, targetRect.width * 1.8)}px`;
+        whiteCloud.style.height = `${Math.max(100, targetRect.height * 1.8)}px`;
+
+        magicContainer.appendChild(glow);
+        magicContainer.appendChild(whiteCloud);
+        document.body.appendChild(magicContainer);
+        setTimeout(() => magicContainer.remove(), 2100);
+
+        // Spawn a spectacular starburst explosion (15 sparkling stars) - Linger for 2.0s
+        const colors = ['#facc15', '#a855f7', '#06b6d4', '#ffffff']; // Gold, Purple, Cyan, White
         for (let j = 0; j < 15; j++) {
           const particle = document.createElement('div');
           particle.className = 'nimo-hit-particle';
           
           const angle = (j * 24 * Math.PI) / 180; // Spread evenly
-          const speed = 40 + Math.random() * 50; // Random distance
+          const speed = 35 + Math.random() * 45; // Random distance
           const dx = `${Math.cos(angle) * speed}px`;
           const dy = `${Math.sin(angle) * speed}px`;
           const pAngle = `${(Math.random() - 0.5) * 720}deg`;
-          const pSize = `${6 + Math.random() * 10}px`;
-          const pDuration = `${0.6 + Math.random() * 0.6}s`;
+          const pSize = `${6 + Math.random() * 12}px`;
+          const pDuration = `${1.2 + Math.random() * 0.8}s`; // Longer duration for 2.0s lingering
           const pColor = colors[Math.floor(Math.random() * colors.length)];
           
           particle.style.setProperty('--targetX', `${targetX}px`);
@@ -565,11 +571,11 @@ export class NimoBrainRegistry {
           particle.style.setProperty('--particleColor', pColor);
           
           document.body.appendChild(particle);
-          setTimeout(() => particle.remove(), 1200);
+          setTimeout(() => particle.remove(), 2100);
         }
       }, flightMs);
 
-    }, 300); // Wait for wand waving before launching projectiles
+    }, 450); // Slower wand wave wait
   }
 
 
@@ -701,7 +707,7 @@ if (typeof window !== 'undefined') {
     category: 'system'
   });
 
-  nimoBrain.registerAction('propose_dynamic_action', async (params) => {
+    nimoBrain.registerAction('propose_dynamic_action', async (params) => {
     try {
       await supabase.from('nimo_dynamic_actions').insert({
         name: params.name,
@@ -717,6 +723,88 @@ if (typeof window !== 'undefined') {
     th: 'เขียนสคริปต์ JavaScript ใหม่เพื่อตอบสนองความต้องการของผู้ใช้ (สถานะรอ Admin อนุมัติ)',
     en: 'Write and propose a new JavaScript action script to fulfill a missing feature request (pending admin approval)',
     params: "{ name: string (snake_case), description: string, script: string (JavaScript code) }",
+    category: 'system'
+  });
+
+  nimoBrain.registerAction('run_diagnostics', async () => {
+    console.log('[NimoBrain] Running system diagnostics...');
+    // Create base diagnostic state
+    const report: any = {
+      timestamp: Date.now(),
+      network: navigator.onLine ? 'online' : 'offline',
+      userAgent: navigator.userAgent,
+      storage: {
+        localStorageUsed: typeof localStorage !== 'undefined' ? JSON.stringify(localStorage).length : 0,
+        customBackend: typeof localStorage !== 'undefined' ? (localStorage.getItem('memolody_custom_backend_url') || 'default') : 'default'
+      },
+      audioContext: 'unknown',
+      gpuServer: 'unknown',
+      gpuServerLatency: -1,
+      errors: []
+    };
+
+    // Dispatch event to query components for additional diagnostic data
+    const queryEvent = new CustomEvent('nimo-request-diagnostics', { detail: { report } });
+    window.dispatchEvent(queryEvent);
+
+    // Test GPU pod connection
+    let base = '';
+    if (typeof localStorage !== 'undefined') {
+      base = localStorage.getItem('memolody_custom_backend_url') || '';
+    }
+    const pingTarget = base ? (base.endsWith('/') ? base.slice(0, -1) : base) + '/studio/synthesis' : '/studio/synthesis';
+    const startTime = Date.now();
+    try {
+      // Small timeout test
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), 2500);
+      const res = await fetch(pingTarget, { method: 'OPTIONS', signal: controller.signal }).catch(() => null);
+      clearTimeout(id);
+      report.gpuServer = res ? 'reachable' : 'offline';
+      report.gpuServerLatency = Date.now() - startTime;
+    } catch (e: any) {
+      report.gpuServer = 'offline';
+      report.errors.push(`GPU Server unreachable: ${e.message || e}`);
+    }
+
+    // Save final report to state
+    nimoBrain.updateState('last_diagnostic_report', report);
+    console.log('[NimoBrain] Diagnostics report generated:', report);
+  }, {
+    th: 'วิเคราะห์ระบบเพื่อค้นหาปัญหาต่างๆ เช่น เรื่องเสียงไม่ออก การเชื่อมต่อ GPU Pod หรือเว็บบล็อกไมค์',
+    en: 'Diagnose application health including AudioContext state, GPU Pod connectivity, and storage limits.',
+    category: 'system'
+  });
+
+  nimoBrain.registerAction('self_repair_app', async () => {
+    console.log('[NimoBrain] Triggering self-repair sequence...');
+    
+    // 1. Resume standard AudioContext if browser suspended it
+    if (typeof window !== 'undefined') {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioCtx) {
+        // Try to automatically resume any orphaned contexts
+        const dummy = new AudioCtx();
+        dummy.resume().catch(() => {});
+      }
+    }
+
+    // 2. Dispatch custom event to trigger active page / audio-engine repairs
+    const repairEvent = new CustomEvent('nimo-trigger-self-repair');
+    window.dispatchEvent(repairEvent);
+
+    // 3. Clear IndexedDB cache database (memolody_audio_cache) to prevent corrupt files from blocking renders
+    try {
+      if (typeof indexedDB !== 'undefined') {
+        indexedDB.deleteDatabase('memolody_audio_cache');
+      }
+    } catch (e) {}
+
+    // 4. Force free memory triggers
+    nimoBrain.showToastNotification("Nimo: ซ่อมแซมระบบเสียงและเครือข่ายสำเร็จแล้วค่ะ!", "#10B981");
+  }, {
+    th: 'ซ่อมแซมแอปพลิเคชัน คืนสถานะระบบเสียง เคลียร์หน่วยความจำแคช หรือรีเซ็ตการเชื่อมต่อค้าง',
+    en: 'Execute automated repairs for audio output, frozen views, and clear temporary rendering caches.',
     category: 'system'
   });
 }

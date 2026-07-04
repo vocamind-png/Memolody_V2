@@ -2306,6 +2306,72 @@ const PlayerPage: React.FC<{
     };
   }, []);
 
+  // 🩺 Nimo Self-Diagnostics and Self-Repair Integration
+  useEffect(() => {
+    const handleDiagnosticsQuery = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      const report = customEvent.detail?.report;
+      if (!report) return;
+
+      // Check Tone.js AudioContext status
+      try {
+        report.audioContext = Tone.getContext().state;
+      } catch (err: any) {
+        report.audioContext = 'error';
+        report.errors.push(`AudioContext query failed: ${err.message || err}`);
+      }
+
+      // Check current active page card
+      report.activeCard = activeCard;
+
+      // Check tracks state
+      report.tracksCount = tracks.length;
+      report.vocalTracks = tracks.filter((t: any) => t.mode === 'vocal').length;
+      report.instrumentTracks = tracks.filter((t: any) => t.mode !== 'vocal').length;
+      report.songId = song?.id || 'none';
+      report.isServerOnline = isServerOnline;
+    };
+
+    const handleSelfRepair = async () => {
+      console.log('[PlayerPage] Nimo Triggered Self-Repair sequence...');
+      
+      // 1. Resume Tone.js Context
+      try {
+        if (Tone.getContext().state !== 'running') {
+          console.log('[PlayerPage] Resuming suspended Tone AudioContext...');
+          await Tone.start();
+          await Tone.getContext().resume();
+        }
+      } catch (err) {
+        console.error('[PlayerPage] Failed to resume Tone AudioContext during repair:', err);
+      }
+
+      // 2. Clear any active rendering errors or loops
+      try {
+        setRenderProgress(null);
+        setIsRendering(false);
+      } catch (err) {}
+
+      // 3. Re-verify GPU server connection
+      try {
+        fetchEngines(true);
+      } catch (err) {}
+      
+      // 4. If card is frozen (e.g. view mode issues), reset it
+      try {
+        setActiveCard('score'); // Fall back to score viewer to unfreeze the page
+      } catch (err) {}
+    };
+
+    window.addEventListener('nimo-request-diagnostics', handleDiagnosticsQuery);
+    window.addEventListener('nimo-trigger-self-repair', handleSelfRepair);
+    
+    return () => {
+      window.removeEventListener('nimo-request-diagnostics', handleDiagnosticsQuery);
+      window.removeEventListener('nimo-trigger-self-repair', handleSelfRepair);
+    };
+  }, [activeCard, tracks, song?.id, isServerOnline]);
+
   // Derive up to 8 notes of lyrics based on current parse
   const currentPhraseToSing = useMemo(() => {
     if (!parsedData || parsedData.notes.length === 0) return "Do Re Mi Fa Sol La Ti Do";
