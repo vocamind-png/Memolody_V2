@@ -873,6 +873,24 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
         setSpeaking(false);
     }
 
+    const getTTSFetchUrl = (path: string) => {
+        if (typeof window === 'undefined') return path;
+        const customUrl = localStorage.getItem('memolody_custom_backend_url');
+        if (customUrl) {
+            let cleanUrl = customUrl.trim();
+            if (cleanUrl.endsWith('/')) {
+                cleanUrl = cleanUrl.slice(0, -1);
+            }
+            let cleanPath = path;
+            if (!cleanPath.startsWith('/')) cleanPath = '/' + cleanPath;
+            if (cleanPath.startsWith('/vocalido/')) {
+                cleanPath = cleanPath.substring('/vocalido'.length);
+            }
+            return `${cleanUrl}${cleanPath}`;
+        }
+        return path;
+    };
+
     const playVoiceSpeech = (text: string, onEnd?: () => void, onError?: () => void) => {
         stopSpeaking();
         const cleanedText = prepareTextForSpeech(text);
@@ -888,7 +906,7 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
         setSpeaking(true);
 
         // 1. Try our high-quality Cloud Neural TTS API via the Vocalido python backend
-        fetch('/vocalido/api/ai/tts', {
+        fetch(getTTSFetchUrl('/vocalido/api/ai/tts'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ text: cleanedText, gender, lang: tl })
@@ -900,7 +918,7 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
         .then(data => {
             if (!data.url) throw new Error('No URL returned');
             
-            const audio = new Audio(data.url);
+            const audio = new Audio(getTTSFetchUrl(data.url));
             activeAudioRef.current = audio;
             
             if (voiceType === 'teen_girl') {
