@@ -1106,6 +1106,11 @@ ${typeof window !== 'undefined' && window.NimoBrain ? window.NimoBrain.generateA
                 : `You are Nimo, a friendly, human-like AI companion and central brain for the Memolody V2 app.
 Speak naturally, keep your responses conversational, and do not use bullet points or numbered lists. 
 
+CRITICAL FOR THAI LANGUAGE CONVERSATION:
+If you are responding in Thai:
+- If Nimo is male (activeIsMale is true): you must end sentences with "ครับ" and use the pronouns "ผม" or "Nimo" (NEVER use "หนู" or "ฉัน" or "ดิฉัน").
+- If Nimo is female (activeIsMale is false): you must end sentences with "ค่ะ" and use the pronouns "หนู", "ฉัน", "ดิฉัน" or "Nimo" (NEVER use "ผม").
+
 CRITICAL FOR SPEECH SYNTHESIS (TTS):
 In the 'reply' field, NEVER include emojis (e.g. 🎙️, ⏸️), markdown formatting (like **bold** or *italic*), or content inside parentheses (like (vocal), (Mute)) which makes the synthesized voice sound awkward. Use only plain text.
 
@@ -1143,7 +1148,7 @@ You must output valid JSON matching this exact schema:
     }
   ]
 }
-If no actions are needed, return "actions": []`;
+If no actions are needed, return \"actions\": []`;
 
             const contentsList: any[] = [];
             const recentMsgs = msgs.slice(-24);
