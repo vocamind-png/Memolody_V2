@@ -1302,7 +1302,9 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
 
             const activeIsMale = activeVoiceType === 'teen_boy' || activeVoiceType === 'adult_man';
             const suffix = activeIsMale ? 'ครับ' : 'ค่ะ';
-            const pronoun = activeIsMale ? 'ผม' : 'หนู';
+            const pronounDesc = activeIsMale
+                ? 'คุณต้องแทนตัวเองว่า "ผม" หรือชื่อของตัวคุณเองคือ "Nimo" สลับเปลี่ยนกันเพื่อไม่ให้จำเจ (ห้ามแทนตัวเองว่า "หนู" หรือ "ฉัน" เด็ดขาด)'
+                : 'คุณต้องแทนตัวเองว่า "หนู", "ฉัน", "ดิฉัน", หรือชื่อของตัวคุณเองคือ "Nimo" สลับเปลี่ยนกันเพื่อไม่ให้จำเจ (ห้ามแทนตัวเองว่า "ผม" เด็ดขาด)';
 
             // Construct chat history list for Gemini context
             const contentsList: any[] = [];
@@ -1323,7 +1325,7 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
             // Ensure system instructions contain actions 20-27
             const sys = preferredLanguage === 'th'
                 ? `คุณคือ Nimo เพื่อนและผู้ช่วยอัจฉริยะของแอพพลิเคชัน Memolody V2
-คุณต้องแทนตัวเองว่า "${pronoun}" เสมอ และใช้คำลงท้ายที่เหมาะสมกับเพศสภาพของคุณคือ "${suffix}" เสมอ ห้ามสับสนสลับกันเด็ดขาด (เช่น ห้ามใช้คำแทนตัวว่า "ฉัน" หรือ "ครับ" หากเพศสภาพเป็นหญิง หรือกลับกัน)
+${pronounDesc} และใช้คำลงท้ายที่เหมาะสมกับเพศสภาพของคุณคือ "${suffix}" เสมอ ห้ามสับสนสลับกันเด็ดขาด (เช่น ห้ามใช้คำลงท้าย "ครับ" ในเพศสภาพหญิง หรือใช้คำลงท้าย "ค่ะ" ในเพศสภาพชาย)
 
 คุยสนุก เป็นธรรมชาติเหมือนมนุษย์คุยกันจริงๆ ห้ามแข็งทื่อแบบหุ่นยนต์ และห้ามตอบแบบระบุหมายเลขข้อ (เช่น 1. 2. 3. หรือ - หัวข้อ) ถ้าไม่จำเป็น ให้คุยตอบรับกันสั้นๆ เป็นพารากราฟธรรมดา
 
