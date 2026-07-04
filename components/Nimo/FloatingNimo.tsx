@@ -346,6 +346,17 @@ export const FloatingNimoContent: React.FC<Props> = ({
         setStatus(preferredLanguage === 'th' ? '💤 สแตนด์บาย' : '💤 Standby');
     };
 
+    const stopSpeaking = () => {
+        if ('speechSynthesis' in window) {
+            window.speechSynthesis.cancel();
+        }
+        if (activeAudioRef.current) {
+            activeAudioRef.current.pause();
+            activeAudioRef.current = null;
+        }
+        setSpeaking(false);
+    };
+
     const startListening = () => {
         if (liveClientRef.current) return; // Do not use old mic if live mode is active
         if (isRecognitionRunningRef.current || speakingRef.current || busyRef.current) return;
@@ -735,7 +746,8 @@ export const FloatingNimoContent: React.FC<Props> = ({
         }
 
         const tl = detectLanguageCode(cleanedText);
-        const gender = (voiceType === 'teen_girl' || voiceType === 'adult_woman') ? 'female' : 'male';
+        const currentVoice = localStorage.getItem('nimo_voice') || 'teen_girl';
+        const gender = (currentVoice === 'teen_girl' || currentVoice === 'adult_woman') ? 'female' : 'male';
 
         setSpeaking(true);
 

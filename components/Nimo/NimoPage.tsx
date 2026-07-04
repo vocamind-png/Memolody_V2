@@ -882,7 +882,8 @@ const NimoPage: React.FC<NimoPageProps> = ({ selectedSong, xmlData, preferredLan
         }
 
         const tl = detectLanguageCode(cleanedText);
-        const gender = (voiceType === 'teen_girl' || voiceType === 'adult_woman') ? 'female' : 'male';
+        const currentVoice = localStorage.getItem('nimo_voice') || 'teen_girl';
+        const gender = (currentVoice === 'teen_girl' || currentVoice === 'adult_woman') ? 'female' : 'male';
 
         setSpeaking(true);
 
