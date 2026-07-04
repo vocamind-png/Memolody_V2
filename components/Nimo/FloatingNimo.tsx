@@ -792,24 +792,22 @@ export const FloatingNimoContent: React.FC<Props> = ({
                 audio.playbackRate = 1.05;
             }
 
-            let hasStarted = false;
-            audio.onplay = () => {
-                hasStarted = true;
+            let didFallback = false;
+            const doFallback = () => {
+                if (didFallback) return;
+                didFallback = true;
+                activeAudioRef.current = null;
+                fallbackSpeakGoogleTranslate(cleanedText, tl, onEnd, onError);
             };
+
             audio.onended = () => {
+                didFallback = true; // prevent any late fallback
                 setSpeaking(false);
                 activeAudioRef.current = null;
                 onEnd?.();
             };
-            audio.onerror = () => {
-                if (hasStarted) return;
-                activeAudioRef.current = null;
-                fallbackSpeakGoogleTranslate(cleanedText, tl, onEnd, onError);
-            };
-            audio.play().catch(() => {
-                if (hasStarted) return;
-                fallbackSpeakGoogleTranslate(cleanedText, tl, onEnd, onError);
-            });
+            audio.onerror = () => doFallback();
+            audio.play().catch(() => doFallback());
         })
         .catch(err => {
             console.log('[Cloud TTS API Fallback]', err);
@@ -828,20 +826,23 @@ export const FloatingNimoContent: React.FC<Props> = ({
             audio.playbackRate = 1.12;
         }
 
+        let didFallback = false;
+        const doFallback = () => {
+            if (didFallback) return;
+            didFallback = true;
+            activeAudioRef.current = null;
+            fallbackSpeakLocal(cleanedText, tl, onEnd, onError);
+        };
+
         audio.onended = () => {
+            didFallback = true;
             setSpeaking(false);
             activeAudioRef.current = null;
             onEnd?.();
         };
 
-        audio.onerror = () => {
-            activeAudioRef.current = null;
-            fallbackSpeakLocal(cleanedText, tl, onEnd, onError);
-        };
-
-        audio.play().catch(() => {
-            fallbackSpeakLocal(cleanedText, tl, onEnd, onError);
-        });
+        audio.onerror = () => doFallback();
+        audio.play().catch(() => doFallback());
     };
 
     const fallbackSpeakLocal = (cleanedText: string, langCode: string, onEnd?: () => void, onError?: () => void) => {
