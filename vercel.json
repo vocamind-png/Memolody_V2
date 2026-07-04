@@ -7,6 +7,7 @@
     { "source": "/vocalido/api/ai/extract-stems-midi", "destination": "https://u2txyroyplqko8-8888.proxy.runpod.net/vocalido/api/ai/extract-stems-midi" },
     { "source": "/vocalido/api/ai/extract-chords", "destination": "https://u2txyroyplqko8-8888.proxy.runpod.net/vocalido/api/ai/extract-chords" },
     { "source": "/vocalido/api/ai/transcribe-audio", "destination": "https://u2txyroyplqko8-8888.proxy.runpod.net/vocalido/api/ai/transcribe-audio" },
+    { "source": "/vocalido/api/ai/tts", "destination": "https://u2txyroyplqko8-8888.proxy.runpod.net/vocalido/api/ai/tts" },
     { "source": "/vocalido/api/instrumento/render", "destination": "https://u2txyroyplqko8-8888.proxy.runpod.net/vocalido/api/instrumento/render" },
     { "source": "/vocalido/:path*", "destination": "https://u2txyroyplqko8-8888.proxy.runpod.net/:path*" },
     { "source": "/studio/preview-async", "destination": "https://u2txyroyplqko8-8888.proxy.runpod.net/studio/preview-async" },
