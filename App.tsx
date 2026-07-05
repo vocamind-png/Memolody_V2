@@ -1103,8 +1103,8 @@ const App: React.FC = () => {
       return <SplashLoader progress={initProgress} statusText={initStatus} />;
     }
 
-    // Guard against rendering player/forge views on startup before selectedSong is fully hydrated
-    if ((currentView === 'player' || currentView === 'forge') && !selectedSong) {
+    // Guard against rendering player view on startup before selectedSong is fully hydrated
+    if (currentView === 'player' && !selectedSong) {
       return <PageLoader />;
     }
 
