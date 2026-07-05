@@ -945,6 +945,13 @@ import queue
 def _onnx_worker(model_dir, language, track_notes, params, result_queue):
     """Worker function that runs in a fully isolated subprocess."""
     try:
+        # HACK: Import torch to preload bundled CUDA libraries (cuBLAS, cuDNN) 
+        # so ONNX Runtime can find them and avoid falling back to CPU.
+        try:
+            import torch
+        except ImportError:
+            pass
+
         # Instantiate the actual engine, loading ONNX into VRAM
         engine = DiffSingerONNXEngineCore(model_dir, language=language)
         # Run inference
