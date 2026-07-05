@@ -425,7 +425,7 @@ const StudioPage: React.FC<StudioPageProps> = ({
     };
   }, []);
 
-  if (showProjectBrowser) {
+  if (showProjectBrowser && studioMode !== 'youtube') {
     return (
       <div className="h-full w-full flex flex-col bg-[#050507] p-8">
         <h1 className="text-3xl font-black text-white italic mb-10 tracking-widest">STUDIO MATRIX</h1>
@@ -479,6 +479,15 @@ const StudioPage: React.FC<StudioPageProps> = ({
           >
             <Download size={32} className="text-amber-500" />
             <span className="text-amber-500 font-black uppercase text-[9px] tracking-[0.3em]">Import & Convert (.EMK)</span>
+          </div>
+
+          {/* YouTube Downloader Card */}
+          <div
+            onClick={() => setStudioMode('youtube')}
+            className="aspect-video bg-red-500/5 border-2 border-dashed border-red-500/20 rounded-[24px] flex flex-col items-center justify-center gap-4 cursor-pointer hover:bg-red-500/10 transition-all active:scale-95"
+          >
+            <Youtube size={32} className="text-red-500" />
+            <span className="text-red-500 font-black uppercase text-[9px] tracking-[0.3em]">YouTube Downloader</span>
           </div>
         </div>
       </div>
