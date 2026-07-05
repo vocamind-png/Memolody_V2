@@ -6,7 +6,8 @@ import {
   ChevronLast, ChevronFirst, Maximize, Minimize, Search,
   Target, TargetIcon, MousePointer2, MoveHorizontal,
   Circle, PlusSquare, Sliders, Music2, Languages, FileText, EyeOff, Music,
-  Cpu, Sparkles, RefreshCw, Activity, Binary, Timer, Library
+  Cpu, Sparkles, RefreshCw, Activity, Binary, Timer, Library,
+  Scissors, Link
 } from 'lucide-react';
 import { musicEngine } from '../../lib/MusicEngine';
 import { Song, ParsedNote, TrackState, EffectInstance, LyricMode } from '../../types';
@@ -18,6 +19,7 @@ import LEDMeter from './LEDMeter';
 import LoopMatrixModal, { LoopPreset } from './LoopMatrixModal';
 import { SoundBankModule } from '../../plugins/soundbank';
 import { TrackVisualizer } from '../Arranger/TrackVisualizer';
+import { AudioTrackVisualizer } from '../Arranger/AudioTrackVisualizer';
 
 interface TrackViewProps {
   song: Song | null;
@@ -107,6 +109,8 @@ const TrackView: React.FC<TrackViewProps> = ({ song, musicXml, tracks, setTracks
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [armedTrackId, setArmedTrackId] = useState<string | null>(null);
+  const [activeTool, setActiveTool] = useState<'pointer' | 'scissors' | 'glue'>('pointer');
   const [currentBpm, setCurrentBpm] = useState(song?.bpm || 120);
   const [transpose, setTranspose] = useState(0);
   const [masterVolume, setMasterVolume] = useState(0.8);
@@ -277,7 +281,120 @@ const TrackView: React.FC<TrackViewProps> = ({ song, musicXml, tracks, setTracks
     } else {
       await musicEngine.ensureInitialized();
       await musicEngine.loadSong(parsedData.notes, tracks, transpose, parsedData.timeSignature, true);
+      if (armedTrackId) {
+        musicEngine.startTrackRecording();
+      }
       musicEngine.start();
+    }
+  };
+
+  const handleRegionSplit = (trackId: string, regionId: string, splitTimeRelative: number) => {
+    setTracks(prev => prev.map(t => {
+      if (t.id === trackId && t.audioRegions) {
+        const regionIndex = t.audioRegions.findIndex(r => r.id === regionId);
+        if (regionIndex === -1) return t;
+        const region = t.audioRegions[regionIndex];
+        
+        // Prevent extremely short splits
+        if (splitTimeRelative < 0.1 || splitTimeRelative > region.duration - 0.1) return t;
+
+        // Clone region into two
+        const region1 = { 
+          ...region, 
+          id: `${region.id}_a`, 
+          duration: splitTimeRelative,
+          sourceDuration: splitTimeRelative * region.timeStretchRatio
+        };
+        const region2 = { 
+          ...region, 
+          id: `${region.id}_b`, 
+          startTime: region.startTime + splitTimeRelative,
+          duration: region.duration - splitTimeRelative,
+          sourceOffset: region.sourceOffset + (splitTimeRelative * region.timeStretchRatio),
+          sourceDuration: (region.duration - splitTimeRelative) * region.timeStretchRatio
+        };
+
+        const newRegions = [...t.audioRegions];
+        newRegions.splice(regionIndex, 1, region1, region2);
+        
+        return { ...t, audioRegions: newRegions };
+      }
+      return t;
+    }));
+  };
+
+  const handleRegionGlue = (trackId: string, regionId: string) => {
+    // Glue tries to merge clicked region with the *next* region if they are from the same buffer
+    setTracks(prev => prev.map(t => {
+      if (t.id === trackId && t.audioRegions) {
+        // Sort regions by startTime
+        const sortedRegions = [...t.audioRegions].sort((a, b) => a.startTime - b.startTime);
+        const regionIndex = sortedRegions.findIndex(r => r.id === regionId);
+        
+        if (regionIndex === -1 || regionIndex === sortedRegions.length - 1) return t;
+        
+        const region1 = sortedRegions[regionIndex];
+        const region2 = sortedRegions[regionIndex + 1];
+        
+        // Ensure they are from the same buffer and are contiguous in the original source
+        if (region1.bufferId === region2.bufferId) {
+          const newRegion = {
+            ...region1,
+            id: `${region1.id}_merged`,
+            duration: (region2.startTime + region2.duration) - region1.startTime,
+            sourceDuration: (region2.sourceOffset + region2.sourceDuration) - region1.sourceOffset,
+            fadeOutDuration: region2.fadeOutDuration // Keep the end fade
+          };
+          
+          sortedRegions.splice(regionIndex, 2, newRegion);
+          return { ...t, audioRegions: sortedRegions };
+        }
+      }
+      return t;
+    }));
+  };
+
+  const toggleRecording = async () => {
+    if (isRecording) {
+      setIsRecording(false);
+      if (armedTrackId) {
+        const result = await musicEngine.stopTrackRecording();
+        if (result) {
+          // Add AudioRegion to the track
+          setTracks(prev => prev.map(t => {
+            if (t.id === result.trackId) {
+              const newRegion = {
+                id: `region_${Date.now()}`,
+                bufferId: result.url,
+                bufferUrl: result.url,
+                name: 'Recording',
+                startTime: result.startTime,
+                duration: result.duration,
+                sourceOffset: 0,
+                sourceDuration: result.duration,
+                timeStretchRatio: 1.0,
+                fadeInDuration: 0.05,
+                fadeOutDuration: 0.05,
+                volume: 1.0,
+                isMuted: false
+              };
+              return { 
+                ...t, 
+                trackType: 'audio', // Ensure it's marked as audio
+                audioRegions: [...(t.audioRegions || []), newRegion] 
+              };
+            }
+            return t;
+          }));
+        }
+      }
+      musicEngine.pause();
+    } else {
+      setIsRecording(true);
+      musicEngine.start();
+      if (armedTrackId) {
+        musicEngine.startTrackRecording();
+      }
     }
   };
 
@@ -382,6 +499,19 @@ const TrackView: React.FC<TrackViewProps> = ({ song, musicXml, tracks, setTracks
 
       {/* MAIN WORKSPACE AREA */}
       <div className="flex-1 flex overflow-hidden relative pb-28 bg-[#050507]">
+        {/* TOOLS FLOATING BAR */}
+        <div className="absolute top-2 left-[210px] z-[2000] flex items-center gap-1 bg-black/60 backdrop-blur-xl border border-white/10 rounded-lg p-1 shadow-2xl">
+          <button onClick={() => setActiveTool('pointer')} className={`w-6 h-6 rounded-md flex items-center justify-center transition-all ${activeTool === 'pointer' ? 'bg-cyan-500 text-black shadow-[0_0_10px_rgba(6,182,212,0.5)]' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`} title="Pointer Tool">
+            <MousePointer2 size={12} />
+          </button>
+          <button onClick={() => setActiveTool('scissors')} className={`w-6 h-6 rounded-md flex items-center justify-center transition-all ${activeTool === 'scissors' ? 'bg-cyan-500 text-black shadow-[0_0_10px_rgba(6,182,212,0.5)]' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`} title="Scissors Tool">
+            <Scissors size={12} />
+          </button>
+          <button onClick={() => setActiveTool('glue')} className={`w-6 h-6 rounded-md flex items-center justify-center transition-all ${activeTool === 'glue' ? 'bg-cyan-500 text-black shadow-[0_0_10px_rgba(6,182,212,0.5)]' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`} title="Glue Tool">
+            <Link size={12} />
+          </button>
+        </div>
+
         {/* ENHANCED MIXER SIDEBAR */}
         <div
           className="h-full bg-[#08080a] flex flex-col shrink-0 z-[1000] relative overflow-hidden border-r border-white/5 transition-[width] duration-300 ease-in-out shadow-2xl"
@@ -430,6 +560,15 @@ const TrackView: React.FC<TrackViewProps> = ({ song, musicXml, tracks, setTracks
                       }}
                       className={`w-6 h-6 rounded-md text-[8px] font-black border transition-all ${track.isSolo ? 'bg-amber-400 border-amber-300 text-black shadow-lg' : 'bg-zinc-900 border-white/10 text-zinc-500 hover:text-amber-400'}`}
                     >S</button>
+                    {/* Record Arm */}
+                    <button
+                      onClick={() => {
+                        const newArmId = armedTrackId === track.id ? null : track.id;
+                        setArmedTrackId(newArmId);
+                        musicEngine.armTrack(newArmId);
+                      }}
+                      className={`w-6 h-6 rounded-md text-[10px] flex items-center justify-center font-black border transition-all ${armedTrackId === track.id ? 'bg-rose-500 border-rose-400 text-white shadow-lg animate-pulse' : 'bg-zinc-900 border-white/10 text-zinc-500 hover:text-rose-400'}`}
+                    >◉</button>
                     {/* Stem Solo buttons */}
                     {(() => {
                       const availableStems = musicEngine.getAvailableStems(track.id);
@@ -541,17 +680,29 @@ const TrackView: React.FC<TrackViewProps> = ({ song, musicXml, tracks, setTracks
                     <div key={bi} className={`h-full border-l ${bi % beatsPerMeasure === 0 ? 'border-indigo-400 opacity-50' : 'border-white/20 opacity-30'}`} style={{ width: pixelsPerSecond, flexShrink: 0 }} />
                   ))}
                 </div>
-                <TrackVisualizer 
-                  track={track} 
-                  notes={parsedData.notes.filter(n => n.trackId === track.id)}
-                  width={Math.max(totalDurationBeats * pixelsPerSecond + 1000, 2000)}
-                  height={trackHeight}
-                  visualType="score"
-                  pixelsPerBeat={pixelsPerSecond}
-                  songKey={song?.key || 'C'}
-                  totalMeasures={totalDurationBeats / beatsPerMeasure}
-                  pixelsPerMeasure={beatsPerMeasure * pixelsPerSecond}
-                />
+                {/* Track Content */}
+                <div className="absolute inset-0 bg-[#0a0a0c]">
+                  {track.trackType === 'audio' ? (
+                    <AudioTrackVisualizer 
+                      track={track}
+                      pixelsPerBeat={pixelsPerSecond * (60 / currentBpm)}
+                      bpm={currentBpm}
+                      height={trackHeight}
+                      activeTool={activeTool}
+                      onRegionSplit={(regionId, splitTime) => handleRegionSplit(track.id, regionId, splitTime)}
+                      onRegionGlue={(regionId) => handleRegionGlue(track.id, regionId)}
+                    />
+                  ) : (
+                    <TrackVisualizer 
+                      track={track} 
+                      notes={parsedData.notes.filter(n => n.trackId === track.id)} 
+                      visualType={trackHeight > 100 ? 'pianoroll' : 'score'}
+                      height={trackHeight}
+                      width={Math.max(800, totalDurationBeats * pixelsPerSecond * (60 / currentBpm))}
+                      pixelsPerBeat={pixelsPerSecond * (60 / currentBpm)}
+                    />
+                  )}
+                </div>
                 <div onMouseDown={handleVerticalZoomDrag} onTouchStart={handleVerticalZoomDrag} className="v-resize-handle" />
               </div>
             ))}
@@ -607,7 +758,7 @@ const TrackView: React.FC<TrackViewProps> = ({ song, musicXml, tracks, setTracks
             <div className="flex-[1.2] h-full flex items-center justify-center scale-[0.95]"><BarBeatPositionDisplay bar={currentBar} beat={currentBeat} onSeek={(bar) => musicEngine.setTransportSeconds((bar - 1) * beatsPerMeasure * 60 / currentBpm)} /></div>
           </div>
           <div className="flex-[2.5] flex items-center justify-end gap-1 pl-1 relative">
-            <button onClick={() => setIsRecording(!isRecording)} className={`w-9 h-9 border rounded-full flex flex-col items-center justify-center group active:scale-95 transition-all ${isRecording ? 'bg-rose-50 border-rose-200 text-rose-500 shadow-[0_0_12px_rgba(244,63,94,0.2)]' : 'bg-[#fbfbfb] border-zinc-100 text-zinc-300 hover:text-rose-400 hover:border-rose-100'}`}>
+            <button onClick={toggleRecording} className={`w-9 h-9 border rounded-full flex flex-col items-center justify-center group active:scale-95 transition-all ${isRecording ? 'bg-rose-50 border-rose-200 text-rose-500 shadow-[0_0_12px_rgba(244,63,94,0.2)]' : 'bg-[#fbfbfb] border-zinc-100 text-zinc-300 hover:text-rose-400 hover:border-rose-100'}`}>
               <div className={`w-2 h-2 rounded-full mb-0.5 ${isRecording ? 'bg-rose-500 animate-pulse shadow-[0_0_8px_#f43f5e]' : 'bg-zinc-300'}`} />
               <span className={`text-[6px] font-black uppercase tracking-tighter ${isRecording ? 'text-rose-600' : 'text-zinc-400'}`}>REC</span>
             </button>

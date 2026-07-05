@@ -1,12 +1,14 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { Blocks, Loader2, Music2, Scissors, Repeat, Trash2, PlusCircle, Search, Settings2, ArrowLeft, Wand2, Volume2, VolumeX, Mic2, MessageSquare, ZoomIn, ZoomOut, Undo2, Redo2, ClipboardPaste, Copy, Eraser, MousePointerClick, Wrench, Download, BookOpen, Headphones } from 'lucide-react';
+import { Blocks, Loader2, Music2, Scissors, Link, Repeat, Trash2, PlusCircle, Search, Settings2, ArrowLeft, Wand2, Volume2, VolumeX, Mic2, MessageSquare, ZoomIn, ZoomOut, Undo2, Redo2, ClipboardPaste, Copy, Eraser, MousePointerClick, MousePointer2, Wrench, Download, BookOpen, Headphones, Youtube } from 'lucide-react';
 import { Song, TrackState } from '../../types';
 import { musicEngine } from '../../lib/MusicEngine';
 import { SymbolicArranger, ArrangementConfig } from '../../lib/SymbolicArranger';
 import { AIArrangerService } from '../../lib/AIArrangerService';
 import { songStorage } from '../../lib/SongStorage';
 import { NeuralRenderService } from '../../lib/NeuralRenderService';
+import { nimoBrain } from '../../lib/NimoBrain';
 import { TrackVisualizer } from './TrackVisualizer';
+import { AudioTrackVisualizer } from './AudioTrackVisualizer';
 import { GM_INSTRUMENTS } from '../../lib/instruments';
 
 // Dummy data for sections for demonstration
@@ -16,6 +18,12 @@ interface SongSection {
   startMeasure: number;
   endMeasure: number;
   color: string;
+}
+
+interface AudioBinFile {
+  url: string;
+  filename: string;
+  title: string;
 }
 
 interface ArrangerPageProps {
@@ -37,6 +45,22 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
     if (musicXml) setLocalXml(musicXml);
   }, [musicXml]);
 
+  useEffect(() => {
+    const handleYoutubeDownloaded = (e: CustomEvent) => {
+      setDownloadedFiles(prev => {
+        // Prevent duplicate adds if event fires multiple times
+        if (prev.some(f => f.url === e.detail.url)) return prev;
+        return [...prev, e.detail];
+      });
+    };
+    
+    window.addEventListener('youtube_downloaded' as any, handleYoutubeDownloaded);
+
+    return () => {
+      window.removeEventListener('youtube_downloaded' as any, handleYoutubeDownloaded);
+    };
+  }, []);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleExportStem = () => {
@@ -51,6 +75,125 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
     a.download = 'melody-stem.musicxml';
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const handleExportAudio = async () => {
+    setIsExporting(true);
+    try {
+      const blob = await musicEngine.exportMaster('webm');
+      if (blob) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `Memolody_Export_${new Date().getTime()}.webm`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch (e) {
+      console.error("Export failed", e);
+      alert("Audio export failed");
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleDownloadYoutube = async () => {
+    if (!youtubeUrl) return;
+    setIsDownloading(true);
+    try {
+      const res = await fetch('/vocalido/api/youtube/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: youtubeUrl })
+      });
+      const data = await res.json();
+      if (data.url) {
+        // Create new track with this audio
+        const newTrack: TrackState = {
+            id: `youtube-${Date.now()}`,
+            name: data.title || 'YouTube Audio',
+            type: 'audio',
+            volume: 80,
+            pan: 0,
+            isMuted: false,
+            isSolo: false,
+            audioRegions: [{
+                id: `region-${Date.now()}`,
+                url: data.url,
+                startTime: 0,
+                duration: 200, // Approximate, Tone handles duration dynamically
+                sourceOffset: 0,
+                timeStretchRatio: 1,
+                name: 'YouTube Audio'
+            }]
+        };
+        setTracks(prev => [...prev, newTrack]);
+        setShowYoutubeModal(false);
+        setYoutubeUrl('');
+      } else {
+        alert(data.error || "Failed to download YouTube video");
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Error contacting backend for YouTube download");
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  const handleSeparateStems = async (stems: 2 | 4) => {
+    if (!stemTargetTrackId) return;
+    const targetTrack = tracks.find(t => t.id === stemTargetTrackId);
+    if (!targetTrack || !targetTrack.audioRegions || targetTrack.audioRegions.length === 0) return;
+    
+    setIsSeparating(true);
+    // Use the first region for simplicity
+    const region = targetTrack.audioRegions[0];
+    const fileUrl = region.url;
+    
+    try {
+      const res = await fetch('/vocalido/api/ai/separate-stems', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file_url: fileUrl, stems })
+      });
+      const data = await res.json();
+      if (data.stems) {
+        const newTracks: TrackState[] = [];
+        Object.keys(data.stems).forEach((stemName, idx) => {
+          newTracks.push({
+            id: `stem-${stemName}-${Date.now()}-${idx}`,
+            name: `${targetTrack.name} (${stemName})`,
+            type: 'audio',
+            volume: 80,
+            pan: 0,
+            isMuted: false,
+            isSolo: false,
+            audioRegions: [{
+              ...region,
+              id: `region-${stemName}-${Date.now()}`,
+              url: data.stems[stemName],
+              name: stemName
+            }]
+          });
+        });
+        
+        // Remove original track, add new ones
+        setTracks(prev => {
+            const filtered = prev.filter(t => t.id !== stemTargetTrackId);
+            return [...filtered, ...newTracks];
+        });
+        setShowStemModal(false);
+      } else {
+        alert(data.error || "Failed to separate stems");
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Error contacting backend for stem separation");
+    } finally {
+      setIsSeparating(false);
+      setStemTargetTrackId(null);
+    }
   };
 
   const handleAddSong = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -98,6 +241,83 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
   const [copiedSections, setCopiedSections] = useState<SongSection[]>([]);
   const [hasSavedDragHistory, setHasSavedDragHistory] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [showYoutubeModal, setShowYoutubeModal] = useState(false);
+  const [youtubeUrl, setYoutubeUrl] = useState('');
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [showStemModal, setShowStemModal] = useState(false);
+  const [isSeparating, setIsSeparating] = useState(false);
+  const [stemTargetTrackId, setStemTargetTrackId] = useState<string | null>(null);
+  const [downloadedFiles, setDownloadedFiles] = useState<AudioBinFile[]>([]);
+  const [ytInput, setYtInput] = useState('');
+  const [isYtDownloading, setIsYtDownloading] = useState(false);
+  const [audioBinOpen, setAudioBinOpen] = useState(true);
+
+  // --- DAW Tools & Audio State ---
+  const [activeTool, setActiveTool] = useState<'pointer' | 'scissors' | 'glue'>('pointer');
+  const [armedTrackId, setArmedTrackId] = useState<string | null>(null);
+  
+  const handleRegionSplit = (trackId: string, regionId: string, splitTimeRelative: number) => {
+    setTracks(prev => prev.map(t => {
+      if (t.id === trackId && t.audioRegions) {
+        const regionIndex = t.audioRegions.findIndex(r => r.id === regionId);
+        if (regionIndex === -1) return t;
+        const region = t.audioRegions[regionIndex];
+        
+        if (splitTimeRelative < 0.1 || splitTimeRelative > region.duration - 0.1) return t;
+
+        const region1 = { 
+          ...region, 
+          id: `${region.id}_a`, 
+          duration: splitTimeRelative,
+          sourceDuration: splitTimeRelative * region.timeStretchRatio
+        };
+        const region2 = { 
+          ...region, 
+          id: `${region.id}_b`, 
+          startTime: region.startTime + splitTimeRelative,
+          duration: region.duration - splitTimeRelative,
+          sourceOffset: region.sourceOffset + (splitTimeRelative * region.timeStretchRatio),
+          sourceDuration: (region.duration - splitTimeRelative) * region.timeStretchRatio
+        };
+
+        const newRegions = [...t.audioRegions];
+        newRegions.splice(regionIndex, 1, region1, region2);
+        
+        return { ...t, audioRegions: newRegions };
+      }
+      return t;
+    }));
+  };
+
+  const handleRegionGlue = (trackId: string, regionId: string) => {
+    setTracks(prev => prev.map(t => {
+      if (t.id === trackId && t.audioRegions) {
+        const sortedRegions = [...t.audioRegions].sort((a, b) => a.startTime - b.startTime);
+        const regionIndex = sortedRegions.findIndex(r => r.id === regionId);
+        
+        if (regionIndex === -1 || regionIndex === sortedRegions.length - 1) return t;
+        
+        const region1 = sortedRegions[regionIndex];
+        const region2 = sortedRegions[regionIndex + 1];
+        
+        if (region1.bufferId === region2.bufferId) {
+          const newRegion = {
+            ...region1,
+            id: `${region1.id}_merged`,
+            duration: (region2.startTime + region2.duration) - region1.startTime,
+            sourceDuration: (region2.sourceOffset + region2.sourceDuration) - region1.sourceOffset,
+            fadeOutDuration: region2.fadeOutDuration
+          };
+          
+          sortedRegions.splice(regionIndex, 2, newRegion);
+          return { ...t, audioRegions: sortedRegions };
+        }
+      }
+      return t;
+    }));
+  };
+
   const [arrangeStyle, setArrangeStyle] = useState('auto');
   const [arrangeBpm, setArrangeBpm] = useState(localSong.bpm);
   const [isSimpleMode, setIsSimpleMode] = useState(true);
@@ -764,13 +984,20 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
           <div className="flex items-center gap-2">
               <div className="relative group">
                 <button className="px-3 py-2 rounded-full text-[9px] font-black uppercase tracking-widest bg-white/5 text-emerald-400 hover:text-white hover:bg-emerald-500/20 border border-emerald-500/30 transition-all flex items-center gap-2">
-                  <Download size={14}/> EXPORT
+                  {isExporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14}/>} EXPORT
                 </button>
-                <div className="absolute top-full right-0 mt-2 w-32 bg-[#111] border border-white/10 rounded-xl overflow-hidden opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[9000] shadow-2xl">
-                  <button onClick={handleExportStem} className="w-full text-left px-4 py-2 text-[10px] font-black uppercase text-zinc-400 hover:text-white hover:bg-white/10">Export Stem (Notes)</button>
-                  <button onClick={handleExportStem} className="w-full text-left px-4 py-2 text-[10px] font-black uppercase text-zinc-400 hover:text-white hover:bg-white/10">Export Selected Tracks (MIDI)</button>
+                <div className="absolute top-full right-0 mt-2 w-48 bg-[#111] border border-white/10 rounded-xl overflow-hidden opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[9000] shadow-2xl">
+                  <button onClick={handleExportAudio} disabled={isExporting} className="w-full text-left px-4 py-2 text-[10px] font-black uppercase text-zinc-400 hover:text-white hover:bg-white/10 flex items-center gap-2">
+                     <Volume2 size={12}/> Export Audio (WebM/WAV)
+                  </button>
+                  <button onClick={handleExportStem} className="w-full text-left px-4 py-2 text-[10px] font-black uppercase text-zinc-400 hover:text-white hover:bg-white/10 flex items-center gap-2">
+                     <BookOpen size={12}/> Export Score (MusicXML)
+                  </button>
                 </div>
               </div>
+              <button onClick={() => setShowYoutubeModal(true)} className="px-3 py-2 rounded-full text-[9px] font-black uppercase tracking-widest bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/40 hover:text-white transition-all flex items-center gap-2">
+                  <Youtube size={14}/> FROM YOUTUBE
+              </button>
               <button onClick={() => fileInputRef.current?.click()} className="px-3 py-2 rounded-full text-[9px] font-black uppercase tracking-widest bg-purple-500/20 text-purple-400 border border-purple-500/30 hover:bg-purple-500/40 hover:text-white transition-all flex items-center gap-2">
                   <PlusCircle size={14}/> ADD MY SONG
               </button>
@@ -986,15 +1213,16 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
           </div>
 
           {/* Timeline Scroll Container (Horizontal & Vertical) */}
-          <div id="arranger-scroll-container" className="flex-1 overflow-auto relative flex flex-col border border-white/5 rounded-2xl bg-[#0c0c0e] custom-scrollbar shadow-inner">
-            <div style={{ width: Math.max(800, totalMeasures * pixelsPerMeasure + 100) }} className="min-h-full flex flex-col relative z-0">
-              
-              {/* Measure Ruler (Sticky Top) */}
-              <div className="h-8 sticky top-0 z-[60] flex border-b border-white/10 bg-[#0c0c0e] shadow-sm">
-                {/* Header Spacer (Sticky Left) */}
-                <div className="w-[100px] shrink-0 border-r border-white/10 bg-[#0c0c0e] sticky left-0 z-[70] flex items-center px-3 shadow-[4px_0_10px_rgba(0,0,0,0.5)]">
-                  <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-widest">Timeline</span>
-                </div>
+          <div className="flex-1 flex gap-4 overflow-hidden relative">
+            <div id="arranger-scroll-container" className="flex-1 overflow-auto relative flex flex-col border border-white/5 rounded-2xl bg-[#0c0c0e] custom-scrollbar shadow-inner">
+              <div style={{ width: Math.max(800, totalMeasures * pixelsPerMeasure + 100) }} className="min-h-full flex flex-col relative z-0">
+                
+                {/* Measure Ruler (Sticky Top) */}
+                <div className="h-8 sticky top-0 z-[60] flex border-b border-white/10 bg-[#0c0c0e] shadow-sm">
+                  {/* Header Spacer (Sticky Left) */}
+                  <div className="w-[100px] shrink-0 border-r border-white/10 bg-[#0c0c0e] sticky left-0 z-[70] flex items-center px-3 shadow-[4px_0_10px_rgba(0,0,0,0.5)]">
+                    <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-widest">Timeline</span>
+                  </div>
                 {/* Ruler Measures */}
                 <div className="flex-1 relative overflow-hidden">
                   <div className="absolute inset-0 flex items-center">
@@ -1013,6 +1241,19 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
                     ))}
                   </div>
                 </div>
+              </div>
+
+              {/* TOOLS FLOATING BAR */}
+              <div className="absolute top-2 right-4 z-[2000] flex items-center gap-1 bg-black/60 backdrop-blur-xl border border-white/10 rounded-lg p-1 shadow-2xl">
+                <button onClick={() => setActiveTool('pointer')} className={`w-6 h-6 rounded-md flex items-center justify-center transition-all ${activeTool === 'pointer' ? 'bg-cyan-500 text-black shadow-[0_0_10px_rgba(6,182,212,0.5)]' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`} title="Pointer Tool">
+                  <MousePointer2 size={12} />
+                </button>
+                <button onClick={() => setActiveTool('scissors')} className={`w-6 h-6 rounded-md flex items-center justify-center transition-all ${activeTool === 'scissors' ? 'bg-cyan-500 text-black shadow-[0_0_10px_rgba(6,182,212,0.5)]' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`} title="Scissors Tool">
+                  <Scissors size={12} />
+                </button>
+                <button onClick={() => setActiveTool('glue')} className={`w-6 h-6 rounded-md flex items-center justify-center transition-all ${activeTool === 'glue' ? 'bg-cyan-500 text-black shadow-[0_0_10px_rgba(6,182,212,0.5)]' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`} title="Glue Tool">
+                  <Link size={12} />
+                </button>
               </div>
 
               {/* Track Lanes */}
@@ -1094,6 +1335,31 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
                             S
                           </button>
                         )}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const newArmId = armedTrackId === track.id ? null : track.id;
+                            setArmedTrackId(newArmId);
+                            musicEngine.armTrack(newArmId);
+                          }}
+                          className={`w-5 h-5 rounded flex items-center justify-center text-[8px] font-black transition-all ml-1 ${armedTrackId === track.id ? 'bg-rose-500 text-white shadow-[0_0_8px_rgba(244,63,94,0.5)] animate-pulse' : 'bg-white/5 text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10'}`}
+                          title="Arm Record"
+                        >
+                          ◉
+                        </button>
+                        {track.type === 'audio' && (
+                          <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setStemTargetTrackId(track.id);
+                                setShowStemModal(true);
+                            }}
+                            className="w-5 h-5 rounded flex items-center justify-center text-zinc-500 hover:text-cyan-400 hover:bg-cyan-500/10 transition-all ml-1"
+                            title="Separate Stems"
+                          >
+                            ✂️
+                          </button>
+                        )}
                         <button 
                           onClick={(e) => { 
                             e.stopPropagation(); 
@@ -1110,17 +1376,29 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
                     </div>
                     {/* Visualizer - flex-1 */}
                     <div className="flex-1 relative h-full bg-black/20">
-                      <TrackVisualizer 
-                        track={track} 
-                        notes={(track as any)._generatedNotes || parsedData.notes.filter(n => n.trackId === track.id || (!n.trackId && index === 0))} 
-                        width={totalMeasures * pixelsPerMeasure}
-                        height={128} // h-32 = 128px
-                        visualType={localVisualType}
-                        pixelsPerBeat={pixelsPerMeasure / beatsPerMeasure}
-                        songKey={arrangeKey}
-                        totalMeasures={totalMeasures}
-                        pixelsPerMeasure={pixelsPerMeasure}
-                      />
+                      {track.trackType === 'audio' ? (
+                        <AudioTrackVisualizer 
+                          track={track}
+                          pixelsPerBeat={pixelsPerMeasure / beatsPerMeasure}
+                          bpm={parsedData.metadata?.bpm || 120}
+                          height={128} // h-32 = 128px
+                          activeTool={activeTool}
+                          onRegionSplit={(regionId, splitTime) => handleRegionSplit(track.id, regionId, splitTime)}
+                          onRegionGlue={(regionId) => handleRegionGlue(track.id, regionId)}
+                        />
+                      ) : (
+                        <TrackVisualizer 
+                          track={track} 
+                          notes={(track as any)._generatedNotes || parsedData.notes.filter(n => n.trackId === track.id || (!n.trackId && index === 0))} 
+                          width={totalMeasures * pixelsPerMeasure}
+                          height={128} // h-32 = 128px
+                          visualType={localVisualType}
+                          pixelsPerBeat={pixelsPerMeasure / beatsPerMeasure}
+                          songKey={arrangeKey}
+                          totalMeasures={totalMeasures}
+                          pixelsPerMeasure={pixelsPerMeasure}
+                        />
+                      )}
                       {/* Overlay Measures Grid on top of Visualizer if needed */}
                       {localVisualType !== 'score' && (
                         <div className="absolute inset-0 pointer-events-none z-10">
@@ -1184,7 +1462,99 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
                 </div>
               </div>
             </div>
+            
+            {/* Audio Bin Sidebar */}
+            {audioBinOpen && (
+              <div className="w-64 bg-[#0c0c0e] border border-white/10 rounded-2xl flex flex-col overflow-hidden shadow-inner shrink-0">
+                <div className="h-10 flex items-center justify-between px-4 border-b border-white/10 bg-black/40 shrink-0">
+                  <h3 className="text-[10px] font-black text-white uppercase tracking-widest flex items-center gap-2">
+                    <Headphones size={12} className="text-cyan-400" /> AUDIO BIN
+                  </h3>
+                  <button onClick={() => setAudioBinOpen(false)} className="text-zinc-500 hover:text-white">
+                    <ArrowLeft size={12} />
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-2 space-y-2 custom-scrollbar">
+                  {downloadedFiles.length === 0 ? (
+                    <div className="text-center py-8 text-zinc-500 text-[10px] uppercase font-bold tracking-widest">
+                      No downloads yet
+                    </div>
+                  ) : (
+                    downloadedFiles.map((file, i) => (
+                      <div key={i} className="bg-white/5 border border-white/10 rounded-xl p-3 flex flex-col gap-2 hover:bg-white/10 transition-colors group">
+                        <span className="text-xs font-bold text-zinc-300 truncate" title={file.title}>{file.title}</span>
+                        <div className="flex items-center gap-1 mt-1">
+                          <button 
+                            onClick={(e) => {
+                              const audio = new Audio(file.url);
+                              audio.play();
+                            }}
+                            className="w-6 h-6 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center hover:bg-emerald-500/40 hover:text-white transition-all"
+                            title="Preview"
+                          >
+                            <Volume2 size={12} />
+                          </button>
+                          <button 
+                            onClick={() => {
+                              const a = document.createElement('a');
+                              a.href = file.url;
+                              a.download = file.filename;
+                              document.body.appendChild(a);
+                              a.click();
+                              document.body.removeChild(a);
+                            }}
+                            className="w-6 h-6 rounded-lg bg-purple-500/20 text-purple-400 flex items-center justify-center hover:bg-purple-500/40 hover:text-white transition-all"
+                            title="Save to Computer"
+                          >
+                            <Download size={12} />
+                          </button>
+                          <button 
+                            onClick={() => {
+                              setTracks(prev => [...prev, {
+                                id: `track-bin-${Date.now()}`,
+                                name: file.title,
+                                type: 'audio',
+                                volume: 80,
+                                pan: 0,
+                                isMuted: false,
+                                isSolo: false,
+                                audioRegions: [{
+                                  id: `region-bin-${Date.now()}`,
+                                  name: file.title,
+                                  url: file.url,
+                                  startTime: 0,
+                                  duration: 60,
+                                  sourceDuration: 60,
+                                  timeStretchRatio: 1
+                                }]
+                              }]);
+                            }}
+                            className="w-6 h-6 rounded-lg bg-cyan-500/20 text-cyan-400 flex items-center justify-center hover:bg-cyan-500/40 hover:text-white transition-all ml-auto"
+                            title="Add to Track"
+                          >
+                            <PlusCircle size={12} />
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+            
+            {!audioBinOpen && (
+              <button 
+                onClick={() => setAudioBinOpen(true)}
+                className="absolute right-0 top-1/2 -translate-y-1/2 w-8 h-24 bg-black/80 backdrop-blur-md border border-white/10 rounded-l-xl flex items-center justify-center text-zinc-500 hover:text-cyan-400 hover:bg-white/5 transition-all z-50 shadow-2xl"
+                title="Open Audio Bin"
+              >
+                <div className="rotate-90 text-[9px] font-black uppercase tracking-widest whitespace-nowrap flex items-center gap-2">
+                  <Headphones size={10} /> AUDIO BIN
+                </div>
+              </button>
+            )}
           </div>
+        </div>
         </div>
       </div>
       </div>
@@ -1277,6 +1647,87 @@ const ArrangerPage: React.FC<ArrangerPageProps> = ({ song, musicXml, tracks, set
                     </button>
                   </div>
                 </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      {/* YouTube Modal */}
+      {showYoutubeModal && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-[#111] border border-white/10 rounded-3xl p-6 w-full max-w-md shadow-2xl relative">
+            <h2 className="text-xl font-black text-white uppercase italic mb-4">Import from YouTube</h2>
+            <p className="text-xs text-zinc-400 mb-4">
+              Enter a YouTube URL. The audio will be downloaded and added to a new track.
+            </p>
+            <input 
+              type="text" 
+              className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-white text-sm focus:border-red-500 focus:outline-none mb-6"
+              placeholder="https://www.youtube.com/watch?v=..."
+              value={youtubeUrl}
+              onChange={e => setYoutubeUrl(e.target.value)}
+              disabled={isDownloading}
+            />
+            <div className="flex justify-end gap-3">
+              <button 
+                onClick={() => setShowYoutubeModal(false)}
+                disabled={isDownloading}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-zinc-400 hover:text-white hover:bg-white/5 transition-colors"
+              >
+                CANCEL
+              </button>
+              <button 
+                onClick={handleDownloadYoutube}
+                disabled={isDownloading || !youtubeUrl}
+                className="px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest bg-red-500 text-white shadow-[0_0_15px_rgba(239,68,68,0.4)] hover:scale-105 transition-all flex items-center gap-2 disabled:opacity-50 disabled:hover:scale-100"
+              >
+                {isDownloading ? <Loader2 size={14} className="animate-spin" /> : <Youtube size={14} />} 
+                {isDownloading ? 'DOWNLOADING...' : 'DOWNLOAD AUDIO'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Stem Separation Modal */}
+      {showStemModal && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-[#111] border border-white/10 rounded-3xl p-6 w-full max-w-md shadow-2xl relative">
+            <h2 className="text-xl font-black text-white uppercase italic mb-4">Separate Stems (Demucs)</h2>
+            <p className="text-xs text-zinc-400 mb-6">
+              AI will split the selected audio track into multiple stems. This may take a minute.
+            </p>
+            <div className="flex flex-col gap-3 mb-6">
+              <button 
+                onClick={() => handleSeparateStems(2)}
+                disabled={isSeparating}
+                className="w-full bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl p-4 text-left transition-all disabled:opacity-50"
+              >
+                <div className="font-bold text-white mb-1">2 Stems</div>
+                <div className="text-xs text-zinc-400">Vocal + Instrumental</div>
+              </button>
+              <button 
+                onClick={() => handleSeparateStems(4)}
+                disabled={isSeparating}
+                className="w-full bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl p-4 text-left transition-all disabled:opacity-50"
+              >
+                <div className="font-bold text-white mb-1">4 Stems</div>
+                <div className="text-xs text-zinc-400">Vocal + Drums + Bass + Other</div>
+              </button>
+            </div>
+            
+            <div className="flex justify-end gap-3">
+              {isSeparating ? (
+                <div className="flex items-center gap-2 text-cyan-400 text-xs font-bold uppercase tracking-widest mr-auto">
+                    <Loader2 size={14} className="animate-spin" /> SEPARATING STEMS...
+                </div>
+              ) : (
+                <button 
+                    onClick={() => { setShowStemModal(false); setStemTargetTrackId(null); }}
+                    className="px-4 py-2 rounded-xl text-xs font-bold text-zinc-400 hover:text-white hover:bg-white/5 transition-colors"
+                >
+                    CANCEL
+                </button>
               )}
             </div>
           </div>

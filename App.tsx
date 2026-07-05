@@ -1018,6 +1018,54 @@ const App: React.FC = () => {
       category: 'navigation'
     });
 
+    const unregYoutubeBatch = nimoBrain.registerAction('download_youtube_batch', async (params) => {
+      if (!params || !params.urls || !Array.isArray(params.urls)) return;
+      const urls = params.urls as string[];
+      const quality = params.quality || 'auto';
+      
+      // Notify start
+      if (typeof window !== 'undefined' && (window as any).showToast) {
+        (window as any).showToast(`Downloading ${urls.length} YouTube links in batch...`, '#ef4444');
+      }
+
+      for (let i = 0; i < urls.length; i++) {
+        const url = urls[i];
+        try {
+          const res = await fetch('/vocalido/api/youtube/download', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url, quality })
+          });
+          const data = await res.json();
+          if (data.url) {
+            if (typeof window !== 'undefined' && (window as any).showToast) {
+              (window as any).showToast(`✅ Downloaded ${i+1}/${urls.length}: ${data.title}`, '#10B981');
+            }
+            window.dispatchEvent(new CustomEvent('youtube_downloaded', { 
+              detail: {
+                url: data.url,
+                filename: data.filename,
+                title: data.title || data.filename
+              }
+            }));
+            // Automatically open Arranger if not already there so user can see it in Audio Bin
+            navigateTo('forge');
+            setTimeout(() => setStudioInitialMode('arranger'), 100);
+          }
+        } catch (e) {
+          console.error(`Failed to download ${url}`, e);
+          if (typeof window !== 'undefined' && (window as any).showToast) {
+            (window as any).showToast(`❌ Failed: ${url}`, '#EF4444');
+          }
+        }
+      }
+    }, {
+      th: 'ดาวน์โหลด YouTube หลายลิงก์ (Batch)',
+      en: 'Download multiple YouTube links (Batch)',
+      params: '{ urls: string[], quality: string }',
+      category: 'system'
+    });
+
     const unregSyncCloud = nimoBrain.registerAction('sync_cloud', (params) => {
       console.log('[App] Nimo requested sync_cloud', params);
       triggerSync();
@@ -1044,6 +1092,7 @@ const App: React.FC = () => {
       unregSearchSong();
       unregSortSongs();
       unregImportFile();
+      unregYoutubeBatch();
       unregSyncCloud();
     };
   }, [navigateTo, handleSongSelect, triggerSync]);

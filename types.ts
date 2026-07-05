@@ -86,6 +86,22 @@ export interface SongFolder {
   createdAt: string;
 }
 
+export interface AudioRegion {
+  id: string;
+  bufferId: string; // The ID mapping to the actual audio blob/URL in MusicEngine
+  bufferUrl: string; // The URL to the audio file
+  name: string;
+  startTime: number; // Time in seconds on the main timeline
+  duration: number; // Playback duration in seconds on the main timeline
+  sourceOffset: number; // Start offset within the source audio file
+  sourceDuration: number; // Original duration of the sliced part (before time-stretch)
+  timeStretchRatio: number; // Playback rate. 1.0 = normal, 0.5 = half speed, 2.0 = double speed
+  fadeInDuration: number; // In seconds
+  fadeOutDuration: number; // In seconds
+  volume: number; // Linear volume multiplier (0.0 to 1.0+)
+  isMuted: boolean;
+}
+
 export interface TrackState {
   id: string;
   name: string;
@@ -103,6 +119,8 @@ export interface TrackState {
   pluginSettings?: any;
   effects: (EffectInstance | null)[];
   engineId?: string;
+  trackType?: 'midi' | 'audio';
+  audioRegions?: AudioRegion[];
 }
 
 export interface ParsedNote {

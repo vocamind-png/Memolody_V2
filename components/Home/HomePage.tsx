@@ -12,6 +12,86 @@ import { GoogleGenAI } from '@google/genai';
 import AbstractCover from './AbstractCover';
 const CameraCapture = lazy(() => import('./CameraCapture'));
 
+// ── Era Detection from Composer Name ─────────────────────────────────
+const detectEraFromName = (name: string): string => {
+  if (!name || name === 'NA' || name === 'Unknown') return '';
+  const c = name.toLowerCase();
+  if (/\b(bach|vivaldi|handel|purcell|corelli|telemann|scarlatti|lully|rameau|couperin|pachelbel|albinoni)\b/.test(c)) return 'Baroque';
+  if (/\b(mozart|haydn|beethoven|clementi|hummel|salieri|boccherini|dussek|field)\b/.test(c)) return 'Classical';
+  if (/\b(chopin|liszt|schumann|tchaikovsky|brahms|mendelssohn|schubert|verdi|wagner|dvorak|grieg|rachmaninoff|rachmaninov|strauss|puccini|mahler|bruckner|elgar|sibelius|rimsky|mussorgsky|borodin|saint-saens|bizet|faure|franck|paganini)\b/.test(c)) return 'Romantic';
+  if (/\b(debussy|ravel|satie|scriabin|delius|respighi|albeniz|granados)\b/.test(c)) return 'Impressionist';
+  if (/\b(stravinsky|bartok|prokofiev|shostakovich|copland|gershwin|bernstein|britten|hindemith|poulenc|milhaud|messiaen|villa-lobos|barber|kodaly|orff|holst|vaughan williams|walton)\b/.test(c)) return '20th Century';
+  if (/\b(glass|reich|adams|part|arvo|ligeti|cage|boulez|stockhausen|xenakis|berio|nono|feldman|riley|tavener|rutter|whitacre|einaudi|yiruma|zimmer|morricone|sakamoto)\b/.test(c)) return 'Contemporary';
+  if (/\b(traditional|folk|anonymous|anon|trad)\b/.test(c)) return 'Traditional';
+  if (/\b(kirkpatrick|doane|sankey|bliss|crosby|bradbury|mason|root|webb|mcgranahan|stebbins|gabriel|lowry|knapp|sweney|excell|fischer)\b/.test(c)) return 'Sacred/Hymn';
+  return '';
+};
+
+// ── Approximate Year from Composer Name ─────────────────────────────────
+const COMPOSER_YEARS: Record<string, number> = {
+  // Baroque
+  bach: 1720, vivaldi: 1720, handel: 1730, purcell: 1690, corelli: 1700, telemann: 1720, scarlatti: 1730, pachelbel: 1690, albinoni: 1710, lully: 1680, rameau: 1730, couperin: 1710,
+  // Classical
+  mozart: 1780, haydn: 1780, beethoven: 1800, clementi: 1790, hummel: 1810,
+  // Romantic
+  chopin: 1840, liszt: 1850, schumann: 1840, tchaikovsky: 1880, brahms: 1870, mendelssohn: 1840, schubert: 1825, verdi: 1860, wagner: 1860, dvorak: 1880, grieg: 1880, rachmaninoff: 1900, rachmaninov: 1900, strauss: 1890, puccini: 1900, mahler: 1900, bruckner: 1880, elgar: 1900, sibelius: 1900, bizet: 1870, faure: 1890, franck: 1880, paganini: 1830, 'saint-saens': 1880,
+  // Impressionist
+  debussy: 1900, ravel: 1910, satie: 1900, scriabin: 1905,
+  // 20th Century
+  stravinsky: 1920, bartok: 1930, prokofiev: 1930, shostakovich: 1940, copland: 1940, gershwin: 1930, bernstein: 1950, britten: 1950, holst: 1920, barber: 1940,
+  // Contemporary
+  glass: 1980, einaudi: 2000, yiruma: 2005, zimmer: 2000, morricone: 1980, sakamoto: 1990, williams: 1980,
+  // Hymn writers
+  kirkpatrick: 1880, sankey: 1880, bliss: 1870, crosby: 1870, bradbury: 1860, mason: 1840,
+};
+
+const detectYearFromComposer = (name: string): string => {
+  if (!name || name === 'NA' || name === 'Unknown') return '';
+  const c = name.toLowerCase();
+  for (const [key, year] of Object.entries(COMPOSER_YEARS)) {
+    if (c.includes(key)) return String(year);
+  }
+  return '';
+};
+
+// ── Instrument Detection from Title / Genre ─────────────────────────────────
+const detectInstrumentsFromTitle = (title: string, genre: string): string[] => {
+  const t = (title || '').toLowerCase();
+  const g = (genre || '').toLowerCase();
+  const instruments: string[] = [];
+  
+  // Detect from title keywords
+  if (/\b(piano|pianoforte|klavier)\b/.test(t)) instruments.push('Piano');
+  if (/\b(violin|violino)\b/.test(t)) instruments.push('Violin');
+  if (/\b(viola)\b/.test(t)) instruments.push('Viola');
+  if (/\b(cello|violoncello)\b/.test(t)) instruments.push('Cello');
+  if (/\b(flute|flauto)\b/.test(t)) instruments.push('Flute');
+  if (/\b(clarinet|clarinetto)\b/.test(t)) instruments.push('Clarinet');
+  if (/\b(oboe)\b/.test(t)) instruments.push('Oboe');
+  if (/\b(bassoon|fagotto)\b/.test(t)) instruments.push('Bassoon');
+  if (/\b(trumpet|tromba)\b/.test(t)) instruments.push('Trumpet');
+  if (/\b(horn|corno)\b/.test(t)) instruments.push('French Horn');
+  if (/\b(trombone)\b/.test(t)) instruments.push('Trombone');
+  if (/\b(harp|arpa)\b/.test(t)) instruments.push('Harp');
+  if (/\b(organ|orgel)\b/.test(t)) instruments.push('Organ');
+  if (/\b(guitar|guitare|chitarra)\b/.test(t)) instruments.push('Guitar');
+  if (/\b(saxophone|sax)\b/.test(t)) instruments.push('Saxophone');
+  if (/\b(drums?|percussion)\b/.test(t)) instruments.push('Drums');
+  if (/\b(voice|vocal|song|lied|aria|choral|choir|hymn|anthem|cantata|mass)\b/.test(t)) instruments.push('Vocals');
+  if (/\b(sonata|sonatina|etude|prelude|fugue|waltz|mazurka|nocturne|ballade|scherzo|impromptu|rondo|minuet|gavotte|bourree|invention|fantasia|rhapsody|polonaise|tarantella|bagatelle|moment|barcarolle)\b/.test(t)) {
+    if (instruments.length === 0) instruments.push('Piano'); // Most solo classical forms are piano
+  }
+  if (/\b(concerto|symphony|symphonic|overture|suite|serenade|divertimento)\b/.test(t)) instruments.push('Orchestra');
+  if (/\b(quartet|quintet|trio|duet)\b/.test(t)) instruments.push('Chamber');
+  
+  // If nothing detected and genre is classical, default to Piano
+  if (instruments.length === 0 && (g.includes('classic') || g.includes('baroque') || g.includes('romantic'))) {
+    instruments.push('Piano');
+  }
+  
+  return instruments;
+};
+
 // ── Processing Overlay (shown during OMR) ─────────────────────────────────
 const ProcessingOverlay: React.FC<{ message: string; error?: string | null; onDismiss?: () => void }> = ({ message, error, onDismiss }) => {
   const [elapsed, setElapsed] = React.useState(0);
@@ -413,6 +493,64 @@ const HomePage: React.FC<HomePageProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
+  // ── Auto Re-grade Background Process ──
+  const [regradeStatus, setRegradeStatus] = useState<{ running: boolean; done: number; total: number; regraded: number } | null>(null);
+  const regradeAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    // Check if re-grading is needed (only run once)
+    const key = 'memolody_regrade_done';
+    if (sessionStorage.getItem(key)) return;
+    sessionStorage.setItem(key, '1');
+    
+    const runRegrade = async () => {
+      try {
+        // Quick check: see if any songs need re-grading
+        const allSongs = await songStorage.getAllSongs();
+        const needsRegrade = allSongs.filter(s => {
+          const m = s.metadata as any;
+          const grade = m.difficulty_grade || m.difficulty || '';
+          return (!grade || grade === 'Intermediate' || grade === 'intermediate') && s.xmlData?.startsWith('http');
+        });
+        
+        if (needsRegrade.length === 0) return;
+        
+        console.log(`[Auto Re-grade] Starting background re-grade for ${needsRegrade.length} songs...`);
+        setRegradeStatus({ running: true, done: 0, total: needsRegrade.length, regraded: 0 });
+        
+        const abort = new AbortController();
+        regradeAbortRef.current = abort;
+        
+        const result = await songStorage.batchRegrade(
+          (done, total) => {
+            setRegradeStatus(prev => prev ? { ...prev, done, total, regraded: done } : null);
+          },
+          abort.signal
+        );
+        
+        console.log(`[Auto Re-grade] Complete! Regraded: ${result.regraded}, Failed: ${result.failed}`);
+        setRegradeStatus({ running: false, done: result.regraded, total: needsRegrade.length, regraded: result.regraded });
+        
+        // Refresh library if any songs were regraded
+        if (result.regraded > 0 && onLocalRefresh) {
+          onLocalRefresh();
+        }
+        
+        // Auto-hide after 5 seconds
+        setTimeout(() => setRegradeStatus(null), 5000);
+      } catch (e) {
+        console.warn('[Auto Re-grade] Error:', e);
+        setRegradeStatus(null);
+      }
+    };
+    
+    // Delay 3 seconds to let the page settle
+    const timer = setTimeout(runRegrade, 3000);
+    return () => {
+      clearTimeout(timer);
+      regradeAbortRef.current?.abort();
+    };
+  }, []);
+
   // ── Listen for NimoBrain custom events dispatched from App.tsx ──
   useEffect(() => {
     const handleSearchSong = (e: Event) => {
@@ -578,34 +716,103 @@ const HomePage: React.FC<HomePageProps> = ({
 
   const allFolders = useMemo(() => folders, [folders]);
 
-  // Precompute unique values for dropdowns to avoid freezing the UI when there are 200k songs
+  // Build dropdown options: actual song data + hardcoded presets (data values first)
   const uniqueGenres = useMemo(() => {
-    return ['Classical', 'Baroque', 'Romantic', 'Modern', 'Contemporary', 'Jazz', 'Pop', 'Rock', 'Blues', 'R&B', 'Hip Hop', 'Electronic', 'Acoustic', 'Folk', 'Country', 'Latin', 'World', 'Soundtrack', 'Anime', 'K-Pop', 'J-Pop', 'Bossa Nova', 'Lo-Fi', 'Metal', 'Soul', 'Funk', 'Disco', 'Reggae'].sort();
-  }, []);
+    const set = new Set<string>();
+    userLibrary.forEach(s => {
+      const g = (s.metadata.genre || s.metadata.category || '').trim();
+      if (g) set.add(g);
+    });
+    ['Classical', 'Baroque', 'Romantic', 'Modern', 'Contemporary', 'Jazz', 'Pop', 'Rock', 'Blues', 'R&B', 'Hip Hop', 'Electronic', 'Acoustic', 'Folk', 'Country', 'Latin', 'World', 'Soundtrack', 'Anime', 'K-Pop', 'J-Pop', 'Bossa Nova', 'Lo-Fi', 'Metal', 'Soul', 'Funk', 'Disco', 'Reggae'].forEach(p => set.add(p));
+    return Array.from(set).sort();
+  }, [userLibrary]);
 
   const uniqueEras = useMemo(() => {
-    return ['Medieval', 'Renaissance', 'Baroque', 'Classical', 'Romantic', '20th Century', 'Modern', 'Contemporary', '1920s', '1930s', '1940s', '1950s', '1960s', '1970s', '1980s', '1990s', '2000s', '2010s', '2020s'].sort();
-  }, []);
+    const set = new Set<string>();
+    userLibrary.forEach(s => {
+      const m = s.metadata as any;
+      let e = (m.era || '').trim();
+      // Derive era from artist/composer if missing
+      if (!e) e = detectEraFromName(m.composer || m.artist || '');
+      if (e) set.add(e);
+    });
+    ['Baroque', 'Classical', 'Romantic', 'Impressionist', '20th Century', 'Contemporary', 'Traditional', 'Sacred/Hymn'].forEach(p => set.add(p));
+    return Array.from(set).sort();
+  }, [userLibrary]);
 
   const uniqueComposers = useMemo(() => {
-    return ['J.S. Bach', 'W.A. Mozart', 'L.v. Beethoven', 'F. Chopin', 'C. Debussy', 'P.I. Tchaikovsky', 'A. Vivaldi', 'J. Brahms', 'F. Schubert', 'G.F. Handel', 'J. Haydn', 'F. Liszt', 'R. Schumann', 'S. Rachmaninoff', 'I. Stravinsky', 'C. Saint-Saëns', 'A. Dvořák', 'E. Grieg', 'G. Verdi', 'R. Wagner', 'G. Puccini', 'Joe Hisaishi', 'Hans Zimmer', 'John Williams', 'Ennio Morricone', 'Ryuichi Sakamoto', 'Yiruma'].sort();
-  }, []);
+    const set = new Set<string>();
+    userLibrary.forEach(s => {
+      const m = s.metadata as any;
+      const c = (m.composer || m.artist || '').trim();
+      if (c && c !== 'NA' && c !== 'Unknown') set.add(c);
+    });
+    return Array.from(set).sort();
+  }, [userLibrary]);
 
   const uniqueYears = useMemo(() => {
-    return ['2024', '2023', '2022', '2021', '2020', '2019', '2018', '2015', '2010', '2000', '1990', '1980', '1970', '1960', '1950', '1900', '1850', '1800', '1750', '1700', '1650', '1600'].sort((a, b) => Number(b) - Number(a));
-  }, []);
+    const set = new Set<string>();
+    userLibrary.forEach(s => {
+      const m = s.metadata as any;
+      let y = String(m.year || '').trim();
+      if (!y || y === 'undefined' || y === '0') {
+        y = detectYearFromComposer(m.composer || m.artist || '');
+      }
+      if (y) set.add(y);
+    });
+    return Array.from(set).sort((a, b) => Number(b) - Number(a));
+  }, [userLibrary]);
 
   const uniqueInstruments = useMemo(() => {
-    return ['Piano', 'Acoustic Guitar', 'Electric Guitar', 'Bass Guitar', 'Violin', 'Viola', 'Cello', 'Double Bass', 'Harp', 'Flute', 'Clarinet', 'Oboe', 'Bassoon', 'Saxophone', 'Trumpet', 'Trombone', 'French Horn', 'Tuba', 'Drums', 'Percussion', 'Timpani', 'Marimba', 'Synthesizer', 'Keyboard', 'Organ', 'Accordion', 'Ukulele', 'Vocals', 'Choir'].sort();
-  }, []);
+    const set = new Set<string>();
+    userLibrary.forEach(s => {
+      const m = s.metadata as any;
+      const existing = m.instruments || [];
+      if (existing.length > 0) {
+        existing.forEach((inst: string) => {
+          const i = inst.trim();
+          if (i) set.add(i);
+        });
+      } else {
+        // Derive from title
+        detectInstrumentsFromTitle(m.title || '', m.genre || m.category || '').forEach(inst => set.add(inst));
+      }
+    });
+    return Array.from(set).sort();
+  }, [userLibrary]);
 
   const uniqueGrades = useMemo(() => {
-    return ['Beginner', 'Intermediate', 'Advanced', 'Expert', 'Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6', 'Grade 7', 'Grade 8', 'Diploma'];
-  }, []);
+    const set = new Set<string>();
+    let debugCount = 0;
+    userLibrary.forEach(s => {
+      const m = s.metadata as any;
+      // Brute-force: scan ALL property values for grade info
+      for (const key of Object.keys(m)) {
+        const val = m[key];
+        if (typeof val !== 'string' || !val) continue;
+        const v = val.trim();
+        const gradeMatch = v.match(/^Grade\s*(\d+)$/i);
+        if (gradeMatch) { set.add(`Grade ${gradeMatch[1]}`); debugCount++; break; }
+        if (/^[1-8]$/.test(v)) { set.add(`Grade ${v}`); debugCount++; break; }
+        if (/^(Beginner|Intermediate|Advanced|Expert|Diploma)$/i.test(v)) { set.add(v); debugCount++; break; }
+      }
+    });
+    // TEMP DEBUG
+    console.log(`[GRADE DEBUG] Total songs: ${userLibrary.length}, Songs with grade data: ${debugCount}, Unique grades found: [${Array.from(set).join(', ')}]`);
+    if (userLibrary.length > 0) {
+      const sample = userLibrary.slice(0, 3).map(s => {
+        const m = s.metadata as any;
+        return `"${m.title}" → ALL_KEYS:[${Object.keys(m).join(',')}] ALL_STRING_VALUES:[${Object.entries(m).filter(([,v]) => typeof v === 'string' && v).map(([k,v]) => `${k}="${v}"`).join(', ')}]`;
+      });
+      console.log('[GRADE DEBUG] Sample songs:', sample.join('\n'));
+    }
+    ['Beginner', 'Intermediate', 'Advanced', 'Expert', 'Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6', 'Grade 7', 'Grade 8', 'Diploma'].forEach(p => set.add(p));
+    return Array.from(set).sort();
+  }, [userLibrary]);
 
   // Counts
   const totalCount = useMemo(() => userLibrary.filter(i => !i.metadata.isDeleted).length, [userLibrary]);
-  const homeCount = useMemo(() => userLibrary.filter(item => !item.metadata.isDeleted && (item.metadata.origin !== 'load' || item.metadata.isPublic)).length, [userLibrary]);
+  const homeCount = useMemo(() => userLibrary.filter(item => !item.metadata.isDeleted).length, [userLibrary]);
   const favCount = useMemo(() => userLibrary.filter(i => !i.metadata.isDeleted && i.metadata.isFavorite).length, [userLibrary]);
   const mySongsCount = useMemo(() => userLibrary.filter(i => !i.metadata.isDeleted && i.metadata.origin === 'load').length, [userLibrary]);
   const trashCount = useMemo(() => userLibrary.filter(i => i.metadata.isDeleted).length, [userLibrary]);
@@ -615,8 +822,8 @@ const HomePage: React.FC<HomePageProps> = ({
     let list: typeof userLibrary = [];
     switch (activeTab) {
       case 'home':
-        // Only show songs that are public OR NOT from 'load' origin (imported/scanned)
-        list = userLibrary.filter(item => !item.metadata.isDeleted && (item.metadata.origin !== 'load' || item.metadata.isPublic));
+        // Show ALL non-deleted songs on home tab
+        list = userLibrary.filter(item => !item.metadata.isDeleted);
         break;
       case 'favorites':
         list = userLibrary.filter(item => !item.metadata.isDeleted && item.metadata.isFavorite);
@@ -661,12 +868,18 @@ const HomePage: React.FC<HomePageProps> = ({
       list = list.filter(i => {
         // 1. Exact Grade Match (if specified in query)
         if (targetGradeNum !== null) {
-          const dGradeRaw = i.metadata.difficulty_grade || i.metadata.difficultyGrade || i.metadata.difficulty || i.metadata.grade || '';
+          const m = i.metadata as any;
+          const dGradeRaw = m.difficulty_grade || m.difficultyGrade || m.difficulty || m.grade || '';
           const dGrade = String(dGradeRaw).trim().toLowerCase();
           const itemGradeNumMatch = dGrade.match(/\d+/);
           const itemGradeNum = itemGradeNumMatch ? parseInt(itemGradeNumMatch[0], 10) : null;
           
-          if (itemGradeNum !== targetGradeNum) {
+          // Also check title for grade info (e.g. "Minuet - Grade 3")
+          const titleText = `${m.title || ''} ${m.artist || ''}`.toLowerCase();
+          const titleGradeMatch = titleText.match(/grade\s*(\d+)/);
+          const titleGradeNum = titleGradeMatch ? parseInt(titleGradeMatch[1], 10) : null;
+          
+          if (itemGradeNum !== targetGradeNum && titleGradeNum !== targetGradeNum) {
             return false;
           }
         }
@@ -690,31 +903,94 @@ const HomePage: React.FC<HomePageProps> = ({
       if ((fg === 'classical' && g === 'classic') || (fg === 'classic' && g === 'classical')) return true;
       return g.includes(fg) || fg.includes(g);
     });
-    if (filterEra) list = list.filter(i => i.metadata.era?.toLowerCase() === filterEra.toLowerCase());
-    if (filterComposer) list = list.filter(i => i.metadata.composer?.toLowerCase() === filterComposer.toLowerCase() || i.metadata.artist?.toLowerCase() === filterComposer.toLowerCase());
-    if (filterYear) list = list.filter(i => String(i.metadata.year) === String(filterYear));
-    if (filterInstrument) list = list.filter(i => i.metadata.instruments?.some(inst => inst.toLowerCase() === filterInstrument.toLowerCase()));
+    if (filterEra) list = list.filter(i => {
+      const m = i.metadata as any;
+      // Check existing era field or derive from composer/artist
+      let era = (m.era || '').toLowerCase().trim();
+      if (!era) {
+        era = detectEraFromName(m.composer || m.artist || '').toLowerCase();
+      }
+      const fe = filterEra.toLowerCase().trim();
+      if (!era) return false;
+      return era === fe || era.includes(fe) || fe.includes(era);
+    });
+    if (filterComposer) list = list.filter(i => {
+      const m = i.metadata as any;
+      const composer = (m.composer || '').toLowerCase();
+      const artist = (m.artist || '').toLowerCase();
+      const fc = filterComposer.toLowerCase();
+      // Match exact or partial (e.g. "Debussy" matches "Claude Debussy" or "C. Debussy")
+      return composer === fc || artist === fc || 
+             composer.includes(fc) || fc.includes(composer) ||
+             artist.includes(fc) || fc.includes(artist);
+    });
+    if (filterYear) list = list.filter(i => {
+      const m = i.metadata as any;
+      let year = String(m.year || '').trim();
+      // Derive year from composer name if missing
+      if (!year || year === 'undefined' || year === '0') {
+        year = detectYearFromComposer(m.composer || m.artist || '');
+      }
+      if (!year) return false;
+      const fy = Number(filterYear);
+      const sy = Number(year);
+      // Match within ±20 year range for approximate matching
+      return Math.abs(sy - fy) <= 20;
+    });
+    if (filterInstrument) list = list.filter(i => {
+      const m = i.metadata as any;
+      // Check existing instruments array
+      const existing = m.instruments || [];
+      if (existing.length > 0) {
+        return existing.some((inst: string) => inst.toLowerCase() === filterInstrument.toLowerCase());
+      }
+      // Derive from title
+      const detected = detectInstrumentsFromTitle(m.title || '', m.genre || m.category || '');
+      return detected.some(inst => inst.toLowerCase() === filterInstrument.toLowerCase());
+    });
     if (filterGrade && filterGrade !== 'All') {
       list = list.filter(i => {
-        const dGradeRaw = i.metadata.difficulty_grade || i.metadata.difficultyGrade || i.metadata.difficulty || i.metadata.grade || '';
-        let dGrade = String(dGradeRaw).trim();
-        if (/^[1-8]$/.test(dGrade)) dGrade = `Grade ${dGrade}`;
+        const m = i.metadata as any;
         
-        if (filterGrade === 'None') return !dGrade || dGrade.toLowerCase() === 'none';
-        if (filterGrade === 'Diploma') return dGrade.toLowerCase() === 'diploma';
-        if (['Beginner', 'Intermediate', 'Advanced', 'Expert'].includes(filterGrade)) {
-          return dGrade.toLowerCase() === filterGrade.toLowerCase();
+        // Brute-force: scan ALL metadata values for grade info
+        let foundGrade = '';
+        for (const key of Object.keys(m)) {
+          const val = m[key];
+          if (typeof val !== 'string' || !val) continue;
+          const v = val.trim();
+          // Match "Grade X" format
+          const gradeMatch = v.match(/^Grade\s*(\d+)$/i);
+          if (gradeMatch) { foundGrade = `Grade ${gradeMatch[1]}`; break; }
+          // Match plain number 1-8
+          if (/^[1-8]$/.test(v)) { foundGrade = `Grade ${v}`; break; }
+          // Match difficulty labels
+          if (/^(Beginner|Intermediate|Advanced|Expert|Diploma)$/i.test(v)) { foundGrade = v; break; }
         }
+        
+        // Also check title for grade info (e.g. "Minuet - Grade 3")
+        if (!foundGrade) {
+          const titleText = `${m.title || ''} ${m.artist || ''}`;
+          const titleMatch = titleText.match(/Grade\s*(\d+)/i);
+          if (titleMatch) foundGrade = `Grade ${titleMatch[1]}`;
+          // Check for difficulty words in title
+          const diffMatch = titleText.match(/\b(Beginner|Intermediate|Advanced|Expert|Diploma)\b/i);
+          if (diffMatch && !foundGrade) foundGrade = diffMatch[1];
+        }
+        
+        if (!foundGrade) return filterGrade === 'None';
+        
+        // Compare
+        if (filterGrade === 'None') return false;
         if (filterGrade.includes('-')) {
-          const match = filterGrade.match(/Grade\s+(\d+)-(\d+)/i);
-          if (match) {
-            const min = parseInt(match[1]);
-            const max = parseInt(match[2]);
-            const grade = parseInt(dGrade.replace(/Grade\s*/i, '') || '0');
-            return grade >= min && grade <= max;
+          const rangeMatch = filterGrade.match(/Grade\s+(\d+)-(\d+)/i);
+          if (rangeMatch) {
+            const min = parseInt(rangeMatch[1]);
+            const max = parseInt(rangeMatch[2]);
+            const num = parseInt(foundGrade.replace(/Grade\s*/i, '') || '0');
+            return num >= min && num <= max;
           }
         }
-        return dGrade.toLowerCase() === filterGrade.toLowerCase();
+        return foundGrade.toLowerCase() === filterGrade.toLowerCase();
       });
     }
 
@@ -968,89 +1244,14 @@ const HomePage: React.FC<HomePageProps> = ({
             value={searchInput}
             onChange={e => {
               setSearchInput(e.target.value);
-              if (e.target.value === '') {
-                setSearchQuery('');
-                setAiFilteredIds(null);
-              }
+              setAiFilteredIds(null);
+              setSearchQuery(e.target.value);
             }}
-            onKeyDown={async e => {
+            onKeyDown={e => {
               if (e.key === 'Enter') {
-                if (!searchInput.trim()) return;
-                setIsAiSearching(true);
+                e.preventDefault();
                 setAiFilteredIds(null);
-                try {
-                  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || (typeof (window as any).__GEMINI_API_KEY__ !== 'undefined' ? (window as any).__GEMINI_API_KEY__ : '');
-                  if (!apiKey) throw new Error('GEMINI_API_KEY is not configured');
-                  const ai = new GoogleGenAI({ apiKey });
-                  
-                  // Extract search intent instead of passing the entire catalog to avoid token limits
-                  // Now we also instruct the AI to detect deep structural requests!
-                  const prompt = `You are a music search intent extractor. User query: "${searchInput}". 
-Extract search parameters into JSON. Return ONLY JSON with this format: 
-{ 
-  "keywords": ["..."], 
-  "genres": ["..."], 
-  "moods": ["..."], 
-  "instruments": ["..."], 
-  "era": ["..."],
-  "hasChords": boolean | null,
-  "hasLyrics": boolean | null
-}
-If a field is not relevant, leave the array empty or boolean null. Translate concepts into English keywords if needed. 
-Note: "hasChords" is true if user asks for songs with chords (คอร์ด). "hasLyrics" is true if user asks for songs with lyrics/singing (เนื้อร้อง).`;
-
-                  const modelsToTry = ['gemini-3.5-flash', 'gemini-3.1-pro', 'gemini-2.5-flash', 'gemini-1.5-flash'];
-                  let responseText = '{}';
-                  for (const modelName of modelsToTry) {
-                    try {
-                      const response = await ai.models.generateContent({ model: modelName, contents: prompt, config: { responseMimeType: 'application/json', temperature: 0.1 } });
-                      responseText = response.text || '{}';
-                      break;
-                    } catch (modelErr) {
-                      console.warn(`[AI Search] Model ${modelName} failed, trying next...`);
-                    }
-                  }
-                  
-                  const params = JSON.parse(responseText);
-                  
-                  // Local filtering based on extracted intent (Deep Search included!)
-                  let matches = userLibrary;
-                  
-                  // 1. Deep XML Scanning
-                  if (params.hasChords === true) {
-                    matches = matches.filter(song => song.xmlData && song.xmlData.includes('<harmony>'));
-                  } else if (params.hasChords === false) {
-                    matches = matches.filter(song => song.xmlData && !song.xmlData.includes('<harmony>'));
-                  }
-                  
-                  if (params.hasLyrics === true) {
-                    matches = matches.filter(song => song.xmlData && song.xmlData.includes('<lyric>'));
-                  } else if (params.hasLyrics === false) {
-                    matches = matches.filter(song => song.xmlData && !song.xmlData.includes('<lyric>'));
-                  }
-
-                  // 2. Metadata Keyword Scanning
-                  const allKeywords = [
-                    ...(params.keywords || []), ...(params.genres || []), ...(params.moods || []), ...(params.instruments || []), ...(params.era || [])
-                  ].map((k: string) => k.toLowerCase());
-
-                  if (allKeywords.length > 0) {
-                    matches = matches.filter(song => {
-                      const m = song.metadata;
-                      const textToSearch = [m.title, m.artist, m.genre, m.mood, m.era, m.composer, ...(m.instruments || [])].filter(Boolean).join(' ').toLowerCase();
-                      return allKeywords.some(kw => textToSearch.includes(kw));
-                    });
-                  }
-                  
-                  setAiFilteredIds(matches.map(m => m.metadata.id));
-                  setSearchQuery(searchInput);
-                } catch (err) {
-                  console.error(err);
-                  // fallback to standard search if AI fails
-                  setSearchQuery(searchInput);
-                } finally {
-                  setIsAiSearching(false);
-                }
+                setSearchQuery(searchInput);
               }
             }}
             className="w-full h-12 bg-white/[0.03] border border-white/5 rounded-2xl pl-12 pr-20 text-xs font-black text-white outline-none focus:border-cyan-500/30 placeholder:text-zinc-800 transition-all uppercase"
@@ -1087,7 +1288,11 @@ If a field is not relevant, leave the array empty. Translate concepts into Engli
                     if (allKeywords.length > 0) {
                       matches = matches.filter(song => {
                         const m = song.metadata;
-                        const textToSearch = [m.title, m.artist, m.genre, m.mood, m.era, m.composer, ...(m.instruments || [])].filter(Boolean).join(' ').toLowerCase();
+                        const rawGrade = m.difficulty_grade || m.difficultyGrade || m.difficulty || m.grade || '';
+                        let dGrade = String(rawGrade).trim();
+                        if (/^[1-8]$/.test(dGrade)) dGrade = `Grade ${dGrade}`;
+                        
+                        const textToSearch = [m.title, m.artist, m.genre, m.mood, m.era, m.composer, dGrade, ...(m.instruments || [])].filter(Boolean).join(' ').toLowerCase();
                         return allKeywords.some(kw => textToSearch.includes(kw));
                       });
                     }

@@ -1057,6 +1057,11 @@ ${pronounDesc} และใช้คำลงท้ายที่เหมา�
 
 คุยสนุก เป็นธรรมชาติเหมือนมนุษย์คุยกันจริงๆ ห้ามแข็งทื่อแบบหุ่นยนต์ และห้ามตอบแบบระบุหมายเลขข้อ (เช่น 1. 2. 3. หรือ - หัวข้อ) ถ้าไม่จำเป็น ให้คุยตอบรับกันสั้นๆ เป็นพารากราฟธรรมดา
 
+**ความฉลาดในการสนทนา (Conversational Intelligence):**
+- คุณไม่ใช่แค่บอทรับคำสั่ง แต่คุณเป็นผู้ช่วยโปรดิวเซอร์อัจฉริยะ (Intelligent Assistant)
+- หากผู้ใช้ชวนคุยเล่น, ถามคำถามทั่วไป, หรือบอกให้เตรียมตัว (เช่น "เดี๋ยวจะส่งลิงก์ให้นะ", "ช่วยแต่งเพลงหน่อยได้ไหม") **ห้าม** รีบส่ง Action ใดๆ ให้พูดคุยตอบรับอย่างเป็นธรรมชาติก่อนเสมอ (เช่น "ได้เลยครับ ส่งมาได้เลย", "ยินดีครับ อยากได้เพลงแนวไหนบอกได้เลยครับ")
+- ให้ใช้ Action ก็ต่อเมื่อผู้ใช้สั่งงานชัดเจนและมีข้อมูลครบถ้วนแล้วเท่านั้น
+
 ข้อกำหนดเพิ่มเติมสำหรับการแต่งเพลงหรือเขียนเนื้อเพลง (Song Lyrics):
 - หากผู้ใช้ขอให้ช่วยแต่งเพลง ให้ทำการขึ้นบรรทัดใหม่ตามปกติในเนื้อเพลงแต่ละวรรค และแบ่งท่อนให้เห็นชัดเจน เช่น [ท่อนเวิร์ส 1], [ท่อนฮุค], [ท่อนเวิร์ส 2] เพื่อความสวยงามและอ่านง่าย ห้ามนำเนื้อเพลงมารวมเป็นบรรทัดเดียวหรือยัดรวมเป็นพารากราฟเดียวเด็ดขาด
 
@@ -1076,6 +1081,16 @@ ${appStateStr}
 ฟีเจอร์และคำสั่งที่คุณควบคุมได้ผ่านทาง actions (ห้ามใช้คำสั่งที่ไม่มีในรายการนี้):
 ${typeof window !== 'undefined' && window.NimoBrain ? window.NimoBrain.generateActionPrompt('th') : ''}
 
+
+หมายเหตุสำคัญเรื่อง YouTube Download:
+- **ข้อสำคัญ (CRITICAL):** แม้คุณจะเป็น AI แต่ระบบของแอปพลิเคชันนี้มีฟีเจอร์โหลดและค้นหา YouTube ในตัว! คุณมีหน้าที่แค่ส่งคำสั่งให้แอปทำงาน ห้ามคิดว่าตัวเองทำไม่ได้เด็ดขาด!
+- หากผู้ใช้ส่งลิงก์มา ให้ใช้ลิงก์นั้นในพารามิเตอร์ urls ของ 'download_youtube_batch' ได้เลย
+- หากผู้ใช้บอกแค่ชื่อเพลง (เช่น "ช่วยโหลดเพลง Hello") ให้คุณใช้คำค้นหานำหน้าด้วย 'ytsearch1:' (เช่น 'ytsearch1: Hello') แล้วส่งไปในพารามิเตอร์ urls ของ 'download_youtube_batch'
+- หากผู้ใช้บอกให้โหลดแต่ไม่ได้ให้ลิงก์หรือชื่อเพลงมา ให้ถามกลับอย่างเป็นธรรมชาติว่า "ต้องการให้หนูโหลดเพลงอะไรคะ ส่งลิงก์หรือชื่อเพลงมาได้เลยค่ะ" (อย่าเพิ่งเรียกใช้ action)
+- ห้ามตอบด้วยคำว่า "Understood. Executing now." ให้ตอบกลับเป็นภาษาไทยอย่างเป็นธรรมชาติเสมอ
+- ห้ามปฏิเสธว่าคุณโหลดเพลงหรือค้นหาเพลงไม่ได้เด็ดขาด เพราะแอปพลิเคชันจะทำให้คุณเอง ให้ตอบตกลงเสมอ!
+- หากเจอเพลงมีลิขสิทธิ์ ให้แจ้งสั้นๆ ว่าแอปเป็นเพียงตัวกลาง ห้ามใช้เชิงพาณิชย์
+- ห้ามทวนซ้ำลิงก์ YouTube เด็ดขาด
 
 หมายเหตุสำคัญเรื่อง Transpose (เปลี่ยนคีย์):
 - เมื่อผู้ใช้เลื่อนเปลี่ยนคีย์ ระบบใช้ PitchShift แบบ real-time เปลี่ยน pitch ทันทีโดยไม่กระทบความเร็ว
@@ -1115,6 +1130,11 @@ If you are responding in Thai:
 CRITICAL FOR SPEECH SYNTHESIS (TTS):
 In the 'reply' field, NEVER include emojis (e.g. 🎙️, ⏸️), markdown formatting (like **bold** or *italic*), or content inside parentheses (like (vocal), (Mute)) which makes the synthesized voice sound awkward. Use only plain text.
 
+**Conversational Intelligence:**
+- You are an intelligent music producer assistant, not just a command-line parser.
+- If the user chats casually, asks general questions, or prepares you for a task (e.g. "I will send links soon", "Can you help me compose?"), DO NOT send any actions. Respond conversationally and naturally first (e.g. "Sure, send them over!", "I'd love to help, what genre?").
+- Only use actions when the user gives a clear command and provides the necessary context.
+
 If the user gives a command, you MUST include the corresponding action in the 'actions' array.
 
 Current Application State:
@@ -1124,6 +1144,16 @@ Supported Actions:
 ${typeof window !== 'undefined' && window.NimoBrain ? window.NimoBrain.generateActionPrompt('en') : ''}
 
 
+IMPORTANT for YouTube Download:
+- **CRITICAL:** Even though you are an AI without direct internet access, the MEMOLODY App has a built-in YouTube downloader and search feature! Your job is ONLY to emit the command for the app to execute. You MUST NEVER say you cannot download or search for songs.
+- If the user provides a URL, use it in the 'urls' parameter of 'download_youtube_batch'.
+- If the user provides a song name (e.g. "Download Hello by Adele"), prefix it with 'ytsearch1:' (e.g. 'ytsearch1: Hello by Adele') and use that in the 'urls' parameter.
+- If the user asks to download but does NOT provide a URL or song name, politely ask them for it. DO NOT call the download action yet.
+- NEVER refuse a download request. The application will handle the internet access for you.
+- **Copyright Disclaimer:** Always include a legal disclaimer stating: *"Our application is merely an intermediary tool. If these are copyrighted materials, please ensure you use them only for personal entertainment or practice, and not for commercial purposes."*
+- ALWAYS reply conversationally in the exact same language the user uses (e.g. if the user asks in Thai, you MUST reply naturally in Thai). DO NOT just say "Understood. Executing now."
+- NEVER repeat the YouTube links in your reply to save tokens.
+- **CRITICAL**: DO NOT echo back or repeat the YouTube links in your 'reply' field (to save token space). Just say you have received the links.
 IMPORTANT: When user asks to compose/create a new song, you MUST use musicgen actions in this order (NEVER use arrange_song for new songs):
 1. navigate_to_page with view='forge' (open Studio first)
 2. studio_set_tab with tab='composer' (MUST be 'composer', NOT 'arranger')
@@ -1186,10 +1216,7 @@ If no actions are needed, return \"actions\": []`;
 
             const modelsToTry = [
                 geminiModel,
-                'gemini-3.5-flash',
-                'gemini-3.1-pro',
-                'gemini-2.5-flash',
-                'gemini-2.5-pro',
+                'gemini-1.5-pro',
                 'gemini-1.5-flash'
             ].filter((v, i, a) => v && a.indexOf(v) === i);
 
@@ -1208,7 +1235,7 @@ If no actions are needed, return \"actions\": []`;
                                 system_instruction: { parts: [{ text: sys }] },
                                 contents: contentsList,
                                 generationConfig: {
-                                    maxOutputTokens: 1024,
+                                    maxOutputTokens: 8192,
                                     temperature: 0.4,
                                     topP: 0.95,
                                     responseMimeType: "application/json"
@@ -1249,12 +1276,24 @@ If no actions are needed, return \"actions\": []`;
                     .replace(/```/g, '')
                     .replace(/,\s*([\}\]])/g, '$1') // Remove trailing commas
                     .trim();
+                
+                // Fix unescaped newlines inside strings (common LLM JSON error)
+                cleanJsonStr = cleanJsonStr.replace(/:\s*"([\s\S]*?)"(?=\s*,|\s*\})/g, (match, p1) => {
+                    const fixedString = p1.replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+                    return `:"${fixedString}"`;
+                });
+
                 parsedRes = JSON.parse(cleanJsonStr);
             } catch(e) {
                 console.error("[Nimo] Failed to parse JSON:", reply);
                 // Attempt to salvage the reply string using Regex if JSON parsing fails completely
-                const replyMatch = reply.match(/"reply"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/);
-                const salvagedReply = replyMatch ? replyMatch[1] : (preferredLanguage === 'th' ? "รับทราบค่ะ กำลังดำเนินการให้ทันทีค่ะ" : "Understood. Executing now.");
+                // Use a more forgiving regex to capture the reply even if it contains newlines or quotes
+                const replyMatch = reply.match(/"reply"\s*:\s*"([\s\S]*?)"\s*(?:,|\})/);
+                let salvagedReply = replyMatch ? replyMatch[1] : "";
+                
+                if (!salvagedReply) {
+                    salvagedReply = preferredLanguage === 'th' ? "รับทราบค่ะ (เกิดข้อผิดพลาดในการอ่านรูปแบบข้อความ)" : "Understood (JSON parsing error).";
+                }
                 
                 // Salvage compose action if we detected compose keywords
                 let salvagedActions = [];
@@ -1269,7 +1308,7 @@ If no actions are needed, return \"actions\": []`;
                 parsedRes = { reply: salvagedReply, actions: salvagedActions };
             }
 
-            let cleanReply = parsedRes.reply || "หนูทำตามคำสั่งเรียบร้อยแล้วค่ะ";
+            let cleanReply = parsedRes.reply || (preferredLanguage === 'th' ? "หนูทำตามคำสั่งเรียบร้อยแล้วค่ะ" : "Task executed.");
 
             // Programmatic Suffix & Pronoun Enforcement (force correct gender)
             if (isMale) {

@@ -114,7 +114,49 @@ export class SongStorage {
       delete finalMeta.category;
     }
     
+    // Derive Composer from artist if missing
+    if (!finalMeta.composer && finalMeta.artist && finalMeta.artist !== 'NA' && finalMeta.artist !== 'Unknown') {
+      finalMeta.composer = finalMeta.artist;
+    }
+    
+    // Derive Era from composer/artist name if missing
+    if (!finalMeta.era && (finalMeta.composer || finalMeta.artist)) {
+      finalMeta.era = this.detectEraFromComposer(finalMeta.composer || finalMeta.artist);
+    }
+    
     return finalMeta as Song;
+  }
+
+  /** Detect musical era from composer name */
+  private detectEraFromComposer(composer: string): string {
+    if (!composer || composer === 'NA' || composer === 'Unknown') return '';
+    const c = composer.toLowerCase();
+    
+    // Baroque (1600-1750)
+    if (/\b(bach|vivaldi|handel|purcell|corelli|telemann|scarlatti|lully|rameau|couperin|pachelbel|albinoni)\b/.test(c)) return 'Baroque';
+    
+    // Classical (1750-1820)  
+    if (/\b(mozart|haydn|beethoven|clementi|hummel|salieri|boccherini|dussek|field)\b/.test(c)) return 'Classical';
+    
+    // Romantic (1820-1900)
+    if (/\b(chopin|liszt|schumann|tchaikovsky|brahms|mendelssohn|schubert|verdi|wagner|dvorak|grieg|rachmaninoff|rachmaninov|strauss|puccini|mahler|bruckner|elgar|sibelius|rimsky|mussorgsky|borodin|saint-saens|bizet|faure|franck|paganini)\b/.test(c)) return 'Romantic';
+    
+    // Impressionist / Early Modern (1880-1930)
+    if (/\b(debussy|ravel|satie|scriabin|delius|respighi|albeniz|granados)\b/.test(c)) return 'Impressionist';
+    
+    // 20th Century (1900-1970)
+    if (/\b(stravinsky|bartok|prokofiev|shostakovich|copland|gershwin|bernstein|britten|hindemith|poulenc|milhaud|messiaen|villa-lobos|barber|kodaly|orff|holst|vaughan williams|walton)\b/.test(c)) return '20th Century';
+    
+    // Modern / Contemporary (1950+)
+    if (/\b(glass|reich|adams|part|arvo|pärt|ligeti|cage|boulez|stockhausen|xenakis|berio|nono|feldman|riley|young|tavener|górecki|rutter|whitacre|einaudi|yiruma|zimmer|williams|morricone|sakamoto)\b/.test(c)) return 'Contemporary';
+    
+    // Folk / Traditional
+    if (/\b(traditional|folk|anonymous|anon|trad)\b/.test(c)) return 'Traditional';
+    
+    // Hymn writers / Sacred
+    if (/\b(kirkpatrick|doane|sankey|bliss|crosby|bradbury|mason|root|webb|mcgranahan|stebbins|gabriel|lowry|knapp|sweney|excell|fischer)\b/.test(c)) return 'Sacred/Hymn';
+    
+    return '';
   }
 
   async saveSong(metadata: Song, xmlData: string, layoutBundle?: any | null): Promise<void> {
@@ -633,6 +675,157 @@ export class SongStorage {
 
       await new Promise(resolve => setTimeout(resolve, 0));
     }
+  }
+
+  /**
+   * [BATCH RE-GRADE V1.0]
+   * Re-grade songs that have a generic difficulty (e.g. 'Intermediate') 
+   * by downloading their .mxl file, parsing it, and running SongGradingEngine.
+   * Processes in small batches to avoid blocking the UI.
+   */
+  async batchRegrade(
+    onProgress?: (done: number, total: number, currentGrade?: string) => void,
+    abortSignal?: AbortSignal
+  ): Promise<{ regraded: number, failed: number, total: number }> {
+    const { SongGradingEngine } = await import('./SongGradingEngine');
+    const db = await this.init();
+    
+    // Get all songs
+    const allSongs: StoredSong[] = await new Promise((resolve, reject) => {
+      const tx = db.transaction([this.storeName], 'readonly');
+      const store = tx.objectStore(this.storeName);
+      const req = store.getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error);
+    });
+    
+    // Filter songs that need re-grading (have generic 'Intermediate' or empty grade)
+    const needsRegrade = allSongs.filter(s => {
+      const m = s.metadata as any;
+      const grade = m.difficulty_grade || m.difficulty || '';
+      const isGeneric = !grade || grade === 'Intermediate' || grade === 'intermediate';
+      // Must have xmlData that is a URL (starts with http)
+      const hasXmlUrl = s.xmlData && s.xmlData.startsWith('http');
+      return isGeneric && hasXmlUrl;
+    });
+    
+    console.log(`[batchRegrade] Found ${needsRegrade.length} songs needing re-grade out of ${allSongs.length} total.`);
+    
+    if (needsRegrade.length === 0) {
+      return { regraded: 0, failed: 0, total: allSongs.length };
+    }
+    
+    let regraded = 0;
+    let failed = 0;
+    const BATCH_SIZE = 50; // Process 50 songs at a time
+    const CONCURRENT = 5;  // Download 5 at a time
+    
+    for (let i = 0; i < needsRegrade.length; i += BATCH_SIZE) {
+      if (abortSignal?.aborted) break;
+      
+      const batch = needsRegrade.slice(i, i + BATCH_SIZE);
+      const updates: { id: string; grade: string }[] = [];
+      
+      // Process in concurrent groups
+      for (let j = 0; j < batch.length; j += CONCURRENT) {
+        if (abortSignal?.aborted) break;
+        
+        const group = batch.slice(j, j + CONCURRENT);
+        const results = await Promise.allSettled(
+          group.map(async (song) => {
+            try {
+              const xmlUrl = song.xmlData;
+              const response = await fetch(xmlUrl, { signal: abortSignal });
+              if (!response.ok) throw new Error(`HTTP ${response.status}`);
+              
+              // Handle .mxl (compressed ZIP) or .xml
+              let xmlText: string;
+              if (xmlUrl.endsWith('.mxl')) {
+                const JSZip = (await import('jszip')).default;
+                const arrayBuffer = await response.arrayBuffer();
+                const zip = await JSZip.loadAsync(arrayBuffer);
+                // Find the first .xml file in the archive
+                let xmlFile: any = null;
+                zip.forEach((relativePath, file) => {
+                  if (!xmlFile && (relativePath.endsWith('.xml') || relativePath.endsWith('.musicxml')) && !relativePath.startsWith('META-INF')) {
+                    xmlFile = file;
+                  }
+                });
+                if (!xmlFile) throw new Error('No XML file found in .mxl archive');
+                xmlText = await xmlFile.async('text');
+              } else {
+                xmlText = await response.text();
+              }
+              
+              // Parse XML
+              const parser = new DOMParser();
+              const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
+              
+              if (xmlDoc.querySelector('parsererror')) {
+                throw new Error('XML parse error');
+              }
+              
+              // Extract notes and grade
+              const notes = SongGradingEngine.extractNotesFromXmlDoc(xmlDoc);
+              if (notes.length === 0) throw new Error('No notes found');
+              
+              const bpm = song.metadata.bpm || 120;
+              const fifthsEl = xmlDoc.querySelector('fifths');
+              const fifths = fifthsEl ? parseInt(fifthsEl.textContent || '0') : 0;
+              
+              const result = SongGradingEngine.gradeSong(notes, { bpm, fifths });
+              return { id: song.metadata.id, grade: result.grade };
+            } catch (e) {
+              throw e;
+            }
+          })
+        );
+        
+        for (const r of results) {
+          if (r.status === 'fulfilled') {
+            updates.push(r.value);
+            regraded++;
+          } else {
+            failed++;
+          }
+        }
+      }
+      
+      // Write batch updates to IndexedDB
+      if (updates.length > 0) {
+        await new Promise<void>((resolve, reject) => {
+          const tx = db.transaction([this.storeName], 'readwrite');
+          const store = tx.objectStore(this.storeName);
+          
+          let processed = 0;
+          updates.forEach(u => {
+            const req = store.get(u.id);
+            req.onsuccess = () => {
+              const song = req.result;
+              if (song) {
+                (song.metadata as any).difficulty_grade = u.grade;
+                (song.metadata as any).difficulty = u.grade;
+                store.put(song);
+              }
+              processed++;
+            };
+          });
+          
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+        });
+      }
+      
+      if (onProgress) {
+        onProgress(i + batch.length, needsRegrade.length, updates[updates.length - 1]?.grade);
+      }
+      
+      // Yield to main thread
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    
+    console.log(`[batchRegrade] Complete! Regraded: ${regraded}, Failed: ${failed}`);
+    return { regraded, failed, total: allSongs.length };
   }
 }
 

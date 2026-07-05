@@ -44,6 +44,15 @@ export class MusicEngine {
   private metronomeClickSynth: Tone.MembraneSynth | null = null;
   private vocalLoopId: number | null = null;
 
+  // ── Audio Region (DAW) & Recording State ──
+  public audioBuffers: Map<string, Tone.ToneAudioBuffer> = new Map();
+  private regionPlayers: Map<string, Tone.GrainPlayer> = new Map();
+  private trackUserMedia: Tone.UserMedia | null = null;
+  private trackRecorder: Tone.Recorder | null = null;
+  public armedTrackId: string | null = null;
+  public isRecordingTrack: boolean = false;
+  private recordingStartTime: number = 0;
+
   public isInitialized = false;
   public countInDuration = 0;
   public countInTicks = 0;
@@ -200,6 +209,84 @@ export class MusicEngine {
     } catch (e) {
       return '';
     }
+  }
+
+  // ── Track Recording (Audio/MIDI) ──
+  
+  armTrack(trackId: string | null) {
+    this.armedTrackId = trackId;
+    console.log(`[MusicEngine] Armed track: ${trackId}`);
+  }
+
+  async startTrackRecording() {
+    if (!this.armedTrackId) return;
+    try {
+      if (!this.trackUserMedia) {
+        this.trackUserMedia = new Tone.UserMedia();
+      }
+      if (!this.trackRecorder) {
+        this.trackRecorder = new Tone.Recorder();
+      }
+      
+      await this.trackUserMedia.open();
+      this.trackUserMedia.connect(this.trackRecorder);
+      await this.trackRecorder.start();
+      
+      this.isRecordingTrack = true;
+      this.recordingStartTime = Tone.Transport.seconds;
+      console.log(`[MusicEngine] Started track recording on ${this.armedTrackId}`);
+    } catch (e) {
+      console.error("[MusicEngine] Failed to start track recording", e);
+      this.isRecordingTrack = false;
+    }
+  }
+
+  async stopTrackRecording(): Promise<{ trackId: string, url: string, startTime: number, duration: number } | null> {
+    if (!this.isRecordingTrack || !this.trackRecorder || !this.trackUserMedia) {
+      this.isRecordingTrack = false;
+      return null;
+    }
+
+    try {
+      const recordingBlob = await this.trackRecorder.stop();
+      this.trackUserMedia.close();
+      this.isRecordingTrack = false;
+
+      const url = URL.createObjectURL(recordingBlob);
+      const trackId = this.armedTrackId!;
+      const startTime = this.recordingStartTime;
+      
+      // Calculate duration roughly (or load it to get exact)
+      const duration = Tone.Transport.seconds - this.recordingStartTime;
+
+      console.log(`[MusicEngine] Stopped track recording on ${trackId}. URL: ${url}, Duration: ${duration}`);
+      
+      // Load the buffer into our cache
+      await this.loadAudioBuffer(url, url);
+
+      return { trackId, url, startTime, duration };
+    } catch (e) {
+      console.error("[MusicEngine] Error stopping track recording", e);
+      this.isRecordingTrack = false;
+      return null;
+    }
+  }
+
+  // ── Audio Regions (DAW) Loading ──
+  
+  async loadAudioBuffer(url: string, id: string): Promise<Tone.ToneAudioBuffer> {
+    if (this.audioBuffers.has(id)) {
+      return this.audioBuffers.get(id)!;
+    }
+    return new Promise((resolve, reject) => {
+      const buffer = new Tone.ToneAudioBuffer(url, () => {
+        this.audioBuffers.set(id, buffer);
+        resolve(buffer);
+      }, (e) => {
+        console.error(`[MusicEngine] Failed to load audio buffer: ${url}`, e);
+        reject(e);
+      });
+    });
   }
 
   /**
@@ -720,6 +807,8 @@ export class MusicEngine {
 
         this.masterGain = new Tone.Gain(0.8).toDestination();
         this.masterBus = new Tone.Gain(1).connect(this.masterGain);
+        this.toneRecorder = new Tone.Recorder();
+        this.masterBus.connect(this.toneRecorder);
         this.masterMeter = new Tone.Meter().connect(this.masterBus);
         await this.initMetronomeClickSynth();
         this.initMetronomeLoop();
@@ -1628,6 +1717,47 @@ export class MusicEngine {
     // Cache the hash
     this.loadedSongHash = hash;
 
+    // ── 5. Schedule Audio Regions (DAW) ──
+    const regionPromises: Promise<void>[] = [];
+    for (const track of tracks) {
+      if (track.trackType === 'audio' && track.audioRegions) {
+        const channel = this.trackChannels.get(track.id);
+        if (!channel) continue;
+
+        for (const region of track.audioRegions) {
+          if (region.isMuted) continue;
+          
+          regionPromises.push((async () => {
+            try {
+              const buffer = await this.loadAudioBuffer(region.bufferUrl, region.bufferId);
+              
+              // Use GrainPlayer for time-stretching capabilities
+              const player = new Tone.GrainPlayer(buffer).connect(channel);
+              
+              // Configure player based on region properties
+              player.playbackRate = region.timeStretchRatio || 1.0;
+              
+              // GrainPlayer doesn't have a direct volume property that works well with fade in/out
+              // We'll wrap it in a Gain node for region-specific volume & fades if needed, 
+              // or just use Tone.Transport.schedule to start/stop it.
+              
+              const startTicks = (region.startTime * ppq + this.countInTicks) + "i";
+              const durTicks = (region.duration * ppq) + "i";
+              
+              player.sync().start(startTicks, region.sourceOffset, durTicks);
+              
+              this.regionPlayers.set(`${track.id}_${region.id}`, player);
+            } catch (e) {
+              console.error(`[MusicEngine] Failed to schedule audio region ${region.id}`, e);
+            }
+          })());
+        }
+      }
+    }
+    
+    // Wait for all audio regions to be loaded and scheduled
+    await Promise.all(regionPromises);
+
     // ── Reconnect PitchShift nodes to new channels ──
     // disposeOldData() disposes all trackChannels, and initSampler() recreates them.
     // We must reconnect PitchShift outputs to the new channel instances.
@@ -1736,6 +1866,40 @@ export class MusicEngine {
     this.disposeOldData();
   }
 
+  // --- AUDIO EXPORT ---
+  public async exportMaster(format: 'wav' | 'webm' = 'webm'): Promise<Blob | null> {
+    if (!this.toneRecorder || !this.isInitialized) return null;
+    
+    // Stop if currently playing
+    this.pause();
+    await Tone.start();
+    
+    // Start recording
+    this.toneRecorder.start();
+    
+    // Play track from beginning
+    this.setTransportSeconds(0);
+    this.start();
+    
+    // Calculate total duration (approximate)
+    let maxTime = 0;
+    this.unrolledMeasures.forEach(m => {
+        const end = m.startTime + m.duration;
+        if (end > maxTime) maxTime = end;
+    });
+    
+    // Add 2s tail for reverb/decay
+    const durationMs = (maxTime + 2) * 1000;
+    
+    return new Promise((resolve) => {
+      setTimeout(async () => {
+        this.pause();
+        const recording = await this.toneRecorder!.stop();
+        resolve(recording);
+      }, durationMs);
+    });
+  }
+
   private disposeOldData(preserveVocals: boolean = false) {
     // 1. Stop transport completely
     Tone.Transport.stop();
@@ -1764,6 +1928,12 @@ export class MusicEngine {
       try { meter.disconnect(); meter.dispose(); } catch (e) { }
     });
     this.trackMeters.clear();
+
+    // 3.5 Dispose Audio Region Players
+    this.regionPlayers.forEach((player) => {
+      try { player.unsync(); player.dispose(); } catch (e) {}
+    });
+    this.regionPlayers.clear();
 
     // 4. Dispose all vocal layers and stems (unsync from Transport first)
     if (!preserveVocals) {

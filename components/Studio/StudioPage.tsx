@@ -4,7 +4,7 @@ import { midiInputManager } from '../../lib/MidiInputManager';
 import {
   ArrowLeft, X, PlusCircle, Settings2, Play, Square, Pause,
   Cpu, Bot, FileText, FileCode, Download, Search,
-  Music, Layers, RotateCcw, RotateCw, Headphones, SlidersHorizontal, VolumeX, Volume2, SkipBack, Bell, Zap, Sparkles
+  Music, Layers, RotateCcw, RotateCw, Headphones, SlidersHorizontal, VolumeX, Volume2, SkipBack, Bell, Zap, Sparkles, Youtube, Loader2
 } from 'lucide-react';
 import { Song, TrackState } from '../../types';
 import ProScoreEditor, { ProScoreEditorRef } from '../Player/ProScoreEditor';
@@ -71,6 +71,11 @@ const StudioPage: React.FC<StudioPageProps> = ({
   const [plugins] = useState(PluginManager.getInstance().listPlugins());
   const [studioMode, setStudioMode] = useState<'composer' | 'arranger' | 'editor' | 'pianoroll'>(initialStudioMode);
   const [pianorollTrackId, setPianorollTrackId] = useState<string | null>(null);
+  const [ytInput, setYtInput] = useState('');
+  const [isYtDownloading, setIsYtDownloading] = useState(false);
+  const [ytProgress, setYtProgress] = useState('');
+  const [showYtModal, setShowYtModal] = useState(false);
+  const [ytResults, setYtResults] = useState<{title: string; url: string; filename: string}[]>([]);
 
   const { processImage, isProcessing: omrProcessing, progress: omrProgress, error: omrError } = useScoreLens();
 
@@ -483,6 +488,55 @@ const StudioPage: React.FC<StudioPageProps> = ({
       </div>
     );
   }
+  const handleYtDownload = async () => {
+    if (!ytInput.trim()) return;
+    const rawLines = ytInput.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+    const urls = [...new Set(rawLines)].map(u => u.startsWith('http') ? u : 'ytsearch1:' + u);
+    if (urls.length === 0) return;
+
+    setIsYtDownloading(true);
+    setYtResults([]);
+    const results: {title: string; url: string; filename: string}[] = [];
+    const total = urls.length;
+
+    if (typeof window !== 'undefined' && (window as any).showToast) {
+      (window as any).showToast(`Downloading ${total} clip(s)...`, '#ef4444');
+    }
+
+    for (let i = 0; i < urls.length; i++) {
+      const url = urls[i];
+      setYtProgress(`${i + 1} / ${total}`);
+      try {
+        const res = await fetch('/vocalido/api/youtube/download', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url, quality: 'auto' })
+        });
+        const data = await res.json();
+        if (data.url) {
+          const item = { title: data.title || 'Unknown', url: data.url, filename: data.filename };
+          results.push(item);
+          setYtResults([...results]);
+          window.dispatchEvent(new CustomEvent('youtube_downloaded', {
+            detail: { url: data.url, title: data.title, filename: data.filename }
+          }));
+        }
+      } catch (e) {
+        console.error(`Failed to download ${url}`, e);
+        if (typeof window !== 'undefined' && (window as any).showToast) {
+          (window as any).showToast(`❌ ${i+1}/${total}: Failed`, '#EF4444');
+        }
+      }
+    }
+
+    if (typeof window !== 'undefined' && (window as any).showToast) {
+      (window as any).showToast(`Done! ${results.length}/${total} downloaded`, '#10B981');
+    }
+    setYtInput('');
+    setYtProgress('');
+    setIsYtDownloading(false);
+    setShowYtModal(false);
+  };
 
   return (
     <div className="h-full w-full flex flex-col bg-[#050507] overflow-hidden relative">
@@ -591,6 +645,14 @@ const StudioPage: React.FC<StudioPageProps> = ({
               }`}
             >
               EDITOR
+            </button>
+
+            {/* YOUTUBE DOWNLOAD BUTTON */}
+            <button
+              onClick={() => setShowYtModal(true)}
+              className="flex items-center gap-1.5 ml-2 px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest bg-red-500/15 text-red-400 border border-red-500/30 hover:bg-red-500/30 hover:text-white transition-all"
+            >
+              <Youtube size={11} /> YouTube
             </button>
           </div>
         </div>
@@ -1104,6 +1166,98 @@ const StudioPage: React.FC<StudioPageProps> = ({
             <Bot size={32} className="text-cyan-400 animate-pulse" />
           </div>
           <h3 className="text-sm font-black text-white italic tracking-widest uppercase">{prepLabel}</h3>
+        </div>
+      )}
+
+      {/* ══ YouTube Batch Download Modal ═══════════════════════════════ */}
+      {showYtModal && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-xl z-[6500] flex items-center justify-center p-6" onClick={() => !isYtDownloading && setShowYtModal(false)}>
+          <div className="w-full max-w-lg bg-[#0c0c0e] border border-red-500/20 rounded-[32px] p-8 relative shadow-[0_0_60px_rgba(239,68,68,0.1)] max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <button onClick={() => { if (!isYtDownloading) { setShowYtModal(false); setYtResults([]); } }} className="absolute top-6 right-6 text-zinc-500 hover:text-white disabled:opacity-30 z-10" disabled={isYtDownloading}>
+              <X size={24} />
+            </button>
+
+            <h3 className="text-sm font-black text-white italic uppercase tracking-widest mb-2 flex gap-2 items-center shrink-0">
+              <Youtube size={16} className="text-red-500" />
+              YouTube Batch Download
+            </h3>
+
+            {/* ── Phase 1: Input ── */}
+            {ytResults.length === 0 && !isYtDownloading && (
+              <>
+                <p className="text-[10px] text-zinc-500 mb-4 shrink-0">Paste up to 20 YouTube links or song names (one per line)</p>
+                <textarea
+                  value={ytInput}
+                  onChange={e => setYtInput(e.target.value)}
+                  placeholder={"https://www.youtube.com/watch?v=...\nhttps://youtu.be/...\nHello - Adele\nBohemian Rhapsody - Queen"}
+                  rows={8}
+                  className="w-full bg-black/60 border border-white/10 rounded-2xl p-4 text-xs text-white font-mono placeholder-zinc-700 outline-none resize-none focus:border-red-500/40 transition-colors"
+                />
+                <div className="flex items-center justify-between mt-4 shrink-0">
+                  <span className="text-[10px] font-bold text-zinc-500">
+                    {ytInput.trim() ? `${ytInput.split(/[\n,]+/).map(s => s.trim()).filter(Boolean).length} link(s)` : 'No links yet'}
+                  </span>
+                  <button
+                    onClick={handleYtDownload}
+                    disabled={!ytInput.trim()}
+                    className="px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest bg-gradient-to-r from-red-600 to-red-500 text-white shadow-lg hover:shadow-red-500/30 hover:scale-105 transition-all disabled:opacity-50 disabled:scale-100 flex items-center gap-2"
+                  >
+                    <Download size={14} />
+                    Start Download
+                  </button>
+                </div>
+              </>
+            )}
+
+            {/* ── Phase 2: Downloading Progress ── */}
+            {isYtDownloading && (
+              <div className="flex-1 flex flex-col items-center justify-center gap-4 py-8">
+                <div className="w-16 h-16 rounded-full border-4 border-red-500/20 border-t-red-500 animate-spin" />
+                <p className="text-sm font-black text-white uppercase tracking-widest">Downloading {ytProgress}</p>
+                {ytResults.length > 0 && (
+                  <p className="text-[10px] text-emerald-400 font-bold">{ytResults.length} completed</p>
+                )}
+              </div>
+            )}
+
+            {/* ── Phase 3: Song List Results ── */}
+            {ytResults.length > 0 && !isYtDownloading && (
+              <>
+                <p className="text-[10px] text-emerald-400 font-bold mb-3 shrink-0">{ytResults.length} song(s) downloaded successfully</p>
+                <div className="flex-1 overflow-y-auto space-y-1.5 custom-scrollbar min-h-0 pr-1">
+                  {ytResults.map((item, i) => (
+                    <div key={i} className="flex items-center gap-3 bg-white/5 border border-white/5 rounded-xl px-4 py-2.5 hover:bg-white/10 transition-colors group">
+                      <span className="text-[10px] font-black text-zinc-600 w-5 text-right shrink-0">{i + 1}</span>
+                      <Music size={12} className="text-red-400 shrink-0" />
+                      <span className="text-xs font-bold text-zinc-300 truncate flex-1" title={item.title}>{item.title}</span>
+                      <button
+                        onClick={() => handleSaveFile(item.url, item.filename)}
+                        className="w-7 h-7 rounded-lg bg-cyan-500/10 text-cyan-400 flex items-center justify-center hover:bg-cyan-500/30 hover:text-white transition-all opacity-0 group-hover:opacity-100"
+                        title="Save to computer"
+                      >
+                        <Download size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-center gap-3 mt-4 pt-4 border-t border-white/5 shrink-0">
+                  <button
+                    onClick={() => { setYtResults([]); setYtInput(''); }}
+                    className="px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest text-zinc-500 border border-white/10 hover:text-white hover:bg-white/5 transition-all"
+                  >
+                    New Batch
+                  </button>
+                  <button
+                    onClick={handleSaveAll}
+                    className="flex-1 px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest bg-gradient-to-r from-emerald-600 to-emerald-500 text-white shadow-lg hover:shadow-emerald-500/30 hover:scale-[1.02] transition-all flex items-center justify-center gap-2"
+                  >
+                    <Download size={14} />
+                    Save All to Computer ({ytResults.length})
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       )}
     </div>

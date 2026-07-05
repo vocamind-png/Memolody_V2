@@ -2512,6 +2512,110 @@ async def _cleanup_old_renders():
 
         await _asyncio.sleep(RENDER_CLEANUP_INTERVAL)
 
+# yt_dlp is imported lazily inside the endpoint to avoid crashing the server if not installed
+import subprocess
+import shutil
+
+@app.post("/vocalido/api/youtube/download")
+async def download_youtube(payload: dict = Body(...)):
+    url = payload.get("url")
+    quality = payload.get("quality", "auto")
+    if not url:
+        return JSONResponse({"error": "No URL provided"}, status_code=400)
+    
+    output_dir = "renders"
+    
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'outtmpl': f'{output_dir}/%(id)s.%(ext)s',
+        'quiet': True,
+    }
+    
+    ext = "wav"
+    postprocessor_args = []
+    
+    if quality == "44100_16":
+        postprocessor_args = ['-ar', '44100', '-sample_fmt', 's16']
+    elif quality == "48000_24":
+        postprocessor_args = ['-ar', '48000', '-sample_fmt', 's24']
+    elif quality == "96000_24":
+        postprocessor_args = ['-ar', '96000', '-sample_fmt', 's24']
+    elif quality == "192000_24":
+        postprocessor_args = ['-ar', '192000', '-sample_fmt', 's24']
+    elif quality == "mp3_320":
+        ext = "mp3"
+    
+    if ext == "mp3":
+        ydl_opts['postprocessors'] = [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '320',
+        }]
+    else:
+        ydl_opts['postprocessors'] = [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'wav',
+        }]
+        if postprocessor_args:
+            ydl_opts['postprocessor_args'] = postprocessor_args
+            
+    try:
+        import yt_dlp
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            video_id = info['id']
+            filename = f"{video_id}.{ext}"
+            
+            return {"url": f"/vocalido/audio/{filename}", "filename": filename, "title": info.get('title', 'Unknown')}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post("/vocalido/api/ai/separate-stems")
+async def separate_stems(payload: dict = Body(...)):
+    file_url = payload.get("file_url")
+    stems = payload.get("stems", 2)
+    
+    if not file_url:
+        return JSONResponse({"error": "No file_url provided"}, status_code=400)
+        
+    filename = file_url.split("/")[-1]
+    input_path = os.path.join("renders", filename)
+    
+    if not os.path.exists(input_path):
+        return JSONResponse({"error": f"File not found: {filename}"}, status_code=404)
+        
+    output_dir = "renders/stems"
+    os.makedirs(output_dir, exist_ok=True)
+    
+    cmd = ["demucs", "-n", "htdemucs", "-d", "cpu", "-o", output_dir]
+    if stems == 2:
+        cmd.extend(["--two-stems", "vocals"])
+    cmd.append(input_path)
+    
+    try:
+        subprocess.run(cmd, check=True)
+        base_name = os.path.splitext(filename)[0]
+        demucs_out_dir = os.path.join(output_dir, "htdemucs", base_name)
+        
+        stem_urls = {}
+        if stems == 2:
+            stem_urls['vocals'] = f"/vocalido/audio/stems/htdemucs/{base_name}/vocals.wav"
+            stem_urls['instrumental'] = f"/vocalido/audio/stems/htdemucs/{base_name}/no_vocals.wav"
+        else:
+            stem_urls['vocals'] = f"/vocalido/audio/stems/htdemucs/{base_name}/vocals.wav"
+            stem_urls['drums'] = f"/vocalido/audio/stems/htdemucs/{base_name}/drums.wav"
+            stem_urls['bass'] = f"/vocalido/audio/stems/htdemucs/{base_name}/bass.wav"
+            stem_urls['other'] = f"/vocalido/audio/stems/htdemucs/{base_name}/other.wav"
+            
+        return {"stems": stem_urls}
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, status_code=500)
+
 
 @app.post("/vocalido/api/ai/tts")
 @app.post("/api/ai/tts")
