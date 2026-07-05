@@ -1,7 +1,7 @@
 """
-Lightweight YouTube Download Server
-Only handles: YouTube download, audio file serving, stem separation
-No heavy ML dependencies required.
+Lightweight YouTube Download Server v2
+- Bypasses YouTube bot detection with player_client options
+- Runs on port 5001
 """
 from fastapi import FastAPI, Body
 from fastapi.responses import JSONResponse
@@ -19,17 +19,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Create renders directory
 os.makedirs("renders", exist_ok=True)
 os.makedirs("renders/stems", exist_ok=True)
 
-# Mount audio files
 app.mount("/audio", StaticFiles(directory="renders"), name="audio")
 app.mount("/vocalido/audio", StaticFiles(directory="renders"), name="vocalido_audio")
 
+@app.get("/")
+async def root():
+    return {"status": "ok", "service": "youtube-server-v2"}
+
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "youtube-server"}
+    return {"status": "ok", "service": "youtube-server-v2"}
 
 @app.post("/vocalido/api/youtube/download")
 @app.post("/api/youtube/download")
@@ -45,6 +47,14 @@ async def download_youtube(payload: dict = Body(...)):
         'format': 'bestaudio/best',
         'outtmpl': f'{output_dir}/%(id)s.%(ext)s',
         'quiet': True,
+        'no_warnings': True,
+        # Bypass bot detection
+        'extractor_args': {'youtube': {
+            'player_client': ['ios', 'web_creator'],
+        }},
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        },
     }
     
     ext = "wav"
@@ -82,10 +92,16 @@ async def download_youtube(payload: dict = Body(...)):
             video_id = info['id']
             filename = f"{video_id}.{ext}"
             
+            # Get file size
+            file_path = os.path.join(output_dir, filename)
+            file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
+            
             return {
                 "url": f"/vocalido/audio/{filename}",
                 "filename": filename,
-                "title": info.get('title', 'Unknown')
+                "title": info.get('title', 'Unknown'),
+                "duration": info.get('duration', 0),
+                "fileSize": file_size,
             }
     except Exception as e:
         import traceback
@@ -140,8 +156,9 @@ async def separate_stems(payload: dict = Body(...)):
 
 
 if __name__ == "__main__":
+    import sys
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 5001
     print("=" * 55)
-    print("YouTube Download Server - Lightweight")
-    print("  Port: 5001")
+    print(f"YouTube Download Server v2 — Port {port}")
     print("=" * 55)
-    uvicorn.run(app, host="0.0.0.0", port=5001)
+    uvicorn.run(app, host="0.0.0.0", port=port)
