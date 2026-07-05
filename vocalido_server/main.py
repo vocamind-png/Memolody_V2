@@ -935,26 +935,15 @@ if os.path.exists(english_voicebanks_dir):
             if ckpt:
                 print(f"[DEBUG] 📂 Found {voice_name} model at: {ckpt}")
                 if ckpt.endswith('.onnx'):
-                    # Load only the first ONNX voice eagerly (Lotte V), rest are lazy
-                    onnx_already_loaded = any(
-                        hasattr(e, 'acoustic_path') for e in _ds_engines.values()
-                    )
-                    if not onnx_already_loaded:
-                        try:
-                            from ds_onnx_engine import DiffSingerONNXEngine
-                            # CRITICAL: Pass voice_path (model root dir), NOT os.path.dirname(ckpt)
-                            # os.path.dirname(ckpt) = .../dsmain/ but engine needs the parent
-                            # that contains dsmain/, dsdur/, dspitch/, dsvocoder/
-                            engine = DiffSingerONNXEngine(voice_path, language='en')
-                            if engine.is_ready:
-                                _ds_engines[voice_name.lower()] = engine
-                                print(f"✅ DiffSinger ONNX Engine ({voice_name}) loaded successfully!")
-                                DS_ENGINE_OK = True
-                        except Exception as e:
-                            print(f"❌ Failed to load {voice_name}: {e}")
-                    else:
-                        _lazy_voice_paths[voice_name.lower()] = (ckpt, cfg)
-                        print(f"📋 Registered lazy voice: {voice_name} (will load on first use)")
+                    try:
+                        from ds_onnx_engine import DiffSingerONNXEngine
+                        engine = DiffSingerONNXEngine(voice_path, language='en')
+                        if engine.is_ready:
+                            _ds_engines[voice_name.lower()] = engine
+                            print(f"✅ DiffSinger ONNX Engine ({voice_name}) loaded successfully (Eagerly into GPU)!")
+                            DS_ENGINE_OK = True
+                    except Exception as e:
+                        print(f"❌ Failed to load {voice_name}: {e}")
                 else:
                     try:
                         from ds_engine import DiffSingerEngine
