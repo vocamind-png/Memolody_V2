@@ -2517,6 +2517,7 @@ import subprocess
 import shutil
 
 @app.post("/vocalido/api/youtube/download")
+@app.post("/api/youtube/download")
 async def download_youtube(payload: dict = Body(...)):
     url = payload.get("url")
     quality = payload.get("quality", "auto")
@@ -2573,6 +2574,7 @@ async def download_youtube(payload: dict = Body(...)):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.post("/vocalido/api/ai/separate-stems")
+@app.post("/api/ai/separate-stems")
 async def separate_stems(payload: dict = Body(...)):
     file_url = payload.get("file_url")
     stems = payload.get("stems", 2)
