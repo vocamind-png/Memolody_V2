@@ -86,9 +86,17 @@ class DiffSingerONNXEngineCore:
         print(f"[ONNXEngine] Loading vocoder: {self.vocoder_path}")
         try:
             providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+            import onnxruntime as ort
             sess_options = ort.SessionOptions()
             sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            # Add multithreading optimization in case of CPU fallback, but primarily for CPU ops
+            sess_options.intra_op_num_threads = 4
+            sess_options.inter_op_num_threads = 4
+            
             self.sess_acoustic = ort.InferenceSession(self.acoustic_path, sess_options=sess_options, providers=providers)
+            actual_providers = self.sess_acoustic.get_providers()
+            print(f"[ONNXEngine] Acoustic initialized with providers: {actual_providers}")
+            
             self.sess_vocoder = ort.InferenceSession(self.vocoder_path, sess_options=sess_options, providers=providers)
             
             # Look for other ONNX models (linguistic, dur, pitch)
@@ -949,7 +957,21 @@ def _onnx_worker(model_dir, language, track_notes, params, result_queue):
         # so ONNX Runtime can find them and avoid falling back to CPU.
         try:
             import torch
-        except ImportError:
+            import os
+            import ctypes
+            import glob
+            # Force load critical CUDA libraries directly into the global symbol table
+            torch_dir = os.path.dirname(torch.__file__)
+            site_packages = os.path.dirname(torch_dir)
+            nvidia_dir = os.path.join(site_packages, 'nvidia')
+            if os.path.exists(nvidia_dir):
+                for so_file in ['libcublasLt.so.11', 'libcublas.so.11', 'libcudnn.so.8']:
+                    for lib_path in glob.glob(os.path.join(nvidia_dir, '*', 'lib', so_file)):
+                        try:
+                            ctypes.CDLL(lib_path, mode=ctypes.RTLD_GLOBAL)
+                        except Exception:
+                            pass
+        except Exception:
             pass
 
         # Instantiate the actual engine, loading ONNX into VRAM
