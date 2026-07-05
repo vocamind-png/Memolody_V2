@@ -43,19 +43,20 @@ async def download_youtube(payload: dict = Body(...)):
     
     output_dir = "renders"
     
+    # Find cookies file
+    cookies_path = os.path.join(os.path.dirname(__file__), "cookies.txt")
+    
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': f'{output_dir}/%(id)s.%(ext)s',
         'quiet': True,
         'no_warnings': True,
-        # Bypass bot detection
-        'extractor_args': {'youtube': {
-            'player_client': ['ios', 'web_creator'],
-        }},
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-        },
     }
+    
+    # Use cookies if available (required on cloud servers)
+    if os.path.exists(cookies_path):
+        ydl_opts['cookiefile'] = cookies_path
+        print(f"[YT] Using cookies from {cookies_path}")
     
     ext = "wav"
     postprocessor_args = []
