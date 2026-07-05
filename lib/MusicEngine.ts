@@ -42,6 +42,7 @@ export class MusicEngine {
   private metronomeLoop: Tone.Loop | null = null;
   private clickMetronomeEnabled = false;
   private metronomeClickSynth: Tone.MembraneSynth | null = null;
+  private _countInEventId: number | null = null;
   private vocalLoopId: number | null = null;
 
   // ── Audio Region (DAW) & Recording State ──
@@ -1539,6 +1540,7 @@ export class MusicEngine {
 
   public updateVocalPlaybackState(time?: number) {
     const isTransportStarted = Tone.Transport.state === 'started';
+    const isPlayingMusic = isTransportStarted && !this.isCountingIn;
 
     // HTMLAudioElement main mix — play/pause sync
     this.vocalAudioElements.forEach((audio, trackId) => {
@@ -1546,12 +1548,12 @@ export class MusicEngine {
       audio.preservesPitch = true;
       audio.playbackRate = this.getVocalPlaybackRate(audio, trackId);
 
-      if (isTransportStarted && audio.paused) {
+      if (isPlayingMusic && audio.paused) {
         const rate = this.getVocalPlaybackRate(audio, trackId);
         const songTime = Tone.Transport.seconds - this.countInDuration;
         try { audio.currentTime = Math.max(0, songTime * rate); } catch (e) {}
         audio.play().catch(e => console.warn('[MusicEngine] main play failed:', e));
-      } else if (!isTransportStarted && !audio.paused) {
+      } else if (!isPlayingMusic && !audio.paused) {
         audio.pause();
       }
     });
@@ -1562,12 +1564,12 @@ export class MusicEngine {
         audio.preservesPitch = true;
         audio.playbackRate = this.getVocalPlaybackRate(audio, trackId);
 
-        if (isTransportStarted && audio.paused) {
+        if (isPlayingMusic && audio.paused) {
           const rate = this.getVocalPlaybackRate(audio, trackId);
           const songTime = Tone.Transport.seconds - this.countInDuration;
           try { audio.currentTime = Math.max(0, songTime * rate); } catch (e) {}
           audio.play().catch(e => console.warn(`[MusicEngine] stem ${i} play failed:`, e));
-        } else if (!isTransportStarted && !audio.paused) {
+        } else if (!isPlayingMusic && !audio.paused) {
           audio.pause();
         }
       });
@@ -1590,9 +1592,20 @@ export class MusicEngine {
     return Math.pow(10, db / 20);
   }
 
-  get transportSeconds() { return Math.max(0, Tone.Transport.seconds - this.countInDuration); }
+  get isCountingIn() {
+    if (Tone.Transport.state !== 'started') return false;
+    return Tone.Transport.seconds < (this.baseStartTime + this.countInDuration - 0.001);
+  }
+
+  get transportSeconds() { 
+    if (this.isCountingIn) return this.baseStartTime;
+    return Math.max(0, Tone.Transport.seconds - this.countInDuration); 
+  }
 
   get transportMusicalTime() {
+    if (this.isCountingIn) {
+      return Math.max(0, Tone.Time(this.baseStartTime).toTicks() / Tone.Transport.PPQ);
+    }
     return Math.max(0, Tone.Transport.ticks - this.countInTicks) / Tone.Transport.PPQ;
   }
 
@@ -1801,15 +1814,28 @@ export class MusicEngine {
     
     const runStart = () => {
       if (Tone.Transport.state !== 'started') {
+        let didRewindForCountIn = false;
+        if (this.clickMetronomeEnabled && this.countInDuration > 0) {
+           didRewindForCountIn = true;
+           Tone.Transport.seconds = this.baseStartTime;
+        }
+
         const songOffset = Math.max(0, Tone.Transport.seconds - this.countInDuration);
         console.log("[MusicEngine] starting Tone.Transport, songOffset=", songOffset);
         
-        // HTMLAudioElements are now elegantly handled by updateTrackStates called below
-        // This prevents iOS Safari restrictions by ensuring ONLY the active layer receives a .play() call
-
         // Start Tone.Transport immediately
         Tone.Transport.start();
         console.log("[MusicEngine] Tone.Transport started!");
+
+        if (didRewindForCountIn) {
+            if (this._countInEventId !== null) Tone.Transport.clear(this._countInEventId);
+            this._countInEventId = Tone.Transport.scheduleOnce((time) => {
+                Tone.Draw.schedule(() => {
+                    this.updateVocalPlaybackState(Tone.now());
+                    this.updateTrackStates(this.tracks);
+                }, time);
+            }, this.baseStartTime + this.countInDuration);
+        }
 
         // Start unsynced vocal players (stems)
         this.updateVocalPlaybackState(Tone.now());
