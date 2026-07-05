@@ -916,6 +916,9 @@ export class MusicEngine {
             this.vocalBlobUrls.set(`${trackId}:${Date.now()}`, finalUrl);
           }
 
+          audio.onloadedmetadata = () => done(audio);
+          audio.onloadeddata = () => done(audio);
+          audio.oncanplay = () => done(audio);
           audio.oncanplaythrough = () => done(audio);
           audio.onerror = () => done(audio);
           audio.load();

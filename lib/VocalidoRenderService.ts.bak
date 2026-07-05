@@ -1094,7 +1094,7 @@ class VocalidoRenderService {
           // ── CONCURRENCY MANAGER (Future-proof for Multi-GPU) ──
           // Adjust this value when upgrading server hardware to multiple GPUs
           // or larger VRAM capacity that supports parallel DiffSinger inference.
-          const MAX_CONCURRENT_VOICES = 8;
+          const MAX_CONCURRENT_VOICES = 1;
 
           console.log(`[VocalidoRenderService] 🎶 Server render: ${voiceLines.length} voices (Concurrency limit: ${MAX_CONCURRENT_VOICES})`);
 
