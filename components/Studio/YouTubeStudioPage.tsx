@@ -1,10 +1,10 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { Youtube, Download, Loader2, Music, Scissors, Play, X, FileAudio, ChevronDown, ChevronUp, AlertCircle } from 'lucide-react';
+import { Youtube, Download, Loader2, Music, Scissors, Play, X, FileAudio, ChevronDown, ChevronUp, AlertCircle, Upload, Link2 } from 'lucide-react';
 
 interface DownloadedSong {
   id: string;
   title: string;
-  url: string;        // server path e.g. /vocalido/audio/xxxxx.wav
+  url: string;        // server path e.g. /vocalido/audio/xxxxx.wav or blob URL
   filename: string;
   duration: number;    // seconds
   sampleRate: number;
@@ -14,6 +14,7 @@ interface DownloadedSong {
   stems?: { [key: string]: { url: string; title: string } };
   isSeparating?: boolean;
   separateError?: string;
+  isLocal?: boolean;   // true if uploaded from disk (not from server)
 }
 
 interface YouTubeStudioPageProps {
@@ -38,28 +39,19 @@ const YouTubeStudioPage: React.FC<YouTubeStudioPageProps> = ({ onOpenInPlayer })
   const [progress, setProgress] = useState('');
   const [songs, setSongs] = useState<DownloadedSong[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [disclaimerAccepted, setDisclaimerAccepted] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
   const audioCtxRef = useRef<AudioContext | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // ── Analyze audio file to extract metadata ──
-  const analyzeAudio = useCallback(async (url: string, fileUrl: string): Promise<Partial<DownloadedSong>> => {
+  const analyzeAudio = useCallback(async (audioData: ArrayBuffer): Promise<Partial<DownloadedSong>> => {
     try {
-      // Get file size via HEAD request
-      let fileSize = 0;
-      try {
-        const headRes = await fetch(fileUrl, { method: 'HEAD' });
-        const cl = headRes.headers.get('content-length');
-        if (cl) fileSize = parseInt(cl, 10);
-      } catch { /* ignore */ }
-
-      // Decode audio for metadata
       if (!audioCtxRef.current) {
         audioCtxRef.current = new AudioContext();
       }
-      const response = await fetch(fileUrl);
-      const arrayBuffer = await response.arrayBuffer();
-      if (!fileSize) fileSize = arrayBuffer.byteLength;
-
-      const audioBuffer = await audioCtxRef.current.decodeAudioData(arrayBuffer);
+      const fileSize = audioData.byteLength;
+      const audioBuffer = await audioCtxRef.current.decodeAudioData(audioData.slice(0));
       const duration = audioBuffer.duration;
       const sampleRate = audioBuffer.sampleRate;
       const channels = audioBuffer.numberOfChannels;
@@ -75,7 +67,49 @@ const YouTubeStudioPage: React.FC<YouTubeStudioPageProps> = ({ onOpenInPlayer })
     }
   }, []);
 
-  // ── Batch download ──
+  // ── Handle file upload ──
+  const handleFileUpload = useCallback(async (files: FileList | File[]) => {
+    const audioFiles = Array.from(files).filter(f => 
+      f.type.startsWith('audio/') || 
+      /\.(wav|mp3|flac|ogg|m4a|aac|wma)$/i.test(f.name)
+    );
+    if (audioFiles.length === 0) return;
+
+    for (const file of audioFiles) {
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        const meta = await analyzeAudio(arrayBuffer);
+        const blobUrl = URL.createObjectURL(file);
+        
+        const song: DownloadedSong = {
+          id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          title: file.name.replace(/\.[^.]+$/, ''),
+          url: blobUrl,
+          filename: file.name,
+          duration: meta.duration || 0,
+          sampleRate: meta.sampleRate || 44100,
+          channels: meta.channels || 2,
+          fileSize: meta.fileSize || file.size,
+          bitDepth: meta.bitDepth || 16,
+          isLocal: true,
+        };
+        setSongs(prev => [...prev, song]);
+
+        // Dispatch event for other components
+        window.dispatchEvent(new CustomEvent('youtube_downloaded', {
+          detail: { url: blobUrl, title: song.title, filename: file.name }
+        }));
+      } catch (e) {
+        console.error(`Failed to process ${file.name}:`, e);
+      }
+    }
+
+    if (typeof window !== 'undefined' && (window as any).showToast) {
+      (window as any).showToast(`✅ Loaded ${audioFiles.length} file(s)`, '#10B981');
+    }
+  }, [analyzeAudio]);
+
+  // ── YouTube download via server ──
   const handleDownload = async () => {
     if (!ytInput.trim()) return;
     const rawLines = ytInput.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
@@ -95,18 +129,24 @@ const YouTubeStudioPage: React.FC<YouTubeStudioPageProps> = ({ onOpenInPlayer })
           body: JSON.stringify({ url, quality: 'auto' })
         });
         const data = await res.json();
+        if (data.error) {
+          throw new Error(data.error);
+        }
         if (data.url) {
-          // Analyze audio metadata
-          const meta = await analyzeAudio(data.url, data.url);
+          // Fetch audio data for analysis
+          const audioRes = await fetch(data.url);
+          const audioData = await audioRes.arrayBuffer();
+          const meta = await analyzeAudio(audioData);
+
           const song: DownloadedSong = {
             id: `yt-${Date.now()}-${i}`,
             title: data.title || 'Unknown',
             url: data.url,
             filename: data.filename,
-            duration: meta.duration || 0,
+            duration: meta.duration || data.duration || 0,
             sampleRate: meta.sampleRate || 44100,
             channels: meta.channels || 2,
-            fileSize: meta.fileSize || 0,
+            fileSize: meta.fileSize || data.fileSize || 0,
             bitDepth: meta.bitDepth || 16,
           };
           setSongs(prev => [...prev, song]);
@@ -116,10 +156,10 @@ const YouTubeStudioPage: React.FC<YouTubeStudioPageProps> = ({ onOpenInPlayer })
             detail: { url: data.url, title: data.title, filename: data.filename }
           }));
         }
-      } catch (e) {
+      } catch (e: any) {
         console.error(`Failed: ${url}`, e);
         if (typeof window !== 'undefined' && (window as any).showToast) {
-          (window as any).showToast(`❌ ${i+1}/${total}: Failed`, '#EF4444');
+          (window as any).showToast(`❌ ${i+1}/${total}: ${e.message || 'Failed'}`, '#EF4444');
         }
       }
     }
@@ -139,10 +179,28 @@ const YouTubeStudioPage: React.FC<YouTubeStudioPageProps> = ({ onOpenInPlayer })
     if (!song) return;
 
     try {
+      let fileUrl = song.url;
+
+      // If local file, upload to server first
+      if (song.isLocal) {
+        const blobRes = await fetch(song.url);
+        const blob = await blobRes.blob();
+        const formData = new FormData();
+        formData.append('file', blob, song.filename);
+        
+        const uploadRes = await fetch('/vocalido/api/upload-audio', {
+          method: 'POST',
+          body: formData,
+        });
+        const uploadData = await uploadRes.json();
+        if (uploadData.error) throw new Error(uploadData.error);
+        fileUrl = uploadData.url || song.url;
+      }
+
       const res = await fetch('/vocalido/api/ai/separate-stems', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ file_url: song.url, stems: stemCount })
+        body: JSON.stringify({ file_url: fileUrl, stems: stemCount })
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
@@ -194,10 +252,109 @@ const YouTubeStudioPage: React.FC<YouTubeStudioPageProps> = ({ onOpenInPlayer })
     setSongs(prev => prev.filter(s => s.id !== id));
   };
 
+  // ── Drag & drop handlers ──
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    if (e.dataTransfer.files.length > 0) {
+      handleFileUpload(e.dataTransfer.files);
+    }
+  };
+
   const linkCount = ytInput.trim() ? ytInput.split(/[\n,]+/).map(s => s.trim()).filter(Boolean).length : 0;
 
   return (
-    <div className="absolute inset-0 flex flex-col bg-[#050507] overflow-hidden">
+    <div 
+      className="absolute inset-0 flex flex-col bg-[#050507] overflow-hidden"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+
+      {/* ── Copyright Disclaimer Modal ── */}
+      {!disclaimerAccepted && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-6">
+          <div className="max-w-lg w-full bg-[#0c0c10] border border-amber-500/20 rounded-2xl p-8 shadow-2xl">
+            <div className="flex items-center gap-3 mb-5">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center">
+                <AlertCircle size={20} className="text-amber-400" />
+              </div>
+              <h3 className="text-base font-black text-white uppercase tracking-wider">ข้อกำหนดและเงื่อนไขการใช้งาน</h3>
+            </div>
+
+            <div className="space-y-3 text-[11px] text-zinc-400 leading-relaxed mb-6 max-h-[50vh] overflow-y-auto pr-2">
+              <p className="text-zinc-300 font-semibold">
+                กรุณาอ่านและยอมรับเงื่อนไขก่อนใช้งานบริการดาวน์โหลดและวิเคราะห์เสียง
+              </p>
+
+              <div className="space-y-2 border-l-2 border-amber-500/30 pl-3">
+                <p>
+                  <strong className="text-amber-400">1. วัตถุประสงค์เพื่อการศึกษา:</strong>{' '}
+                  บริการนี้จัดทำขึ้นเพื่อวัตถุประสงค์ทางการศึกษา การวิเคราะห์ทางดนตรี 
+                  และการเรียนรู้ด้านการผลิตเสียงเท่านั้น (Educational & Research Purposes Only)
+                </p>
+                <p>
+                  <strong className="text-amber-400">2. ความรับผิดชอบด้านลิขสิทธิ์:</strong>{' '}
+                  เนื้อหาทั้งหมดที่นำเข้าผ่านบริการนี้อยู่ภายใต้ความคุ้มครองลิขสิทธิ์ของเจ้าของผลงานต้นฉบับ 
+                  ผู้ใช้เป็นผู้รับผิดชอบแต่เพียงผู้เดียวในการตรวจสอบและปฏิบัติตามกฎหมายลิขสิทธิ์ที่เกี่ยวข้อง
+                </p>
+                <p>
+                  <strong className="text-amber-400">3. ข้อห้ามการนำไปเผยแพร่:</strong>{' '}
+                  ห้ามนำเนื้อหาที่ได้จากบริการนี้ไปใช้ในเชิงพาณิชย์ เผยแพร่ซ้ำ หรือแจกจ่ายโดยไม่ได้รับอนุญาต
+                  จากเจ้าของลิขสิทธิ์ การกระทำดังกล่าวถือเป็นการละเมิดลิขสิทธิ์ตาม พ.ร.บ. ลิขสิทธิ์ พ.ศ. 2537
+                </p>
+                <p>
+                  <strong className="text-amber-400">4. ข้อจำกัดความรับผิด:</strong>{' '}
+                  Memolody เป็นเพียงผู้ให้บริการเครื่องมือทางเทคนิคเพื่อการศึกษา 
+                  ไม่มีส่วนเกี่ยวข้องและไม่รับผิดชอบต่อการนำเนื้อหาไปใช้ในทางที่ผิดกฎหมายหรือละเมิดสิทธิ์ของผู้อื่น 
+                  ความรับผิดชอบทั้งหมดตกอยู่กับผู้ใช้งาน
+                </p>
+                <p>
+                  <strong className="text-amber-400">5. การยินยอม:</strong>{' '}
+                  การกดปุ่ม &quot;ยอมรับ&quot; ถือว่าท่านได้อ่าน เข้าใจ และยินยอมปฏิบัติตามเงื่อนไขทั้งหมดข้างต้น
+                </p>
+              </div>
+
+              <p className="text-[10px] text-zinc-600 italic mt-4">
+                This service is provided solely for educational and music analysis purposes. 
+                All content remains the intellectual property of its original copyright holders. 
+                Users assume full legal responsibility for any use of the materials.
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setDisclaimerAccepted(true)}
+                className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest bg-amber-500/15 text-amber-400 border border-amber-500/30 hover:bg-amber-500/30 transition-all"
+              >
+                ✅ ยอมรับเงื่อนไข
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Drag overlay ── */}
+      {isDragging && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/70 backdrop-blur-sm border-4 border-dashed border-emerald-500/50 rounded-2xl m-2 pointer-events-none">
+          <div className="flex flex-col items-center gap-3">
+            <Upload size={48} className="text-emerald-400 animate-bounce" />
+            <p className="text-lg font-black text-emerald-400 uppercase tracking-widest">Drop audio files here</p>
+            <p className="text-xs text-zinc-400">WAV, MP3, FLAC, OGG, M4A</p>
+          </div>
+        </div>
+      )}
 
       {/* ── Header ── */}
       <div className="shrink-0 px-6 pt-5 pb-4 border-b border-white/5">
@@ -206,8 +363,8 @@ const YouTubeStudioPage: React.FC<YouTubeStudioPageProps> = ({ onOpenInPlayer })
             <Youtube size={18} className="text-red-500" />
           </div>
           <div>
-            <h2 className="text-sm font-black text-white uppercase tracking-widest">YouTube Downloader</h2>
-            <p className="text-[10px] text-zinc-500">Download, analyze & separate stems</p>
+            <h2 className="text-sm font-black text-white uppercase tracking-widest">Audio Studio</h2>
+            <p className="text-[10px] text-zinc-500">Upload files or paste YouTube links • Analyze & separate stems</p>
           </div>
           {songs.length > 0 && (
             <div className="ml-auto flex items-center gap-2">
@@ -222,16 +379,43 @@ const YouTubeStudioPage: React.FC<YouTubeStudioPageProps> = ({ onOpenInPlayer })
           )}
         </div>
 
-        {/* ── Input Area ── */}
+        {/* ── Input Area: Upload + YouTube ── */}
         <div className="flex gap-3">
-          <textarea
-            value={ytInput}
-            onChange={e => setYtInput(e.target.value)}
-            placeholder={"Paste YouTube links or song names (one per line)...\nhttps://www.youtube.com/watch?v=...\nHello - Adele"}
-            rows={3}
-            disabled={isDownloading}
-            className="flex-1 bg-black/60 border border-white/10 rounded-xl p-3 text-xs text-white font-mono placeholder-zinc-700 outline-none resize-none focus:border-red-500/30 transition-colors disabled:opacity-50"
+          {/* Upload button */}
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="shrink-0 w-24 h-[86px] rounded-xl border-2 border-dashed border-white/10 bg-white/[0.02] hover:border-emerald-500/40 hover:bg-emerald-500/5 transition-all flex flex-col items-center justify-center gap-1.5 group"
+          >
+            <Upload size={20} className="text-zinc-600 group-hover:text-emerald-400 transition-colors" />
+            <span className="text-[8px] font-bold text-zinc-600 group-hover:text-emerald-400 uppercase tracking-widest transition-colors">Upload</span>
+            <span className="text-[7px] text-zinc-700">WAV, MP3...</span>
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="audio/*,.wav,.mp3,.flac,.ogg,.m4a,.aac"
+            multiple
+            className="hidden"
+            onChange={e => e.target.files && handleFileUpload(e.target.files)}
           />
+
+          {/* YouTube URL input */}
+          <div className="flex-1 flex flex-col gap-1">
+            <div className="flex items-center gap-1.5 px-1">
+              <Link2 size={10} className="text-zinc-600" />
+              <span className="text-[8px] font-bold text-zinc-600 uppercase tracking-widest">YouTube Links</span>
+            </div>
+            <textarea
+              value={ytInput}
+              onChange={e => setYtInput(e.target.value)}
+              placeholder={"Paste YouTube links (one per line)...\nhttps://www.youtube.com/watch?v=..."}
+              rows={3}
+              disabled={isDownloading}
+              className="flex-1 bg-black/60 border border-white/10 rounded-xl p-3 text-xs text-white font-mono placeholder-zinc-700 outline-none resize-none focus:border-red-500/30 transition-colors disabled:opacity-50"
+            />
+          </div>
+
+          {/* Download button */}
           <div className="flex flex-col gap-2 shrink-0">
             <button
               onClick={handleDownload}
@@ -263,7 +447,10 @@ const YouTubeStudioPage: React.FC<YouTubeStudioPageProps> = ({ onOpenInPlayer })
           <div className="flex flex-col items-center justify-center h-full gap-4 opacity-30">
             <FileAudio size={48} className="text-zinc-600" />
             <p className="text-sm font-bold text-zinc-600 uppercase tracking-widest">No songs yet</p>
-            <p className="text-[10px] text-zinc-700">Paste YouTube links above and hit Download</p>
+            <p className="text-[10px] text-zinc-700 text-center leading-relaxed">
+              Drag & drop audio files here, click Upload,<br/>
+              or paste YouTube links above
+            </p>
           </div>
         )}
 
@@ -281,11 +468,21 @@ const YouTubeStudioPage: React.FC<YouTubeStudioPageProps> = ({ onOpenInPlayer })
               {/* ── Main Row ── */}
               <div className="flex items-center gap-4 px-5 py-3.5 cursor-pointer" onClick={() => setExpandedId(isExpanded ? null : song.id)}>
                 <span className="text-[11px] font-black text-zinc-600 w-6 text-right shrink-0">{index + 1}</span>
-                <Music size={14} className="text-red-400 shrink-0" />
+                {song.isLocal ? (
+                  <Upload size={14} className="text-emerald-400 shrink-0" />
+                ) : (
+                  <Music size={14} className="text-red-400 shrink-0" />
+                )}
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-bold text-zinc-200 truncate">{song.title}</p>
                   <div className="flex items-center gap-2 mt-0.5">
-                    <span className="text-[9px] font-bold text-red-400/70 bg-red-500/10 px-1.5 py-0.5 rounded">WAV</span>
+                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                      song.isLocal 
+                        ? 'text-emerald-400/70 bg-emerald-500/10' 
+                        : 'text-red-400/70 bg-red-500/10'
+                    }`}>
+                      {song.filename.split('.').pop()?.toUpperCase() || 'WAV'}
+                    </span>
                     <span className="text-[9px] text-zinc-500">{song.sampleRate.toLocaleString()} Hz</span>
                     <span className="text-[9px] text-zinc-600">•</span>
                     <span className="text-[9px] text-zinc-500">{song.bitDepth}-bit</span>
