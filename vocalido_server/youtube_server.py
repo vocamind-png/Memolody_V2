@@ -43,8 +43,16 @@ async def download_youtube(payload: dict = Body(...)):
     
     output_dir = "renders"
     
-    # Find cookies file
-    cookies_path = os.path.join(os.path.dirname(__file__), "cookies.txt")
+    # Find cookies file (try multiple locations)
+    cookies_path = None
+    for p in [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies.txt"),
+        "/workspace/vocalido_server/cookies.txt",
+        os.path.join(os.getcwd(), "cookies.txt"),
+    ]:
+        if os.path.exists(p):
+            cookies_path = p
+            break
     
     ydl_opts = {
         'format': 'bestaudio/best',
@@ -54,9 +62,11 @@ async def download_youtube(payload: dict = Body(...)):
     }
     
     # Use cookies if available (required on cloud servers)
-    if os.path.exists(cookies_path):
+    if cookies_path:
         ydl_opts['cookiefile'] = cookies_path
         print(f"[YT] Using cookies from {cookies_path}")
+    else:
+        print("[YT] WARNING: No cookies.txt found! YouTube may block downloads.")
     
     ext = "wav"
     postprocessor_args = []
