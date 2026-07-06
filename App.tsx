@@ -158,16 +158,19 @@ const App: React.FC = () => {
   const [uiTheme, setUiTheme] = useState<'v1' | 'v2'>(() => (localStorage.getItem('memo_ui_theme') as 'v1' | 'v2') || 'v2');
   const [nimoPosition, setNimoPosition] = useState<'left' | 'right'>(() => (localStorage.getItem('nimo_position') as 'left' | 'right') || 'left');
   const [layoutMode, setLayoutMode] = useState<'compact' | 'full'>(() => {
-    const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 1024;
-    const autoUpgraded = typeof window !== 'undefined' ? localStorage.getItem('memo_layout_auto_upgraded') : null;
-    let saved = typeof window !== 'undefined' ? (localStorage.getItem('memo_layout_mode') as 'compact' | 'full') : null;
+    if (typeof window === 'undefined') return 'compact';
+    const isDesktop = window.innerWidth >= 1024;
+    if (!isDesktop) return 'compact'; // Force compact on mobile devices regardless of saved settings
+    
+    const autoUpgraded = localStorage.getItem('memo_layout_auto_upgraded');
+    let saved = localStorage.getItem('memo_layout_mode') as 'compact' | 'full' | null;
 
     if (isDesktop && !autoUpgraded) {
       saved = 'full';
-      if (typeof window !== 'undefined') localStorage.setItem('memo_layout_auto_upgraded', 'true');
+      localStorage.setItem('memo_layout_auto_upgraded', 'true');
     }
     
-    return saved || (isDesktop ? 'full' : 'compact');
+    return saved || 'full';
   });
   const [studioInitialMode, setStudioInitialMode] = useState<'composer' | 'arranger' | 'editor' | 'youtube' | 'pianoroll'>('arranger');
   const [loopPresets, setLoopPresets] = useState<LoopPreset[]>(INITIAL_LOOP_PRESETS);
@@ -238,6 +241,18 @@ const App: React.FC = () => {
       root.classList.add(`layout-${layoutMode}`);
     }
     localStorage.setItem('memo_layout_mode', layoutMode);
+  }, [layoutMode]);
+
+  // Listen for window resize to dynamically force compact mode on mobile screens
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth < 1024 && layoutMode !== 'compact') {
+        setLayoutMode('compact');
+      }
+    };
+    window.addEventListener('resize', handleResize);
+    handleResize(); // Run on mount/state update
+    return () => window.removeEventListener('resize', handleResize);
   }, [layoutMode]);
 
   // Save currentView to localStorage on change and sync with History API
