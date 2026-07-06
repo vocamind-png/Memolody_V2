@@ -169,7 +169,7 @@ const App: React.FC = () => {
     
     return saved || (isDesktop ? 'full' : 'compact');
   });
-  const [studioInitialMode, setStudioInitialMode] = useState<'composer' | 'arranger' | 'editor'>('arranger');
+  const [studioInitialMode, setStudioInitialMode] = useState<'composer' | 'arranger' | 'editor' | 'youtube' | 'pianoroll'>('arranger');
   const [loopPresets, setLoopPresets] = useState<LoopPreset[]>(INITIAL_LOOP_PRESETS);
   const [pendingImportFile, setPendingImportFile] = useState<File | null>(null);
   const [autoPlayOnLoad, setAutoPlayOnLoad] = useState(false); // true after OMR import → Player auto-starts
@@ -240,12 +240,37 @@ const App: React.FC = () => {
     localStorage.setItem('memo_layout_mode', layoutMode);
   }, [layoutMode]);
 
-  // Save currentView to localStorage on change
+  // Save currentView to localStorage on change and sync with History API
   useEffect(() => {
     try {
       localStorage.setItem('memo_current_view', currentView);
     } catch (e) {}
+    
+    // Support Android Back Button: Push state to browser history when view changes
+    if (window.history.state?.view !== currentView) {
+      window.history.pushState({ view: currentView }, '');
+    }
   }, [currentView]);
+
+  // Handle system Back button (popstate)
+  useEffect(() => {
+    // Set initial state for history API if none exists
+    if (!window.history.state) {
+      window.history.replaceState({ view: 'home' }, '');
+    }
+    
+    const handlePopState = (event: PopStateEvent) => {
+      const stateView = event.state?.view;
+      if (stateView) {
+        setCurrentView(stateView as ViewId);
+      } else {
+        setCurrentView('home');
+      }
+    };
+    
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   // Save selectedSong ID to localStorage on change
   useEffect(() => {
@@ -1066,6 +1091,100 @@ const App: React.FC = () => {
       category: 'system'
     });
 
+    const unregYoutubeSeparate = nimoBrain.registerAction('youtube_separate_stems', async (params) => {
+      if (!params || !params.file_url) return;
+      const stems = params.stems || 4;
+      try {
+        if (typeof window !== 'undefined' && (window as any).showToast) {
+          (window as any).showToast(`🎵 Separating stems (${stems}-track)...`, '#8B5CF6');
+        }
+        const res = await fetch('/vocalido/api/ai/separate-stems', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file_url: params.file_url, stems })
+        });
+        const data = await res.json();
+        if (data.stems) {
+          window.dispatchEvent(new CustomEvent('youtube_stems_ready', { detail: { file_url: params.file_url, stems: data.stems } }));
+          if (typeof window !== 'undefined' && (window as any).showToast) {
+            (window as any).showToast(`✅ Stem separation complete! ${Object.keys(data.stems).length} tracks.`, '#10B981');
+          }
+        }
+      } catch (e: any) {
+        console.error('Nimo stem separation failed:', e);
+        if (typeof window !== 'undefined' && (window as any).showToast) {
+          (window as any).showToast(`❌ Stem separation failed: ${e.message}`, '#EF4444');
+        }
+      }
+    }, {
+      th: 'แยกแทร็คเครื่องดนตรี (Stem Separation)',
+      en: 'Separate audio into instrument stems',
+      params: '{ file_url: string, stems: 2|4|6 }',
+      category: 'audio'
+    });
+
+    const unregYoutubeTranscribe = nimoBrain.registerAction('youtube_transcribe_stem', async (params) => {
+      if (!params || !params.stem_url) return;
+      try {
+        if (typeof window !== 'undefined' && (window as any).showToast) {
+          (window as any).showToast(`🎼 Transcribing to sheet music...`, '#6366F1');
+        }
+        const { transcribeAudioToMusicXML } = await import('./lib/browserTranscribe');
+        const musicxml = await transcribeAudioToMusicXML(params.stem_url);
+        if (!musicxml) throw new Error('Transcription failed');
+
+        // Note: For Nimo actions, we might need a way to pass the song title or just use a default
+        const newSongTitle = `Transcribed Stem (Score)`;
+        const newSong = {
+          id: `song_${Date.now()}`,
+          title: newSongTitle,
+          source: 'verovio',
+          version: 3,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          bpm: 120,
+          isPublic: false,
+        };
+        await songStorage.saveSong(newSong as any, musicxml);
+
+        if (typeof window !== 'undefined' && (window as any).showToast) {
+          (window as any).showToast(`✅ Transcription complete! Saved to Vault.`, '#10B981');
+        }
+      } catch (e: any) {
+        console.error('Nimo transcription failed:', e);
+        if (typeof window !== 'undefined' && (window as any).showToast) {
+          (window as any).showToast(`❌ Transcription failed: ${e.message}`, '#EF4444');
+        }
+      }
+    }, {
+      th: 'แปลงเสียงเป็นโน้ตดนตรี (Transcribe)',
+      en: 'Transcribe audio stem to sheet music (MusicXML)',
+      params: '{ stem_url: string }',
+      category: 'audio'
+    });
+
+    const unregYoutubePlay = nimoBrain.registerAction('youtube_play_audio', async (params) => {
+      if (!params || !params.url) return;
+      window.dispatchEvent(new CustomEvent('youtube_play_request', { detail: { url: params.url } }));
+      if (typeof window !== 'undefined' && (window as any).showToast) {
+        (window as any).showToast(`▶ Playing audio...`, '#06B6D4');
+      }
+    }, {
+      th: 'เล่นเสียงจาก Audio Studio',
+      en: 'Play audio from Audio Studio',
+      params: '{ url: string }',
+      category: 'audio'
+    });
+
+    const unregYoutubeOpenStudio = nimoBrain.registerAction('open_audio_studio', () => {
+      navigateTo('forge');
+      setTimeout(() => setStudioInitialMode('youtube'), 100);
+    }, {
+      th: 'เปิดหน้า Audio Studio (YouTube)',
+      en: 'Open Audio Studio (YouTube) page',
+      category: 'navigation'
+    });
+
     const unregSyncCloud = nimoBrain.registerAction('sync_cloud', (params) => {
       console.log('[App] Nimo requested sync_cloud', params);
       triggerSync();
@@ -1093,6 +1212,10 @@ const App: React.FC = () => {
       unregSortSongs();
       unregImportFile();
       unregYoutubeBatch();
+      unregYoutubeSeparate();
+      unregYoutubeTranscribe();
+      unregYoutubePlay();
+      unregYoutubeOpenStudio();
       unregSyncCloud();
     };
   }, [navigateTo, handleSongSelect, triggerSync]);
