@@ -21,7 +21,7 @@ const AuthForm: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
       if (isSignUp) {
         const { error: signUpError } = await authActions.signUp(email, password);
         if (signUpError) throw signUpError;
-        alert("Account created successfully!");
+        alert("สมัครสมาชิกสำเร็จ! กรุณาตรวจสอบอีเมลของคุณ (รวมถึงกล่องจดหมายขยะ/Spam) เพื่อกดยืนยันตัวตนก่อนเข้าสู่ระบบครับ\\n\\nAccount created successfully! Please check your email to verify your account.");
         onComplete();
       } else {
         const { error: signInError } = await authActions.signIn(email, password);
