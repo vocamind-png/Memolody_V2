@@ -101,10 +101,12 @@ export const authActions = {
     return { user: data.user, error: null };
   },
   signUp: async (email: string, pass: string) => {
+    const redirectTo = typeof window !== 'undefined' ? window.location.origin : undefined;
     const { data, error } = await supabase.auth.signUp({
       email,
       password: pass,
       options: {
+        emailRedirectTo: redirectTo,
         data: {
           display_name: email.split('@')[0],
           full_name: email.split('@')[0]

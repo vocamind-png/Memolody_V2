@@ -203,10 +203,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [syncSession]);
 
   const signUp = useCallback(async (email: string, password: string, name: string) => {
+    const redirectTo = typeof window !== 'undefined' ? window.location.origin : undefined;
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
+        emailRedirectTo: redirectTo,
         data: {
           display_name: name,
           full_name: name
