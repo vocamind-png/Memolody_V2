@@ -4418,7 +4418,7 @@ const PlayerPage: React.FC<{
                   <Mic2 size={10} className="text-cyan-400" /> AI Voice Model
                 </span>
                 <span className="text-[8px] text-zinc-500">
-                  เลือกโมเดลเสียงร้อง AI สำหรับเพลงนี้ (เช่น Lotte V, Canary, Tiger)
+                  เลือกโมเดลเสียงร้อง AI สำหรับเพลงนี้ (เช่น AIdol Lotte V, Fish)
                 </span>
                 {voiceEngines.length === 0 ? (
                   <span className="text-[9px] text-zinc-400 italic">กำลังโหลดโมเดลเสียง...</span>

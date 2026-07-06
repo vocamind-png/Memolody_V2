@@ -87,15 +87,6 @@ async def startup_event():
                 engine_cache[model_root] = engine
                 print("[Startup] ✅ AIdol model successfully preloaded into GPU VRAM!")
         
-        # Preload Thai model
-        thai_model = os.path.join(os.path.dirname(__file__), 'checkpoints', 'tiger_v106')
-        if os.path.exists(thai_model):
-            print(f"[Startup] Preloading {thai_model}...")
-            engine = DiffSingerONNXEngine(thai_model, language='zh')
-            if getattr(engine, "is_ready", False):
-                engine_cache[thai_model] = engine
-                print("[Startup] ✅ Thai Tiger model successfully preloaded into GPU VRAM!")
-                
         print("[Startup] ✅ All available models successfully preloaded. Ready for instant rendering!")
     except Exception as e:
         print(f"[Startup] ❌ Preloading models failed: {e}")

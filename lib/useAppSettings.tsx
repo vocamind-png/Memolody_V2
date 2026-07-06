@@ -1,7 +1,7 @@
 // src/hooks/useAppSettings.ts
 import React, { createContext, useContext, useState, useEffect } from 'react';
 
-type EngineOption = 'core' | 'tiger' | 'fish';
+type EngineOption = 'core' | 'fish';
 
 interface SettingsContextProps {
   vocalEngine: EngineOption;
@@ -16,8 +16,10 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   // Persist selection in localStorage
   useEffect(() => {
     const stored = localStorage.getItem('vocal_engine');
-    if (stored && ['core', 'tiger', 'fish'].includes(stored)) {
+    if (stored && ['core', 'fish'].includes(stored)) {
       setVocalEngine(stored as EngineOption);
+    } else {
+      setVocalEngine('core');
     }
   }, []);
 
