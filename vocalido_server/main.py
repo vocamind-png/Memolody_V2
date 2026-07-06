@@ -65,7 +65,43 @@ RENDER_MAX_DISK_MB = 2000      # Max total render disk usage (2 GB)
 RENDER_MAX_PER_USER = 20       # Max renders per user (oldest auto-evicted)
 RENDER_CLEANUP_INTERVAL = 3600 # Cleanup runs every 1 hour (seconds)
 
+RENDER_CLEANUP_INTERVAL = 3600 # Cleanup runs every 1 hour (seconds)
+
+engine_cache = {}
+
 app = FastAPI(title="Vocalido SVS Engine", version="5.1.0")
+
+@app.on_event("startup")
+async def startup_event():
+    print("[Startup] Starting Vocalido Server...")
+    print("[Startup] Preloading models into GPU VRAM to ensure 24/7 instant rendering...")
+    try:
+        from ds_onnx_engine import DiffSingerONNXEngine
+        
+        # Preload English AIdol model
+        model_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'english_voicebanks', 'Lotte_V_AI_dol', 'Hoshino Hanami ~AIdol~ for DiffSinger v1.0', 'dsmain')
+        if os.path.exists(model_root):
+            print(f"[Startup] Preloading {model_root}...")
+            engine = DiffSingerONNXEngine(model_root, language='en')
+            if getattr(engine, "is_ready", False):
+                engine_cache[model_root] = engine
+                print("[Startup] ✅ AIdol model successfully preloaded into GPU VRAM!")
+        
+        # Preload Thai model
+        thai_model = os.path.join(os.path.dirname(__file__), 'checkpoints', 'tiger_v106')
+        if os.path.exists(thai_model):
+            print(f"[Startup] Preloading {thai_model}...")
+            engine = DiffSingerONNXEngine(thai_model, language='zh')
+            if getattr(engine, "is_ready", False):
+                engine_cache[thai_model] = engine
+                print("[Startup] ✅ Thai Tiger model successfully preloaded into GPU VRAM!")
+                
+        print("[Startup] ✅ All available models successfully preloaded. Ready for instant rendering!")
+    except Exception as e:
+        print(f"[Startup] ❌ Preloading models failed: {e}")
+        import traceback
+        traceback.print_exc()
+
 os.makedirs("renders", exist_ok=True)
 os.makedirs("voicebanks", exist_ok=True)
 app.mount("/audio", StaticFiles(directory="renders"), name="audio")
@@ -1310,12 +1346,16 @@ def _studio_preview_impl(req: StudioPreviewReq):
                 # For ONNX models, ckpt is .../dsmain/acoustic.onnx
                 # The engine needs the model root (parent of dsmain/)
                 model_root = os.path.dirname(os.path.dirname(ckpt))
-                engine = DiffSingerONNXEngine(model_root, language='en')
-                if engine.is_ready:
-                    _ds_engines[target_voice] = engine
-                    _target_engine = engine
-                    del _lazy_voice_paths[target_voice]
-                    print(f"[LazyLoad] ✅ Voice '{target_voice}' loaded successfully!")
+                global engine_cache
+                if model_root in engine_cache:
+                    _target_engine = engine_cache[model_root]
+                else:
+                    engine = DiffSingerONNXEngine(model_root, language='en')
+                    if engine.is_ready:
+                        engine_cache[model_root] = engine
+                        _target_engine = engine
+                        del _lazy_voice_paths[target_voice]
+                        print(f"[LazyLoad] ✅ Voice '{target_voice}' loaded successfully!")
             except Exception as e:
                 print(f"[LazyLoad] ❌ Failed to load '{target_voice}': {e}")
         elif _ds_engines:
@@ -1556,7 +1596,7 @@ async def studio_job_status(job_id: str):
     """Poll job status. Returns status + result when done."""
     job = _async_jobs.get(job_id)
     if not job:
-        return JSONResponse({"status": "not_found"}, status_code=404)
+        return JSONResponse({"status": "not_found"}, code=404)
     
     # Clean up old jobs (> 10 min)
     now = _time_module.time()
@@ -2289,6 +2329,48 @@ async def extract_stems_midi(request: Request):
         print(f"[Extract Stems Error] {e}")
         return JSONResponse({"success": False, "message": str(e)}, status_code=500)
 
+@app.post("/vocalido/api/ai/transcribe-stem")
+async def transcribe_stem(request: Request):
+    try:
+        from lyria_pipeline import audio_to_midi, midi_to_musicxml
+        import base64
+        data = await request.json()
+        stem_url = data.get("stem_url")
+        
+        if not stem_url:
+            return JSONResponse({"success": False, "message": "Missing stem_url"}, status_code=400)
+            
+        print(f"[API] Transcribing stem from URL: {stem_url}")
+        
+        # Determine local path from URL
+        local_path = None
+        if stem_url.startswith("/vocalido/audio/"):
+            local_path = os.path.join("renders", stem_url[len("/vocalido/audio/"):])
+        elif stem_url.startswith("/audio/"):
+            local_path = os.path.join("renders", stem_url[len("/audio/"):])
+        else:
+            # Maybe it's a full URL, in a real app we'd download it. 
+            # For this local server, we assume it's relative.
+            return JSONResponse({"success": False, "message": "Invalid stem_url format"}, status_code=400)
+            
+        if not os.path.exists(local_path):
+            return JSONResponse({"success": False, "message": f"File not found: {local_path}"}, status_code=404)
+            
+        midi_path = audio_to_midi(local_path)
+        xml_path = midi_to_musicxml(midi_path)
+        
+        with open(xml_path, "r", encoding="utf-8") as f_xml:
+            xml_data = f_xml.read()
+            
+        return JSONResponse({
+            "success": True,
+            "musicxml": xml_data
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"success": False, "message": str(e)}, status_code=500)
+
 @app.post("/vocalido/api/ai/extract-chords")
 async def extract_chords(request: Request):
     try:
@@ -2515,11 +2597,27 @@ async def download_youtube(payload: dict = Body(...)):
     
     output_dir = "renders"
     
+    import shutil
+    js_runtimes = []
+    for rt in ['deno', 'node', 'bun']:
+        if shutil.which(rt):
+            js_runtimes.append(rt)
+    
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': f'{output_dir}/%(id)s.%(ext)s',
         'quiet': True,
+        'noplaylist': True,
     }
+    cookie_path = os.path.join(os.path.dirname(__file__), 'youtube_cookies.txt')
+    if os.path.exists(cookie_path):
+        ydl_opts['cookiefile'] = cookie_path
+    elif os.path.exists('youtube_cookies.txt'):
+        ydl_opts['cookiefile'] = 'youtube_cookies.txt'
+    elif os.path.exists('www.youtube.com_cookies.txt'):
+        ydl_opts['cookiefile'] = 'www.youtube.com_cookies.txt'
+    if js_runtimes:
+        ydl_opts['js_runtimes'] = ','.join(js_runtimes)
     
     ext = "wav"
     postprocessor_args = []
@@ -2556,7 +2654,7 @@ async def download_youtube(payload: dict = Body(...)):
             video_id = info['id']
             filename = f"{video_id}.{ext}"
             
-            return {"url": f"/vocalido/audio/{filename}", "filename": filename, "title": info.get('title', 'Unknown')}
+            return {"url": f"/vocalido/audio/{filename}", "filename": filename, "title": info.get('title', 'Unknown'), "duration": info.get('duration', 0)}
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -2580,7 +2678,8 @@ async def separate_stems(payload: dict = Body(...)):
     output_dir = "renders/stems"
     os.makedirs(output_dir, exist_ok=True)
     
-    cmd = ["demucs", "-n", "htdemucs", "-d", "cpu", "-o", output_dir]
+    model_name = "htdemucs_6s" if stems == 6 else "htdemucs"
+    cmd = ["demucs", "-n", model_name, "-o", output_dir]
     if stems == 2:
         cmd.extend(["--two-stems", "vocals"])
     cmd.append(input_path)
@@ -2588,17 +2687,24 @@ async def separate_stems(payload: dict = Body(...)):
     try:
         subprocess.run(cmd, check=True)
         base_name = os.path.splitext(filename)[0]
-        demucs_out_dir = os.path.join(output_dir, "htdemucs", base_name)
+        demucs_out_dir = os.path.join(output_dir, model_name, base_name)
         
         stem_urls = {}
         if stems == 2:
-            stem_urls['vocals'] = f"/vocalido/audio/stems/htdemucs/{base_name}/vocals.wav"
-            stem_urls['instrumental'] = f"/vocalido/audio/stems/htdemucs/{base_name}/no_vocals.wav"
-        else:
-            stem_urls['vocals'] = f"/vocalido/audio/stems/htdemucs/{base_name}/vocals.wav"
-            stem_urls['drums'] = f"/vocalido/audio/stems/htdemucs/{base_name}/drums.wav"
-            stem_urls['bass'] = f"/vocalido/audio/stems/htdemucs/{base_name}/bass.wav"
-            stem_urls['other'] = f"/vocalido/audio/stems/htdemucs/{base_name}/other.wav"
+            stem_urls['vocals'] = f"/vocalido/audio/stems/{model_name}/{base_name}/vocals.wav"
+            stem_urls['instrumental'] = f"/vocalido/audio/stems/{model_name}/{base_name}/no_vocals.wav"
+        elif stems == 4:
+            stem_urls['vocals'] = f"/vocalido/audio/stems/{model_name}/{base_name}/vocals.wav"
+            stem_urls['drums'] = f"/vocalido/audio/stems/{model_name}/{base_name}/drums.wav"
+            stem_urls['bass'] = f"/vocalido/audio/stems/{model_name}/{base_name}/bass.wav"
+            stem_urls['other'] = f"/vocalido/audio/stems/{model_name}/{base_name}/other.wav"
+        elif stems == 6:
+            stem_urls['vocals'] = f"/vocalido/audio/stems/{model_name}/{base_name}/vocals.wav"
+            stem_urls['drums'] = f"/vocalido/audio/stems/{model_name}/{base_name}/drums.wav"
+            stem_urls['bass'] = f"/vocalido/audio/stems/{model_name}/{base_name}/bass.wav"
+            stem_urls['piano'] = f"/vocalido/audio/stems/{model_name}/{base_name}/piano.wav"
+            stem_urls['guitar'] = f"/vocalido/audio/stems/{model_name}/{base_name}/guitar.wav"
+            stem_urls['other'] = f"/vocalido/audio/stems/{model_name}/{base_name}/other.wav"
             
         return {"stems": stem_urls}
         

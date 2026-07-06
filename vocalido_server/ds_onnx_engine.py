@@ -36,7 +36,7 @@ except ImportError:
     # Fallback or stub if needed, but it should be available
     pass
 
-class DiffSingerONNXEngineCore:
+class DiffSingerONNXEngine:
     def __init__(self, model_dir, language='en'):
         self.model_dir = model_dir
         self.language = language
@@ -946,84 +946,4 @@ class DiffSingerONNXEngineCore:
             
         return audio
 
-# ── VRAM Isolation Wrapper ───────────────────────────────────────────────────
-import multiprocessing as mp
-import queue
 
-def _onnx_worker(model_dir, language, track_notes, params, result_queue):
-    """Worker function that runs in a fully isolated subprocess."""
-    try:
-        # HACK: Import torch to preload bundled CUDA libraries (cuBLAS, cuDNN) 
-        # so ONNX Runtime can find them and avoid falling back to CPU.
-        try:
-            import torch
-            import os
-            import ctypes
-            import glob
-            # Force load critical CUDA libraries directly into the global symbol table
-            torch_dir = os.path.dirname(torch.__file__)
-            site_packages = os.path.dirname(torch_dir)
-            nvidia_dir = os.path.join(site_packages, 'nvidia')
-            if os.path.exists(nvidia_dir):
-                for so_file in ['libcublasLt.so.11', 'libcublas.so.11', 'libcudnn.so.8']:
-                    for lib_path in glob.glob(os.path.join(nvidia_dir, '*', 'lib', so_file)):
-                        try:
-                            ctypes.CDLL(lib_path, mode=ctypes.RTLD_GLOBAL)
-                        except Exception:
-                            pass
-        except Exception:
-            pass
-
-        # Instantiate the actual engine, loading ONNX into VRAM
-        engine = DiffSingerONNXEngineCore(model_dir, language=language)
-        # Run inference
-        result = engine.synthesize_phrase(track_notes, params)
-        # Return success and data to parent
-        result_queue.put(("success", result))
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        result_queue.put(("error", str(e)))
-
-class DiffSingerONNXEngine:
-    """Proxy class that runs the ONNX engine in a separate process to prevent VRAM leaks.
-    When the subprocess exits, the OS reclaims 100% of the CUDA memory.
-    """
-    def __init__(self, model_dir, language='en'):
-        self.model_dir = model_dir
-        self.language = language
-        self.sr = 44100
-        # Pretend it's ready, actual loading happens per-request
-        self.is_ready = True
-        
-    def synthesize_phrase(self, track_notes, params=None):
-        print(f"[ONNX Subprocess] Spawning worker for model {self.model_dir}...")
-        ctx = mp.get_context('spawn')
-        q = ctx.Queue()
-        p = ctx.Process(target=_onnx_worker, args=(self.model_dir, self.language, track_notes, params, q))
-        p.start()
-        
-        # Safely poll the queue to avoid deadlocks and catch OOM crashes
-        res = None
-        while p.is_alive():
-            try:
-                res = q.get(timeout=1.0)
-                break
-            except queue.Empty:
-                continue
-                
-        # If the process exited but we haven't got the result yet, check one last time
-        if res is None:
-            try:
-                res = q.get(timeout=2.0)
-            except queue.Empty:
-                p.join()
-                raise Exception("Synthesis worker process crashed (likely GPU Out of Memory or Segfault).")
-                
-        p.join()
-        
-        status, data = res
-        if status == "success":
-            return data
-        else:
-            raise Exception(f"Synthesis failed in worker: {data}")
