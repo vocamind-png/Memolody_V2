@@ -32,7 +32,7 @@ interface StudioPageProps {
   setTracks: React.Dispatch<React.SetStateAction<TrackState[]>>;
   onPublish: () => void;
   onExit?: () => void;
-  initialStudioMode?: 'composer' | 'arranger' | 'editor';
+  initialStudioMode?: 'composer' | 'arranger' | 'editor' | 'youtube' | 'pianoroll';
 }
 
 /** Map EngraverCommandCenter tool IDs → ScoreEditOverlay tool + duration */

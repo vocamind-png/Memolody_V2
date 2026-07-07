@@ -11,12 +11,7 @@ export default defineConfig(({ mode }) => {
   const GEMINI_KEY = env.GEMINI_API_KEY || process.env.GEMINI_API_KEY || '';
 
   // Local mode: set VITE_LOCAL_VOCALIDO=true in .env.local to route all
-  // Vocalido traffic to localhost:5001 instead of the Google Cloud VM.
   const LOCAL_VOCALIDO = env.VITE_LOCAL_VOCALIDO === 'true';
-  const VOCALIDO_TARGET = env.VITE_VOCALIDO_URL || (LOCAL_VOCALIDO
-    ? 'http://127.0.0.1:5001'
-    : 'https://u2txyroyplqko8-8888.proxy.runpod.net');
-    
   const OMR_TARGET = env.VITE_OMR_URL || 'http://127.0.0.1:3003';
 
   if (!GEMINI_KEY) {
@@ -24,9 +19,21 @@ export default defineConfig(({ mode }) => {
   } else {
     console.log('✅ GEMINI_API_KEY loaded, length:', GEMINI_KEY.length);
   }
-  console.log(`🎤 Vocalido target: ${VOCALIDO_TARGET}`);
-  console.log(`🎼 OMR target: ${OMR_TARGET}`);
 
+  // --- VOCALIDO SVS PROXY ROUTING ---
+  // AI tasks (Demucs) require GPU so they go to Cloud/Runpod if configured.
+  // Other tasks (YouTube download, standard rendering) stay local to avoid IP bans.
+  const LOCAL_SERVER = 'http://127.0.0.1:5001';
+  const CLOUD_TARGET = env.VITE_VOCALIDO_URL || 'https://u2txyroyplqko8-8888.proxy.runpod.net';
+  const AI_TARGET = LOCAL_VOCALIDO ? LOCAL_SERVER : CLOUD_TARGET;
+  const VOCALIDO_TARGET = LOCAL_VOCALIDO ? LOCAL_SERVER : CLOUD_TARGET;
+
+  console.log(`🎤 Vocalido AI Target: ${AI_TARGET}`);
+  console.log(`🎤 Vocalido Local Target: ${LOCAL_SERVER}`);
+
+  // We have to modify the proxy config below
+  // ... but wait, I can just replace the whole proxy object up to the next proxy
+  
   return {
     worker: {
       format: 'es'
@@ -40,7 +47,6 @@ export default defineConfig(({ mode }) => {
         'Cross-Origin-Embedder-Policy': 'credentialless'
       },
       watch: {
-        // Ignore backend server directory and node_modules to prevent spurious reloads when generating audio
         ignored: ['**/vocalido_server/**', '**/node_modules/**', '**/.git/**', '**/renders/**', '**/cache/**'],
       },
       proxy: {
@@ -50,9 +56,28 @@ export default defineConfig(({ mode }) => {
           secure: false,
           rewrite: (path) => path.replace(/^\/api\/manifest/, '')
         },
-        // --- VOCALIDO SVS PROXY → Cloud VM or localhost (set VITE_LOCAL_VOCALIDO=true for local) ---
+        // --- AI & Cloud Targets (Runpod) ---
+        '/vocalido/api/ai': {
+          target: AI_TARGET,
+          changeOrigin: true,
+          secure: false,
+          rewrite: (path) => path.replace(/^\/vocalido/, '')
+        },
+        '/vocalido/api/upload-audio': {
+          target: AI_TARGET,
+          changeOrigin: true,
+          secure: false,
+          rewrite: (path) => path.replace(/^\/vocalido/, '')
+        },
+        '/vocalido/audio/stems': {
+          target: AI_TARGET,
+          changeOrigin: true,
+          secure: false,
+          rewrite: (path) => path.replace(/^\/vocalido/, '')
+        },
+        // --- Everything Else (including YouTube download) → Local or Cloud depending on config ---
         '/vocalido': {
-          target: VOCALIDO_TARGET,
+          target: LOCAL_VOCALIDO ? LOCAL_SERVER : CLOUD_TARGET,
           changeOrigin: true,
           secure: false,
           rewrite: (path) => path.replace(/^\/vocalido/, '')

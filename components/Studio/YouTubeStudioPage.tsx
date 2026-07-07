@@ -1,5 +1,6 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { Youtube, Download, Loader2, Music, Scissors, Play, X, FileAudio, ChevronDown, ChevronUp, AlertCircle, Upload, Link2 } from 'lucide-react';
+import { Youtube, Download, Loader2, Music, Scissors, Play, Square, X, FileAudio, ChevronDown, ChevronUp, AlertCircle, Upload, Link2, FileCode2 } from 'lucide-react';
+import { songStorage } from '../../lib/SongStorage';
 
 interface DownloadedSong {
   id: string;
@@ -41,8 +42,13 @@ const YouTubeStudioPage: React.FC<YouTubeStudioPageProps> = ({ onOpenInPlayer })
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [disclaimerAccepted, setDisclaimerAccepted] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState<{ [stemUrl: string]: boolean }>({});
+  const [playingUrl, setPlayingUrl] = useState<string | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const audioElRef = useRef<HTMLAudioElement | null>(null);
+  
+  const preferredLanguage = localStorage.getItem('nimo_lang') === 'th' ? 'th' : 'en';
 
   // ── Analyze audio file to extract metadata ──
   const analyzeAudio = useCallback(async (audioData: ArrayBuffer): Promise<Partial<DownloadedSong>> => {
@@ -133,21 +139,23 @@ const YouTubeStudioPage: React.FC<YouTubeStudioPageProps> = ({ onOpenInPlayer })
           throw new Error(data.error);
         }
         if (data.url) {
-          // Fetch audio data for analysis
-          const audioRes = await fetch(data.url);
-          const audioData = await audioRes.arrayBuffer();
-          const meta = await analyzeAudio(audioData);
+          // Get file size with a HEAD request (fast, no download)
+          let fileSize = 0;
+          try {
+            const headRes = await fetch(data.url, { method: 'HEAD' });
+            fileSize = parseInt(headRes.headers.get('content-length') || '0', 10);
+          } catch {}
 
           const song: DownloadedSong = {
             id: `yt-${Date.now()}-${i}`,
             title: data.title || 'Unknown',
             url: data.url,
             filename: data.filename,
-            duration: meta.duration || data.duration || 0,
-            sampleRate: meta.sampleRate || 44100,
-            channels: meta.channels || 2,
-            fileSize: meta.fileSize || data.fileSize || 0,
-            bitDepth: meta.bitDepth || 16,
+            duration: data.duration || 0,
+            sampleRate: 48000,
+            channels: 2,
+            fileSize: fileSize,
+            bitDepth: 16,
           };
           setSongs(prev => [...prev, song]);
 
@@ -173,7 +181,7 @@ const YouTubeStudioPage: React.FC<YouTubeStudioPageProps> = ({ onOpenInPlayer })
   };
 
   // ── Stem separation ──
-  const handleStemSeparation = async (songId: string, stemCount: 2 | 4) => {
+  const handleStemSeparation = async (songId: string, stemCount: 2 | 4 | 6) => {
     setSongs(prev => prev.map(s => s.id === songId ? { ...s, isSeparating: true, separateError: undefined } : s));
     const song = songs.find(s => s.id === songId);
     if (!song) return;
@@ -181,8 +189,9 @@ const YouTubeStudioPage: React.FC<YouTubeStudioPageProps> = ({ onOpenInPlayer })
     try {
       let fileUrl = song.url;
 
-      // If local file, upload to server first
-      if (song.isLocal) {
+      // Always upload to AI server because the AI server (Runpod) is likely separate from the Local server
+      // where the YouTube file was downloaded to.
+      try {
         const blobRes = await fetch(song.url);
         const blob = await blobRes.blob();
         const formData = new FormData();
@@ -195,6 +204,8 @@ const YouTubeStudioPage: React.FC<YouTubeStudioPageProps> = ({ onOpenInPlayer })
         const uploadData = await uploadRes.json();
         if (uploadData.error) throw new Error(uploadData.error);
         fileUrl = uploadData.url || song.url;
+      } catch (err) {
+        console.warn('Upload to AI server failed, using original url:', err);
       }
 
       const res = await fetch('/vocalido/api/ai/separate-stems', {
@@ -220,6 +231,45 @@ const YouTubeStudioPage: React.FC<YouTubeStudioPageProps> = ({ onOpenInPlayer })
     }
   };
 
+  const handleTranscribeStem = async (stemUrl: string, stemName: string, songTitle: string) => {
+    setIsTranscribing(prev => ({ ...prev, [stemUrl]: true }));
+    try {
+      if (typeof window !== 'undefined' && (window as any).showToast) {
+        (window as any).showToast(`🎼 Transcribing to sheet music in browser...`, '#6366F1');
+      }
+      
+      const { transcribeAudioToMusicXML } = await import('../../lib/browserTranscribe');
+      const musicxml = await transcribeAudioToMusicXML(stemUrl);
+      
+      if (!musicxml) throw new Error('Transcription failed');
+
+      // Create a new song in the Vault
+      const newSongTitle = `${songTitle} - ${stemName.charAt(0).toUpperCase() + stemName.slice(1)} (Score)`;
+      const newSong = {
+        id: `song_${Date.now()}`,
+        title: newSongTitle,
+        source: 'verovio',
+        version: 3,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        bpm: 120,
+        isPublic: false,
+      };
+      await songStorage.saveSong(newSong as any, musicxml);
+      
+      if (typeof window !== 'undefined' && (window as any).showToast) {
+        (window as any).showToast(`✅ Transcribed to Sheet Music! Saved to Vault.`, '#10B981');
+      }
+    } catch (e: any) {
+      console.error('Transcription failed:', e);
+      if (typeof window !== 'undefined' && (window as any).showToast) {
+        (window as any).showToast(`❌ Failed: ${e.message}`, '#EF4444');
+      }
+    } finally {
+      setIsTranscribing(prev => ({ ...prev, [stemUrl]: false }));
+    }
+  };
+
   // ── Save file to computer ──
   const handleSaveFile = (url: string, filename: string) => {
     const a = document.createElement('a');
@@ -231,13 +281,38 @@ const YouTubeStudioPage: React.FC<YouTubeStudioPageProps> = ({ onOpenInPlayer })
   };
 
   // ── Open in TrackView ──
+  const handlePlayToggle = (url: string) => {
+    // If already playing this URL, stop it
+    if (playingUrl === url && audioElRef.current) {
+      audioElRef.current.pause();
+      audioElRef.current.currentTime = 0;
+      setPlayingUrl(null);
+      return;
+    }
+    // Stop any currently playing audio
+    if (audioElRef.current) {
+      audioElRef.current.pause();
+    }
+    const audio = new Audio(url);
+    audio.onended = () => setPlayingUrl(null);
+    audio.onerror = () => {
+      setPlayingUrl(null);
+      if (typeof window !== 'undefined' && (window as any).showToast) {
+        (window as any).showToast('❌ Failed to play audio', '#EF4444');
+      }
+    };
+    audio.play();
+    audioElRef.current = audio;
+    setPlayingUrl(url);
+  };
+
   const handleOpenInPlayer = (url: string, title: string) => {
+    // Play inline
+    handlePlayToggle(url);
+    // Also notify parent if callback exists
     if (onOpenInPlayer) {
       onOpenInPlayer(url, title);
     }
-    window.dispatchEvent(new CustomEvent('youtube_open_in_player', {
-      detail: { url, title }
-    }));
   };
 
   // ── Save all ──
@@ -379,6 +454,18 @@ const YouTubeStudioPage: React.FC<YouTubeStudioPageProps> = ({ onOpenInPlayer })
           )}
         </div>
 
+        {/* Disclaimer Warning */}
+        <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4 mb-6">
+          <div className="flex items-start gap-3">
+            <AlertCircle size={16} className="text-amber-500 shrink-0 mt-0.5" />
+            <p className="text-xs text-amber-500/80 leading-relaxed">
+              {preferredLanguage === 'th'
+                ? "คำเตือน: การดาวน์โหลดเพลงจาก YouTube หรือสื่ออื่นๆ มีจุดประสงค์เพื่อการศึกษาและการเรียนรู้เท่านั้น ไม่อนุญาตให้นำไปใช้ในเชิงพาณิชย์"
+                : "Disclaimer: Downloading songs from YouTube or other media is for educational and learning purposes only. Commercial use is strictly prohibited."}
+            </p>
+          </div>
+        </div>
+
         {/* ── Input Area: Upload + YouTube ── */}
         <div className="flex gap-3">
           {/* Upload button */}
@@ -500,10 +587,10 @@ const YouTubeStudioPage: React.FC<YouTubeStudioPageProps> = ({ onOpenInPlayer })
                 {/* Quick actions */}
                 <button
                   onClick={e => { e.stopPropagation(); handleOpenInPlayer(song.url, song.title); }}
-                  className="w-8 h-8 rounded-lg bg-cyan-500/10 text-cyan-400 flex items-center justify-center hover:bg-cyan-500/30 hover:text-white transition-all opacity-0 group-hover:opacity-100"
-                  title="Open in Player"
+                  className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${playingUrl === song.url ? 'bg-cyan-500/30 text-white opacity-100' : 'bg-cyan-500/10 text-cyan-400 opacity-0 group-hover:opacity-100 hover:bg-cyan-500/30 hover:text-white'}`}
+                  title={playingUrl === song.url ? 'Stop' : 'Play'}
                 >
-                  <Play size={12} />
+                  {playingUrl === song.url ? <Square size={12} /> : <Play size={12} />}
                 </button>
                 <button
                   onClick={e => { e.stopPropagation(); handleSaveFile(song.url, song.filename); }}
@@ -545,7 +632,7 @@ const YouTubeStudioPage: React.FC<YouTubeStudioPageProps> = ({ onOpenInPlayer })
                   )}
 
                   {!song.isSeparating && !song.stems && (
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 flex-wrap">
                       <button
                         onClick={() => handleStemSeparation(song.id, 2)}
                         className="px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest bg-purple-500/15 text-purple-400 border border-purple-500/30 hover:bg-purple-500/30 hover:text-white transition-all flex items-center gap-2"
@@ -558,6 +645,12 @@ const YouTubeStudioPage: React.FC<YouTubeStudioPageProps> = ({ onOpenInPlayer })
                       >
                         <Scissors size={12} /> 4-Track (Vocals, Drums, Bass, Other)
                       </button>
+                      <button
+                        onClick={() => handleStemSeparation(song.id, 6)}
+                        className="px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest bg-cyan-500/15 text-cyan-400 border border-cyan-500/30 hover:bg-cyan-500/30 hover:text-white transition-all flex items-center gap-2"
+                      >
+                        <Scissors size={12} /> 6-Track (Vocals, Drums, Bass, Piano, Guitar, Other)
+                      </button>
                     </div>
                   )}
 
@@ -565,22 +658,34 @@ const YouTubeStudioPage: React.FC<YouTubeStudioPageProps> = ({ onOpenInPlayer })
                   {song.stems && (
                     <div className="space-y-1.5 mt-2">
                       {Object.entries(song.stems).map(([stemName, stemData]) => (
-                        <div key={stemName} className="flex items-center gap-3 bg-white/[0.04] border border-white/5 rounded-xl px-4 py-2.5 group/stem hover:bg-white/[0.07] transition-all">
+                        <div key={stemName} className="flex items-center gap-3 bg-white/[0.04] border border-white/5 rounded-xl px-4 py-2.5 hover:bg-white/[0.07] transition-all">
                           <div className="w-2 h-2 rounded-full bg-purple-400 shrink-0" />
                           <span className="text-[10px] font-bold text-zinc-300 flex-1 capitalize">{stemData.title}</span>
                           <button
-                            onClick={() => handleOpenInPlayer(stemData.url, stemData.title)}
-                            className="w-7 h-7 rounded-lg bg-cyan-500/10 text-cyan-400 flex items-center justify-center hover:bg-cyan-500/30 hover:text-white transition-all opacity-0 group-hover/stem:opacity-100"
-                            title="Open in Player"
+                            onClick={() => handlePlayToggle(stemData.url)}
+                            className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${playingUrl === stemData.url ? 'bg-cyan-500/30 text-white' : 'bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/30 hover:text-white'}`}
+                            title={playingUrl === stemData.url ? 'Stop' : 'Play'}
                           >
-                            <Play size={11} />
+                            {playingUrl === stemData.url ? <Square size={11} /> : <Play size={11} />}
                           </button>
                           <button
                             onClick={() => handleSaveFile(stemData.url, `${stemName}.wav`)}
-                            className="w-7 h-7 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center hover:bg-emerald-500/30 hover:text-white transition-all opacity-0 group-hover/stem:opacity-100"
+                            className="w-7 h-7 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center hover:bg-emerald-500/30 hover:text-white transition-all"
                             title="Save"
                           >
                             <Download size={11} />
+                          </button>
+                          <button
+                            onClick={() => handleTranscribeStem(stemData.url, stemName, song.title)}
+                            disabled={isTranscribing[stemData.url]}
+                            className="w-7 h-7 rounded-lg bg-indigo-500/10 text-indigo-400 flex items-center justify-center hover:bg-indigo-500/30 hover:text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="Transcribe to Sheet Music"
+                          >
+                            {isTranscribing[stemData.url] ? (
+                              <Loader2 size={11} className="animate-spin" />
+                            ) : (
+                              <FileCode2 size={11} />
+                            )}
                           </button>
                         </div>
                       ))}

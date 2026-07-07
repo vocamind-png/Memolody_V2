@@ -812,7 +812,15 @@ const HomePage: React.FC<HomePageProps> = ({
 
   // Counts
   const totalCount = useMemo(() => userLibrary.filter(i => !i.metadata.isDeleted).length, [userLibrary]);
-  const homeCount = useMemo(() => userLibrary.filter(item => !item.metadata.isDeleted).length, [userLibrary]);
+  const homeCount = useMemo(() => userLibrary.filter(item => {
+    if (item.metadata.isDeleted) return false;
+    const m = item.metadata as any;
+    let era = (m.era || '').toLowerCase().trim();
+    if (!era) {
+      era = detectEraFromName(m.composer || m.artist || '').toLowerCase();
+    }
+    return era === 'baroque' || era === 'classical' || era === 'romantic';
+  }).length, [userLibrary]);
   const favCount = useMemo(() => userLibrary.filter(i => !i.metadata.isDeleted && i.metadata.isFavorite).length, [userLibrary]);
   const mySongsCount = useMemo(() => userLibrary.filter(i => !i.metadata.isDeleted && i.metadata.origin === 'load').length, [userLibrary]);
   const trashCount = useMemo(() => userLibrary.filter(i => i.metadata.isDeleted).length, [userLibrary]);
@@ -822,8 +830,16 @@ const HomePage: React.FC<HomePageProps> = ({
     let list: typeof userLibrary = [];
     switch (activeTab) {
       case 'home':
-        // Show ALL non-deleted songs on home tab
-        list = userLibrary.filter(item => !item.metadata.isDeleted);
+        // Show only non-deleted songs from Baroque, Classical, and Romantic eras on the home tab
+        list = userLibrary.filter(item => {
+          if (item.metadata.isDeleted) return false;
+          const m = item.metadata as any;
+          let era = (m.era || '').toLowerCase().trim();
+          if (!era) {
+            era = detectEraFromName(m.composer || m.artist || '').toLowerCase();
+          }
+          return era === 'baroque' || era === 'classical' || era === 'romantic';
+        });
         break;
       case 'favorites':
         list = userLibrary.filter(item => !item.metadata.isDeleted && item.metadata.isFavorite);
