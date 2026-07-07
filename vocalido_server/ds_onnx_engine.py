@@ -355,20 +355,29 @@ class DiffSingerONNXEngine:
         if current_phrase:
             phrases.append(current_phrase)
             
-        print(f"[ONNXEngine] 🧩 Chunked track into {len(phrases)} phrases to speed up rendering...")
+        print(f"[ONNXEngine] 🧩 Chunked track into {len(phrases)} phrases. Rendering in parallel to speed up...")
         
         # Determine total duration and allocate track audio array
         total_dur = track_notes[-1][0] + track_notes[-1][1] + 1.0
         track_audio = np.zeros(int(total_dur * self.sr), dtype=np.float32)
         
-        # Render each phrase and blend it into the track audio
-        for phrase in phrases:
+        # Render each phrase in parallel using ThreadPoolExecutor
+        from concurrent.futures import ThreadPoolExecutor
+        
+        def render_single_phrase(phrase):
             phrase_start = phrase[0][0]
             offset_phrase = []
             for start, dur, note in phrase:
                 offset_phrase.append((start - phrase_start, dur, note))
-                
             phrase_audio = self._synthesize_track_neural_single(offset_phrase, params)
+            return phrase_start, phrase_audio
+
+        max_workers = min(len(phrases), 8) # Up to 8 threads in parallel
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            results = list(executor.map(render_single_phrase, phrases))
+            
+        # Stitch the results back together
+        for phrase_start, phrase_audio in results:
             if phrase_audio is not None:
                 start_sample = int(max(0.0, phrase_start - 0.02) * self.sr)
                 end_sample = start_sample + len(phrase_audio)
