@@ -335,6 +335,51 @@ class DiffSingerONNXEngine:
             return self._synthesize_track_fallback(track_notes, params)
 
     def _synthesize_track_neural(self, track_notes, params):
+        if len(track_notes) > 10:
+            return self._synthesize_track_neural_chunked(track_notes, params)
+        else:
+            return self._synthesize_track_neural_single(track_notes, params)
+
+    def _synthesize_track_neural_chunked(self, track_notes, params):
+        # Group notes into phrases based on silence/gap > 0.8 seconds
+        phrases = []
+        current_phrase = []
+        prev_end = None
+        
+        for start, dur, note in track_notes:
+            if prev_end is not None and (start - prev_end) > 0.8:
+                phrases.append(current_phrase)
+                current_phrase = []
+            current_phrase.append((start, dur, note))
+            prev_end = start + dur
+        if current_phrase:
+            phrases.append(current_phrase)
+            
+        print(f"[ONNXEngine] 🧩 Chunked track into {len(phrases)} phrases to speed up rendering...")
+        
+        # Determine total duration and allocate track audio array
+        total_dur = track_notes[-1][0] + track_notes[-1][1] + 1.0
+        track_audio = np.zeros(int(total_dur * self.sr), dtype=np.float32)
+        
+        # Render each phrase and blend it into the track audio
+        for phrase in phrases:
+            phrase_start = phrase[0][0]
+            offset_phrase = []
+            for start, dur, note in phrase:
+                offset_phrase.append((start - phrase_start, dur, note))
+                
+            phrase_audio = self._synthesize_track_neural_single(offset_phrase, params)
+            if phrase_audio is not None:
+                start_sample = int(max(0.0, phrase_start - 0.02) * self.sr)
+                end_sample = start_sample + len(phrase_audio)
+                if end_sample > len(track_audio):
+                    pad_len = end_sample - len(track_audio)
+                    track_audio = np.pad(track_audio, (0, pad_len))
+                track_audio[start_sample:end_sample] += phrase_audio
+                
+        return track_audio
+
+    def _synthesize_track_neural_single(self, track_notes, params):
         hop_size = 512
         frame_sec = hop_size / self.sr
         frame_hz = self.sr / hop_size
