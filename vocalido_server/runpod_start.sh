@@ -4,8 +4,8 @@
 cd /workspace/vocalido_server
 
 echo "🚀 Updating latest fixes from GitHub via jsDelivr..."
-curl -sL "https://cdn.jsdelivr.net/gh/vocamind-png/Memolody_V2@main/vocalido_server/main.py" > main.py
-curl -sL "https://cdn.jsdelivr.net/gh/vocamind-png/Memolody_V2@main/vocalido_server/ds_onnx_engine.py" > ds_onnx_engine.py
+curl -sL "https://raw.githubusercontent.com/vocamind-png/Memolody_V2/main/vocalido_server/main.py" > main.py
+curl -sL "https://raw.githubusercontent.com/vocamind-png/Memolody_V2/main/vocalido_server/ds_onnx_engine.py" > ds_onnx_engine.py
 
 echo "🧹 Cleaning up old processes..."
 pkill -f "python main.py" 2>/dev/null
