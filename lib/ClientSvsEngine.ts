@@ -162,7 +162,7 @@ export class ClientSvsEngine {
   private speakerEmbeds: Record<string, Float32Array> = {};
   private defaultEmbed: Float32Array | null = null;
   
-  private sr = 44100;
+  private sr = 24000;
   private maxDepth = 0.6;
   private isLoaded = false;
   private activeVoiceId = '';
@@ -1073,7 +1073,7 @@ export class ClientSvsEngine {
     params?: ClientSvsParams
   ): Promise<Float32Array | null> {
     const ort = getOrt();
-    const hopSize = 512;
+    const hopSize = 256;
     const frameHz = this.sr / hopSize;
     const SP_ID = this.phonemeToId['SP'] ?? 2;
 
@@ -1529,7 +1529,7 @@ export class ClientSvsEngine {
     params?: ClientSvsParams
   ): Promise<Float32Array | null> {
     const ort = getOrt();
-    const hopSize = 512;
+    const hopSize = 256;
     const frameSec = hopSize / this.sr;
     
     // Minimal initial silence (SP) for clean onset

@@ -1041,7 +1041,7 @@ const HomePage: React.FC<HomePageProps> = ({
 
   const topClassicalSongs = useMemo(() => {
     const classical = userLibrary.filter(it => {
-      if (it.metadata.isDeleted) return false;
+      if (!it || !it.metadata || it.metadata.isDeleted) return false;
       const era = (it.metadata.era || detectEraFromName(it.metadata.composer || '')).toLowerCase();
       return era === 'baroque' || era === 'classical' || era === 'romantic';
     });
