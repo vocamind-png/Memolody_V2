@@ -3914,6 +3914,20 @@ const PlayerPage: React.FC<{
                       </div>
                     </div>
 
+                    {/* Reset Button */}
+                    <button
+                      onClick={() => {
+                        handleSvsPortamentoChange(120);
+                        handleSvsVibratoStartChange(100);
+                        handleSvsVibratoDepthChange(0);
+                        handleSvsVibratoSpeedChange(4.8);
+                        handleSvsTimingFeelChange(50);
+                      }}
+                      className="w-full mt-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white rounded-lg text-[9px] font-bold uppercase tracking-widest transition-colors"
+                    >
+                      Reset to Defaults
+                    </button>
+
                   </div>
                 )}
               </div>
