@@ -65,22 +65,18 @@ export class CoverGenerator {
       const ai = new GoogleGenAI({ apiKey });
       const prompt = this.getPromptForSong(song, lyricsText);
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image',
-        contents: {
-          parts: [{ text: prompt }]
-        },
+      const response = await ai.models.generateImages({
+        model: 'imagen-4.0-generate-001',
+        prompt: prompt,
         config: {
-          imageConfig: {
-            aspectRatio: "16:9"
-          }
+          numberOfImages: 1,
+          aspectRatio: "16:9",
+          outputMimeType: "image/png"
         }
       });
 
-      // Find the image part in the response candidates
-      const part = response.candidates?.[0]?.content?.parts.find(p => p.inlineData);
-      if (part?.inlineData) {
-        const base64Data = part.inlineData.data;
+      const base64Data = response.generatedImages?.[0]?.image?.imageBytes;
+      if (base64Data) {
         const dataUrl = `data:image/png;base64,${base64Data}`;
         
         try {
