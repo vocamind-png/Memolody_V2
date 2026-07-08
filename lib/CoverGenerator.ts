@@ -24,6 +24,16 @@ export class CoverGenerator {
     const mood = bpm > 100 ? "energetic and bright" : "calm and introspective";
     
     let storyPrompt = `Visually interpret the meaning and story behind the title "${title}".`;
+    
+    const isClassical = ["Baroque", "Classical", "Romantic", "Impressionist/Modern"].includes(category || "");
+    if (isClassical) {
+      storyPrompt = `Analyze the title "${title}" and artist "${artist}":
+- If the title or artist names a composer, depict the composer in an interesting, expressive pose.
+- If the title names a musical instrument, feature that instrument prominently.
+- If the title implies a landscape, children, animals, nature, or specific objects, depict a vivid scene with those elements.
+- If the title is purely generic (e.g., Symphony, Sonata, Concerto, Opus, Minuet) with no specific visual meaning, create a beautiful, purely abstract composition.`;
+    }
+
     if (lyrics && lyrics.trim().length > 0) {
       storyPrompt = `Visually interpret the story, mood, and deeper meaning behind the title "${title}" and these lyrics: "${lyrics.substring(0, 400)}...".`;
     }

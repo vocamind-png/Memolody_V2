@@ -482,10 +482,10 @@ const PlayerPage: React.FC<{
       const saved = localStorage.getItem('vocalido_portamento');
       if (saved) {
         const val = parseInt(saved, 10);
-        if (!isNaN(val) && val >= 0 && val <= 300) return val;
+        if (!isNaN(val) && val >= 0 && val <= 500) return val;
       }
     } catch (e) {}
-    return 120; // Default 120ms
+    return 0; // Default 0 (no slide)
   });
 
   const handleSvsPortamentoChange = (val: number) => {
@@ -541,6 +541,22 @@ const PlayerPage: React.FC<{
   const handleSvsVibratoSpeedChange = (val: number) => {
     setSvsVibratoSpeed(val);
     try { localStorage.setItem('vocalido_vibrato_speed', val.toString()); } catch (e) {}
+  };
+
+  const [svsPitchBlend, setSvsPitchBlend] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('vocalido_pitch_blend');
+      if (saved) {
+        const val = parseFloat(saved);
+        if (!isNaN(val) && val >= 0.0 && val <= 1.0) return val;
+      }
+    } catch (e) {}
+    return 0.0; // Default to 0.0 (MIDI Ideal Pitch) to fix flat pitch issues
+  });
+
+  const handleSvsPitchBlendChange = (val: number) => {
+    setSvsPitchBlend(val);
+    try { localStorage.setItem('vocalido_pitch_blend', val.toString()); } catch (e) {}
   };
 
   // Keep the user's preferred SVS engine (migrates legacy states).
@@ -2591,7 +2607,7 @@ const PlayerPage: React.FC<{
     setIsPlaying(false);
     musicEngine.pause();
     setTracks(prev => prev.map(t => t.mode === 'vocal'
-      ? { ...t, mode: 'instrument', instrument: mapPartNameToInstrument(t.name) || 'acoustic_grand_piano' } as TrackState
+      ? { ...t, mode: 'instrument', instrument: 'acoustic_grand_piano' } as TrackState
       : t
     ));
     // Force full engine reset so next Play reloads with instrument samplers
@@ -2740,7 +2756,7 @@ const PlayerPage: React.FC<{
     // Switch vocal tracks to soundbank instrument mode
     const instrumentTracks = tracks.map(t =>
       t.mode === 'vocal'
-        ? { ...t, mode: 'instrument' as const, instrument: mapPartNameToInstrument(t.name) || 'acoustic_grand_piano' } as TrackState
+        ? { ...t, mode: 'instrument' as const, instrument: 'acoustic_grand_piano' } as TrackState
         : t
     );
     setTracks(instrumentTracks);
@@ -3914,18 +3930,36 @@ const PlayerPage: React.FC<{
                       </div>
                     </div>
 
+                    {/* Pitch Blend */}
+                    <div className="mt-3">
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="text-[7px] font-black uppercase tracking-widest text-zinc-500">Pitch Style (Neural vs MIDI)</span>
+                        <span className="text-[8px] font-bold text-cyan-400">{Math.round(svsPitchBlend * 100)}%</span>
+                      </div>
+                      <input
+                        type="range" min={0.0} max={1.0} step={0.05}
+                        value={svsPitchBlend}
+                        onChange={e => handleSvsPitchBlendChange(Number(e.target.value))}
+                        className="w-full h-1.5 appearance-none bg-zinc-800 rounded-full accent-cyan-400 cursor-pointer"
+                      />
+                      <div className="flex justify-between text-[7px] text-zinc-600 mt-0.5">
+                        <span>MIDI (ตรงคีย์)</span><span>Neural (เป็นธรรมชาติ)</span>
+                      </div>
+                    </div>
+
                     {/* Reset Button */}
                     <button
                       onClick={() => {
-                        handleSvsPortamentoChange(120);
+                        handleSvsPortamentoChange(0);
                         handleSvsVibratoStartChange(100);
                         handleSvsVibratoDepthChange(0);
                         handleSvsVibratoSpeedChange(4.8);
                         handleSvsTimingFeelChange(50);
+                        handleSvsPitchBlendChange(0.0);
                       }}
                       className="w-full mt-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white rounded-lg text-[9px] font-bold uppercase tracking-widest transition-colors"
                     >
-                      Reset to Defaults
+                      คืนค่าเริ่มต้น (Reset to Defaults)
                     </button>
 
                   </div>
@@ -3951,7 +3985,7 @@ const PlayerPage: React.FC<{
                   // Switch all vocal tracks to soundbank instrument mode
                   setTracks(prev => prev.map(t =>
                     t.mode === 'vocal'
-                      ? { ...t, mode: 'instrument', instrument: mapPartNameToInstrument(t.name) || 'acoustic_grand_piano' } as TrackState
+                      ? { ...t, mode: 'instrument', instrument: 'acoustic_grand_piano' } as TrackState
                       : t
                   ));
                   // Reset engine so next Play reloads with correct instrument samplers

@@ -85,7 +85,18 @@ async def startup_event():
             engine = DiffSingerONNXEngine(model_root, language='en')
             if getattr(engine, "is_ready", False):
                 engine_cache[model_root] = engine
+                _ds_engines['lotte_v_ai_dol'] = engine
+                global _target_engine
+                _target_engine = engine
                 print("[Startup] ✅ AIdol model successfully preloaded into GPU VRAM!")
+                
+                # WARMUP
+                print("[Startup] 🔥 Warming up GPU with a dummy render to lock VRAM...")
+                try:
+                    engine.synthesize_phrase([{'midi': 60, 'duration': 1.0, 'startTime': 0.0, 'lyric': 'la'}])
+                    print("[Startup] 🔥 Warmup complete! Instant render is now active.")
+                except Exception as e:
+                    print(f"[Startup] ⚠️ Warmup failed: {e}")
         
         print("[Startup] ✅ All available models successfully preloaded. Ready for instant rendering!")
     except Exception as e:

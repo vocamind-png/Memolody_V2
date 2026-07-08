@@ -683,7 +683,7 @@ class DiffSingerONNXEngine:
             # ----- HUMANIZED INTONATION BLEND -----
             # Blend: 60% neural pitch (natural glides/intonation) + 40% MIDI ideal pitch
             # Higher neural = more expressive, more human-like singing
-            NEURAL_BLEND = 0.0   # ← 0.0 = robot, 1.0 = full neural AI
+            NEURAL_BLEND = float(params.get("pitch_blend", 1.0)) if params else 1.0
             
             f0_hz_ideal = np.zeros_like(f0_midi_arr)
             voicing_mask = f0_midi_arr > 0.0
@@ -691,7 +691,7 @@ class DiffSingerONNXEngine:
             
             # Mix: where both are voiced, blend neural into ideal
             both_voiced = voicing_mask & (pp_final[0] > 0.0)
-            blended = f0_hz_ideal.copy()
+            blended = pp_final[0].copy()
             blended[both_voiced] = (
                 (1.0 - NEURAL_BLEND) * f0_hz_ideal[both_voiced] +
                 NEURAL_BLEND * pp_final[0][both_voiced]

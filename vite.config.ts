@@ -24,7 +24,7 @@ export default defineConfig(({ mode }) => {
   // AI tasks (Demucs) require GPU so they go to Cloud/Runpod if configured.
   // Other tasks (YouTube download, standard rendering) stay local to avoid IP bans.
   const LOCAL_SERVER = 'http://127.0.0.1:5001';
-  const CLOUD_TARGET = env.VITE_VOCALIDO_URL || 'https://z6i0v69lze2w4o-8888.proxy.runpod.net';
+  const CLOUD_TARGET = env.VITE_VOCALIDO_URL || 'https://z6i0v69lze2w4o-8000.proxy.runpod.net';
   const AI_TARGET = LOCAL_VOCALIDO ? LOCAL_SERVER : CLOUD_TARGET;
   const VOCALIDO_TARGET = LOCAL_VOCALIDO ? LOCAL_SERVER : CLOUD_TARGET;
 

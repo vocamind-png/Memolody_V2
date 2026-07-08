@@ -791,7 +791,8 @@ class VocalidoRenderService {
       let svsVibratoStart = 100;
       let svsVibratoDepth = 0;
       let svsVibratoSpeed = 4.8;
-      let timingFeel = svsTimingFeel || 50;
+      let svsTimingFeel = 50;
+      let svsPitchBlend = 0.0;
 
       try {
         const storedPortamento = localStorage.getItem('vocalido_portamento');
@@ -807,7 +808,10 @@ class VocalidoRenderService {
         if (storedVibSpeed !== null) svsVibratoSpeed = Number(storedVibSpeed);
 
         const storedTiming = localStorage.getItem('vocalido_svs_timing_feel');
-        if (storedTiming !== null) timingFeel = Number(storedTiming);
+        if (storedTiming !== null) svsTimingFeel = Number(storedTiming);
+        
+        const storedPitchBlend = localStorage.getItem('vocalido_pitch_blend');
+        if (storedPitchBlend !== null) svsPitchBlend = Number(storedPitchBlend);
       } catch (e) {}
 
       // activeSvsEngine is already set above (line ~391) with mobile override applied
@@ -820,11 +824,12 @@ class VocalidoRenderService {
         return_stems: true, 
         collapse_chords: collapseChords, 
         steps: svsSteps, 
-        timing_feel: timingFeel,
+        timing_feel: svsTimingFeel,
         portamento: svsPortamento,
         vibrato_start: svsVibratoStart,
         vibrato_depth: svsVibratoDepth,
-        vibrato_speed: svsVibratoSpeed
+        vibrato_speed: svsVibratoSpeed,
+        pitch_blend: svsPitchBlend
       };
       let usedRunPod = false;
       let useDirectBlobUrl = false;

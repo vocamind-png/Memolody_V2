@@ -1368,7 +1368,7 @@ export class ClientSvsEngine {
     // ----- HUMANIZED INTONATION BLEND (AUTOTUNE) -----
     // Blend: neural pitch (natural glides) + MIDI ideal pitch
     // 0.0 = perfect MIDI pitch (robot), 1.0 = full neural AI (expressive but might be off-pitch)
-    const NEURAL_BLEND = params?.pitch_blend ?? 0.0; // Default to 0.0 (strict autotune) to fix off-pitch issues
+    const NEURAL_BLEND = params?.pitch_blend ?? 1.0; // Default to 1.0 (Neural Pitch) for natural singing
     console.log(`[ClientSvsEngine] Applying pitch blend: ${NEURAL_BLEND}`);
     
     for (let i = 0; i < ppFinal.length; i++) {
@@ -1379,83 +1379,9 @@ export class ClientSvsEngine {
     }
     // -------------------------------------------------
 
-    // Apply custom Vibrato to F0
-    const vibDepthCents = params?.vibrato_depth ?? 0;
-    if (vibDepthCents > 0.1) {
-      const vibHz = params?.vibrato_speed ?? 4.8;
-      const vibDelayMs = params?.vibrato_start ?? 100.0;
-      
-      const frameSec = 1.0 / frameHz;
-      const vibDelayFrames = Math.floor((vibDelayMs / 1000.0) / frameSec);
-      
-      let frameIdx = 0;
-      let phIdx = 0;
-      for (let i = 0; i < wordDiv.length; i++) {
-        const wdivV = wordDiv[i];
-        let durF = 0;
-        for (let k = 0; k < wdivV; k++) {
-          if (phIdx + k < phDur.length) {
-            durF += phDur[phIdx + k];
-          }
-        }
-        
-        if (durF > vibDelayFrames) {
-          const vibLen = durF - vibDelayFrames;
-          const fadeInN = Math.min(Math.floor(0.10 / frameSec), vibLen);
-          
-          for (let k = 0; k < vibLen; k++) {
-            const t = k * frameSec;
-            let centsLfo = vibDepthCents * Math.sin(2 * Math.PI * vibHz * t);
-            
-            if (k < fadeInN && fadeInN > 0) {
-              centsLfo *= (k / fadeInN);
-            }
-            
-            const ratio = Math.pow(2.0, centsLfo / 1200.0);
-            
-            const idx = frameIdx + vibDelayFrames + k;
-            if (idx < ppFinal.length && ppFinal[idx] > 0) {
-              ppFinal[idx] *= ratio;
-            }
-          }
-        }
-        
-        frameIdx += durF;
-        phIdx += wdivV;
-      }
-    }
-
-    // Apply Cosine Legato smoothing (Portamento) on voiced-to-voiced note transitions
-    const glideTimeMs = params?.portamento ?? 120.0;
-    const glideFrames = Math.round((glideTimeMs / 1000.0) * frameHz);
-    const halfGlide = Math.floor(glideFrames / 2);
-
-    for (let i = 1; i < f0MidiArr.length; i++) {
-      if (f0MidiArr[i - 1] > 0 && f0MidiArr[i] > 0 && f0MidiArr[i - 1] !== f0MidiArr[i]) {
-        // Found transition boundary at index i
-        const startIdx = Math.max(0, i - halfGlide);
-        const endIdx = Math.min(ppFinal.length - 1, i + halfGlide);
-        
-        // Ensure all frames in the transition window are voiced
-        let allVoiced = true;
-        for (let k = startIdx; k <= endIdx; k++) {
-          if (ppFinal[k] <= 0 || f0MidiArr[k] <= 0) {
-            allVoiced = false;
-            break;
-          }
-        }
-        
-        if (allVoiced && startIdx < endIdx) {
-          const valStart = ppFinal[startIdx];
-          const valEnd = ppFinal[endIdx];
-          for (let k = startIdx; k <= endIdx; k++) {
-            const t = (k - startIdx) / (endIdx - startIdx);
-            const factor = (1.0 - Math.cos(Math.PI * t)) / 2.0;
-            ppFinal[k] = valStart + (valEnd - valStart) * factor;
-          }
-        }
-      }
-    }
+    // [Removed artificial vibrato and portamento from NeuralF0]
+    // The Neural Pitch model already predicts natural human vibrato and portamento.
+    // Overriding it with mathematical cosine/sine waves causes severe pitch distortion.
 
     const f0Tensor = new ort.Tensor('float32', ppFinal, [1, nFrames]);
 

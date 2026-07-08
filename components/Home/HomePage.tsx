@@ -96,8 +96,17 @@ const detectInstrumentsFromTitle = (title: string, genre: string): string[] => {
 const ProcessingOverlay: React.FC<{ message: string; error?: string | null; onDismiss?: () => void }> = ({ message, error, onDismiss }) => {
   const [elapsed, setElapsed] = React.useState(0);
   React.useEffect(() => {
+    const bgm = new Audio('/audio/minuet_in_g.ogg');
+    bgm.loop = true;
+    bgm.volume = 0.5;
+    bgm.play().catch(e => console.warn('BGM autoplay blocked:', e));
+
     const t = setInterval(() => setElapsed(s => s + 1), 1000);
-    return () => clearInterval(t);
+    return () => {
+      clearInterval(t);
+      bgm.pause();
+      bgm.src = '';
+    };
   }, []);
 
   // Error state
