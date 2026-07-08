@@ -3869,6 +3869,51 @@ const PlayerPage: React.FC<{
                       </div>
                     </div>
 
+                    {/* Vibrato Depth */}
+                    <div>
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="text-[8px] font-black uppercase tracking-widest text-zinc-500">Vibrato Depth</span>
+                        <span className="text-[9px] font-bold text-cyan-400">{svsVibratoDepth} cents</span>
+                      </div>
+                      <input
+                        type="range" min={0} max={200} step={5}
+                        value={svsVibratoDepth}
+                        onChange={e => handleSvsVibratoDepthChange(Number(e.target.value))}
+                        className="w-full h-1.5 appearance-none bg-zinc-800 rounded-full accent-fuchsia-400 cursor-pointer"
+                      />
+                      <div className="flex justify-between text-[7px] text-zinc-600 mt-0.5">
+                        <span>Flat</span><span>Natural</span><span>Strong</span>
+                      </div>
+                    </div>
+
+                    {/* Vibrato Speed & Delay */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <div className="flex justify-between items-center mb-1">
+                          <span className="text-[7px] font-black uppercase tracking-widest text-zinc-500">Vib Speed</span>
+                          <span className="text-[8px] font-bold text-cyan-400">{svsVibratoSpeed} Hz</span>
+                        </div>
+                        <input
+                          type="range" min={2} max={8} step={0.1}
+                          value={svsVibratoSpeed}
+                          onChange={e => handleSvsVibratoSpeedChange(Number(e.target.value))}
+                          className="w-full h-1.5 appearance-none bg-zinc-800 rounded-full accent-pink-500 cursor-pointer"
+                        />
+                      </div>
+                      <div>
+                        <div className="flex justify-between items-center mb-1">
+                          <span className="text-[7px] font-black uppercase tracking-widest text-zinc-500">Vib Delay</span>
+                          <span className="text-[8px] font-bold text-cyan-400">{svsVibratoStart} ms</span>
+                        </div>
+                        <input
+                          type="range" min={0} max={1000} step={50}
+                          value={svsVibratoStart}
+                          onChange={e => handleSvsVibratoStartChange(Number(e.target.value))}
+                          className="w-full h-1.5 appearance-none bg-zinc-800 rounded-full accent-pink-400 cursor-pointer"
+                        />
+                      </div>
+                    </div>
+
                   </div>
                 )}
               </div>
