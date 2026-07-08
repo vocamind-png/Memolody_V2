@@ -506,7 +506,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, on
                                         <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
                                         <span className="text-[9px] text-zinc-500 uppercase tracking-widest font-bold">App Build</span>
                                     </div>
-                                    <span className="text-[10px] text-zinc-400 font-mono">{new Date().toISOString().split('T')[0]} · v2.4</span>
+                                    <span className="text-[10px] text-zinc-400 font-mono">{new Date().toISOString().split('T')[0]} · v2.5</span>
                                 </div>
                             </div>
                         </div>

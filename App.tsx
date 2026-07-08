@@ -318,7 +318,7 @@ const App: React.FC = () => {
         setInitProgress(35);
 
         // 🚨 AUTO-CLEAR CACHE ON NEW BUILD/REINSTALL
-        const APP_VERSION = '2.4.1-build-20260626-0001';
+        const APP_VERSION = '2.5.0-build-20260708-0001';
         const savedVersion = localStorage.getItem('memo_app_version');
         if (savedVersion !== APP_VERSION) {
           setInitStatus('Wiping Old Cache');
@@ -1338,7 +1338,7 @@ const App: React.FC = () => {
       <header className="h-14 flex items-center justify-between px-6 glass-panel shrink-0 z-[10000] sticky top-0">
         <div className="flex items-center gap-3">
           <Zap size={18} className="text-cyan-400 drop-shadow-[0_0_8px_rgba(0,229,255,0.8)]" />
-          <span className="text-[12px] font-black tracking-[0.2em] text-white drop-shadow-md">MEMOLODY <span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-indigo-400">V2.4</span></span>
+          <span className="text-[12px] font-black tracking-[0.2em] text-white drop-shadow-md">MEMOLODY <span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-indigo-400">V2.5</span></span>
         </div>
         <nav className="flex items-center gap-1 sm:gap-2 shrink-0">
           {NAV_ITEMS

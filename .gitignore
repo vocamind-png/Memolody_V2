@@ -77,3 +77,4 @@ vocalido_server/*
 vocalido_server.tar.gz
 runpod_server_logs*.txt
 runpod_server_logs*.b64
+.env*
