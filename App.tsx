@@ -121,8 +121,6 @@ const INITIAL_LOOP_PRESETS: LoopPreset[] = [
 const NAV_ITEMS: { id: ViewId; icon: any; label: string; minRole?: string; isNimo?: boolean }[] = [
   { id: 'home', icon: Home, label: 'HOME' },
   { id: 'player', icon: Play, label: 'PLAYER' },
-  { id: 'forge', icon: Music2, label: 'STUDIO' },
-  { id: 'nimo', icon: Sparkles, label: 'NIMO', isNimo: true },
   { id: 'profile', icon: User, label: 'ME' },
   { id: 'settings', icon: Settings, label: 'SETTINGS' },
   { id: 'admin', icon: Shield, label: 'CORE', minRole: 'admin' },
