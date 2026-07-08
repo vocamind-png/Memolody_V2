@@ -1038,6 +1038,21 @@ const HomePage: React.FC<HomePageProps> = ({
     } catch(e) {}
     return userLibrary.filter(it => !it.metadata.isDeleted).reverse().slice(0, 5).map(it => it.metadata);
   }, [userLibrary]);
+
+  const topClassicalSongs = useMemo(() => {
+    const classical = userLibrary.filter(it => {
+      if (it.metadata.isDeleted) return false;
+      const era = (it.metadata.era || detectEraFromName(it.metadata.composer || '')).toLowerCase();
+      return era === 'baroque' || era === 'classical' || era === 'romantic';
+    });
+    classical.sort((a, b) => {
+      const aPop = (a.metadata.views || 0) + (a.metadata.playCount || 0) * 2 + (a.metadata.likes || 0) * 5;
+      const bPop = (b.metadata.views || 0) + (b.metadata.playCount || 0) * 2 + (b.metadata.likes || 0) * 5;
+      return bPop - aPop;
+    });
+    return classical.slice(0, 500).map(it => it.metadata);
+  }, [userLibrary]);
+
   const visibleItems = useMemo(() => filteredLibrary.slice(0, visibleCount), [filteredLibrary, visibleCount]);
   const hasMore = visibleCount < filteredLibrary.length;
 
@@ -1491,6 +1506,55 @@ If a field is not relevant, leave the array empty. Translate concepts into Engli
           </div>
         )}
       </div>
+
+      {/* Top 500 Classical Hits */}
+      {topClassicalSongs.length > 0 && (
+        <div className="space-y-2 mb-6">
+          <div className="flex items-center justify-between px-1">
+            <span className="text-[8px] font-black text-rose-500 uppercase tracking-widest italic">Top Classical Hits</span>
+            <span className="text-[8px] font-mono text-rose-500/70">{topClassicalSongs.length} songs</span>
+          </div>
+          <div className="flex gap-2 overflow-x-auto no-scrollbar px-1">
+            {topClassicalSongs.map((item, index) => (
+              <div key={item.id} onClick={() => onSongSelect(item, undefined, 'listen')}
+                className="shrink-0 w-[calc(33.33%-6px)] flex flex-col gap-1.5 group/card cursor-pointer">
+                {/* Cover Image Area */}
+                <div className="w-full aspect-video rounded-xl overflow-hidden relative shadow-md group-hover/card:shadow-lg group-hover/card:shadow-rose-500/20 border border-white/10 transition-all group-hover/card:-translate-y-1">
+                  <AbstractCover seed={item.title || item.id} size={200} />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-50" />
+                  
+                  {/* Rank Badge */}
+                  <div className="absolute top-1 left-1 bg-black/60 backdrop-blur-md px-1.5 py-0.5 rounded text-[8px] font-black text-white/90 shadow-sm border border-white/10 z-10">
+                    #{index + 1}
+                  </div>
+                  
+                  {/* Default small play button */}
+                  <div className="absolute bottom-1.5 left-1.5 flex items-center justify-center pointer-events-none">
+                    <div 
+                      className="w-6 h-6 rounded-full bg-black/40 backdrop-blur-sm flex items-center justify-center text-white/80 group-hover/card:text-rose-400 group-hover/card:bg-rose-500/20 transition-colors pointer-events-auto cursor-pointer"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSongSelect(item, undefined, 'play');
+                      }}
+                    >
+                      <Play size={10} fill="currentColor" className="ml-0.5" />
+                    </div>
+                  </div>
+                  
+                  {/* Favorite Icon */}
+                  {item.isFavorite && <Heart size={10} className="text-rose-500 fill-rose-500 absolute top-1.5 right-1.5" />}
+                </div>
+                
+                {/* Title Area */}
+                <div className="px-0.5">
+                  <p className="text-[10px] leading-tight font-black text-white uppercase italic truncate">{item.title || 'Untitled Song'}</p>
+                  <p className="text-[8px] leading-tight text-zinc-500 uppercase tracking-wider truncate mt-0.5">{item.artist || item.composer || 'Unknown Artist'}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Recent Matrix (Horizontal Scroll) */}
         {recentSongs.length > 0 && (
