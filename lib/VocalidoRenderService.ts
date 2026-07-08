@@ -794,16 +794,20 @@ class VocalidoRenderService {
       let timingFeel = svsTimingFeel || 50;
 
       try {
-        const studioState = localStorage.getItem('vocalido_studio_state');
-        if (studioState) {
-          const parsed = JSON.parse(studioState);
-          if (parsed.params) {
-            if (parsed.params.portamento !== undefined) svsPortamento = parsed.params.portamento;
-            if (parsed.params.vibrato_depth !== undefined) svsVibratoDepth = parsed.params.vibrato_depth;
-            if (parsed.params.vibrato_rate !== undefined) svsVibratoSpeed = parsed.params.vibrato_rate;
-            if (parsed.params.timing_feel !== undefined) timingFeel = parsed.params.timing_feel;
-          }
-        }
+        const storedPortamento = localStorage.getItem('vocalido_portamento');
+        if (storedPortamento !== null) svsPortamento = Number(storedPortamento);
+
+        const storedVibStart = localStorage.getItem('vocalido_vibrato_start');
+        if (storedVibStart !== null) svsVibratoStart = Number(storedVibStart);
+
+        const storedVibDepth = localStorage.getItem('vocalido_vibrato_depth');
+        if (storedVibDepth !== null) svsVibratoDepth = Number(storedVibDepth);
+
+        const storedVibSpeed = localStorage.getItem('vocalido_vibrato_speed');
+        if (storedVibSpeed !== null) svsVibratoSpeed = Number(storedVibSpeed);
+
+        const storedTiming = localStorage.getItem('vocalido_svs_timing_feel');
+        if (storedTiming !== null) timingFeel = Number(storedTiming);
       } catch (e) {}
 
       // activeSvsEngine is already set above (line ~391) with mobile override applied
