@@ -2463,7 +2463,8 @@ const PlayerPage: React.FC<{
       // Ensure sampler is loaded for any tracks that are now in 'instrument' mode
       for (const t of updatedTracks) {
         if (t.mode === 'instrument') {
-          await musicEngine.initSampler(t.id, t.name, t.pluginSettings, 'instrument');
+          const settings = { instrument: t.instrument, ...(t.pluginSettings || {}) };
+          await musicEngine.initSampler(t.id, t.name, settings, 'instrument');
         }
       }
 

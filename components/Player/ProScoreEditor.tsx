@@ -343,7 +343,7 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
 
   useEffect(() => {
     let checkCount = 0;
-    const initVrv = () => {
+    const initVrv = async () => {
       // Dynamic injection of Verovio
       if (!document.querySelector('script[src="/verovio-toolkit.js"]')) {
         const script = document.createElement('script');
@@ -362,8 +362,11 @@ const ProScoreEditor = forwardRef<ProScoreEditorRef, ProScoreEditorProps>(({
         return;
       }
 
-      if (verovio?.toolkit) {
+      if (verovio) {
         try {
+          if (verovio.moduleLoaded) {
+            await verovio.moduleLoaded;
+          }
           // Instantiate once and store globally for the entire window session
           const instance = new verovio.toolkit();
           (window as any).__globalVrvToolkit = instance;

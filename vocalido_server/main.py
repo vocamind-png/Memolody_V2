@@ -895,6 +895,7 @@ async def set_engine(body: dict):
 # ── AI Engine (trained model) ─────────────────────────────────────────────
 import sys as _sys
 _sys.path.insert(0, os.path.dirname(__file__))
+_sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'training', 'DiffSinger'))
 
 # English: vocalido_gtsinger_en 100k — trained overnight May 18-19 on GTSinger dataset
 # Full English phoneme coverage from professional singing corpus
