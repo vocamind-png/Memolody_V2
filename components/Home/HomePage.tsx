@@ -1249,6 +1249,26 @@ const HomePage: React.FC<HomePageProps> = ({
     { id: 'trash', label: 'Trash', count: trashCount, color: 'text-zinc-500' },
   ];
 
+  React.useEffect(() => {
+    const bgm = document.getElementById('homepage-bgm') as HTMLAudioElement;
+    if (bgm) {
+      bgm.volume = 0;
+      bgm.play().then(() => {
+        let vol = 0;
+        const targetVolume = 0.5;
+        const fade = setInterval(() => {
+          vol += 0.05;
+          if (vol >= targetVolume) {
+            bgm.volume = targetVolume;
+            clearInterval(fade);
+          } else {
+            bgm.volume = vol;
+          }
+        }, 200);
+      }).catch(e => console.warn('HomePage BGM autoplay blocked:', e));
+    }
+  }, []);
+
   return (
     <div className="absolute inset-0 flex flex-col bg-[#0A0A0B] overflow-y-auto overflow-x-hidden select-none" onScroll={handleScroll}>
       {/* Background Music Audio Element */}
