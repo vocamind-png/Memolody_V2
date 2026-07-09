@@ -139,6 +139,16 @@ const App: React.FC = () => {
   const [isInitializing, setIsInitializing] = useState(true);
   const [hasStartedSplash, setHasStartedSplash] = useState(false);
   const [initProgress, setInitProgress] = useState(0);
+
+  const smartBgmUrl = React.useMemo(() => {
+    try {
+      const title = selectedSong ? selectedSong.title.toLowerCase() : '';
+      if (title.includes('minuet')) return '/audio/minuet_in_g.mp3';
+      if (title.includes('bird')) return '/audio/bird_choir.mp3';
+      if (title.includes('forest')) return '/audio/forest_bgm.mp3';
+    } catch(e) {}
+    return '/audio/Where_Dreams_Align.mp3';
+  }, [selectedSong]);
   const [initStatus, setInitStatus] = useState('Booting Audio System...');
   const [isNimoOpen, setIsNimoOpen] = useState(false);
   const [nimoMounted, setNimoMounted] = useState(true); // Always mount for sidebar mode
@@ -1238,6 +1248,7 @@ const App: React.FC = () => {
           progress={isInitializing ? initProgress : 100} 
           statusText={isInitializing ? initStatus : 'Workspace Ready'} 
           onStart={() => setHasStartedSplash(true)}
+          bgmUrl={smartBgmUrl}
         />
       );
     }
@@ -1268,6 +1279,7 @@ const App: React.FC = () => {
           onTogglePublic={handleTogglePublic}
           isAdmin={isAdmin}
           currentUserId={authUser?.id}
+          bgmUrl={smartBgmUrl}
         />;
       case 'player':
         return null; // PlayerPage is rendered persistently outside this switch

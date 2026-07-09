@@ -5,9 +5,10 @@ interface SplashLoaderProps {
   progress: number;
   statusText?: string;
   onStart?: () => void;
+  bgmUrl?: string;
 }
 
-export const SplashLoader: React.FC<SplashLoaderProps> = ({ progress, statusText = 'Loading Memolody V2...', onStart }) => {
+export const SplashLoader: React.FC<SplashLoaderProps> = ({ progress, statusText = 'Loading Memolody V2...', onStart, bgmUrl }) => {
   const [dots, setDots] = useState('');
   const [showRecovery, setShowRecovery] = useState(false);
   const [audioError, setAudioError] = useState(false);
@@ -139,7 +140,7 @@ export const SplashLoader: React.FC<SplashLoaderProps> = ({ progress, statusText
       <div className="absolute top-1/4 left-1/4 w-[40vw] h-[40vw] rounded-full bg-cyan-500/10 blur-[120px] pointer-events-none animate-pulse" style={{ animationDuration: '6s' }} />
       <div className="absolute bottom-1/4 right-1/4 w-[45vw] h-[45vw] rounded-full bg-indigo-500/10 blur-[140px] pointer-events-none animate-pulse" style={{ animationDuration: '8s' }} />
 
-      <audio ref={audioRef} src="/audio/Where_Dreams_Align.mp3" loop />
+      <audio ref={audioRef} src={bgmUrl || "/audio/Where_Dreams_Align.mp3"} loop />
       <div className="relative z-10 flex flex-col items-center max-w-lg w-full px-6">
         
         {/* Brand Logo & Header */}

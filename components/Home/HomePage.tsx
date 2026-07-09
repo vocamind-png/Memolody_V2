@@ -93,14 +93,9 @@ const detectInstrumentsFromTitle = (title: string, genre: string): string[] => {
 };
 
 // ── Processing Overlay (shown during OMR) ─────────────────────────────────
-const ProcessingOverlay: React.FC<{ message: string; error?: string | null; onDismiss?: () => void }> = ({ message, error, onDismiss }) => {
+const ProcessingOverlay: React.FC<{ message: string; error?: string | null; onDismiss?: () => void; bgmUrl?: string }> = ({ message, error, onDismiss, bgmUrl }) => {
   const [elapsed, setElapsed] = React.useState(0);
   React.useEffect(() => {
-    const bgm = new Audio('/audio/Where_Dreams_Align.mp3');
-    bgm.loop = true;
-    bgm.volume = 0.5;
-    bgm.play().catch(e => console.warn('BGM autoplay blocked:', e));
-
     const t = setInterval(() => setElapsed(s => s + 1), 1000);
     return () => {
       clearInterval(t);
@@ -195,6 +190,7 @@ interface HomePageProps {
   onTogglePublic: (id: string, isPublic: boolean) => void;
   isAdmin?: boolean;
   currentUserId?: string;
+  bgmUrl?: string;
 }
 
 type SortMode = 'default' | 'az' | 'za' | 'newest' | 'oldest';
@@ -1254,7 +1250,7 @@ const HomePage: React.FC<HomePageProps> = ({
   return (
     <div className="absolute inset-0 flex flex-col bg-[#0A0A0B] overflow-y-auto overflow-x-hidden select-none" onScroll={handleScroll}>
       {/* Background Music Audio Element */}
-      <audio id="homepage-bgm" src="/audio/Where_Dreams_Align.mp3" loop />
+      <audio id="homepage-bgm" src={props.bgmUrl || "/audio/Where_Dreams_Align.mp3"} loop />
 
       {/* ── HEADER / SEARCH & RECENT (STATIC TOP) ── */}
       <div className="shrink-0 px-6 pt-6 pb-2 space-y-5 bg-gradient-to-b from-white/[0.02] to-transparent border-b border-white/5">
