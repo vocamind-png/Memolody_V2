@@ -158,6 +158,14 @@ const getFetchUrl = (path: string) => {
 const getDirectServerUrl = (path: string) => {
   let cleanPath = path;
   if (!cleanPath.startsWith('/')) cleanPath = '/' + cleanPath;
+  
+  const customBackend = getCustomBackendUrl();
+  if (customBackend) {
+    if (cleanPath.startsWith('/vocalido/')) cleanPath = cleanPath.substring('/vocalido'.length);
+    if (!cleanPath.startsWith('/')) cleanPath = '/' + cleanPath;
+    return `${customBackend}${cleanPath}`;
+  }
+
   // Use relative path → routed through Vercel → RunPod proxy
   return cleanPath;
 };
@@ -234,9 +242,9 @@ const serverFetchWithAsyncPolling = async (
 
   onProgress?.(`Job queued (${job_id.slice(0, 6)}…), waiting for GPU...`);
 
-  // 2. Poll until done (max 10 min)
+  // 2. Poll until done (max 1 hour)
   const startedAt = Date.now();
-  while (Date.now() - startedAt < 600_000) {
+  while (Date.now() - startedAt < 3_600_000) {
     if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
     await new Promise(r => setTimeout(r, 3000));
     if (signal.aborted) throw new DOMException('Aborted', 'AbortError');

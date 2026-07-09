@@ -835,7 +835,7 @@ const HomePage: React.FC<HomePageProps> = ({
     if (!era) {
       era = detectEraFromName(m.composer || m.artist || '').toLowerCase();
     }
-    return era === 'baroque' || era === 'classical' || era === 'romantic';
+    return era === 'baroque' || era === 'classical' || era === 'romantic' || era === 'classic';
   }).length, [userLibrary]);
   const favCount = useMemo(() => userLibrary.filter(i => !i.metadata.isDeleted && i.metadata.isFavorite).length, [userLibrary]);
   const mySongsCount = useMemo(() => userLibrary.filter(i => !i.metadata.isDeleted && i.metadata.origin === 'load').length, [userLibrary]);
@@ -854,7 +854,7 @@ const HomePage: React.FC<HomePageProps> = ({
           if (!era) {
             era = detectEraFromName(m.composer || m.artist || '').toLowerCase();
           }
-          return era === 'baroque' || era === 'classical' || era === 'romantic';
+          return era === 'baroque' || era === 'classical' || era === 'romantic' || era === 'classic';
         });
         break;
       case 'favorites':

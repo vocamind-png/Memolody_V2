@@ -229,10 +229,12 @@ const getFetchUrl = (path: string) => {
     cleanPath = '/' + cleanPath;
   }
 
-  // If path is /vocalido/studio/voices, map to /studio/voices on the local SVS server
+  // Vercel routes /vocalido/:path* to /:path* on RunPod
   if (cleanPath.startsWith('/vocalido/')) {
     cleanPath = cleanPath.substring('/vocalido'.length);
   }
+
+  if (!cleanPath.startsWith('/')) cleanPath = '/' + cleanPath;
 
   return `${customBackend}${cleanPath}`;
 };
@@ -991,7 +993,19 @@ const PlayerPage: React.FC<{
   const [soloedStems, setSoloedStems] = useState<Record<string, Set<number>>>({});
   const [availableStems, setAvailableStems] = useState<Record<string, number>>({});
 
-  const handleSoloStem = (trackId: string, stemIndex: number | null) => {
+  const dragToggleRef = useRef<{ type: 'mute' | 'solo' | 'mode', actionType: 'on' | 'off' } | null>(null);
+  
+  useEffect(() => {
+    const handleUp = () => { dragToggleRef.current = null; };
+    window.addEventListener('pointerup', handleUp);
+    window.addEventListener('pointercancel', handleUp);
+    return () => {
+      window.removeEventListener('pointerup', handleUp);
+      window.removeEventListener('pointercancel', handleUp);
+    };
+  }, []);
+
+  const handleSoloStem = (trackId: string, stemIndex: number | null, forceState?: boolean) => {
     setSoloedStems(prev => {
       const currentSet = new Set<number>(prev[trackId] || []);
       
@@ -1000,10 +1014,15 @@ const PlayerPage: React.FC<{
         currentSet.clear();
       } else {
         // Toggle this specific stem
-        if (currentSet.has(stemIndex)) {
-          currentSet.delete(stemIndex);
+        if (forceState !== undefined) {
+          if (forceState) currentSet.add(stemIndex);
+          else currentSet.delete(stemIndex);
         } else {
-          currentSet.add(stemIndex);
+          if (currentSet.has(stemIndex)) {
+            currentSet.delete(stemIndex);
+          } else {
+            currentSet.add(stemIndex);
+          }
         }
       }
       
@@ -3520,7 +3539,20 @@ const PlayerPage: React.FC<{
                     >
                       <div className="flex flex-row flex-nowrap gap-px items-center bg-black/30 border border-white/8 p-px rounded-md backdrop-blur-sm pointer-events-auto w-fit">
                         <button
-                          onClick={(e) => { e.stopPropagation(); setTracks((prev: any) => prev.map((t: any) => t.id === track.id ? { ...t, mode: t.mode === 'vocal' ? 'instrument' : 'vocal' } : t)); }}
+                          style={{ touchAction: 'none' }}
+                          onPointerDown={(e) => { 
+                            e.stopPropagation();
+                            e.currentTarget.releasePointerCapture(e.pointerId);
+                            const willBeVocal = track.mode !== 'vocal';
+                            dragToggleRef.current = { type: 'mode', actionType: willBeVocal ? 'on' : 'off' };
+                            setTracks((prev: any) => prev.map((t: any) => t.id === track.id ? { ...t, mode: willBeVocal ? 'vocal' : 'instrument' } : t));
+                          }}
+                          onPointerEnter={() => {
+                            if (dragToggleRef.current?.type === 'mode') {
+                              const willBeVocal = dragToggleRef.current.actionType === 'on';
+                              setTracks((prev: any) => prev.map((t: any) => t.id === track.id ? { ...t, mode: willBeVocal ? 'vocal' : 'instrument' } : t));
+                            }
+                          }}
                           className={`w-3 h-3 rounded flex items-center justify-center transition-all border shadow-sm flex-shrink-0 ${track.mode === 'vocal' ? 'bg-cyan-600/90 border-cyan-400 text-white shadow-[0_0_6px_rgba(34,211,238,0.3)]' : 'bg-[#1a1a1e]/80 border-zinc-700/80 text-zinc-400 hover:text-cyan-400 hover:border-cyan-400/60'}`}
                           title={track.mode === 'vocal' ? `Switch "${track.name}" to Instrument` : `Switch "${track.name}" to Vocal`}
                         >
@@ -3531,7 +3563,20 @@ const PlayerPage: React.FC<{
                           const isSoloed = soloedStems[track.id]?.has(0);
                           return (
                             <button
-                              onClick={(e) => { e.stopPropagation(); handleSoloStem(track.id, 0); }}
+                              style={{ touchAction: 'none' }}
+                              onPointerDown={(e) => { 
+                                e.stopPropagation(); 
+                                e.currentTarget.releasePointerCapture(e.pointerId);
+                                const willBeSoloed = !isSoloed;
+                                dragToggleRef.current = { type: 'solo', actionType: willBeSoloed ? 'on' : 'off' };
+                                handleSoloStem(track.id, 0, willBeSoloed);
+                              }}
+                              onPointerEnter={() => {
+                                if (dragToggleRef.current?.type === 'solo') {
+                                  const willBeSoloed = dragToggleRef.current.actionType === 'on';
+                                  handleSoloStem(track.id, 0, willBeSoloed);
+                                }
+                              }}
                               className={`w-3 h-3 rounded border flex items-center justify-center transition-all shadow-sm flex-shrink-0 ${isSoloed ? 'bg-yellow-500/90 border-yellow-300 text-black shadow-[0_0_5px_rgba(234,179,8,0.4)]' : 'bg-[#1a1a1e]/80 border-zinc-700/80 text-zinc-400 hover:text-yellow-400 hover:border-yellow-500/60'}`}
                               title={`Solo ${track.name}`}
                             >
@@ -3542,7 +3587,20 @@ const PlayerPage: React.FC<{
 
                         {showStemControls && (
                           <button
-                            onClick={(e) => { e.stopPropagation(); setMutedVocalTracks(prev => { const next = new Set(prev); if (next.has(track.id)) next.delete(track.id); else next.add(track.id); return next; }); }}
+                            style={{ touchAction: 'none' }}
+                            onPointerDown={(e) => { 
+                              e.stopPropagation(); 
+                              e.currentTarget.releasePointerCapture(e.pointerId);
+                              const willBeMuted = !isMuted;
+                              dragToggleRef.current = { type: 'mute', actionType: willBeMuted ? 'on' : 'off' };
+                              setMutedVocalTracks(prev => { const next = new Set(prev); if (willBeMuted) next.add(track.id); else next.delete(track.id); return next; });
+                            }}
+                            onPointerEnter={() => {
+                              if (dragToggleRef.current?.type === 'mute') {
+                                const willBeMuted = dragToggleRef.current.actionType === 'on';
+                                setMutedVocalTracks(prev => { const next = new Set(prev); if (willBeMuted) next.add(track.id); else next.delete(track.id); return next; });
+                              }
+                            }}
                             className={`w-3 h-3 rounded border flex items-center justify-center transition-all shadow-sm flex-shrink-0 ${isMuted ? 'bg-red-500/90 border-red-300 text-white shadow-[0_0_5px_rgba(239,68,68,0.4)]' : 'bg-[#1a1a1e]/80 border-zinc-700/80 text-zinc-400 hover:text-red-400 hover:border-red-500/60'}`}
                             title={`Mute ${track.name}`}
                           >
@@ -4041,14 +4099,14 @@ const PlayerPage: React.FC<{
                   AI Voice Synthesis
                 </span>
                 
-                <span className={`text-[13px] font-bold tracking-wide truncate mt-1 ${renderError ? 'text-rose-400' : 'text-cyan-300'}`}>
+                <span className={`text-[13px] font-bold tracking-wide mt-1 break-words ${renderError ? 'text-rose-400' : 'text-cyan-300'}`}>
                   {renderError 
                     ? "Synthesis Failed" 
                     : (renderStatusText || (renderProgress > 95 ? "Finalizing Audio..." : "Rendering vocals..."))
                   }
                 </span>
 
-                <div className="text-[9px] text-zinc-500 font-medium tracking-wide mt-0.5 flex gap-1 truncate">
+                <div className="text-[9px] text-zinc-500 font-medium tracking-wide mt-0.5 flex gap-1 flex-wrap">
                   <span>{(activeVoiceName || 'Vocalido Soprano').toUpperCase()}</span>
                   <span>•</span>
                   <span>{(activeLyricMode || 'Standard').toUpperCase()}</span>

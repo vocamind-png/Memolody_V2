@@ -9,6 +9,21 @@ interface SplashLoaderProps {
 export const SplashLoader: React.FC<SplashLoaderProps> = ({ progress, statusText = 'Loading Memolody V2...' }) => {
   const [dots, setDots] = useState('');
   const [showRecovery, setShowRecovery] = useState(false);
+  const [audioError, setAudioError] = useState(false);
+  const audioRef = React.useRef<HTMLAudioElement>(null);
+
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.volume = 0.4;
+      audioRef.current.play().catch(() => setAudioError(true));
+    }
+  }, []);
+
+  const handleEnableAudio = () => {
+    if (audioRef.current) {
+      audioRef.current.play().then(() => setAudioError(false)).catch(() => {});
+    }
+  };
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -56,16 +71,25 @@ export const SplashLoader: React.FC<SplashLoaderProps> = ({ progress, statusText
       <div className="absolute top-1/4 left-1/4 w-[40vw] h-[40vw] rounded-full bg-cyan-500/10 blur-[120px] pointer-events-none animate-pulse" style={{ animationDuration: '6s' }} />
       <div className="absolute bottom-1/4 right-1/4 w-[45vw] h-[45vw] rounded-full bg-indigo-500/10 blur-[140px] pointer-events-none animate-pulse" style={{ animationDuration: '8s' }} />
 
+      <audio ref={audioRef} src="/minuet_in_g.mp3" loop />
       <div className="relative z-10 flex flex-col items-center max-w-lg w-full px-6">
         
         {/* Brand Logo & Header */}
-        <div className="flex items-center gap-2 mb-10 animate-fade-in">
+        <div className="flex items-center gap-2 mb-10 animate-fade-in relative">
           <div className="p-2 rounded-xl bg-gradient-to-br from-cyan-400 to-indigo-600 shadow-[0_0_20px_rgba(0,229,255,0.3)]">
             <Music size={20} className="text-black" strokeWidth={2.5} />
           </div>
           <span className="text-[11px] font-black tracking-[0.25em] text-zinc-400 uppercase">
             MEMOLODY <span className="text-cyan-400">V2.5</span>
           </span>
+          {audioError && (
+            <button 
+              onClick={handleEnableAudio}
+              className="absolute -right-28 px-3 py-1 bg-cyan-500/20 text-cyan-300 text-[9px] font-bold tracking-widest rounded-full border border-cyan-500/50 hover:bg-cyan-500/40 transition-colors animate-pulse whitespace-nowrap"
+            >
+              TAP TO UNMUTE
+            </button>
+          )}
         </div>
 
         {/* ── 5-LINE STAFF & FALLING NOTES AREA ── */}

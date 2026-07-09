@@ -1603,7 +1603,7 @@ async def studio_job_status(job_id: str):
     
     # Clean up old jobs (> 10 min)
     now = _time_module.time()
-    stale = [k for k, v in _async_jobs.items() if now - v["created_at"] > 600]
+    stale = [k for k, v in _async_jobs.items() if now - v["created_at"] > 3600]
     for k in stale:
         _async_jobs.pop(k, None)
     

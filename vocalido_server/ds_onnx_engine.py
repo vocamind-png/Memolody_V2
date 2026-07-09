@@ -226,6 +226,12 @@ class DiffSingerONNXEngine:
         if clean_word in self.dict_map:
             return self.dict_map[clean_word]
 
+        SOLFEGE_MAP = {
+            "doh": "d ow", "do": "d ow", "di": "d iy", "ra": "r aa",
+            "re": "r ey", "ray": "r ey", "ri": "r iy", "me": "m iy", "mi": "m iy",
+            "fa": "f aa", "fi": "f iy", "se": "s ey", "sol": "s ow l", "so": "s ow", "si": "s iy",
+            "le": "l ey", "la": "l aa", "li": "l iy", "te": "t ey", "ti": "t iy", "ta": "t aa"
+        }
         if clean_word in SOLFEGE_MAP:
             return SOLFEGE_MAP[clean_word].split()
 
@@ -372,7 +378,10 @@ class DiffSingerONNXEngine:
             phrase_audio = self._synthesize_track_neural_single(offset_phrase, params)
             return phrase_start, phrase_audio
 
-        max_workers = min(len(phrases), 8) # Up to 8 threads in parallel
+        import onnxruntime as ort
+        is_cpu = 'CUDAExecutionProvider' not in ort.get_available_providers()
+        max_workers = 1 if is_cpu else min(len(phrases), 4)
+        print(f"[ONNXEngine] Using {max_workers} threads for {len(phrases)} phrases (is_cpu={is_cpu})")
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             results = list(executor.map(render_single_phrase, phrases))
             

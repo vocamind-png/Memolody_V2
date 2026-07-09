@@ -388,26 +388,21 @@ const App: React.FC = () => {
         await songStorage.permanentDeleteSong('demo-vocal-01'); // User specifically requested deletion
         if (songs.length < 50) { // If there are fewer than 50 songs, assume they need a sync from GCS
           if (songs.length === 0) {
-            setInitStatus('Syncing Songs Library in Background');
-            setInitProgress(80);
+            setInitStatus('Downloading Music Library (First Time Setup)...');
+            setInitProgress(0);
             
-            // 🔥 Non-blocking Sync: Let the app boot instantly, load songs in background
             setIsSyncing(true);
-            CloudSyncService.syncWithGlobalCloud((percent) => {
-              // Can optionally dispatch progress event here if needed
-            }).then(async (syncResult) => {
-              if (syncResult && syncResult.total >= 0) {
-                const updatedSongs = await songStorage.getAllSongs();
-                setUserSongs(updatedSongs);
-                userSongsRef.current = updatedSongs;
-              }
-            }).catch((syncErr) => {
-              console.warn('[App] Initial cloud sync failed (non-blocking):', syncErr?.message || syncErr);
-              // Don't auto-retry — manifest.json is ~138MB, retrying on slow connections just times out again
-            }).finally(() => {
+            try {
+              await CloudSyncService.syncWithGlobalCloud((percent) => {
+                setInitProgress(percent);
+                setInitStatus(`Importing Library... ${percent}%`);
+              });
+              songs = await songStorage.getAllSongs();
+            } catch (syncErr: any) {
+              console.warn('[App] Initial cloud sync failed:', syncErr?.message || syncErr);
+            } finally {
               setIsSyncing(false);
-            });
-            
+            }
           } else {
             // Already have some songs, let's load UI fast and sync in background
             CloudSyncService.syncWithGlobalCloud().then(async () => {
