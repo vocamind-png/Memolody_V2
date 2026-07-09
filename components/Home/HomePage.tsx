@@ -1,5 +1,6 @@
 import React, { useMemo, useState, useEffect, useCallback, useRef, memo, lazy, Suspense } from 'react';
 import { Sparkles, Mic, MessageSquare, Waves, ChevronRight, Music2, Play, Search, X, Database, SortAsc, RefreshCcw, Loader2, Plus, RotateCcw, Trash2, ChevronDown, Heart, FolderPlus, Folder, Star, Music, MoreVertical, Store, Video, Target, Camera, Upload, Crop } from 'lucide-react';
+import * as Tone from 'tone';
 import { Song, ViewId, SongFolder } from '../../types';
 import { parseMusicXMLMetadata } from '../../lib/MusicXmlParser';
 import { songStorage } from '../../lib/SongStorage';
@@ -452,7 +453,7 @@ const HomePage: React.FC<HomePageProps> = ({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   // Resume Tone.js audio context on first interaction
   useEffect(() => {
-    const resumeAudio = async () => {
+    const resumeAudio = () => {
       // Start background music immediately on click
       const bgmElement = document.getElementById('homepage-bgm') as HTMLAudioElement;
       if (bgmElement && bgmElement.paused) {
@@ -461,8 +462,7 @@ const HomePage: React.FC<HomePageProps> = ({
       }
 
       try {
-        const Tone = await import('tone');
-        await Tone.start();
+        Tone.start();
         console.log('🔊 Audio context resumed');
       } catch (e) {
         console.warn('Audio context resume failed', e);
