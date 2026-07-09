@@ -191,6 +191,8 @@ interface HomePageProps {
   isAdmin?: boolean;
   currentUserId?: string;
   bgmUrl?: string;
+  bgmTitle?: string;
+  bgmCover?: string;
 }
 
 type SortMode = 'default' | 'az' | 'za' | 'newest' | 'oldest';
@@ -1255,13 +1257,32 @@ const HomePage: React.FC<HomePageProps> = ({
       {/* ── HEADER / SEARCH & RECENT (STATIC TOP) ── */}
       <div className="shrink-0 px-6 pt-6 pb-2 space-y-5 bg-gradient-to-b from-white/[0.02] to-transparent border-b border-white/5">
 
-        {/* Brand/Hero */}
-        <div className="flex flex-col items-center gap-1.5">
-          <h1 className="text-2xl font-black text-white tracking-[0.4em] uppercase italic">MEMOLODY</h1>
-          <p className="text-[8px] font-black text-zinc-500 uppercase tracking-[0.3em] flex items-center gap-2">
-            Hear by Eye, Play by Ear
-            <button onClick={handleExportDB} className="text-[7px] bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 px-2 py-0.5 rounded-full hover:bg-cyan-500/30 transition-colors cursor-pointer">EXPORT DB</button>
-          </p>
+        {/* Brand/Hero & Now Playing Widget */}
+        <div className="flex items-start justify-between">
+          <div className="flex flex-col items-start gap-1.5">
+            <h1 className="text-2xl font-black text-white tracking-[0.4em] uppercase italic">MEMOLODY</h1>
+            <p className="text-[8px] font-black text-zinc-500 uppercase tracking-[0.3em] flex items-center gap-2">
+              Hear by Eye, Play by Ear
+              <button onClick={handleExportDB} className="text-[7px] bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 px-2 py-0.5 rounded-full hover:bg-cyan-500/30 transition-colors cursor-pointer">EXPORT DB</button>
+            </p>
+          </div>
+
+          {/* Now Playing Widget */}
+          <div className="flex items-center gap-3 bg-black/30 backdrop-blur-md px-3 py-2 rounded-full border border-white/5 cursor-pointer hover:bg-black/50 transition-colors" onClick={() => {
+            const bgm = document.getElementById('homepage-bgm') as HTMLAudioElement;
+            if (bgm) {
+              if (bgm.paused) bgm.play().catch(()=>{});
+              else bgm.pause();
+            }
+          }}>
+            <div className="w-8 h-8 rounded-full overflow-hidden shrink-0 animate-[spin_10s_linear_infinite]">
+              <img src={props.bgmCover || '/images/memolody_hero.png'} alt="Cover" className="w-full h-full object-cover" />
+            </div>
+            <div className="flex flex-col pr-2 hidden sm:flex">
+              <span className="text-[7px] text-cyan-400 font-black tracking-widest uppercase">NOW PLAYING</span>
+              <span className="text-[10px] text-white font-medium truncate max-w-[120px]">{props.bgmTitle || 'Where Dreams Align'}</span>
+            </div>
+          </div>
         </div>
 
         {/* Hidden file input (kept for programmatic import from + button) */}

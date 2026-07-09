@@ -140,14 +140,14 @@ const App: React.FC = () => {
   const [hasStartedSplash, setHasStartedSplash] = useState(false);
   const [initProgress, setInitProgress] = useState(0);
 
-  const smartBgmUrl = React.useMemo(() => {
+  const { bgmUrl, bgmTitle, bgmCover } = React.useMemo(() => {
     try {
       const title = selectedSong ? selectedSong.title.toLowerCase() : '';
-      if (title.includes('minuet')) return '/audio/minuet_in_g.mp3';
-      if (title.includes('bird')) return '/audio/bird_choir.mp3';
-      if (title.includes('forest')) return '/audio/forest_bgm.mp3';
+      if (title.includes('minuet')) return { bgmUrl: '/audio/minuet_in_g.mp3', bgmTitle: 'Minuet in G (Ambient)', bgmCover: '/images/memolody_hero.png' };
+      if (title.includes('bird')) return { bgmUrl: '/audio/bird_choir.mp3', bgmTitle: 'Bird Choir (Ambient)', bgmCover: '/images/memolody_hero.png' };
+      if (title.includes('forest')) return { bgmUrl: '/audio/forest_bgm.mp3', bgmTitle: 'Forest (Ambient)', bgmCover: '/images/memolody_hero.png' };
     } catch(e) {}
-    return '/audio/Where_Dreams_Align.mp3';
+    return { bgmUrl: '/audio/Where_Dreams_Align.mp3', bgmTitle: 'Where Dreams Align', bgmCover: '/images/memolody_hero.png' };
   }, [selectedSong]);
   const [initStatus, setInitStatus] = useState('Booting Audio System...');
   const [isNimoOpen, setIsNimoOpen] = useState(false);
@@ -1248,7 +1248,9 @@ const App: React.FC = () => {
           progress={isInitializing ? initProgress : 100} 
           statusText={isInitializing ? initStatus : 'Workspace Ready'} 
           onStart={() => setHasStartedSplash(true)}
-          bgmUrl={smartBgmUrl}
+          bgmUrl={bgmUrl}
+          bgmTitle={bgmTitle}
+          bgmCover={bgmCover}
         />
       );
     }
@@ -1279,7 +1281,9 @@ const App: React.FC = () => {
           onTogglePublic={handleTogglePublic}
           isAdmin={isAdmin}
           currentUserId={authUser?.id}
-          bgmUrl={smartBgmUrl}
+          bgmUrl={bgmUrl}
+          bgmTitle={bgmTitle}
+          bgmCover={bgmCover}
         />;
       case 'player':
         return null; // PlayerPage is rendered persistently outside this switch

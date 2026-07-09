@@ -6,9 +6,11 @@ interface SplashLoaderProps {
   statusText?: string;
   onStart?: () => void;
   bgmUrl?: string;
+  bgmTitle?: string;
+  bgmCover?: string;
 }
 
-export const SplashLoader: React.FC<SplashLoaderProps> = ({ progress, statusText = 'Loading Memolody V2...', onStart, bgmUrl }) => {
+export const SplashLoader: React.FC<SplashLoaderProps> = ({ progress, statusText = 'Loading Memolody V2...', onStart, bgmUrl, bgmTitle, bgmCover }) => {
   const [dots, setDots] = useState('');
   const [showRecovery, setShowRecovery] = useState(false);
   const [audioError, setAudioError] = useState(false);
@@ -143,6 +145,19 @@ export const SplashLoader: React.FC<SplashLoaderProps> = ({ progress, statusText
       <audio ref={audioRef} src={bgmUrl || "/audio/Where_Dreams_Align.mp3"} loop />
       <div className="relative z-10 flex flex-col items-center max-w-lg w-full px-6">
         
+          {/* Now Playing Widget */}
+          {hasStarted && (
+            <div className="absolute top-6 right-6 flex items-center gap-3 bg-black/40 backdrop-blur-md px-3 py-2 rounded-full border border-white/5 animate-fade-in shadow-xl">
+              <div className="w-8 h-8 rounded-full overflow-hidden shrink-0 animate-[spin_10s_linear_infinite]">
+                <img src={bgmCover || '/images/memolody_hero.png'} alt="Cover" className="w-full h-full object-cover" />
+              </div>
+              <div className="flex flex-col pr-2">
+                <span className="text-[7px] text-cyan-400 font-black tracking-widest uppercase">NOW PLAYING</span>
+                <span className="text-[10px] text-white font-medium truncate max-w-[120px]">{bgmTitle || 'Where Dreams Align'}</span>
+              </div>
+            </div>
+          )}
+
         {/* Brand Logo & Header */}
         <div className="flex items-center gap-2 mb-10 animate-fade-in relative">
           <div className="p-2 rounded-xl bg-gradient-to-br from-cyan-400 to-indigo-600 shadow-[0_0_20px_rgba(0,229,255,0.3)]">
