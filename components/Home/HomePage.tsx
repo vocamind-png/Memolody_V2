@@ -99,8 +99,10 @@ const ProcessingOverlay: React.FC<{ message: string; error?: string | null; onDi
     const t = setInterval(() => setElapsed(s => s + 1), 1000);
     return () => {
       clearInterval(t);
-      bgm.pause();
-      bgm.src = '';
+      const bgmEl = document.getElementById('homepage-bgm') as HTMLAudioElement;
+      if (bgmEl) {
+        bgmEl.pause();
+      }
     };
   }, []);
 
@@ -444,7 +446,8 @@ const SongRow = memo(({ item, onSongSelect, onToggleDelete, onPermanentDelete, i
 const HomePage: React.FC<HomePageProps> = ({
   onSongSelect, userLibrary = [], onEnterStudio, onViewVault, onSearch,
   performanceMode, onToggleDelete, onPermanentDelete, onBulkDelete, onBulkPermanentDelete, onRefresh, onLocalRefresh, isSyncing, onOpenNimo, onImportToNimo,
-  onTogglePublic, isAdmin, currentUserId
+  onTogglePublic, isAdmin, currentUserId,
+  bgmUrl, bgmTitle, bgmCover
 }) => {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   // Resume Tone.js audio context on first interaction
@@ -1272,7 +1275,7 @@ const HomePage: React.FC<HomePageProps> = ({
   return (
     <div className="absolute inset-0 flex flex-col bg-[#0A0A0B] overflow-y-auto overflow-x-hidden select-none" onScroll={handleScroll}>
       {/* Background Music Audio Element */}
-      <audio id="homepage-bgm" src={props.bgmUrl || "/audio/Where_Dreams_Align.mp3"} loop />
+      <audio id="homepage-bgm" src={bgmUrl || "/audio/Where_Dreams_Align.mp3"} loop />
 
       {/* ── HEADER / SEARCH & RECENT (STATIC TOP) ── */}
       <div className="shrink-0 px-6 pt-6 pb-2 space-y-5 bg-gradient-to-b from-white/[0.02] to-transparent border-b border-white/5">
@@ -1296,11 +1299,11 @@ const HomePage: React.FC<HomePageProps> = ({
             }
           }}>
             <div className="w-8 h-8 rounded-full overflow-hidden shrink-0 animate-[spin_10s_linear_infinite]">
-              <img src={props.bgmCover || '/images/memolody_hero.png'} alt="Cover" className="w-full h-full object-cover" />
+              <img src={bgmCover || '/images/memolody_hero.png'} alt="Cover" className="w-full h-full object-cover" />
             </div>
             <div className="flex flex-col pr-2 hidden sm:flex">
               <span className="text-[7px] text-cyan-400 font-black tracking-widest uppercase">NOW PLAYING</span>
-              <span className="text-[10px] text-white font-medium truncate max-w-[120px]">{props.bgmTitle || 'Where Dreams Align'}</span>
+              <span className="text-[10px] text-white font-medium truncate max-w-[120px]">{bgmTitle || 'Where Dreams Align'}</span>
             </div>
           </div>
         </div>
