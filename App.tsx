@@ -137,6 +137,7 @@ const App: React.FC = () => {
   const isAdmin = hasAccess(role, 'admin');
   const [currentView, setCurrentView] = useState<ViewId>('home');
   const [isInitializing, setIsInitializing] = useState(true);
+  const [hasStartedSplash, setHasStartedSplash] = useState(false);
   const [initProgress, setInitProgress] = useState(0);
   const [initStatus, setInitStatus] = useState('Booting Audio System...');
   const [isNimoOpen, setIsNimoOpen] = useState(false);
@@ -1230,8 +1231,15 @@ const App: React.FC = () => {
 
   const renderPage = () => {
     // Show premium splash loader on startup while loading database and plugins
-    if (isInitializing) {
-      return <SplashLoader progress={initProgress} statusText={initStatus} />;
+    // Block transition until user clicks 'TAP TO START' (hasStartedSplash = true)
+    if (isInitializing || !hasStartedSplash) {
+      return (
+        <SplashLoader 
+          progress={isInitializing ? initProgress : 100} 
+          statusText={isInitializing ? initStatus : 'Workspace Ready'} 
+          onStart={() => setHasStartedSplash(true)}
+        />
+      );
     }
 
     // Guard against rendering player view on startup before selectedSong is fully hydrated

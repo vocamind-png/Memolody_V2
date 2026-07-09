@@ -4,24 +4,79 @@ import { Music, Sparkles } from 'lucide-react';
 interface SplashLoaderProps {
   progress: number;
   statusText?: string;
+  onStart?: () => void;
 }
 
-export const SplashLoader: React.FC<SplashLoaderProps> = ({ progress, statusText = 'Loading Memolody V2...' }) => {
+export const SplashLoader: React.FC<SplashLoaderProps> = ({ progress, statusText = 'Loading Memolody V2...', onStart }) => {
   const [dots, setDots] = useState('');
   const [showRecovery, setShowRecovery] = useState(false);
   const [audioError, setAudioError] = useState(false);
+  const [hasStarted, setHasStarted] = useState(false);
   const audioRef = React.useRef<HTMLAudioElement>(null);
+
+  const handleStartExperience = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setHasStarted(true);
+    if (audioRef.current) fadeInAudio(audioRef.current);
+    
+    setTimeout(() => {
+      if (onStart) onStart();
+    }, 2500);
+  };
+
+  const intervalRef = React.useRef<NodeJS.Timeout | null>(null);
+
+  const fadeInAudio = (audioEl: HTMLAudioElement) => {
+    // If it's already playing and volume is up, do not reset
+    if (!audioEl.paused && audioEl.volume > 0) return;
+
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    audioEl.volume = 0;
+    
+    audioEl.play().then(() => {
+      setAudioError(false);
+      let vol = 0;
+      const targetVolume = 0.5;
+      intervalRef.current = setInterval(() => {
+        vol += 0.05;
+        if (vol >= targetVolume) {
+          audioEl.volume = targetVolume;
+          if (intervalRef.current) clearInterval(intervalRef.current);
+        } else {
+          audioEl.volume = vol;
+        }
+      }, 200);
+    }).catch(() => setAudioError(true));
+  };
 
   useEffect(() => {
     if (audioRef.current) {
-      audioRef.current.volume = 0.4;
-      audioRef.current.play().catch(() => setAudioError(true));
+      fadeInAudio(audioRef.current);
     }
   }, []);
 
+  const fadeOutAudio = (audioEl: HTMLAudioElement) => {
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    let vol = audioEl.volume;
+    intervalRef.current = setInterval(() => {
+      vol -= 0.1;
+      if (vol <= 0) {
+        audioEl.volume = 0;
+        audioEl.pause();
+        if (intervalRef.current) clearInterval(intervalRef.current);
+      } else {
+        audioEl.volume = vol;
+      }
+    }, 100);
+  };
+
   const handleEnableAudio = () => {
     if (audioRef.current) {
-      audioRef.current.play().then(() => setAudioError(false)).catch(() => {});
+      if (!audioRef.current.paused && audioRef.current.volume > 0) {
+        fadeOutAudio(audioRef.current);
+      } else {
+        fadeInAudio(audioRef.current);
+      }
     }
   };
 
@@ -66,12 +121,25 @@ export const SplashLoader: React.FC<SplashLoaderProps> = ({ progress, statusText
   }, []);
 
   return (
-    <div className="fixed inset-0 z-[99999] flex flex-col items-center justify-center bg-[#050507] text-white select-none overflow-hidden">
+    <div 
+      className="fixed inset-0 z-[99999] flex flex-col items-center justify-center bg-[#050507] text-white select-none overflow-hidden cursor-pointer"
+      onClick={hasStarted ? handleEnableAudio : undefined}
+    >
+      {!hasStarted && (
+        <div className="absolute inset-0 z-[100000] flex items-center justify-center bg-[#050507]/80 backdrop-blur-sm animate-fade-in">
+           <button 
+             onClick={handleStartExperience} 
+             className="px-10 py-5 bg-cyan-500/20 text-cyan-300 border-2 border-cyan-500/50 rounded-full font-black text-sm tracking-[0.3em] hover:bg-cyan-500/40 hover:scale-105 transition-all duration-300 animate-pulse shadow-[0_0_30px_rgba(0,229,255,0.4)]"
+           >
+             TAP TO START
+           </button>
+        </div>
+      )}
       {/* Immersive background glow effects */}
       <div className="absolute top-1/4 left-1/4 w-[40vw] h-[40vw] rounded-full bg-cyan-500/10 blur-[120px] pointer-events-none animate-pulse" style={{ animationDuration: '6s' }} />
       <div className="absolute bottom-1/4 right-1/4 w-[45vw] h-[45vw] rounded-full bg-indigo-500/10 blur-[140px] pointer-events-none animate-pulse" style={{ animationDuration: '8s' }} />
 
-      <audio ref={audioRef} src="/minuet_in_g.mp3" loop />
+      <audio ref={audioRef} src="/audio/Where_Dreams_Align.mp3" loop />
       <div className="relative z-10 flex flex-col items-center max-w-lg w-full px-6">
         
         {/* Brand Logo & Header */}
@@ -82,7 +150,7 @@ export const SplashLoader: React.FC<SplashLoaderProps> = ({ progress, statusText
           <span className="text-[11px] font-black tracking-[0.25em] text-zinc-400 uppercase">
             MEMOLODY <span className="text-cyan-400">V2.5</span>
           </span>
-          {audioError && (
+          {audioError && hasStarted && (
             <button 
               onClick={handleEnableAudio}
               className="absolute -right-28 px-3 py-1 bg-cyan-500/20 text-cyan-300 text-[9px] font-bold tracking-widest rounded-full border border-cyan-500/50 hover:bg-cyan-500/40 transition-colors animate-pulse whitespace-nowrap"
