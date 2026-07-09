@@ -140,15 +140,6 @@ const App: React.FC = () => {
   const [hasStartedSplash, setHasStartedSplash] = useState(false);
   const [initProgress, setInitProgress] = useState(0);
 
-  const { bgmUrl, bgmTitle, bgmCover } = React.useMemo(() => {
-    try {
-      const title = selectedSong ? selectedSong.title.toLowerCase() : '';
-      if (title.includes('minuet')) return { bgmUrl: '/audio/minuet_in_g.mp3', bgmTitle: 'Minuet in G (Ambient)', bgmCover: '/images/memolody_hero.png' };
-      if (title.includes('bird')) return { bgmUrl: '/audio/bird_choir.mp3', bgmTitle: 'Bird Choir (Ambient)', bgmCover: '/images/memolody_hero.png' };
-      if (title.includes('forest')) return { bgmUrl: '/audio/forest_bgm.mp3', bgmTitle: 'Forest (Ambient)', bgmCover: '/images/memolody_hero.png' };
-    } catch(e) {}
-    return { bgmUrl: '/audio/Where_Dreams_Align.mp3', bgmTitle: 'Where Dreams Align', bgmCover: '/images/memolody_hero.png' };
-  }, [selectedSong]);
   const [initStatus, setInitStatus] = useState('Booting Audio System...');
   const [isNimoOpen, setIsNimoOpen] = useState(false);
   const [nimoMounted, setNimoMounted] = useState(true); // Always mount for sidebar mode
@@ -163,6 +154,16 @@ const App: React.FC = () => {
   const isSyncingRef = React.useRef(false); // ref to prevent cascade re-renders from isSyncing dep
   const [onlineStatus, setOnlineStatus] = useState<'online' | 'offline'>('online');
   const [globalSearchQuery, setGlobalSearchQuery] = useState('');
+
+  const { bgmUrl, bgmTitle, bgmCover } = React.useMemo(() => {
+    try {
+      const title = selectedSong ? selectedSong.title.toLowerCase() : '';
+      if (title.includes('minuet')) return { bgmUrl: '/audio/minuet_in_g.mp3', bgmTitle: 'Minuet in G (Ambient)', bgmCover: '/images/memolody_hero.png' };
+      if (title.includes('bird')) return { bgmUrl: '/audio/bird_choir.mp3', bgmTitle: 'Bird Choir (Ambient)', bgmCover: '/images/memolody_hero.png' };
+      if (title.includes('forest')) return { bgmUrl: '/audio/forest_bgm.mp3', bgmTitle: 'Forest (Ambient)', bgmCover: '/images/memolody_hero.png' };
+    } catch(e) {}
+    return { bgmUrl: '/audio/Where_Dreams_Align.mp3', bgmTitle: 'Where Dreams Align', bgmCover: '/images/memolody_hero.png' };
+  }, [selectedSong]);
   const [performanceMode, setPerformanceMode] = useState(() => localStorage.getItem('nimo_perf_mode') === 'true');
   const [uiTheme, setUiTheme] = useState<'v1' | 'v2'>(() => (localStorage.getItem('memo_ui_theme') as 'v1' | 'v2') || 'v2');
   const [nimoPosition, setNimoPosition] = useState<'left' | 'right'>(() => (localStorage.getItem('nimo_position') as 'left' | 'right') || 'left');
