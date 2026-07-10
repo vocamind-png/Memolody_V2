@@ -20,7 +20,9 @@ import traceback
 import soundfile as sf
 import threading
 
-inference_lock = threading.Lock()
+# Global thread lock for single-GPU inference to prevent OOM
+# Increased to Semaphore(3) to allow 3 concurrent inference requests and utilize full 20GB VRAM
+inference_lock = threading.Semaphore(3)
 try:
     import fitz # PyMuPDF
     FITZ_OK = True
