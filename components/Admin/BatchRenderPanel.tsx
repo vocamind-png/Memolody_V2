@@ -96,16 +96,7 @@ const BatchRenderPanel: React.FC = () => {
   }, []);
 
   // Fetch cloud render status for locally-known songs
-  const [cloudStatusLoaded, setCloudStatusLoaded] = useState(0);
-  useEffect(() => {
-    const songIds = allSongs.map(s => s.song.id);
-    if (songIds.length === 0) return;
-    const chunks: string[][] = [];
-    for (let i = 0; i < songIds.length; i += 50) chunks.push(songIds.slice(i, i + 50));
-    Promise.all(chunks.map(c => fetchCloudRenderStatusBulk(c)))
-      .then(() => setCloudStatusLoaded(prev => prev + 1))
-      .catch(() => {});
-  }, [allSongs]);
+  // fetchCloudRenderStatusBulk removed to prevent rate limiting, fetchAllCloudRenderedSongsFull is sufficient.
 
   // Merge cloud renders into local song render status
   // (local songs whose ID matches song_<cloudId> or exact cloudId)
