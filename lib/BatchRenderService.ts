@@ -136,43 +136,9 @@ export async function fetchCloudRenderStatus(songId: string): Promise<{ keys: nu
 }
 
 export async function fetchCloudRenderStatusBulk(songIds: string[]): Promise<Record<string, { keys: number[]; fullyRendered: boolean }>> {
-  const result: Record<string, { keys: number[]; fullyRendered: boolean }> = {};
-  // Filter out cached entries
-  const uncached = songIds.filter(id => {
-    const c = _cloudRenderCache[id];
-    if (c && Date.now() - c.fetchedAt < CLOUD_CACHE_TTL) {
-      result[id] = { keys: c.keys, fullyRendered: c.keys.length >= 12 };
-      return false;
-    }
-    return true;
-  });
-  if (uncached.length === 0) return result;
-  try {
-    const { supabase } = await import('./supabase');
-    const { data } = await supabase
-      .from('rendered_vocals')
-      .select('song_id, song_key, gcs_url')
-      .in('song_id', uncached);
-    const grouped: Record<string, { keys: number[]; gcsUrls: Record<number, string> }> = {};
-    if (data) {
-      for (const row of data) {
-        if (!grouped[row.song_id]) grouped[row.song_id] = { keys: [], gcsUrls: {} };
-        if (!grouped[row.song_id].keys.includes(row.song_key)) {
-          grouped[row.song_id].keys.push(row.song_key);
-        }
-        grouped[row.song_id].gcsUrls[row.song_key] = row.gcs_url;
-      }
-    }
-    for (const sid of uncached) {
-      const g = grouped[sid] || { keys: [], gcsUrls: {} };
-      g.keys.sort((a, b) => a - b);
-      _cloudRenderCache[sid] = { keys: g.keys, gcsUrls: g.gcsUrls, fetchedAt: Date.now() };
-      result[sid] = { keys: g.keys, fullyRendered: g.keys.length >= 12 };
-    }
-  } catch (e) {
-    console.warn('[BatchRender] Bulk cloud status failed:', e);
-  }
-  return result;
+  // Disabled to prevent API rate limiting / ERR_INSUFFICIENT_RESOURCES
+  // Use fetchAllCloudRenderedSongsFull() instead to get the full catalog in 1 request.
+  return {};
 }
 
 // ── Fetch All Cloud Rendered Songs ──
