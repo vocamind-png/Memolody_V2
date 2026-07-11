@@ -1083,28 +1083,9 @@ if os.path.exists(english_voicebanks_dir):
             ckpt, cfg = find_diffsinger_model(voice_path)
             if ckpt:
                 print(f"[DEBUG] 📂 Found {voice_name} model at: {ckpt}")
-                if ckpt.endswith('.onnx'):
-                    try:
-                        from ds_onnx_engine import DiffSingerONNXEngine
-                        engine = DiffSingerONNXEngine(voice_path, language='en')
-                        if engine.is_ready:
-                            _ds_engines[voice_name.lower()] = engine
-                            print(f"✅ DiffSinger ONNX Engine ({voice_name}) loaded successfully (Eagerly into GPU)!")
-                            DS_ENGINE_OK = True
-                    except Exception as e:
-                        print(f"❌ Failed to load {voice_name}: {e}")
-                else:
-                    try:
-                        from ds_engine import DiffSingerEngine
-                        engine = DiffSingerEngine(ckpt, config_path=cfg, language='en')
-                        if engine.is_ready:
-                            _ds_engines[voice_name.lower()] = engine
-                            print(f"✅ DiffSinger Engine ({voice_name}) loaded successfully!")
-                            DS_ENGINE_OK = True
-                            if _ds_engine is None:
-                                _ds_engine = engine
-                    except Exception as e:
-                        print(f"❌ Failed to load {voice_name}: {e}")
+                # Instead of eager loading, we defer it to save memory and avoid onnxruntime multi-session crashes
+                _lazy_voice_paths[voice_name.lower()] = (ckpt, cfg)
+                print(f"[DEBUG] ⏳ Added {voice_name} to lazy load list")
 
 # Initialize Jianpu (Chinese) DiffSinger Engine
 DS_JIANPU_OK = False
