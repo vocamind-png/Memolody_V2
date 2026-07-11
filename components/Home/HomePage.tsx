@@ -1632,7 +1632,7 @@ If a field is not relevant, leave the array empty. Translate concepts into Engli
                   </div>
                 )}
                 {/* Cover Area */}
-                <div className="w-full aspect-square rounded-lg overflow-hidden relative shadow-md group-hover/card:shadow-lg border border-white/10 mb-1">
+                <div className="w-full aspect-video rounded-lg overflow-hidden relative shadow-md group-hover/card:shadow-lg border border-white/10 mb-1">
                   <AbstractCover seed={item.title || item.id} size={140} />
                   
                   {/* Default small play button overlay */}
