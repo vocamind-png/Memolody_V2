@@ -145,7 +145,7 @@ export const SplashLoader: React.FC<SplashLoaderProps> = ({ progress, statusText
             <Music size={20} className="text-black" strokeWidth={2.5} />
           </div>
           <span className="text-[11px] font-black tracking-[0.25em] text-zinc-400 uppercase">
-            MEMOLODY <span className="text-cyan-400">V2.5.1</span>
+            MEMOLODY <span className="text-cyan-400">V2.5.2</span>
           </span>
           {audioError && (
             <button 

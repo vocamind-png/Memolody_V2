@@ -116,14 +116,17 @@ const BatchRenderPanel: React.FC = () => {
     const local = getSongRenderedKeyCount(songId);
     if (local >= 12) return local;
     // Check cloud by exact or prefixed ID
-    const cs = cloudRenderedSongs.find(c => c.songId === songId || 'song_' + c.songId === songId || c.songId === songId.replace(/^song_/, ''));
-    return cs ? cs.keys.length : local;
+    const normId = songId.replace(/^song_/, '');
+    const cs = cloudRenderedSongs.find(c => c.songId.replace(/^song_/, '') === normId);
+    if (cs) return Math.max(local, cs.keys.length);
+    return local;
   }, [cloudRenderedSongs]);
 
   const getEffectiveKeys = useCallback((songId: string): number[] => {
     const local = getSongRenderedKeys(songId);
     if (local.length >= 12) return local;
-    const cs = cloudRenderedSongs.find(c => c.songId === songId || 'song_' + c.songId === songId || c.songId === songId.replace(/^song_/, ''));
+    const normId = songId.replace(/^song_/, '');
+    const cs = cloudRenderedSongs.find(c => c.songId.replace(/^song_/, '') === normId);
     if (!cs) return local;
     const merged = new Set([...local, ...cs.keys]);
     return Array.from(merged).sort((a, b) => a - b);
