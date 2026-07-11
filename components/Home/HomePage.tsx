@@ -4,6 +4,8 @@ import * as Tone from 'tone';
 import { Song, ViewId, SongFolder } from '../../types';
 import { parseMusicXMLMetadata } from '../../lib/MusicXmlParser';
 import { songStorage } from '../../lib/SongStorage';
+import { getClassicalRank } from '../../lib/classicalRanking';
+import { isSongFullyRendered } from '../../lib/BatchRenderService';
 import ScoreSelectionModal from './ScoreSelectionModal';
 import { GoogleGenAI } from '@google/genai';
 
@@ -100,10 +102,6 @@ const ProcessingOverlay: React.FC<{ message: string; error?: string | null; onDi
     const t = setInterval(() => setElapsed(s => s + 1), 1000);
     return () => {
       clearInterval(t);
-      const bgmEl = document.getElementById('homepage-bgm') as HTMLAudioElement;
-      if (bgmEl) {
-        bgmEl.pause();
-      }
     };
   }, []);
 
@@ -451,25 +449,123 @@ const HomePage: React.FC<HomePageProps> = ({
   bgmUrl, bgmTitle, bgmCover
 }) => {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  // Resume Tone.js audio context on first interaction
-  useEffect(() => {
-    const resumeAudio = () => {
-      // Start background music immediately on click
-      const bgmElement = document.getElementById('homepage-bgm') as HTMLAudioElement;
-      if (bgmElement && bgmElement.paused) {
-        bgmElement.volume = 0.3;
-        bgmElement.play().catch(e => console.warn('BGM play blocked:', e));
-      }
+  // BGM Audio - reuse the audio from SplashLoader if available, otherwise create new
+  const bgmRef = React.useRef<HTMLAudioElement | null>(null);
+  const bgmStartedRef = React.useRef(false);
 
-      try {
-        Tone.start();
-        console.log('🔊 Audio context resumed');
-      } catch (e) {
-        console.warn('Audio context resume failed', e);
+  useEffect(() => {
+    // Check if SplashLoader already created and started playing an audio
+    const existingBgm = (window as any).__memolody_bgm as HTMLAudioElement | undefined;
+    
+    if (existingBgm && !existingBgm.paused) {
+      // Reuse the already-playing audio from SplashLoader!
+      bgmRef.current = existingBgm;
+      bgmStartedRef.current = true;
+      existingBgm.volume = 1.0;
+      console.log('🎵 BGM: Reusing audio from SplashLoader (already playing)');
+      
+      // Resume Tone.js
+      try { Tone.start(); } catch (e) {}
+      return;
+    }
+
+    // Fallback: create new Audio (for cases where SplashLoader didn't play)
+    const audioSrc = bgmUrl || '/audio/Where_Dreams_Align.mp3';
+    const audio = existingBgm || new Audio(audioSrc);
+    audio.loop = true;
+    audio.preload = 'auto';
+    audio.volume = 1.0;
+    bgmRef.current = audio;
+
+    const startBGM = () => {
+      if (bgmStartedRef.current) return;
+      const a = bgmRef.current;
+      if (!a) return;
+      a.play().then(() => {
+        bgmStartedRef.current = true;
+        (window as any).__memolody_bgm = a;
+        console.log('🎵 BGM playing!');
+        window.removeEventListener('click', startBGM, true);
+        window.removeEventListener('touchstart', startBGM, true);
+        window.removeEventListener('touchend', startBGM, true);
+        window.removeEventListener('keydown', startBGM, true);
+      }).catch(err => {
+        console.warn('BGM play attempt failed:', err);
+      });
+    };
+
+    // Try immediately
+    startBGM();
+
+    // Listen for ANY user gesture in capture phase
+    window.addEventListener('click', startBGM, true);
+    window.addEventListener('touchstart', startBGM, true);
+    window.addEventListener('touchend', startBGM, true);
+    window.addEventListener('keydown', startBGM, true);
+
+    // Also resume Tone.js audio context
+    const resumeTone = () => {
+      try { Tone.start(); } catch (e) {}
+    };
+    window.addEventListener('click', resumeTone);
+
+    return () => {
+      window.removeEventListener('click', startBGM, true);
+      window.removeEventListener('touchstart', startBGM, true);
+      window.removeEventListener('touchend', startBGM, true);
+      window.removeEventListener('keydown', startBGM, true);
+      window.removeEventListener('click', resumeTone);
+      // Do NOT pause/destroy bgm here - let it keep playing
+    };
+  }, [bgmUrl]);
+
+  // ── Stop BGM on first user click/tap (after it's started) ──
+  useEffect(() => {
+    let stopRegistered = false;
+    
+    const stopBgmOnClick = () => {
+      const audio = bgmRef.current || (window as any).__memolody_bgm as HTMLAudioElement | undefined;
+      if (!audio || audio.paused) return;
+      
+      // Fade out smoothly over 500ms
+      let vol = audio.volume;
+      const fadeInterval = setInterval(() => {
+        vol -= 0.1;
+        if (vol <= 0) {
+          audio.volume = 0;
+          audio.pause();
+          audio.currentTime = 0;
+          clearInterval(fadeInterval);
+          (window as any).__memolody_bgm = null;
+          bgmRef.current = null;
+          console.log('🎵 BGM stopped by user click');
+        } else {
+          audio.volume = vol;
+        }
+      }, 50);
+      
+      // Remove listener after first use (one-shot)
+      window.removeEventListener('click', stopBgmOnClick, true);
+      window.removeEventListener('touchend', stopBgmOnClick, true);
+      stopRegistered = false;
+    };
+
+    // Wait a short moment so the "start BGM" click doesn't immediately stop it
+    const timer = setTimeout(() => {
+      if (bgmStartedRef.current || (window as any).__memolody_bgm) {
+        window.addEventListener('click', stopBgmOnClick, true);
+        window.addEventListener('touchend', stopBgmOnClick, true);
+        stopRegistered = true;
+      }
+    }, 1500);
+
+    return () => {
+      clearTimeout(timer);
+      if (stopRegistered) {
+        window.removeEventListener('click', stopBgmOnClick, true);
+        window.removeEventListener('touchend', stopBgmOnClick, true);
       }
     };
-    window.addEventListener('click', resumeAudio);
-    return () => window.removeEventListener('click', resumeAudio);
   }, []);
   const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -1059,10 +1155,26 @@ const HomePage: React.FC<HomePageProps> = ({
   const topClassicalSongs = useMemo(() => {
     const classical = userLibrary.filter(it => {
       if (!it || !it.metadata || it.metadata.isDeleted) return false;
-      const era = (it.metadata.era || detectEraFromName(it.metadata.composer || '')).toLowerCase();
-      return era === 'baroque' || era === 'classical' || era === 'romantic';
+      const explicitEra = it.metadata.era && it.metadata.era !== 'NA' ? it.metadata.era : null;
+      // Many XMLs put composer name inside the title or artist field
+      const textToSearch = `${it.metadata.composer || ''} ${it.metadata.artist || ''} ${it.metadata.title || ''}`;
+      const era = (explicitEra || detectEraFromName(textToSearch)).toLowerCase();
+      
+      const isClassicalEra = ['baroque', 'classical', 'romantic', 'impressionist', '20th century', 'contemporary'].includes(era);
+      const isRanked = getClassicalRank(textToSearch, it.metadata.title || '') < 999;
+      
+      return isClassicalEra || isRanked;
     });
     classical.sort((a, b) => {
+      const textA = `${a.metadata.composer || ''} ${a.metadata.artist || ''} ${a.metadata.title || ''}`;
+      const textB = `${b.metadata.composer || ''} ${b.metadata.artist || ''} ${b.metadata.title || ''}`;
+      const rankA = getClassicalRank(textA, a.metadata.title || '');
+      const rankB = getClassicalRank(textB, b.metadata.title || '');
+      
+      if (rankA !== rankB) {
+        return rankA - rankB;
+      }
+      
       const aPop = (a.metadata.views || 0) + (a.metadata.playCount || 0) * 2 + (a.metadata.likes || 0) * 5;
       const bPop = (b.metadata.views || 0) + (b.metadata.playCount || 0) * 2 + (b.metadata.likes || 0) * 5;
       return bPop - aPop;
@@ -1252,31 +1364,8 @@ const HomePage: React.FC<HomePageProps> = ({
     { id: 'trash', label: 'Trash', count: trashCount, color: 'text-zinc-500' },
   ];
 
-  React.useEffect(() => {
-    const bgm = document.getElementById('homepage-bgm') as HTMLAudioElement;
-    if (bgm) {
-      bgm.volume = 0;
-      bgm.play().then(() => {
-        let vol = 0;
-        const targetVolume = 0.5;
-        const fade = setInterval(() => {
-          vol += 0.05;
-          if (vol >= targetVolume) {
-            bgm.volume = targetVolume;
-            clearInterval(fade);
-          } else {
-            bgm.volume = vol;
-          }
-        }, 200);
-      }).catch(e => console.warn('HomePage BGM autoplay blocked:', e));
-    }
-  }, []);
-
   return (
     <div className="absolute inset-0 flex flex-col bg-[#0A0A0B] overflow-y-auto overflow-x-hidden select-none" onScroll={handleScroll}>
-      {/* Background Music Audio Element */}
-      <audio id="homepage-bgm" src={bgmUrl || "/audio/Where_Dreams_Align.mp3"} loop />
-
       {/* ── HEADER / SEARCH & RECENT (STATIC TOP) ── */}
       <div className="shrink-0 px-6 pt-6 pb-2 space-y-5 bg-gradient-to-b from-white/[0.02] to-transparent border-b border-white/5">
 
@@ -1292,7 +1381,7 @@ const HomePage: React.FC<HomePageProps> = ({
 
           {/* Now Playing Widget */}
           <div className="flex items-center gap-3 bg-black/30 backdrop-blur-md px-3 py-2 rounded-full border border-white/5 cursor-pointer hover:bg-black/50 transition-colors" onClick={() => {
-            const bgm = document.getElementById('homepage-bgm') as HTMLAudioElement;
+            const bgm = bgmRef.current;
             if (bgm) {
               if (bgm.paused) bgm.play().catch(()=>{});
               else bgm.pause();
@@ -1523,37 +1612,59 @@ If a field is not relevant, leave the array empty. Translate concepts into Engli
           <span className="text-[8px] font-black text-amber-500 uppercase tracking-widest flex items-center gap-1"><Star size={10} /> Top Charts</span>
           <span className="text-[8px] font-mono text-zinc-700">Global</span>
         </div>
-        {topSongs.length > 0 ? (
-          <div className="flex gap-2 overflow-x-auto no-scrollbar px-1 pb-2">
-            {topSongs.map((item, index) => (
-              <div key={item.song_id} onClick={() => {
-                const songItem = userLibrary.find(s => s.metadata.id === item.song_id);
-                if (songItem) onSongSelect(songItem.metadata, songItem.xmlData, 'listen');
-              }}
-                className="shrink-0 w-[140px] flex flex-col gap-1.5 group/card cursor-pointer relative bg-white/[0.02] p-2 rounded-xl border border-white/5 hover:bg-white/[0.05] transition-all">
+        {topClassicalSongs.length > 0 ? (
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 overflow-y-auto max-h-[320px] px-1 pb-2 custom-scrollbar">
+            {topClassicalSongs.map((item, index) => (
+              <div key={item.id} onClick={() => onSongSelect(item, undefined, 'listen')}
+                className="flex flex-col gap-1.5 group/card cursor-pointer relative bg-white/[0.02] p-2 rounded-xl border border-white/5 hover:bg-white/[0.05] transition-all">
                 {/* Rank Badge */}
-                <div className="absolute top-0 left-0 -mt-2 -ml-2 w-6 h-6 rounded-full bg-amber-500 text-black flex items-center justify-center text-[10px] font-black shadow-lg z-10 border border-[#0a0a0b]">
-                  {index + 1}
-                </div>
+                {index < 3 ? (
+                  <div className="absolute top-0 left-0 -mt-2 -ml-2 w-7 h-7 rounded-full bg-gradient-to-br from-amber-300 to-amber-600 text-black flex items-center justify-center text-[10px] font-black shadow-lg z-10 border-2 border-[#0a0a0b]">
+                    <span className="text-[12px] -mt-[1px]">👑</span>
+                  </div>
+                ) : index < 100 ? (
+                  <div className="absolute top-0 left-0 -mt-2 -ml-2 w-6 h-6 rounded-full bg-amber-500 text-black flex items-center justify-center text-[10px] font-black shadow-lg z-10 border border-[#0a0a0b]">
+                    <Star size={10} fill="currentColor" />
+                  </div>
+                ) : (
+                  <div className="absolute top-0 left-0 -mt-2 -ml-2 w-6 h-6 rounded-full bg-zinc-700 text-white flex items-center justify-center text-[9px] font-black shadow-lg z-10 border border-[#0a0a0b]">
+                    {index + 1}
+                  </div>
+                )}
                 {/* Cover Area */}
                 <div className="w-full aspect-square rounded-lg overflow-hidden relative shadow-md group-hover/card:shadow-lg border border-white/10 mb-1">
-                  <AbstractCover seed={item.title || item.song_id} size={140} />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end p-2 opacity-0 group-hover/card:opacity-100 transition-opacity">
-                    <div className="flex gap-2 text-[8px] font-bold text-white">
-                      <span className="flex items-center gap-0.5"><Star size={8} className="text-amber-400"/>{item.favorites_count || 0}</span>
-                      <span className="flex items-center gap-0.5"><Heart size={8} className="text-rose-400"/>{item.likes_count || 0}</span>
+                  <AbstractCover seed={item.title || item.id} size={140} />
+                  
+                  {/* Default small play button overlay */}
+                  <div className="absolute bottom-2 left-2 flex items-center justify-center pointer-events-none opacity-0 group-hover/card:opacity-100 transition-opacity z-20">
+                    <div 
+                      className="w-8 h-8 rounded-full bg-amber-500 flex items-center justify-center text-black shadow-lg shadow-amber-500/20 hover:scale-110 transition-transform pointer-events-auto cursor-pointer"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSongSelect(item, undefined, 'play');
+                      }}
+                    >
+                      <Play size={14} fill="currentColor" className="ml-1" />
                     </div>
                   </div>
+                  
+                  {/* Favorite Icon */}
+                  {item.isFavorite && <Heart size={14} className="text-rose-500 fill-rose-500 absolute top-2 right-2 z-20 shadow-sm" />}
                 </div>
                 <div className="min-w-0">
-                  <h3 className="text-[10px] font-black text-white truncate leading-tight group-hover/card:text-amber-400 transition-colors">
-                    {item.title}
+                  <h3 className="text-[10px] font-black text-white truncate leading-tight group-hover/card:text-amber-400 transition-colors flex items-center gap-1">
+                    {item.title || 'Untitled Song'}
+                    {isSongFullyRendered(item.id) && (
+                      <span className="inline-flex items-center gap-0.5 px-1 py-px bg-emerald-500/20 rounded-full shrink-0" title="AI Vocal Ready - All 12 keys rendered">
+                        <Sparkles size={6} className="text-emerald-400" />
+                      </span>
+                    )}
                   </h3>
-                  <p className="text-[8px] font-bold text-zinc-500 truncate mt-0.5 uppercase tracking-widest">{item.artist}</p>
+                  <p className="text-[8px] font-bold text-zinc-500 truncate mt-0.5 uppercase tracking-widest">{item.artist || item.composer || 'Unknown Artist'}</p>
                 </div>
                 <div className="text-[7px] text-zinc-600 font-mono mt-auto pt-1 border-t border-white/5 flex justify-between">
-                  <span>{item.play_count || 0} PLAYS</span>
-                  {item.difficulty_grade && <span className="text-cyan-600">{item.difficulty_grade}</span>}
+                  <span className="text-amber-500/70">CLASSICAL TOP 500</span>
+                  {item.difficultyGrade && <span className="text-cyan-600">{item.difficultyGrade}</span>}
                 </div>
               </div>
             ))}
@@ -1564,55 +1675,6 @@ If a field is not relevant, leave the array empty. Translate concepts into Engli
           </div>
         )}
       </div>
-
-      {/* Top 500 Classical Hits */}
-      {topClassicalSongs.length > 0 && (
-        <div className="space-y-2 mb-6">
-          <div className="flex items-center justify-between px-1">
-            <span className="text-[8px] font-black text-rose-500 uppercase tracking-widest italic">Top Classical Hits</span>
-            <span className="text-[8px] font-mono text-rose-500/70">{topClassicalSongs.length} songs</span>
-          </div>
-          <div className="flex gap-2 overflow-x-auto no-scrollbar px-1">
-            {topClassicalSongs.map((item, index) => (
-              <div key={item.id} onClick={() => onSongSelect(item, undefined, 'listen')}
-                className="shrink-0 w-[calc(33.33%-6px)] flex flex-col gap-1.5 group/card cursor-pointer">
-                {/* Cover Image Area */}
-                <div className="w-full aspect-video rounded-xl overflow-hidden relative shadow-md group-hover/card:shadow-lg group-hover/card:shadow-rose-500/20 border border-white/10 transition-all group-hover/card:-translate-y-1">
-                  <AbstractCover seed={item.title || item.id} size={200} />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-50" />
-                  
-                  {/* Rank Badge */}
-                  <div className="absolute top-1 left-1 bg-black/60 backdrop-blur-md px-1.5 py-0.5 rounded text-[8px] font-black text-white/90 shadow-sm border border-white/10 z-10">
-                    #{index + 1}
-                  </div>
-                  
-                  {/* Default small play button */}
-                  <div className="absolute bottom-1.5 left-1.5 flex items-center justify-center pointer-events-none">
-                    <div 
-                      className="w-6 h-6 rounded-full bg-black/40 backdrop-blur-sm flex items-center justify-center text-white/80 group-hover/card:text-rose-400 group-hover/card:bg-rose-500/20 transition-colors pointer-events-auto cursor-pointer"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onSongSelect(item, undefined, 'play');
-                      }}
-                    >
-                      <Play size={10} fill="currentColor" className="ml-0.5" />
-                    </div>
-                  </div>
-                  
-                  {/* Favorite Icon */}
-                  {item.isFavorite && <Heart size={10} className="text-rose-500 fill-rose-500 absolute top-1.5 right-1.5" />}
-                </div>
-                
-                {/* Title Area */}
-                <div className="px-0.5">
-                  <p className="text-[10px] leading-tight font-black text-white uppercase italic truncate">{item.title || 'Untitled Song'}</p>
-                  <p className="text-[8px] leading-tight text-zinc-500 uppercase tracking-wider truncate mt-0.5">{item.artist || item.composer || 'Unknown Artist'}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* Recent Matrix (Horizontal Scroll) */}
         {recentSongs.length > 0 && (

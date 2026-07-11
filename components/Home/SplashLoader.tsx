@@ -14,18 +14,7 @@ export const SplashLoader: React.FC<SplashLoaderProps> = ({ progress, statusText
   const [dots, setDots] = useState('');
   const [showRecovery, setShowRecovery] = useState(false);
   const [audioError, setAudioError] = useState(false);
-  const [hasStarted, setHasStarted] = useState(false);
   const audioRef = React.useRef<HTMLAudioElement>(null);
-
-  const handleStartExperience = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setHasStarted(true);
-    if (audioRef.current) fadeInAudio(audioRef.current);
-    
-    setTimeout(() => {
-      if (onStart) onStart();
-    }, 2500);
-  };
 
   const intervalRef = React.useRef<NodeJS.Timeout | null>(null);
 
@@ -38,6 +27,8 @@ export const SplashLoader: React.FC<SplashLoaderProps> = ({ progress, statusText
     
     audioEl.play().then(() => {
       setAudioError(false);
+      // Store globally so HomePage can reuse the same playing audio
+      (window as any).__memolody_bgm = audioEl;
       let vol = 0;
       const targetVolume = 0.5;
       intervalRef.current = setInterval(() => {
@@ -126,27 +117,17 @@ export const SplashLoader: React.FC<SplashLoaderProps> = ({ progress, statusText
   return (
     <div 
       className="fixed inset-0 z-[99999] flex flex-col items-center justify-center bg-[#050507] text-white select-none overflow-hidden cursor-pointer"
-      onClick={hasStarted ? handleEnableAudio : undefined}
+      onClick={handleEnableAudio}
     >
-      {!hasStarted && (
-        <div className="absolute inset-0 z-[100000] flex items-center justify-center bg-[#050507]/80 backdrop-blur-sm animate-fade-in">
-           <button 
-             onClick={handleStartExperience} 
-             className="px-10 py-5 bg-cyan-500/20 text-cyan-300 border-2 border-cyan-500/50 rounded-full font-black text-sm tracking-[0.3em] hover:bg-cyan-500/40 hover:scale-105 transition-all duration-300 animate-pulse shadow-[0_0_30px_rgba(0,229,255,0.4)]"
-           >
-             TAP TO START
-           </button>
-        </div>
-      )}
       {/* Immersive background glow effects */}
       <div className="absolute top-1/4 left-1/4 w-[40vw] h-[40vw] rounded-full bg-cyan-500/10 blur-[120px] pointer-events-none animate-pulse" style={{ animationDuration: '6s' }} />
       <div className="absolute bottom-1/4 right-1/4 w-[45vw] h-[45vw] rounded-full bg-indigo-500/10 blur-[140px] pointer-events-none animate-pulse" style={{ animationDuration: '8s' }} />
 
-      <audio ref={audioRef} src={bgmUrl || "/audio/Where_Dreams_Align.mp3"} loop />
+      <audio ref={audioRef} src={bgmUrl || "/audio/Where_Dreams_Align.mp3"} loop preload="auto" />
       <div className="relative z-10 flex flex-col items-center max-w-lg w-full px-6">
         
           {/* Now Playing Widget */}
-          {hasStarted && (
+          {(
             <div className="absolute top-6 right-6 flex items-center gap-3 bg-black/40 backdrop-blur-md px-3 py-2 rounded-full border border-white/5 animate-fade-in shadow-xl">
               <div className="w-8 h-8 rounded-full overflow-hidden shrink-0 animate-[spin_10s_linear_infinite]">
                 <img src={bgmCover || '/images/memolody_hero.png'} alt="Cover" className="w-full h-full object-cover" />
@@ -166,7 +147,7 @@ export const SplashLoader: React.FC<SplashLoaderProps> = ({ progress, statusText
           <span className="text-[11px] font-black tracking-[0.25em] text-zinc-400 uppercase">
             MEMOLODY <span className="text-cyan-400">V2.5</span>
           </span>
-          {audioError && hasStarted && (
+          {audioError && (
             <button 
               onClick={handleEnableAudio}
               className="absolute -right-28 px-3 py-1 bg-cyan-500/20 text-cyan-300 text-[9px] font-bold tracking-widest rounded-full border border-cyan-500/50 hover:bg-cyan-500/40 transition-colors animate-pulse whitespace-nowrap"

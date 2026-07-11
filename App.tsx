@@ -137,7 +137,7 @@ const App: React.FC = () => {
   const isAdmin = hasAccess(role, 'admin');
   const [currentView, setCurrentView] = useState<ViewId>('home');
   const [isInitializing, setIsInitializing] = useState(true);
-  const [hasStartedSplash, setHasStartedSplash] = useState(false);
+  const [hasStartedSplash, setHasStartedSplash] = useState(true); // Auto-start, no TAP TO START needed
   const [initProgress, setInitProgress] = useState(0);
 
   const [initStatus, setInitStatus] = useState('Booting Audio System...');
@@ -678,6 +678,11 @@ const App: React.FC = () => {
             throw new Error(`HTTP Error ${resp.status}`);
           }
         } catch (e: any) {
+          // Don't show error for abort (user navigated away or switched songs quickly)
+          if (e?.name === 'AbortError') {
+            console.log('[Neural] Fetch aborted (user navigated away)');
+            return;
+          }
           console.warn('[Neural] Fetch error:', e);
           const errorMsg = `❌ ไม่สามารถดาวน์โหลดไฟล์เพลงได้: ${e.message || String(e)}`;
           alert(errorMsg);
@@ -1241,13 +1246,12 @@ const App: React.FC = () => {
   }, [navigateTo, handleSongSelect, triggerSync]);
 
   const renderPage = () => {
-    // Show premium splash loader on startup while loading database and plugins
-    // Block transition until user clicks 'TAP TO START' (hasStartedSplash = true)
-    if (isInitializing || !hasStartedSplash) {
+    // Show premium splash loader only during initialization
+    if (isInitializing) {
       return (
         <SplashLoader 
-          progress={isInitializing ? initProgress : 100} 
-          statusText={isInitializing ? initStatus : 'Workspace Ready'} 
+          progress={initProgress} 
+          statusText={initStatus} 
           onStart={() => setHasStartedSplash(true)}
           bgmUrl={bgmUrl}
           bgmTitle={bgmTitle}

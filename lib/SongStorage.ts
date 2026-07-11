@@ -26,35 +26,30 @@ export class SongStorage {
   private db: IDBDatabase | null = null;
 
   async init(): Promise<IDBDatabase> {
-    if (this.db) return this.db;
+    if (this.db) {
+      try {
+        // Test if the connection is still open
+        this.db.transaction([this.storeName], 'readonly');
+        return this.db;
+      } catch {
+        this.db = null; // Connection was closed, re-open
+      }
+    }
     return new Promise((resolve, reject) => {
-      const request = indexedDB.open(this.dbName, 8); // Bump to 8 for deleted_ids
+      const request = indexedDB.open(this.dbName, 8);
       request.onupgradeneeded = (e: any) => {
         const db = e.target.result;
-        if (!db.objectStoreNames.contains(this.storeName)) {
-          db.createObjectStore(this.storeName, { keyPath: 'metadata.id' });
-        }
-        if (!db.objectStoreNames.contains(this.deletedStore)) {
-          db.createObjectStore(this.deletedStore, { keyPath: 'id' });
-        }
-        if (!db.objectStoreNames.contains(this.historyStore)) {
-          db.createObjectStore(this.historyStore, { keyPath: 'id' });
-        }
-        if (!db.objectStoreNames.contains(this.favoritesStore)) {
-          db.createObjectStore(this.favoritesStore, { keyPath: 'id' });
-        }
-        if (!db.objectStoreNames.contains(this.memoStore)) {
-          db.createObjectStore(this.memoStore, { keyPath: 'id' });
-        }
-        if (!db.objectStoreNames.contains(this.statsStore)) {
-          db.createObjectStore(this.statsStore, { keyPath: 'id' });
-        }
-        if (!db.objectStoreNames.contains(this.foldersStore)) {
-          db.createObjectStore(this.foldersStore, { keyPath: 'id' });
-        }
+        if (!db.objectStoreNames.contains(this.storeName)) db.createObjectStore(this.storeName, { keyPath: 'metadata.id' });
+        if (!db.objectStoreNames.contains(this.deletedStore)) db.createObjectStore(this.deletedStore, { keyPath: 'id' });
+        if (!db.objectStoreNames.contains(this.historyStore)) db.createObjectStore(this.historyStore, { keyPath: 'id' });
+        if (!db.objectStoreNames.contains(this.favoritesStore)) db.createObjectStore(this.favoritesStore, { keyPath: 'id' });
+        if (!db.objectStoreNames.contains(this.memoStore)) db.createObjectStore(this.memoStore, { keyPath: 'id' });
+        if (!db.objectStoreNames.contains(this.statsStore)) db.createObjectStore(this.statsStore, { keyPath: 'id' });
+        if (!db.objectStoreNames.contains(this.foldersStore)) db.createObjectStore(this.foldersStore, { keyPath: 'id' });
       };
       request.onsuccess = (e: any) => {
         this.db = e.target.result;
+        this.db!.onclose = () => { this.db = null; };
         resolve(this.db!);
       };
       request.onerror = () => reject('IndexedDB failed to open');

@@ -83,7 +83,7 @@ const fixAudioUrl = (u: string) => {
   return url;
 };
 
-// ── Persistence ──
+// ── Persistence (localStorage — legacy, still works as fallback) ──
 const BATCH_RENDERED_KEY = 'batch_rendered_songs';
 
 export function getBatchRenderedSongs(): Record<string, number[]> {
@@ -100,16 +100,108 @@ function saveBatchRendered(songId: string, transpose: number) {
   localStorage.setItem(BATCH_RENDERED_KEY, JSON.stringify(data));
 }
 
+// ── Cloud Render Status (Supabase catalog — shared community cache) ──
+// Queries the rendered_vocals table in Supabase to check if a render
+// already exists on GCS. Results are cached in memory for performance.
+const _cloudRenderCache: Record<string, { keys: number[]; gcsUrls: Record<number, string>; fetchedAt: number }> = {};
+const CLOUD_CACHE_TTL = 60_000; // 1 minute TTL
+
+export async function fetchCloudRenderStatus(songId: string): Promise<{ keys: number[]; gcsUrls: Record<number, string> }> {
+  // Check memory cache
+  const cached = _cloudRenderCache[songId];
+  if (cached && Date.now() - cached.fetchedAt < CLOUD_CACHE_TTL) {
+    return { keys: cached.keys, gcsUrls: cached.gcsUrls };
+  }
+  try {
+    const { supabase } = await import('./supabase');
+    const { data } = await supabase
+      .from('rendered_vocals')
+      .select('song_key, gcs_url')
+      .eq('song_id', songId);
+    const keys: number[] = [];
+    const gcsUrls: Record<number, string> = {};
+    if (data) {
+      for (const row of data) {
+        if (!keys.includes(row.song_key)) keys.push(row.song_key);
+        gcsUrls[row.song_key] = row.gcs_url;
+      }
+    }
+    keys.sort((a, b) => a - b);
+    _cloudRenderCache[songId] = { keys, gcsUrls, fetchedAt: Date.now() };
+    return { keys, gcsUrls };
+  } catch (e) {
+    console.warn('[BatchRender] Cloud status fetch failed:', e);
+    return { keys: [], gcsUrls: {} };
+  }
+}
+
+export async function fetchCloudRenderStatusBulk(songIds: string[]): Promise<Record<string, { keys: number[]; fullyRendered: boolean }>> {
+  const result: Record<string, { keys: number[]; fullyRendered: boolean }> = {};
+  // Filter out cached entries
+  const uncached = songIds.filter(id => {
+    const c = _cloudRenderCache[id];
+    if (c && Date.now() - c.fetchedAt < CLOUD_CACHE_TTL) {
+      result[id] = { keys: c.keys, fullyRendered: c.keys.length >= 12 };
+      return false;
+    }
+    return true;
+  });
+  if (uncached.length === 0) return result;
+  try {
+    const { supabase } = await import('./supabase');
+    const { data } = await supabase
+      .from('rendered_vocals')
+      .select('song_id, song_key, gcs_url')
+      .in('song_id', uncached);
+    const grouped: Record<string, { keys: number[]; gcsUrls: Record<number, string> }> = {};
+    if (data) {
+      for (const row of data) {
+        if (!grouped[row.song_id]) grouped[row.song_id] = { keys: [], gcsUrls: {} };
+        if (!grouped[row.song_id].keys.includes(row.song_key)) {
+          grouped[row.song_id].keys.push(row.song_key);
+        }
+        grouped[row.song_id].gcsUrls[row.song_key] = row.gcs_url;
+      }
+    }
+    for (const sid of uncached) {
+      const g = grouped[sid] || { keys: [], gcsUrls: {} };
+      g.keys.sort((a, b) => a - b);
+      _cloudRenderCache[sid] = { keys: g.keys, gcsUrls: g.gcsUrls, fetchedAt: Date.now() };
+      result[sid] = { keys: g.keys, fullyRendered: g.keys.length >= 12 };
+    }
+  } catch (e) {
+    console.warn('[BatchRender] Bulk cloud status failed:', e);
+  }
+  return result;
+}
+
+// ── Combined status: localStorage + Cloud ──
 export function isSongFullyRendered(songId: string, keys: number[] = [-5,-4,-3,-2,-1,0,1,2,3,4,5,6]): boolean {
-  const data = getBatchRenderedSongs();
-  if (!data[songId]) return false;
-  return keys.every(k => data[songId].includes(k));
+  // Check localStorage first (instant)
+  const local = getBatchRenderedSongs();
+  if (local[songId] && keys.every(k => local[songId].includes(k))) return true;
+  // Check cloud cache (if available, non-blocking)
+  const cloud = _cloudRenderCache[songId];
+  if (cloud && keys.every(k => cloud.keys.includes(k))) return true;
+  return false;
 }
 
 export function getSongRenderedKeyCount(songId: string): number {
-  const data = getBatchRenderedSongs();
-  return data[songId]?.length || 0;
+  const local = getBatchRenderedSongs();
+  const localKeys = new Set(local[songId] || []);
+  const cloud = _cloudRenderCache[songId];
+  if (cloud) cloud.keys.forEach(k => localKeys.add(k));
+  return localKeys.size;
 }
+
+export function getSongRenderedKeys(songId: string): number[] {
+  const local = getBatchRenderedSongs();
+  const keys = new Set(local[songId] || []);
+  const cloud = _cloudRenderCache[songId];
+  if (cloud) cloud.keys.forEach(k => keys.add(k));
+  return Array.from(keys).sort((a, b) => a - b);
+}
+
 
 // ── Main Service ──
 export class BatchRenderService {
@@ -125,6 +217,7 @@ export class BatchRenderService {
   private currentJob: BatchRenderJob | null = null;
   private statusText = '';
   private avgRenderTime = 180_000; // 3 min initial estimate
+  private generation = 0; // guards against stale workers from previous runs
 
   subscribe(listener: ProgressListener) {
     this.listeners.push(listener);
@@ -177,6 +270,7 @@ export class BatchRenderService {
     this.isPaused = false;
     this.startTime = Date.now();
     this.abortController = new AbortController();
+    const gen = ++this.generation; // capture generation for stale-run detection
     
     const stepMap: Record<string, number> = { 'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11 };
     
@@ -197,7 +291,7 @@ export class BatchRenderService {
     let jobIndex = 0;
     
     const worker = async (workerId: number) => {
-      while (this.isRunning && !this.abortController?.signal.aborted) {
+      while (this.isRunning && !this.abortController?.signal.aborted && gen === this.generation) {
         // Handle pause
         if (this.isPaused) {
           if (workerId === 0) {
@@ -235,8 +329,39 @@ export class BatchRenderService {
           const songEntry = songMap.get(job.songId);
           if (!songEntry) { job.status = 'error'; job.error = 'Song not found'; this.errors++; continue; }
 
-          const { song, xmlData } = songEntry;
-          const parsed = musicEngine.parseMusicXml(xmlData);
+          let { song, xmlData } = songEntry;
+          let finalXml = xmlData;
+          if ((!finalXml || !finalXml.includes('<score-partwise')) && !finalXml.startsWith('http') && String(song.id).length > 20) {
+            finalXml = `https://storage.googleapis.com/memolody-vault/pdmx-vault/${song.id}.mxl`;
+          }
+          if (finalXml && finalXml.startsWith('http')) {
+            try {
+              const url = finalXml.split('?')[0];
+              const isMxl = url.endsWith('.mxl');
+              const resp = await fetch(finalXml);
+              if (resp.ok) {
+                if (isMxl) {
+                  const blob = await resp.blob();
+                  const JSZip = (await import('jszip')).default || await import('jszip');
+                  const jszipInstance = new (JSZip as any)();
+                  const zip = await jszipInstance.loadAsync(blob);
+                  for (const [name, file] of Object.entries(zip.files)) {
+                    if (name.endsWith('.xml') && !name.startsWith('META-INF')) {
+                      finalXml = await (file as any).async('string');
+                      break;
+                    }
+                  }
+                } else {
+                  finalXml = await resp.text();
+                }
+                songEntry.xmlData = finalXml; // Cache for subsequent transpose keys
+              }
+            } catch (e) {
+              console.warn(`[BatchRender] Failed to fetch XML for ${song.id}:`, e);
+            }
+          }
+
+          const parsed = musicEngine.parseMusicXml(finalXml);
           if (!parsed.notes.length) { job.status = 'error'; job.error = 'No notes'; this.errors++; continue; }
 
           const songKey = parsed.metadata.key || 'C';
@@ -319,10 +444,13 @@ export class BatchRenderService {
     const workerPromises = Array.from({ length: CONCURRENT_WORKERS }).map((_, i) => worker(i));
     await Promise.all(workerPromises);
 
-    this.isRunning = false;
-    this.currentJob = null;
-    this.statusText = this.completed > 0 ? `✅ Done! ${this.completed} rendered, ${this.errors} errors, ${this.skipped} skipped.` : '⏹️ Stopped';
-    this.notify();
+    // Only update state if this run is still the active generation (not superseded by stop/restart)
+    if (gen === this.generation) {
+      this.isRunning = false;
+      this.currentJob = null;
+      this.statusText = this.completed > 0 ? `✅ Done! ${this.completed} rendered, ${this.errors} errors, ${this.skipped} skipped.` : '⏹️ Stopped';
+      this.notify();
+    }
   }
 
   private async saveResult(song: Song, data: any, transpose: number, songKey: string, bpm: number, lyricMode: LyricMode, voiceName: string, engineId: string, timingFeel: number, trackIds: string[]) {
@@ -348,7 +476,170 @@ export class BatchRenderService {
 
   pause() { this.isPaused = true; this.statusText = '⏸️ Pausing...'; this.notify(); }
   resume() { this.isPaused = false; }
-  stop() { this.isRunning = false; this.isPaused = false; this.abortController?.abort(); this.abortController = null; this.statusText = '⏹️ Stopped'; this.notify(); }
+  stop() {
+    this.isRunning = false;
+    this.isPaused = false;
+    this.generation++; // invalidate any in-flight workers
+    this.abortController?.abort();
+    this.abortController = null;
+    this.currentJob = null;
+    this.jobs = [];
+    this.completed = 0;
+    this.errors = 0;
+    this.skipped = 0;
+    // Stop server-side batch if running
+    if (this.serverBatchId) {
+      const stopUrl = getDirectServerUrl(`/studio/batch-render/${this.serverBatchId}/stop`);
+      svsFetch(stopUrl, { method: 'POST' }).catch(() => {});
+      this.serverBatchId = null;
+    }
+    if (this.serverPollInterval) {
+      clearInterval(this.serverPollInterval);
+      this.serverPollInterval = null;
+    }
+    this.statusText = '⏹️ Stopped';
+    this.notify();
+  }
+
+  // ── Server-Side Batch Render (10x faster — renders on GPU locally) ──
+  private serverBatchId: string | null = null;
+  private serverPollInterval: ReturnType<typeof setInterval> | null = null;
+
+  async startServerSide(songIds: string[]) {
+    if (this.isRunning) return;
+
+    this.isRunning = true;
+    this.isPaused = false;
+    this.startTime = Date.now();
+    this.completed = 0;
+    this.errors = 0;
+    this.skipped = 0;
+    this.jobs = [];
+    this.statusText = '🚀 Starting server-side batch render...';
+    this.notify();
+
+    const activeVoiceName = localStorage.getItem('vocalido_active_voice') || 'Lotte';
+    const trackEngineId = localStorage.getItem('vocalido_active_engine') || 'lotte_v_ai_dol';
+    const lyricMode = localStorage.getItem('vocalido_lyric_mode') || 'Solfege';
+    const svsSteps = parseInt(localStorage.getItem('vocalido_svs_steps') || '10');
+    const svsTimingFeel = parseInt(localStorage.getItem('vocalido_svs_timing_feel') || '50');
+    const svsPortamento = parseInt(localStorage.getItem('vocalido_portamento') || '120');
+    const svsVibratoDepth = parseInt(localStorage.getItem('vocalido_vibrato_depth') || '0');
+    const svsVibratoSpeed = parseFloat(localStorage.getItem('vocalido_vibrato_speed') || '4.8');
+    const svsVibratoStart = parseInt(localStorage.getItem('vocalido_vibrato_start') || '100');
+    const svsPitchBlend = parseInt(localStorage.getItem('vocalido_pitch_blend') || '0');
+
+    try {
+      const url = getDirectServerUrl('/studio/batch-render');
+      const res = await svsFetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          song_ids: songIds,
+          transpose_range: [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6],
+          params: {
+            singer: activeVoiceName,
+            voice: trackEngineId,
+            lyric_mode: lyricMode,
+            steps: svsSteps,
+            timing_feel: svsTimingFeel,
+            portamento: svsPortamento,
+            vibrato_depth: svsVibratoDepth,
+            vibrato_speed: svsVibratoSpeed,
+            vibrato_start: svsVibratoStart,
+            pitch_blend: svsPitchBlend,
+          },
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        this.statusText = `❌ ${err.error || 'Failed to start server batch'}`;
+        this.isRunning = false;
+        this.notify();
+        return;
+      }
+
+      const data = await res.json();
+      this.serverBatchId = data.batch_id;
+      const total = data.total_jobs || songIds.length * 12;
+
+      // Create placeholder jobs for UI
+      for (const sid of songIds) {
+        for (let tp = -5; tp <= 6; tp++) {
+          this.jobs.push({ songId: sid, songTitle: sid.slice(0, 12) + '...', transpose: tp, status: 'pending' });
+        }
+      }
+      this.statusText = `⚡ Server-side rendering: 0/${total}`;
+      this.notify();
+
+      // Poll progress every 5 seconds
+      this.serverPollInterval = setInterval(async () => {
+        if (!this.serverBatchId || !this.isRunning) {
+          if (this.serverPollInterval) clearInterval(this.serverPollInterval);
+          return;
+        }
+
+        try {
+          const pollUrl = getDirectServerUrl(`/studio/batch-render/${this.serverBatchId}`);
+          const pollRes = await svsFetch(pollUrl);
+          if (!pollRes.ok) return;
+
+          const progress = await pollRes.json();
+          this.completed = progress.completed || 0;
+          this.errors = progress.errors || 0;
+          this.skipped = progress.skipped || 0;
+
+          // Update job statuses for UI
+          const completedCount = this.completed + this.errors + this.skipped;
+          this.jobs.forEach((j, i) => {
+            if (i < completedCount) {
+              j.status = i < this.completed ? 'done' : 'error';
+            } else if (i === completedCount) {
+              j.status = 'rendering';
+              this.currentJob = j;
+            }
+          });
+
+          const elapsed = Math.round(progress.elapsed_seconds || 0);
+          const remaining = Math.round(progress.estimated_remaining_seconds || 0);
+          const remainStr = remaining > 60 ? `~${Math.ceil(remaining / 60)}m` : `~${remaining}s`;
+          const keyStr = progress.current_key >= 0 ? `+${progress.current_key}` : `${progress.current_key}`;
+          this.statusText = `⚡ GPU Rendering: ${this.completed}/${progress.total} (key ${keyStr}) — ${remainStr} left`;
+
+          // Mark rendered songs in localStorage
+          for (const doneId of (progress.songs_done || [])) {
+            for (let tp = -5; tp <= 6; tp++) {
+              saveBatchRendered(doneId, tp);
+            }
+          }
+
+          this.notify();
+
+          // Check if done
+          if (progress.status === 'done' || progress.status === 'stopped') {
+            if (this.serverPollInterval) clearInterval(this.serverPollInterval);
+            this.serverPollInterval = null;
+            this.serverBatchId = null;
+            this.isRunning = false;
+            this.currentJob = null;
+            this.statusText = progress.status === 'done'
+              ? `✅ Server render done! ${this.completed} rendered, ${this.errors} errors in ${Math.round(elapsed / 60)}m`
+              : '⏹️ Stopped';
+            this.notify();
+          }
+        } catch (e) {
+          console.warn('[BatchRender] Poll error:', e);
+        }
+      }, 5000);
+
+    } catch (err: any) {
+      this.statusText = `❌ ${err.message || 'Connection failed'}`;
+      this.isRunning = false;
+      this.notify();
+    }
+  }
 }
 
 export const batchRenderService = new BatchRenderService();
+

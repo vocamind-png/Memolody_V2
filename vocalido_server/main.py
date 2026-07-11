@@ -20,6 +20,114 @@ import traceback
 import soundfile as sf
 import threading
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# RENDER PERSISTENCE — Upload to GCS + catalog in Supabase
+# Every render (batch or user) is persisted so it survives pod restarts
+# and can be shared across all users (community cache).
+# ═══════════════════════════════════════════════════════════════════════════════
+_gcs_bucket = None
+_supabase_client = None
+
+def _init_gcs():
+    """Lazy-init GCS client. Returns bucket or None."""
+    global _gcs_bucket
+    if _gcs_bucket is not None:
+        return _gcs_bucket
+    try:
+        from google.cloud import storage as gcs_storage
+        _client = gcs_storage.Client()
+        _gcs_bucket = _client.bucket("memolody-vault")
+        print("[GCS] ✅ Connected to memolody-vault bucket")
+        return _gcs_bucket
+    except Exception as e:
+        print(f"[GCS] ⚠️ Not available: {e}")
+        return None
+
+def _init_supabase():
+    """Lazy-init Supabase client. Returns client or None."""
+    global _supabase_client
+    if _supabase_client is not None:
+        return _supabase_client
+    try:
+        sb_url = os.environ.get('SUPABASE_URL', 'https://nxueprpjcwcwljpmhgak.supabase.co')
+        # Try service key first, fallback to anon key
+        sb_key = os.environ.get('SUPABASE_SERVICE_KEY', '')
+        if not sb_key:
+            sb_key = os.environ.get('SUPABASE_ANON_KEY', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im54dWVwcnBqY3djd2xqcG1oZ2FrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM5ODIxMzcsImV4cCI6MjA4OTU1ODEzN30.OCvad3oUN_7n4VZ2WtXX435PtA3QCVHiC1CgMbfnb_E')
+            print("[Supabase] ℹ️ Using anon key (service key not set)")
+        if not sb_key:
+            print("[Supabase] ⚠️ No Supabase key available")
+            return None
+        from supabase import create_client
+        _supabase_client = create_client(sb_url, sb_key)
+        print("[Supabase] ✅ Connected")
+        return _supabase_client
+    except Exception as e:
+        print(f"[Supabase] ⚠️ Not available: {e}")
+        return None
+
+def _persist_render_to_cloud(local_path: str, filename: str, song_id: str, song_key: str, bpm_pct: int, voice: str, engine: str, duration: float, owner_id: str = None):
+    """Background thread: upload render to GCS + catalog in Supabase."""
+    gcs_url = None
+    try:
+        bucket = _init_gcs()
+        if bucket:
+            gcs_path = f"renders/{filename}"
+            blob = bucket.blob(gcs_path)
+            if not blob.exists():
+                blob.upload_from_filename(local_path, content_type="audio/mpeg" if filename.endswith('.mp3') else "audio/wav")
+                blob.make_public()
+                gcs_url = f"https://storage.googleapis.com/memolody-vault/{gcs_path}"
+                print(f"[GCS] ☁️ Uploaded: {gcs_path}")
+            else:
+                gcs_url = f"https://storage.googleapis.com/memolody-vault/{gcs_path}"
+                print(f"[GCS] ☁️ Already exists: {gcs_path}")
+    except Exception as e:
+        print(f"[GCS] ⚠️ Upload failed: {e}")
+
+    try:
+        sb = _init_supabase()
+        if sb and gcs_url:
+            key_int = 0
+            try:
+                key_int = int(song_key) if song_key.lstrip('-').isdigit() else 0
+            except:
+                pass
+            file_size = os.path.getsize(local_path) if os.path.isfile(local_path) else 0
+            sb.table('rendered_vocals').upsert({
+                'song_id': song_id,
+                'song_key': key_int,
+                'bpm_pct': bpm_pct,
+                'voice': voice,
+                'gcs_url': gcs_url,
+                'local_filename': filename,
+                'file_size_bytes': file_size,
+                'duration_sec': round(duration, 2),
+                'engine': engine,
+                'rendered_by': owner_id or 'system',
+            }, on_conflict='song_id,song_key,bpm_pct,voice').execute()
+            print(f"[Supabase] 📝 Cataloged: {song_id} key={song_key} bpm={bpm_pct}")
+    except Exception as e:
+        print(f"[Supabase] ⚠️ Catalog failed: {e}")
+
+def _check_gcs_cache(song_id: str, song_key: str, bpm_pct: int, voice: str):
+    """Check Supabase catalog for existing GCS render. Returns GCS URL or None."""
+    try:
+        sb = _init_supabase()
+        if not sb:
+            return None
+        key_int = 0
+        try:
+            key_int = int(song_key) if song_key.lstrip('-').isdigit() else 0
+        except:
+            pass
+        result = sb.table('rendered_vocals').select('gcs_url').eq('song_id', song_id).eq('song_key', key_int).eq('bpm_pct', bpm_pct).eq('voice', voice).limit(1).execute()
+        if result.data and len(result.data) > 0:
+            return result.data[0]['gcs_url']
+    except Exception as e:
+        print(f"[Supabase] ⚠️ Cache check failed: {e}")
+    return None
+
 # Global thread lock for single-GPU inference to prevent OOM
 # Increased to Semaphore(3) to allow 3 concurrent inference requests and utilize full 20GB VRAM
 inference_lock = threading.Semaphore(3)
@@ -1288,6 +1396,27 @@ def _studio_preview_impl(req: StudioPreviewReq):
                 "cached": True,
             }
 
+        # ── GCS CACHE FALLBACK ────────────────────────────────────────────────────
+        # If not cached locally, check if someone else already rendered this
+        _gcs_cached = _check_gcs_cache(req.song_id, req.song_key or '0', req.bpm_pct, _safe_vc)
+        if _gcs_cached:
+            print(f"[Cache] ☁️ Found GCS render: {_gcs_cached} — skipping GPU")
+            return {
+                "audio_b64": None,
+                "mime_type": "audio/mpeg",
+                "stems_b64": [],
+                "saved_stem_urls": [],
+                "duration": 0,
+                "notes": len(notes),
+                "engine": "gcs_cached",
+                "saved_url": _gcs_cached,
+                "song_id": req.song_id,
+                "bpm_pct": req.bpm_pct,
+                "song_key": req.song_key,
+                "label": f"{req.song_key} / {req.bpm_pct}% / GCS Cache",
+                "cached": True,
+            }
+
     # Check if lyrics are present
     has_lyrics = any(n.get('lyric') and str(n.get('lyric')).strip() not in ('-', '~', '_', 'rest') for n in notes)
     
@@ -1515,6 +1644,14 @@ def _studio_preview_impl(req: StudioPreviewReq):
             sf.write(saved_path, audio, SR)
         saved_url = f"/vocalido/audio/{saved_name}"
         print(f"[studio/preview] 💾 Saved: {saved_name}")
+        # Upload to GCS + catalog in Supabase (background, non-blocking)
+        if req.song_id and not is_private:
+            _render_duration = float(len(audio)) / SR if audio is not None else 0
+            threading.Thread(
+                target=_persist_render_to_cloud,
+                args=(saved_path, saved_name, req.song_id, req.song_key or '0', req.bpm_pct, safe_voice, engine_name, _render_duration, req.owner_id),
+                daemon=True
+            ).start()
     except Exception as _se:
         print(f"[studio/preview] ⚠️ Save failed: {_se}")
         saved_url = None
@@ -1615,6 +1752,319 @@ async def studio_job_status(job_id: str):
         return JSONResponse({"status": "error", "error": job["error"]}, status_code=500)
     else:
         return JSONResponse({"status": job["status"]})
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SERVER-SIDE BATCH RENDER — renders songs×keys locally on GPU (no network hop)
+# POST /studio/batch-render         → { batch_id, total_jobs }
+# GET  /studio/batch-render/{id}    → { status, completed, total, ... }
+# POST /studio/batch-render/{id}/stop → stops the batch
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_batch_jobs: dict = {}  # batch_id → { status, progress_data, thread, stop_flag }
+
+BATCH_SOLFEGE_MAP = {0:'Doh',1:'Di',2:'Ray',3:'Ri',4:'Me',5:'Fah',6:'Fi',7:'Soh',8:'Si',9:'Lah',10:'Li',11:'Ti'}
+BATCH_STEP_MAP = {'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11}
+BATCH_KEYS_BY_FIFTHS = {0:'C',1:'G',2:'D',3:'A',4:'E',5:'B',6:'F#',-1:'F',-2:'Bb',-3:'Eb',-4:'Ab',-5:'Db',-6:'Gb'}
+
+def _batch_get_solfege(step, alter, key_fifths, transpose):
+    base = BATCH_STEP_MAP.get(step.upper(), 0) + (alter or 0)
+    key_offset = (key_fifths * 7) % 12
+    relative = (base - key_offset + transpose + 120) % 12
+    return BATCH_SOLFEGE_MAP.get(relative, 'Doh')
+
+def _batch_parse_musicxml(xml_str):
+    """Parse MusicXML string and extract notes + metadata for batch rendering."""
+    from xml.etree import ElementTree as _ET
+    try:
+        root = _ET.fromstring(xml_str)
+    except _ET.ParseError:
+        return None, None
+    ns = ''
+    if root.tag.startswith('{'):
+        ns = root.tag.split('}')[0] + '}'
+    fifths = 0; bpm = 120; key_name = 'C'
+    for attr in root.iter(f'{ns}attributes'):
+        k = attr.find(f'{ns}key')
+        if k is not None:
+            f = k.find(f'{ns}fifths')
+            if f is not None and f.text:
+                fifths = int(f.text)
+                key_name = BATCH_KEYS_BY_FIFTHS.get(fifths, 'C')
+        break
+    for sound in root.iter(f'{ns}sound'):
+        if 'tempo' in sound.attrib:
+            bpm = float(sound.attrib['tempo']); break
+    notes = []; current_time = 0.0; divisions = 1
+    for part in root.iter(f'{ns}part'):
+        current_time = 0.0; part_id = part.get('id', 'P1')
+        for measure in part.iter(f'{ns}measure'):
+            attrs = measure.find(f'{ns}attributes')
+            if attrs is not None:
+                div = attrs.find(f'{ns}divisions')
+                if div is not None and div.text: divisions = int(div.text)
+            for elem in measure:
+                tag = elem.tag.replace(ns, '')
+                if tag == 'forward':
+                    dur = elem.find(f'{ns}duration')
+                    if dur is not None and dur.text: current_time += float(dur.text) / divisions * (60.0 / bpm)
+                elif tag == 'backup':
+                    dur = elem.find(f'{ns}duration')
+                    if dur is not None and dur.text: current_time -= float(dur.text) / divisions * (60.0 / bpm)
+                elif tag == 'note':
+                    is_rest = elem.find(f'{ns}rest') is not None
+                    dur_elem = elem.find(f'{ns}duration')
+                    dur_val = float(dur_elem.text) / divisions * (60.0 / bpm) if dur_elem is not None and dur_elem.text else 0.5
+                    is_chord = elem.find(f'{ns}chord') is not None
+                    if not is_rest:
+                        pitch_elem = elem.find(f'{ns}pitch')
+                        if pitch_elem is not None:
+                            step = pitch_elem.find(f'{ns}step')
+                            octave = pitch_elem.find(f'{ns}octave')
+                            alter_elem = pitch_elem.find(f'{ns}alter')
+                            if step is not None and octave is not None:
+                                step_val = step.text or 'C'; oct_val = int(octave.text or '4')
+                                alter_val = int(float(alter_elem.text)) if alter_elem is not None and alter_elem.text else 0
+                                midi = (oct_val + 1) * 12 + BATCH_STEP_MAP.get(step_val.upper(), 0) + alter_val
+                                notes.append({'step': step_val, 'octave': oct_val, 'alter': alter_val, 'midi': midi,
+                                              'startTime': current_time, 'duration': dur_val, 'trackId': part_id})
+                    if not is_chord: current_time += dur_val
+        break  # Only first part
+    return notes, {'key': key_name, 'fifths': fifths, 'bpm': bpm}
+
+def _batch_download_mxl(song_id):
+    """Download and extract MusicXML from MXL on GCS."""
+    import zipfile as _zf, io as _io, requests
+    raw_id = song_id.replace('song_', '') if song_id.startswith('song_') else song_id
+    url = f"https://storage.googleapis.com/memolody-vault/pdmx-vault/{raw_id}.mxl"
+    try:
+        resp = requests.get(url, timeout=60)
+        if resp.status_code != 200:
+            raise Exception(f"HTTP {resp.status_code} for {url}")
+        z = _zf.ZipFile(_io.BytesIO(resp.content))
+        for name in z.namelist():
+            if name.endswith('.xml') and not name.startswith('META-INF'):
+                return z.read(name).decode('utf-8')
+        for name in z.namelist():
+            if name.endswith('.musicxml'):
+                return z.read(name).decode('utf-8')
+        raise Exception(f"No XML found in {url}")
+    except Exception as e:
+        raise Exception(f"Exception downloading {url}: {e}")
+
+def _batch_render_worker(batch_id, song_ids, transpose_range, params):
+    """Background worker that renders songs×keys sequentially on localhost."""
+    import requests as _req
+    job = _batch_jobs[batch_id]
+    total = len(song_ids) * len(transpose_range)
+    job["progress"] = {"completed": 0, "errors": 0, "skipped": 0, "total": total,
+                        "current_song": "", "current_key": 0, "current_song_index": 0,
+                        "songs_done": [], "error_details": [], "started_at": _time_module.time()}
+
+    voice = params.get("voice", "lotte_v_ai_dol")
+    singer = params.get("singer", "Lotte")
+    lyric_mode = params.get("lyric_mode", "Solfege")
+    steps = params.get("steps", 10)
+    timing_feel = params.get("timing_feel", 50)
+    portamento = params.get("portamento", 120)
+    vibrato_depth = params.get("vibrato_depth", 0)
+    vibrato_speed = params.get("vibrato_speed", 4.8)
+    vibrato_start = params.get("vibrato_start", 100)
+    pitch_blend = params.get("pitch_blend", 0)
+
+    for si, song_id in enumerate(song_ids):
+        if job.get("stop_flag"): break
+
+        job["progress"]["current_song"] = song_id
+        job["progress"]["current_song_index"] = si
+
+        # Download MXL
+        try:
+            xml_data = _batch_download_mxl(song_id)
+        except Exception as e:
+            job["progress"]["errors"] += len(transpose_range)
+            job["progress"]["error_details"].append({"song_id": song_id, "error": str(e)})
+            print(f"[BatchRender] ❌ {song_id}: {e}")
+            continue
+
+        notes, metadata = _batch_parse_musicxml(xml_data)
+        if not notes:
+            job["progress"]["errors"] += len(transpose_range)
+            job["progress"]["error_details"].append({"song_id": song_id, "error": "No notes in XML"})
+            print(f"[BatchRender] ❌ {song_id}: No notes")
+            continue
+
+        fifths = metadata.get('fifths', 0)
+        bpm = metadata.get('bpm', 120)
+        song_key = metadata.get('key', 'C')
+        print(f"[BatchRender] 🎵 Song {si+1}/{len(song_ids)}: {song_id} ({len(notes)} notes, key={song_key}, bpm={bpm})")
+
+        for tp in transpose_range:
+            if job.get("stop_flag"): break
+            job["progress"]["current_key"] = tp
+
+            synth_notes = []
+            for n in notes:
+                transposed_midi = max(24, min(108, n['midi'] + tp))
+                lyric = _batch_get_solfege(n['step'], n['alter'], fifths, tp)
+                synth_notes.append({'pitch': transposed_midi, 'midi': transposed_midi,
+                                    'duration': n['duration'], 'startTime': n['startTime'],
+                                    'lyric': lyric, 'trackId': n.get('trackId', 'P1'), 'staff': 1, 'voice': 1})
+
+            note_hash = '-'.join(str(n['midi']) for n in synth_notes[:8])
+            payload = {
+                'notes': synth_notes,
+                'song_id': song_id,  # Use true song_id for global cache
+                'song_key': str(tp), # Pass transposition as song_key string to be parsed correctly
+                'bpm_pct': 100,
+                'lyric_mode': lyric_mode, 'is_public': True, 'owner_id': 'batch',
+                'params': {'singer': singer, 'bpm': bpm, 'transpose': tp, 'voice': voice,
+                           'return_stems': False, 'collapse_chords': True, 'steps': steps,
+                           'timing_feel': timing_feel, 'portamento': portamento,
+                           'vibrato_start': vibrato_start, 'vibrato_depth': vibrato_depth,
+                           'vibrato_speed': vibrato_speed, 'pitch_blend': pitch_blend}
+            }
+
+            try:
+                # Call the render implementation directly (same process, no network!)
+                req_obj = StudioPreviewReq(**payload)
+                result = _studio_preview_impl(req_obj)
+                # Check if result is an error response
+                if hasattr(result, 'status_code') and result.status_code >= 400:
+                    import json as _json
+                    body = _json.loads(result.body) if hasattr(result, 'body') else {}
+                    raise Exception(body.get('error', f'HTTP {result.status_code}'))
+                job["progress"]["completed"] += 1
+                tp_str = f"+{tp}" if tp >= 0 else str(tp)
+                print(f"[BatchRender] ✅ {song_id} key={tp_str} ({job['progress']['completed']}/{total})")
+            except Exception as e:
+                job["progress"]["errors"] += 1
+                job["progress"]["error_details"].append({"song_id": song_id, "key": tp, "error": str(e)})
+                print(f"[BatchRender] ❌ {song_id} key={tp}: {e}")
+
+        job["progress"]["songs_done"].append(song_id)
+
+    elapsed = _time_module.time() - job["progress"]["started_at"]
+    job["status"] = "stopped" if job.get("stop_flag") else "done"
+    job["progress"]["elapsed_seconds"] = elapsed
+    print(f"[BatchRender] 🏁 Batch {batch_id} {job['status']}: {job['progress']['completed']}/{total} in {elapsed/60:.1f}m")
+
+class BatchRenderRequest(BaseModel):
+    song_ids: list = []
+    transpose_range: list = [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6]
+    params: dict = {}
+
+@app.post("/studio/batch-render")
+async def start_batch_render(req: BatchRenderRequest):
+    """Start a server-side batch render. Songs are rendered locally on GPU — no network hop."""
+    if not req.song_ids:
+        return JSONResponse({"error": "No song_ids provided"}, status_code=400)
+
+    # Check if another batch is already running
+    for bid, bj in _batch_jobs.items():
+        if bj["status"] == "running":
+            return JSONResponse({"error": f"Batch {bid} is already running", "existing_batch_id": bid}, status_code=409)
+
+    batch_id = str(uuid.uuid4()).replace('-', '')[:12]
+    total = len(req.song_ids) * len(req.transpose_range)
+    _batch_jobs[batch_id] = {"status": "running", "progress": None, "stop_flag": False}
+
+    t = threading.Thread(target=_batch_render_worker, args=(batch_id, req.song_ids, req.transpose_range, req.params), daemon=True)
+    t.start()
+    _batch_jobs[batch_id]["thread"] = t
+
+    print(f"[BatchRender] 🚀 Started batch {batch_id}: {len(req.song_ids)} songs × {len(req.transpose_range)} keys = {total} jobs")
+    return JSONResponse({"batch_id": batch_id, "total_jobs": total, "status": "running"})
+
+@app.get("/studio/batch-render/{batch_id}")
+async def get_batch_render_status(batch_id: str):
+    """Poll server-side batch render progress."""
+    job = _batch_jobs.get(batch_id)
+    if not job:
+        return JSONResponse({"status": "not_found"}, status_code=404)
+
+    progress = job.get("progress") or {}
+    elapsed = _time_module.time() - progress.get("started_at", _time_module.time()) if progress else 0
+    completed = progress.get("completed", 0)
+    total = progress.get("total", 0)
+    avg_time = elapsed / completed if completed > 0 else 0
+    remaining = avg_time * (total - completed - progress.get("errors", 0) - progress.get("skipped", 0)) if completed > 0 else 0
+
+    return JSONResponse({
+        "status": job["status"],
+        "completed": completed,
+        "total": total,
+        "errors": progress.get("errors", 0),
+        "skipped": progress.get("skipped", 0),
+        "current_song": progress.get("current_song", ""),
+        "current_song_index": progress.get("current_song_index", 0),
+        "current_key": progress.get("current_key", 0),
+        "songs_done": progress.get("songs_done", []),
+        "elapsed_seconds": round(elapsed, 1),
+        "estimated_remaining_seconds": round(remaining, 1),
+        "error_details": progress.get("error_details", [])[-5:],  # Last 5 errors
+    })
+
+@app.post("/studio/batch-render/{batch_id}/stop")
+async def stop_batch_render(batch_id: str):
+    """Stop a running server-side batch render."""
+    job = _batch_jobs.get(batch_id)
+    if not job:
+        return JSONResponse({"status": "not_found"}, status_code=404)
+    if job["status"] != "running":
+        return JSONResponse({"status": job["status"], "message": "Batch is not running"})
+    job["stop_flag"] = True
+    return JSONResponse({"status": "stopping", "message": "Stop signal sent"})
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# RENDER STATUS — Query which keys are rendered for a song (from Supabase)
+# ═══════════════════════════════════════════════════════════════════════════════
+@app.get("/studio/render-status/{song_id}")
+async def get_render_status(song_id: str):
+    """Get render status for a song from Supabase catalog.
+    Returns which keys/bpm/voice combos have been rendered and their GCS URLs.
+    Any user can query this to know if a render already exists."""
+    sb = _init_supabase()
+    if not sb:
+        return JSONResponse({"error": "Supabase not configured", "song_id": song_id, "renders": [], "total_renders": 0, "fully_rendered": False})
+    try:
+        result = sb.table('rendered_vocals').select('song_key,bpm_pct,voice,gcs_url,engine,duration_sec,rendered_at,rendered_by').eq('song_id', song_id).execute()
+        unique_keys = set(r['song_key'] for r in result.data) if result.data else set()
+        return JSONResponse({
+            "song_id": song_id,
+            "total_renders": len(result.data) if result.data else 0,
+            "renders": result.data or [],
+            "rendered_keys": sorted(list(unique_keys)),
+            "fully_rendered": len(unique_keys) >= 12,
+        })
+    except Exception as e:
+        return JSONResponse({"error": str(e), "song_id": song_id, "renders": [], "total_renders": 0, "fully_rendered": False})
+
+@app.get("/studio/render-status-bulk")
+async def get_render_status_bulk(song_ids: str):
+    """Get render status for multiple songs at once.
+    Query: /studio/render-status-bulk?song_ids=id1,id2,id3"""
+    sb = _init_supabase()
+    ids = [s.strip() for s in song_ids.split(',') if s.strip()]
+    if not sb or not ids:
+        return JSONResponse({"songs": {}})
+    try:
+        result = sb.table('rendered_vocals').select('song_id,song_key,bpm_pct,voice,gcs_url').in_('song_id', ids).execute()
+        songs = {}
+        for r in (result.data or []):
+            sid = r['song_id']
+            if sid not in songs:
+                songs[sid] = {'rendered_keys': [], 'renders': [], 'total_renders': 0}
+            songs[sid]['renders'].append(r)
+            if r['song_key'] not in songs[sid]['rendered_keys']:
+                songs[sid]['rendered_keys'].append(r['song_key'])
+            songs[sid]['total_renders'] = len(songs[sid]['renders'])
+        for sid in songs:
+            songs[sid]['fully_rendered'] = len(songs[sid]['rendered_keys']) >= 12
+            songs[sid]['rendered_keys'] = sorted(songs[sid]['rendered_keys'])
+        return JSONResponse({"songs": songs})
+    except Exception as e:
+        return JSONResponse({"error": str(e), "songs": {}})
 
 
 def get_vocal_modes(path):

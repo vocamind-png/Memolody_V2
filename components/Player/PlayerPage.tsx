@@ -34,6 +34,7 @@ import { AudioBlobCache } from '../../lib/AudioBlobCache';
 import { vocalidoRenderService } from '../../lib/VocalidoRenderService';
 import { SongAnalyticsService } from '../../lib/SongAnalyticsService';
 import { renderQueueService } from '../../lib/RenderQueueService';
+import { isSongFullyRendered } from '../../lib/BatchRenderService';
 import { RenderQueueCard } from './RenderQueueCard';
 import { mapPartNameToInstrument } from '../../lib/instruments';
 export type PlayerCardType = 'score' | 'pianoroll' | 'trackview' | 'memochord' | 'practice' | 'vocalido';
@@ -942,7 +943,8 @@ const PlayerPage: React.FC<{
                 const songIdForHist = song?.id || '_unsaved_';
                 const histStr = localStorage.getItem(`memo_render_history_${songIdForHist}`);
                 const hasExistingRender = histStr ? (JSON.parse(histStr) || []).length > 0 : false;
-                if (!hasExistingRender) {
+                const batchRendered = isSongFullyRendered(songIdForHist);
+                if (!hasExistingRender && !batchRendered) {
                   setModalSelectedTracks(tracks.map(t => t.id));
                   setShowRenderPrompt(true);
                 }
@@ -978,7 +980,8 @@ const PlayerPage: React.FC<{
         hasPromptedRenderRef.current = true;
         const histStr = localStorage.getItem(`memo_render_history_${songId}`);
         const hasExistingRender = histStr ? (JSON.parse(histStr) || []).length > 0 : false;
-        if (!hasExistingRender) {
+        const batchRendered = isSongFullyRendered(songId);
+        if (!hasExistingRender && !batchRendered) {
           const timer = setTimeout(() => {
             setModalSelectedTracks(tracks.map(t => t.id));
             setShowRenderPrompt(true);

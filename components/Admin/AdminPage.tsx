@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   CheckCircle2, ShieldCheck, RefreshCcw, Trash2, HardDrive, AlertTriangle,
-  Sparkles, FileText, FileImage, FileCode, Plus, Music, Database, TrendingUp, Users, Lock, BrainCircuit, Server, Gift, Award, HelpCircle, BarChart3, MessageSquare
+  Sparkles, FileText, FileImage, FileCode, Plus, Music, Database, TrendingUp, Users, Lock, BrainCircuit, Server, Gift, Award, HelpCircle, BarChart3, MessageSquare, Mic
 } from 'lucide-react';
 import { parseMusicXMLMetadata } from '../../lib/MusicXmlParser';
 import { songStorage } from '../../lib/SongStorage';
@@ -17,6 +17,7 @@ import FeedbackMatrix from './FeedbackMatrix';
 // GameAssetsManager moved to Devel/ folder
 import { useAuth, hasAccess } from '../../lib/useAuth';
 import { supabase } from '../../lib/supabase';
+import BatchRenderPanel from './BatchRenderPanel';
 
 interface AdminPageProps {
   onMusicXmlUpload?: (metadata: Song, xmlData: string) => void;
@@ -24,7 +25,7 @@ interface AdminPageProps {
   onRefresh?: () => void;
 }
 
-type AdminTab = 'vault' | 'finance' | 'users' | 'servers' | 'promotions' | 'redemptions' | 'analytics' | 'headquarters' | 'nimo_actions' | 'feedback';
+type AdminTab = 'vault' | 'finance' | 'users' | 'servers' | 'promotions' | 'redemptions' | 'analytics' | 'headquarters' | 'nimo_actions' | 'feedback' | 'batch_render';
 
 interface PromoCode {
   id: string;
@@ -239,6 +240,7 @@ const AdminPage: React.FC<AdminPageProps> = ({ onMusicXmlUpload, onRestoreMaster
     { id: 'redemptions', label: 'Rewards redemptions', icon: Gift, color: 'text-purple-500' },
     { id: 'analytics', label: 'Analytics', icon: BarChart3, color: 'text-cyan-400' },
     { id: 'servers', label: 'Servers', icon: Server, color: 'text-zinc-500' },
+    { id: 'batch_render', label: 'Batch Render', icon: Mic, color: 'text-fuchsia-500' },
     { id: 'feedback', label: 'Feedback Matrix', icon: MessageSquare, color: 'text-orange-500' },
     { id: 'nimo_actions', label: 'Nimo Actions', icon: Sparkles, color: 'text-fuchsia-500' },
     ...(hasAccess(role, 'executive') ? [{ id: 'headquarters', label: 'HQ Analytics', icon: BrainCircuit, color: 'text-rose-500' }] : [])
@@ -298,6 +300,7 @@ const AdminPage: React.FC<AdminPageProps> = ({ onMusicXmlUpload, onRestoreMaster
             activeTab === 'redemptions' ? 'Redemption Matrix: Real-time physical/digital rewards redemption log and tracking.' :
             activeTab === 'servers' ? 'Infrastructure Matrix: Real-time service daemon monitoring, resource telemetry, and remote restart controls.' :
             activeTab === 'feedback' ? 'Feedback Matrix: Auto-categorized issues, feature requests, and complaints detected by Nimo AI.' :
+            activeTab === 'batch_render' ? 'Batch Vocal Render: Pre-render Top Chart songs across all keys for instant playback.' :
             activeTab === 'nimo_actions' ? 'Dynamic Actions Registry: Manage Nimo AI autonomous actions and scripts. Owner access only.' :
             activeTab === 'feedback' ? 'Feedback Matrix: User feedback and ratings.' :
             'Headquarters Matrix: Executive-level growth and retention metrics.'}
@@ -585,6 +588,12 @@ const AdminPage: React.FC<AdminPageProps> = ({ onMusicXmlUpload, onRestoreMaster
         <div className="flex-1 min-h-0 bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden shadow-2xl p-6 relative z-10 mx-6">
           <FeedbackMatrix />
         </div>
+      )}
+
+      {activeTab === 'batch_render' && hasAccess(role, 'admin') && (
+        <section className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <BatchRenderPanel />
+        </section>
       )}
 
 
