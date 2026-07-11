@@ -175,6 +175,97 @@ export async function fetchCloudRenderStatusBulk(songIds: string[]): Promise<Rec
   return result;
 }
 
+// ── Fetch All Cloud Rendered Songs ──
+export interface CloudRenderedSong {
+  songId: string;
+  keys: number[];
+  gcsUrls: Record<number, string>;
+  voice: string;
+  fullyRendered: boolean;
+  // Derived from GCS url
+  titleHint?: string;
+}
+
+export async function fetchAllCloudRenderedSongs(): Promise<Record<string, number[]>> {
+  try {
+    const { supabase } = await import('./supabase');
+    const { data } = await supabase
+      .from('rendered_vocals')
+      .select('song_id, song_key, gcs_url, voice');
+    
+    const grouped: Record<string, number[]> = {};
+    if (data) {
+      for (const row of data) {
+        const sid = row.song_id;
+        if (!grouped[sid]) grouped[sid] = [];
+        if (!grouped[sid].includes(row.song_key)) grouped[sid].push(row.song_key);
+        // Update cloud cache with gcs_url too
+        if (!_cloudRenderCache[sid]) {
+          _cloudRenderCache[sid] = { keys: [], gcsUrls: {}, fetchedAt: Date.now() };
+        }
+        _cloudRenderCache[sid].gcsUrls[row.song_key] = row.gcs_url;
+      }
+    }
+    for (const sid in grouped) {
+      grouped[sid].sort((a, b) => a - b);
+      if (_cloudRenderCache[sid]) {
+        _cloudRenderCache[sid].keys = grouped[sid];
+        _cloudRenderCache[sid].fetchedAt = Date.now();
+      } else {
+        _cloudRenderCache[sid] = { keys: grouped[sid], gcsUrls: {}, fetchedAt: Date.now() };
+      }
+    }
+    return grouped;
+  } catch (e) {
+    console.warn('[BatchRender] Failed to fetch all cloud songs:', e);
+    return {};
+  }
+}
+
+export async function fetchAllCloudRenderedSongsFull(): Promise<CloudRenderedSong[]> {
+  try {
+    const { supabase } = await import('./supabase');
+    const { data } = await supabase
+      .from('rendered_vocals')
+      .select('song_id, song_key, gcs_url, voice')
+      .neq('song_id', 'test_song');
+    
+    const grouped: Record<string, CloudRenderedSong> = {};
+    if (data) {
+      for (const row of data) {
+        const sid = row.song_id; // e.g. "song_QmbhyVJ5..."
+        if (!grouped[sid]) {
+          grouped[sid] = { songId: sid, keys: [], gcsUrls: {}, voice: row.voice || '', fullyRendered: false };
+        }
+        if (!grouped[sid].keys.includes(row.song_key)) grouped[sid].keys.push(row.song_key);
+        grouped[sid].gcsUrls[row.song_key] = row.gcs_url;
+      }
+    }
+    const result: CloudRenderedSong[] = [];
+    for (const sid in grouped) {
+      const entry = grouped[sid];
+      entry.keys.sort((a, b) => a - b);
+      entry.fullyRendered = entry.keys.length >= 12;
+
+      // Populate cloud cache with BOTH variants so any local ID format can match:
+      // "song_Qm..." (primary) and "Qm..." (without prefix)
+      const cacheEntry = { keys: entry.keys, gcsUrls: entry.gcsUrls, fetchedAt: Date.now() };
+      _cloudRenderCache[sid] = cacheEntry;
+      if (sid.startsWith('song_')) {
+        _cloudRenderCache[sid.replace(/^song_/, '')] = cacheEntry; // also register without prefix
+      } else {
+        _cloudRenderCache['song_' + sid] = cacheEntry; // also register with prefix
+      }
+
+      result.push(entry);
+    }
+    return result;
+  } catch (e) {
+    console.warn('[BatchRender] Failed to fetch full cloud songs:', e);
+    return [];
+  }
+}
+
 // ── Combined status: localStorage + Cloud ──
 export function isSongFullyRendered(songId: string, keys: number[] = [-5,-4,-3,-2,-1,0,1,2,3,4,5,6]): boolean {
   // Check localStorage first (instant)
