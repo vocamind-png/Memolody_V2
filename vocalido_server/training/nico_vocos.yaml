@@ -1,0 +1,83 @@
+# ============================================================
+# DiffSinger Training Config: Nico (Vocos Vocoder)
+# GPU: NVIDIA RTX 4000 Ada Generation (20GB VRAM)
+# ============================================================
+
+base_config:
+  - configs/base.yaml
+
+# --- Model Identity ---
+exp_name: nico_vocos_v1
+speaker_id: nico
+
+# --- Audio Settings ---
+audio_sample_rate: 44100
+hop_size: 512
+win_size: 2048
+fft_size: 2048
+num_mels: 128
+mel_fmin: 40
+mel_fmax: 16000
+f0_min: 65.0
+f0_max: 1047.0
+
+# --- Vocoder: Vocos ---
+vocoder: vocos
+vocoder_ckpt: /workspace/diffsinger_training/vocos/checkpoints/vocos_44khz.ckpt
+
+# --- Dataset ---
+raw_data_dir: /workspace/diffsinger_training/dataset/nico/raw
+binary_data_dir: /workspace/diffsinger_training/dataset/nico/binary
+dictionary: /workspace/diffsinger_training/DiffSinger/dictionaries/opencpop-extension.txt
+mfa_model: english_us_arpa
+
+# --- Architecture ---
+hidden_size: 256
+enc_layers: 4
+dec_layers: 4
+num_heads: 2
+diffusion_type: reflow
+timesteps: 1000
+K_step: 1000
+diff_decoder_type: wavenet
+
+# --- Training (RTX 4000 Ada) ---
+max_batch_frames: 80000
+max_batch_size: 32
+max_updates: 160000
+val_check_interval: 2000
+optimizer: adamw
+lr: 4.0e-4
+scheduler: cosine
+warmup_updates: 2000
+weight_decay: 0.01
+
+# --- Mixed Precision ---
+pl_trainer_precision: "16-mixed"
+pl_trainer_devices: 1
+pl_trainer_accelerator: gpu
+
+# --- Multi-Speaker (Nico + Lotte V) ---
+use_spk_id: true
+speakers:
+  - nico
+  - lotte_v
+num_spk: 2
+
+# --- Preprocessing ---
+use_mfa: true
+pe: rmvpe
+pe_ckpt: /workspace/diffsinger_training/rmvpe/model.pt
+
+# --- Augmentation ---
+augmentation_args:
+  random_pitch_shifting:
+    enabled: true
+    range: [-2, 2]
+    scale: 0.75
+  random_time_stretching:
+    enabled: false
+
+# --- Checkpoints ---
+permanent_ckpt_start: 120000
+permanent_ckpt_interval: 20000
