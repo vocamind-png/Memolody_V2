@@ -42,13 +42,6 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, on
         return '';
     });
 
-    const [customBackendUrl, setCustomBackendUrl] = useState(() => {
-        if (typeof window !== 'undefined') {
-            return localStorage.getItem('memolody_custom_backend_url') || '';
-        }
-        return '';
-    });
-
     useEffect(() => {
         if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
             const loadVoices = () => {
@@ -380,50 +373,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, performanceMode, on
                                 Clear cached data to ensure you're using the latest version. Use after app updates or if audio sounds incorrect.
                             </p>
 
-                            <div className="h-[1px] w-full bg-gradient-to-r from-transparent via-white/10 to-transparent my-8" />
-
-                            <h2 className="text-lg font-black uppercase tracking-widest text-zinc-300 flex items-center gap-3 mb-4">
-                                <Server size={20} className="text-purple-400" /> Cloud Services
-                            </h2>
-                            <p className="text-[10px] text-zinc-500 uppercase tracking-widest mb-6 leading-relaxed">
-                                Configure your external cloud GPU connection.
-                            </p>
-
                             <div className="space-y-4">
-                                {/* Custom Backend URL */}
-                                <div className="flex flex-col gap-3 p-5 bg-black/40 border border-white/5 rounded-2xl">
-                                    <div className="flex-1">
-                                        <h3 className="text-xs font-bold text-white mb-1 flex items-center gap-2"><Server size={14} className="text-purple-400" /> Custom AI Server URL</h3>
-                                        <p className="text-[9px] text-zinc-500 leading-relaxed mb-3">If you are running your own Vocalido server on RunPod or Google Colab, enter the Proxy URL here. Leave empty to use the default.</p>
-                                    </div>
-                                    <div className="flex flex-row items-center gap-3 w-full">
-                                        <input 
-                                            type="text" 
-                                            placeholder="https://...proxy.runpod.net"
-                                            value={customBackendUrl}
-                                            onChange={(e) => {
-                                                const val = e.target.value;
-                                                setCustomBackendUrl(val);
-                                                if (val.trim() === '') {
-                                                    localStorage.removeItem('memolody_custom_backend_url');
-                                                } else {
-                                                    localStorage.setItem('memolody_custom_backend_url', val.trim());
-                                                }
-                                            }}
-                                            className="flex-1 bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-sm text-zinc-300 focus:outline-none focus:border-purple-500/50 transition-all font-mono"
-                                        />
-                                        <button
-                                            onClick={() => {
-                                                window.dispatchEvent(new Event('vocalido_backend_url_changed'));
-                                                alert('Saved. Please reload the app if the connection does not update automatically.');
-                                            }}
-                                            className="px-6 py-3 rounded-xl bg-purple-500/20 text-purple-400 font-black uppercase tracking-widest text-[10px] hover:bg-purple-500/30 transition-all whitespace-nowrap border border-purple-500/30"
-                                        >
-                                            Apply
-                                        </button>
-                                    </div>
-                                </div>
-
                                 {/* Clear Render History */}
                                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-5 bg-black/40 border border-white/5 rounded-2xl">
                                     <div className="flex-1">
