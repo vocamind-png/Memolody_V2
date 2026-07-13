@@ -137,7 +137,6 @@ const App: React.FC = () => {
   const isAdmin = hasAccess(role, 'admin');
   const [currentView, setCurrentView] = useState<ViewId>('home');
   const [isInitializing, setIsInitializing] = useState(true);
-  const [hasStartedSplash, setHasStartedSplash] = useState(true); // Auto-start, no TAP TO START needed
   const [initProgress, setInitProgress] = useState(0);
 
   const [initStatus, setInitStatus] = useState('Booting Audio System...');
@@ -213,6 +212,48 @@ const App: React.FC = () => {
     };
     window.addEventListener('nimo_voice_changed', handleVoiceChange);
     return () => window.removeEventListener('nimo_voice_changed', handleVoiceChange);
+  }, []);
+
+  // Global BGM Player Logic (Autoplay and stop on interaction)
+  const bgmRef = React.useRef<HTMLAudioElement>(null);
+  
+  useEffect(() => {
+    // Attempt autoplay
+    if (bgmRef.current) {
+      bgmRef.current.volume = 0.5;
+      bgmRef.current.play().catch(e => console.log('BGM autoplay blocked by browser:', e));
+    }
+  }, [bgmUrl]); // Retry if bgmUrl changes
+
+  useEffect(() => {
+    const stopBgm = () => {
+      if (bgmRef.current && !bgmRef.current.paused) {
+        let vol = bgmRef.current.volume;
+        const fadeOut = setInterval(() => {
+          if (bgmRef.current) {
+            vol -= 0.05;
+            if (vol <= 0) {
+              clearInterval(fadeOut);
+              bgmRef.current.pause();
+              bgmRef.current.volume = 0.5;
+            } else {
+              bgmRef.current.volume = vol;
+            }
+          } else {
+            clearInterval(fadeOut);
+          }
+        }, 50);
+      }
+    };
+    
+    // Listen for any interaction anywhere in the document to stop BGM
+    document.addEventListener('pointerdown', stopBgm, { once: true, capture: true });
+    document.addEventListener('keydown', stopBgm, { once: true, capture: true });
+    
+    return () => {
+      document.removeEventListener('pointerdown', stopBgm, { capture: true });
+      document.removeEventListener('keydown', stopBgm, { capture: true });
+    };
   }, []);
 
   // Apply UI Theme class to body
@@ -1252,7 +1293,6 @@ const App: React.FC = () => {
         <SplashLoader 
           progress={initProgress} 
           statusText={initStatus} 
-          onStart={() => setHasStartedSplash(true)}
           bgmUrl={bgmUrl}
           bgmTitle={bgmTitle}
           bgmCover={bgmCover}
@@ -1458,6 +1498,14 @@ const App: React.FC = () => {
             </Suspense>
           </div>
         )}
+
+        {/* Global Background Music (stops on interaction) */}
+        <audio 
+          ref={bgmRef} 
+          src={bgmUrl || "/audio/Where_Dreams_Align.mp3"} 
+          loop 
+          preload="auto" 
+        />
       </div>
     </div>
   );

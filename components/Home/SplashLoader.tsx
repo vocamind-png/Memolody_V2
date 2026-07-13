@@ -13,66 +13,6 @@ interface SplashLoaderProps {
 export const SplashLoader: React.FC<SplashLoaderProps> = ({ progress, statusText = 'Loading Memolody V2...', onStart, bgmUrl, bgmTitle, bgmCover }) => {
   const [dots, setDots] = useState('');
   const [showRecovery, setShowRecovery] = useState(false);
-  const [audioError, setAudioError] = useState(false);
-  const audioRef = React.useRef<HTMLAudioElement>(null);
-
-  const intervalRef = React.useRef<NodeJS.Timeout | null>(null);
-
-  const fadeInAudio = (audioEl: HTMLAudioElement) => {
-    // If it's already playing and volume is up, do not reset
-    if (!audioEl.paused && audioEl.volume > 0) return;
-
-    if (intervalRef.current) clearInterval(intervalRef.current);
-    audioEl.volume = 0;
-    
-    audioEl.play().then(() => {
-      setAudioError(false);
-      // Store globally so HomePage can reuse the same playing audio
-      (window as any).__memolody_bgm = audioEl;
-      let vol = 0;
-      const targetVolume = 0.5;
-      intervalRef.current = setInterval(() => {
-        vol += 0.05;
-        if (vol >= targetVolume) {
-          audioEl.volume = targetVolume;
-          if (intervalRef.current) clearInterval(intervalRef.current);
-        } else {
-          audioEl.volume = vol;
-        }
-      }, 200);
-    }).catch(() => setAudioError(true));
-  };
-
-  useEffect(() => {
-    if (audioRef.current) {
-      fadeInAudio(audioRef.current);
-    }
-  }, []);
-
-  const fadeOutAudio = (audioEl: HTMLAudioElement) => {
-    if (intervalRef.current) clearInterval(intervalRef.current);
-    let vol = audioEl.volume;
-    intervalRef.current = setInterval(() => {
-      vol -= 0.1;
-      if (vol <= 0) {
-        audioEl.volume = 0;
-        audioEl.pause();
-        if (intervalRef.current) clearInterval(intervalRef.current);
-      } else {
-        audioEl.volume = vol;
-      }
-    }, 100);
-  };
-
-  const handleEnableAudio = () => {
-    if (audioRef.current) {
-      if (!audioRef.current.paused && audioRef.current.volume > 0) {
-        fadeOutAudio(audioRef.current);
-      } else {
-        fadeInAudio(audioRef.current);
-      }
-    }
-  };
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -117,13 +57,10 @@ export const SplashLoader: React.FC<SplashLoaderProps> = ({ progress, statusText
   return (
     <div 
       className="fixed inset-0 z-[99999] flex flex-col items-center justify-center bg-[#050507] text-white select-none overflow-hidden cursor-pointer"
-      onClick={handleEnableAudio}
     >
       {/* Immersive background glow effects */}
       <div className="absolute top-1/4 left-1/4 w-[40vw] h-[40vw] rounded-full bg-cyan-500/10 blur-[120px] pointer-events-none animate-pulse" style={{ animationDuration: '6s' }} />
       <div className="absolute bottom-1/4 right-1/4 w-[45vw] h-[45vw] rounded-full bg-indigo-500/10 blur-[140px] pointer-events-none animate-pulse" style={{ animationDuration: '8s' }} />
-
-      <audio ref={audioRef} src={bgmUrl || "/audio/Where_Dreams_Align.mp3"} loop preload="auto" />
       <div className="relative z-10 flex flex-col items-center max-w-lg w-full px-6">
         
           {/* Now Playing Widget */}
@@ -147,14 +84,6 @@ export const SplashLoader: React.FC<SplashLoaderProps> = ({ progress, statusText
           <span className="text-[11px] font-black tracking-[0.25em] text-zinc-400 uppercase">
             MEMOLODY <span className="text-cyan-400">V2.5.2</span>
           </span>
-          {audioError && (
-            <button 
-              onClick={handleEnableAudio}
-              className="absolute -right-28 px-3 py-1 bg-cyan-500/20 text-cyan-300 text-[9px] font-bold tracking-widest rounded-full border border-cyan-500/50 hover:bg-cyan-500/40 transition-colors animate-pulse whitespace-nowrap"
-            >
-              TAP TO UNMUTE
-            </button>
-          )}
         </div>
 
         {/* ── 5-LINE STAFF & FALLING NOTES AREA ── */}
@@ -271,8 +200,6 @@ export const SplashLoader: React.FC<SplashLoaderProps> = ({ progress, statusText
             {/* Glossy light highlight effect inside progress bar */}
             <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(255,255,255,0.15),transparent)] rounded-full" />
           </div>
-
-          {/* Recovery UI Removed as requested */}
         </div>
 
         {/* Credits Section */}
