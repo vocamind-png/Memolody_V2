@@ -2939,14 +2939,27 @@ const PlayerPage: React.FC<{
         {/* Right: PREMIUM CLOUD DROPDOWN SVS CONTROL */}
         <div className="relative flex items-center bg-[#0c0c0e]/85 backdrop-blur-2xl border border-white/10 rounded-full pl-2 pr-1.5 py-0.5 shadow-2xl gap-2 hover:border-white/30 transition-all cursor-pointer group">
 
-          {/* Main Display Area (Click to Toggle Menu) */}
+          {/* Main Display Area (Click to Toggle Studio) */}
           <button 
-            className="flex items-center gap-2 pr-1"
-            onClick={() => setIsVoiceMenuVisible(!isVoiceMenuVisible)}
+            className="flex items-center pr-1"
+            onClick={() => {
+              if (activeCard === 'vocalido') {
+                setActiveCard('score');
+              } else {
+                setActiveCard('vocalido');
+                setIsNavMenuVisible(false);
+              }
+            }}
           >
-            <span className={`text-[7px] font-black uppercase tracking-[0.2em] transition-colors ${isVoiceMenuVisible ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'}`}>
-              VOCAL: {voiceEngines.find(v => v.id === activeEngineId)?.name.split(' ')[0].replace('Lotte', 'Lotte V') || 'NICO'}
+            <span className={`text-[7px] font-black uppercase tracking-[0.2em] transition-colors ${activeCard === 'vocalido' ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'}`}>
+              VOCALIDO
             </span>
+          </button>
+
+          <button 
+            onClick={() => setIsVoiceMenuVisible(!isVoiceMenuVisible)} 
+            className="flex items-center justify-center p-0.5 rounded-full hover:bg-white/10 transition-colors"
+          >
             <ChevronDown size={10} className={`text-zinc-500 transition-transform duration-300 ${isVoiceMenuVisible ? 'rotate-180' : ''}`} />
           </button>
           

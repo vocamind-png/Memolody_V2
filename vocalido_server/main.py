@@ -1083,14 +1083,15 @@ for vdir in voice_dirs_to_check:
             voice_path = os.path.join(vdir, entry)
             if os.path.isdir(voice_path):
                 voice_name = entry
+                lower_name = voice_name.lower()
                 # If we already found this voice in english_voicebanks, skip
-                if voice_name in _lazy_voice_paths or (voice_name in _ds_engines):
+                if lower_name in _lazy_voice_paths or any(k.lower() == lower_name for k in _ds_engines.keys()):
                     continue
                 ckpt, cfg = find_diffsinger_model(voice_path)
                 if ckpt:
                     print(f"[DEBUG] 📂 Found {voice_name} model at: {ckpt}")
                 # Instead of eager loading, we defer it to save memory and avoid onnxruntime multi-session crashes
-                _lazy_voice_paths[voice_name.lower()] = (ckpt, cfg)
+                _lazy_voice_paths[lower_name] = (ckpt, cfg)
                 print(f"[DEBUG] ⏳ Added {voice_name} to lazy load list")
 
 # Initialize Jianpu (Chinese) DiffSinger Engine
