@@ -226,33 +226,42 @@ const App: React.FC = () => {
   }, [bgmUrl]); // Retry if bgmUrl changes
 
   useEffect(() => {
+    let fadeOutInterval: NodeJS.Timeout | null = null;
+    
     const stopBgm = () => {
       if (bgmRef.current && !bgmRef.current.paused) {
+        if (fadeOutInterval) return; // already fading out
+        
         let vol = bgmRef.current.volume;
-        const fadeOut = setInterval(() => {
+        fadeOutInterval = setInterval(() => {
           if (bgmRef.current) {
             vol -= 0.05;
             if (vol <= 0) {
-              clearInterval(fadeOut);
+              clearInterval(fadeOutInterval!);
+              fadeOutInterval = null;
               bgmRef.current.pause();
               bgmRef.current.volume = 0.5;
             } else {
               bgmRef.current.volume = vol;
             }
           } else {
-            clearInterval(fadeOut);
+            if (fadeOutInterval) clearInterval(fadeOutInterval);
+            fadeOutInterval = null;
           }
         }, 50);
       }
     };
     
-    // Listen for any interaction anywhere in the document to stop BGM
-    document.addEventListener('pointerdown', stopBgm, { once: true, capture: true });
-    document.addEventListener('keydown', stopBgm, { once: true, capture: true });
+    // Listen for interactions. Do NOT use once: true because the user might tap before the audio starts playing
+    document.addEventListener('click', stopBgm, { capture: true });
+    document.addEventListener('touchstart', stopBgm, { capture: true, passive: true });
+    document.addEventListener('keydown', stopBgm, { capture: true });
     
     return () => {
-      document.removeEventListener('pointerdown', stopBgm, { capture: true });
+      document.removeEventListener('click', stopBgm, { capture: true });
+      document.removeEventListener('touchstart', stopBgm, { capture: true });
       document.removeEventListener('keydown', stopBgm, { capture: true });
+      if (fadeOutInterval) clearInterval(fadeOutInterval);
     };
   }, []);
 
