@@ -1,7 +1,7 @@
 #!/bin/bash
 # This script sets up the environment and starts the Vocalido server on RunPod.
 
-cd /workspace/vocalido_server
+cd /workspace/Memolody_V2/vocalido_server
 
 echo "🚀 Updating latest fixes from GitHub..."
 curl -sL "https://raw.githubusercontent.com/vocamind-png/Memolody_V2/main/vocalido_server/main.py" > main.py
