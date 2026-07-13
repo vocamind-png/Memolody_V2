@@ -854,6 +854,7 @@ const PlayerPage: React.FC<{
   }, [activeCard]);
 
   const [isNavMenuVisible, setIsNavMenuVisible] = useState(false);
+  const [isVoiceMenuVisible, setIsVoiceMenuVisible] = useState(false);
   
   // Original Image Split View State
   const [isOriginalViewHidden, setIsOriginalViewHidden] = useState(true); // Default hidden
@@ -2936,25 +2937,61 @@ const PlayerPage: React.FC<{
         </div>
 
         {/* Right: PREMIUM CLOUD DROPDOWN SVS CONTROL */}
-        <div className="flex items-center bg-[#0c0c0e]/85 backdrop-blur-2xl border border-white/10 rounded-full pl-2 pr-1.5 py-0.5 shadow-2xl gap-2 hover:border-white/30 transition-all cursor-pointer group">
+        <div className="relative flex items-center bg-[#0c0c0e]/85 backdrop-blur-2xl border border-white/10 rounded-full pl-2 pr-1.5 py-0.5 shadow-2xl gap-2 hover:border-white/30 transition-all cursor-pointer group">
 
-          {/* Main Display Area (Click to Toggle Studio) */}
+          {/* Main Display Area (Click to Toggle Menu) */}
           <button 
             className="flex items-center gap-2 pr-1"
-            onClick={() => {
-              if (activeCard === 'vocalido') {
-                setActiveCard('score');
-              } else {
-                setActiveCard('vocalido');
-                setIsNavMenuVisible(false);
-              }
-            }}
+            onClick={() => setIsVoiceMenuVisible(!isVoiceMenuVisible)}
           >
-            <span className={`text-[7px] font-black uppercase tracking-[0.2em] transition-colors ${activeCard === 'vocalido' ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'}`}>
-              VOCALIDO
+            <span className={`text-[7px] font-black uppercase tracking-[0.2em] transition-colors ${isVoiceMenuVisible ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'}`}>
+              VOCAL: {voiceEngines.find(v => v.id === activeEngineId)?.name.split(' ')[0].replace('Lotte', 'Lotte V') || 'NICO'}
             </span>
-            <ChevronDown size={10} className={`text-zinc-500 transition-transform duration-300 ${activeCard === 'vocalido' ? 'rotate-180' : ''}`} />
+            <ChevronDown size={10} className={`text-zinc-500 transition-transform duration-300 ${isVoiceMenuVisible ? 'rotate-180' : ''}`} />
           </button>
+          
+          {isVoiceMenuVisible && (
+            <div className="absolute right-0 top-full mt-2 bg-[#0c0c0e]/95 backdrop-blur-3xl border border-white/10 p-3 rounded-3xl shadow-[0_20px_60px_rgba(0,0,0,0.9)] flex flex-col gap-2 w-[220px] max-h-[75vh] overflow-y-auto custom-scrollbar animate-in fade-in slide-in-from-top-4 origin-top-right z-[5000] cursor-default" onClick={e => e.stopPropagation()}>
+              <div className="flex flex-col gap-1.5">
+                <span className="text-[8px] font-black text-white/40 uppercase tracking-widest pl-2 mb-1 flex items-center gap-1.5"><Mic2 size={9} /> AI Voice Models</span>
+                <div className="flex flex-col gap-1">
+                  {voiceEngines.length === 0 ? (
+                    <span className="text-[9px] text-zinc-400 italic pl-2">กำลังโหลดโมเดลเสียง...</span>
+                  ) : (
+                    voiceEngines.map(voice => {
+                      const isActive = activeEngineId === voice.id;
+                      return (
+                        <button
+                          key={voice.id}
+                          onClick={() => {
+                            setActiveEngineId(voice.id);
+                            localStorage.setItem('vocalido_active_engine', voice.id);
+                            setIsVoiceMenuVisible(false);
+                          }}
+                          className={`px-3 py-2 rounded-xl text-[9px] font-black tracking-wide transition-all text-left flex items-center justify-between border
+                            ${isActive ? 'bg-indigo-500 border-indigo-400 text-white shadow-lg' : 'bg-white/5 border-white/5 text-zinc-400 hover:text-white hover:bg-white/10'}`}
+                        >
+                          <span className="truncate pr-2">{voice.name}</span>
+                          {isActive && <div className="w-1.5 h-1.5 rounded-full bg-white shadow-[0_0_5px_white]" />}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+              <div className="w-full h-px bg-white/10 my-1" />
+              <button
+                onClick={() => {
+                  setIsVoiceMenuVisible(false);
+                  setShowVocalidoSetup(true);
+                }}
+                className="w-full py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-white text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 border border-white/5"
+              >
+                <SlidersHorizontal size={10} className="text-cyan-400" />
+                Timbre Designer
+              </button>
+            </div>
+          )}
 
           <div className="w-px h-2 bg-white/10" />
 

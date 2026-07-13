@@ -1075,14 +1075,20 @@ def find_diffsinger_model(directory):
 # Store lazy voice paths for on-demand loading
 _lazy_voice_paths = {}  # voice_name -> (ckpt_path, config_path)
 
-if os.path.exists(english_voicebanks_dir):
-    for entry in os.listdir(english_voicebanks_dir):
-        voice_path = os.path.join(english_voicebanks_dir, entry)
-        if os.path.isdir(voice_path):
-            voice_name = entry
-            ckpt, cfg = find_diffsinger_model(voice_path)
-            if ckpt:
-                print(f"[DEBUG] 📂 Found {voice_name} model at: {ckpt}")
+voice_dirs_to_check = [english_voicebanks_dir, os.path.join(os.path.dirname(__file__), 'voicebanks')]
+
+for vdir in voice_dirs_to_check:
+    if os.path.exists(vdir):
+        for entry in os.listdir(vdir):
+            voice_path = os.path.join(vdir, entry)
+            if os.path.isdir(voice_path):
+                voice_name = entry
+                # If we already found this voice in english_voicebanks, skip
+                if voice_name in _lazy_voice_paths or (voice_name in _ds_engines):
+                    continue
+                ckpt, cfg = find_diffsinger_model(voice_path)
+                if ckpt:
+                    print(f"[DEBUG] 📂 Found {voice_name} model at: {ckpt}")
                 # Instead of eager loading, we defer it to save memory and avoid onnxruntime multi-session crashes
                 _lazy_voice_paths[voice_name.lower()] = (ckpt, cfg)
                 print(f"[DEBUG] ⏳ Added {voice_name} to lazy load list")
@@ -2072,15 +2078,25 @@ def get_vocal_modes(path):
     return []
 
 def get_model_files(voice_id):
-    if not english_voicebanks_dir or not os.path.exists(english_voicebanks_dir):
-        return None
-    voice_dir = os.path.join(english_voicebanks_dir, voice_id)
-    if not os.path.exists(voice_dir):
-        for name in os.listdir(english_voicebanks_dir):
-            if name.lower() == voice_id.lower():
-                voice_dir = os.path.join(english_voicebanks_dir, name)
-                break
-    if not os.path.exists(voice_dir):
+    voice_dirs = [english_voicebanks_dir, os.path.join(os.path.dirname(__file__), 'voicebanks')]
+    voice_dir = None
+    
+    for vdir in voice_dirs:
+        if not vdir or not os.path.exists(vdir):
+            continue
+        test_dir = os.path.join(vdir, voice_id)
+        if os.path.exists(test_dir):
+            voice_dir = test_dir
+            break
+        else:
+            for name in os.listdir(vdir):
+                if name.lower() == voice_id.lower():
+                    voice_dir = os.path.join(vdir, name)
+                    break
+        if voice_dir:
+            break
+
+    if not voice_dir or not os.path.exists(voice_dir):
         return None
     acoustic_path = None
     vocoder_path = None
@@ -2170,6 +2186,19 @@ def get_voices():
     # 4. Jianpu Chinese engine
     if DS_JIANPU_OK and _ds_jianpu_engine:
         voices.append({"id": "jianpu", "name": "Chinese Numeral (Jianpu 简谱)", "type": "DiffSinger", "lang": "zh", "vocal_modes": []})
+        
+    # Sort voices: Nico first, then Lotte V, then Native English, then others
+    def sort_key(v):
+        name = v["name"].lower()
+        if "nico" in name:
+            return 0
+        if "lotte" in name:
+            return 1
+        if "native english" in name:
+            return 2
+        return 3
+        
+    voices.sort(key=sort_key)
             
     return {"ok": True, "voices": voices}
 
