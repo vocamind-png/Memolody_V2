@@ -188,17 +188,27 @@ async def startup_event():
     try:
         from ds_onnx_engine import DiffSingerONNXEngine
         
-        # Preload English AIdol model
-        model_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'english_voicebanks', 'Lotte_V_AI_dol', 'Hoshino Hanami ~AIdol~ for DiffSinger v1.0', 'dsmain')
-        if os.path.exists(model_root):
-            print(f"[Startup] Preloading {model_root}...")
-            engine = DiffSingerONNXEngine(model_root, language='en')
+        # Preload Lotte_V
+        lotte_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'english_voicebanks', 'Lotte_V_AI_dol', 'Hoshino Hanami ~AIdol~ for DiffSinger v1.0', 'dsmain')
+        if os.path.exists(lotte_root):
+            print(f"[Startup] Preloading {lotte_root}...")
+            engine = DiffSingerONNXEngine(lotte_root, language='en')
             if getattr(engine, "is_ready", False):
-                engine_cache[model_root] = engine
+                engine_cache[lotte_root] = engine
                 _ds_engines['lotte_v_ai_dol'] = engine
+                print("[Startup] ✅ Lotte V model successfully preloaded into GPU VRAM!")
+
+        # Preload Nico as Primary
+        nico_root = os.path.join(os.path.dirname(__file__), 'voicebanks', 'nico')
+        if os.path.exists(nico_root):
+            print(f"[Startup] Preloading {nico_root}...")
+            engine = DiffSingerONNXEngine(nico_root)
+            if getattr(engine, "is_ready", False):
+                engine_cache[nico_root] = engine
+                _ds_engines['nico'] = engine
                 global _target_engine
                 _target_engine = engine
-                print("[Startup] ✅ AIdol model successfully preloaded into GPU VRAM!")
+                print("[Startup] ✅ Nico model successfully preloaded into GPU VRAM as PRIMARY!")
                 
                 # WARMUP
                 print("[Startup] 🔥 Warming up GPU with a dummy render to lock VRAM...")
@@ -1849,8 +1859,8 @@ def _batch_render_worker(batch_id, song_ids, transpose_range, params):
                         "current_song": "", "current_key": 0, "current_song_index": 0,
                         "songs_done": [], "error_details": [], "started_at": _time_module.time()}
 
-    voice = params.get("voice", "lotte_v_ai_dol")
-    singer = params.get("singer", "Lotte")
+    voice = params.get("voice", "nico")
+    singer = params.get("singer", "Nico")
     lyric_mode = params.get("lyric_mode", "Solfege")
     steps = params.get("steps", 10)
     timing_feel = params.get("timing_feel", 50)
@@ -2362,9 +2372,9 @@ def studio_preview_note(req: StudioNoteReq):
     _target_engine = None
     target_id = requested_voice
     
-    # Resolve 'default' to 'lotte_v_ai_dol'
+    # Resolve 'default' to 'nico'
     if target_id == 'default' or target_id == '':
-        target_id = 'lotte_v_ai_dol'
+        target_id = 'nico'
         
     if target_id in _ds_engines:
         _target_engine = _ds_engines[target_id]
