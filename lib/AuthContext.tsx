@@ -141,11 +141,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     try {
       // Query profiles table to retrieve user tier/role metadata
-      const { data: profile } = await supabase
+      const { data: profile, error: profileError } = await supabase
         .from('profiles')
         .select('role')
         .eq('id', sessionUser.id)
-        .single();
+        .maybeSingle();
+
+      if (profileError && profileError.code !== 'PGRST116') {
+        console.warn('Supabase profile fetch warning:', profileError);
+      }
 
       // Mapping Supabase role values to billing tiers
       const userRole = profile?.role || 'member';
