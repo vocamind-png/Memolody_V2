@@ -65,11 +65,12 @@ class DiffSingerONNXEngine:
                     break
             if self.vocoder_path:
                 break
-        # Fallback: look for vocoder.onnx or aidolgan.onnx anywhere
+        # Fallback: look for vocoder_vocos.onnx, vocoder.onnx or aidolgan.onnx anywhere
+        # Prefer Vocos over NSF-HiFiGAN for better audio clarity
         if not self.vocoder_path:
             for sdir in search_dirs:
                 for root, dirs, files in os.walk(sdir):
-                    for fname in ['aidolgan.onnx', 'vocoder.onnx']:
+                    for fname in ['vocoder_vocos.onnx', 'aidolgan.onnx', 'vocoder.onnx']:
                         if fname in files:
                             self.vocoder_path = os.path.join(root, fname)
                             break
@@ -98,6 +99,14 @@ class DiffSingerONNXEngine:
             print(f"[ONNXEngine] Acoustic initialized with providers: {actual_providers}")
             
             self.sess_vocoder = ort.InferenceSession(self.vocoder_path, sess_options=sess_options, providers=providers)
+            
+            # Detect vocoder input format (Vocos=mel-only, NSF-HiFiGAN=mel+f0)
+            voc_input_names = [inp.name for inp in self.sess_vocoder.get_inputs()]
+            voc_output_names = [out.name for out in self.sess_vocoder.get_outputs()]
+            self.vocoder_needs_f0 = 'f0' in voc_input_names
+            self.vocoder_output_name = voc_output_names[0] if voc_output_names else 'waveform'
+            vocoder_type = 'NSF-HiFiGAN (mel+f0)' if self.vocoder_needs_f0 else 'Vocos (mel-only)'
+            print(f"[ONNXEngine] Vocoder type: {vocoder_type}, inputs: {voc_input_names}, outputs: {voc_output_names}")
             
             # Look for other ONNX models (linguistic, dur, pitch)
             self.ling_path = None
@@ -751,10 +760,13 @@ class DiffSingerONNXEngine:
             print(f"[ONNX_TIME] Acoustic model: {t_acou - t_pitch:.3f}s")
             print(f"[DEBUG] mel shape: {mel.shape}, acou frames: {mel.shape[1]}")
 
-            # 7. Vocoder
+            # 7. Vocoder (adaptive: Vocos=mel-only, NSF-HiFiGAN=mel+f0)
             print(f"[DEBUG] pp_final passed to vocoder: median={np.median(pp_final[pp_final>0]):.2f} Hz, max={np.max(pp_final):.2f} Hz")
-            voc_inputs = {"mel": mel, "f0": pp_final}
-            waveform = self.sess_vocoder.run(["waveform"], voc_inputs)[0]
+            if self.vocoder_needs_f0:
+                voc_inputs = {"mel": mel, "f0": pp_final}
+            else:
+                voc_inputs = {"mel": mel}
+            waveform = self.sess_vocoder.run([self.vocoder_output_name], voc_inputs)[0]
             t_voc = time.time()
             print(f"[ONNX_TIME] Vocoder model: {t_voc - t_acou:.3f}s")
             print(f"[ONNX_TIME] TOTAL INFERENCE: {t_voc - t_start:.3f}s")
@@ -955,8 +967,11 @@ class DiffSingerONNXEngine:
 
         try:
             mel = self.sess_acoustic.run(["mel"], inputs)[0]
-            voc_inputs = { "mel": mel, "f0": f0_np }
-            waveform = self.sess_vocoder.run(["waveform"], voc_inputs)[0]
+            if self.vocoder_needs_f0:
+                voc_inputs = {"mel": mel, "f0": f0_np}
+            else:
+                voc_inputs = {"mel": mel}
+            waveform = self.sess_vocoder.run([self.vocoder_output_name], voc_inputs)[0]
             audio = waveform[0].copy().astype(np.float32)
             return self._apply_post_processing(audio, params)
         except Exception as e:
