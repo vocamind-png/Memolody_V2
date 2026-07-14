@@ -35,6 +35,10 @@ CRITICAL_FILES = {
     "/workspace/Memolody_V2/vocalido_server/voicebanks/nico/dictionary-en.txt": "nico/dictionary-en.txt",
     "/workspace/Memolody_V2/vocalido_server/voicebanks/nico/nico_vocos_v1.phonemes.json": "nico/nico_vocos_v1.phonemes.json",
     "/workspace/Memolody_V2/vocalido_server/voicebanks/nico/nico_vocos_v1.languages.json": "nico/nico_vocos_v1.languages.json",
+    "/workspace/Memolody_V2/vocalido_server/voicebanks/nico/vocoder_vocos.onnx": "nico/vocoder_vocos.onnx",
+
+    # ── Vocos vocoder checkpoint (for re-export) ──
+    "/workspace/diffsinger_training/vocos/checkpoints/vocos_44khz.ckpt": "vocos_training/vocos_44khz.ckpt",
 
     # ── Lotte V voice model ──
     "/workspace/Memolody_V2/english_voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dsmain/acoustic.onnx": "lotte_v/dsmain/acoustic.onnx",
