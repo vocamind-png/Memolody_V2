@@ -46,10 +46,12 @@ class DiffSingerONNXEngine:
         # Look for acoustic.onnx
         self.acoustic_path = None
         for root, dirs, files in os.walk(model_dir):
-            if "acoustic.onnx" in files:
-                self.acoustic_path = os.path.join(root, "acoustic.onnx")
+            for fname in ["acoustic.onnx", "nico_vocos_v1.nico.onnx", "lotte_v_ai_dol.onnx"]:
+                if fname in files:
+                    self.acoustic_path = os.path.join(root, fname)
+                    break
+            if self.acoustic_path:
                 break
-                
         # Look for vocoder (.onnx) — search dsvocoder/ for any .onnx file
         self.vocoder_path = None
         search_dirs = [model_dir, os.path.dirname(model_dir)]
@@ -138,10 +140,33 @@ class DiffSingerONNXEngine:
             print(f"[ONNXEngine] ❌ Failed to load ONNX session: {e}")
             return
             
-        # Load phonemes.txt (Token map)
+        # Load phoneme token map (supports both phonemes.txt and *.phonemes.json)
         self.phoneme_to_id = {}
-        ph_path = os.path.join(os.path.dirname(self.acoustic_path), "phonemes.txt")
-        if os.path.exists(ph_path):
+        acou_dir = os.path.dirname(self.acoustic_path)
+        ph_path = os.path.join(acou_dir, "phonemes.txt")
+        ph_json_path = None
+        # Search for *.phonemes.json in the model directory
+        for f in os.listdir(acou_dir):
+            if f.endswith('.phonemes.json'):
+                ph_json_path = os.path.join(acou_dir, f)
+                break
+        if not ph_json_path:
+            for f in os.listdir(model_dir):
+                if f.endswith('.phonemes.json'):
+                    ph_json_path = os.path.join(model_dir, f)
+                    break
+
+        if ph_json_path and os.path.exists(ph_json_path):
+            import json
+            with open(ph_json_path, "r", encoding="utf-8") as f:
+                ph_map = json.load(f)
+            for phoneme, idx in ph_map.items():
+                self.phoneme_to_id[phoneme] = int(idx)
+                # Also store lowercase and uppercase variants for case-insensitive lookup
+                self.phoneme_to_id[phoneme.lower()] = int(idx)
+                self.phoneme_to_id[phoneme.upper()] = int(idx)
+            print(f"[ONNXEngine] 📖 Loaded {len(ph_map)} phonemes from {os.path.basename(ph_json_path)}")
+        elif os.path.exists(ph_path):
             with open(ph_path, "r", encoding="utf-8") as f:
                 for i, line in enumerate(f):
                     parts = line.strip().split()
@@ -149,24 +174,37 @@ class DiffSingerONNXEngine:
                         continue
                     if len(parts) >= 2:
                         self.phoneme_to_id[parts[0]] = int(parts[1])
+                        self.phoneme_to_id[parts[0].lower()] = int(parts[1])
+                        self.phoneme_to_id[parts[0].upper()] = int(parts[1])
                     else:
                         self.phoneme_to_id[parts[0]] = i
+                        self.phoneme_to_id[parts[0].lower()] = i
+                        self.phoneme_to_id[parts[0].upper()] = i
+            print(f"[ONNXEngine] 📖 Loaded {len(self.phoneme_to_id)//3} phonemes from phonemes.txt")
         else:
-            print(f"[ONNXEngine] ⚠️ Warning: phonemes.txt not found in {os.path.dirname(self.acoustic_path)}")
-            # Fallback simple list? Hard to guess.
+            print(f"[ONNXEngine] ⚠️ Warning: No phoneme map found in {acou_dir}")
             
-        # Load dictionary.txt (Word to Phonemes)
+        # Load dictionary (Word to Phonemes) — supports dictionary.txt and dictionary-en.txt
         self.dict_map = {}
-        dict_path = os.path.join(os.path.dirname(self.acoustic_path), "dictionary.txt")
-        if not os.path.exists(dict_path):
-            dict_path = os.path.join(model_dir, "dictionary.txt")
-        if os.path.exists(dict_path):
+        dict_candidates = [
+            os.path.join(acou_dir, "dictionary.txt"),
+            os.path.join(model_dir, "dictionary.txt"),
+            os.path.join(acou_dir, "dictionary-en.txt"),
+            os.path.join(model_dir, "dictionary-en.txt"),
+        ]
+        dict_path = None
+        for dp in dict_candidates:
+            if os.path.exists(dp):
+                dict_path = dp
+                break
+        if dict_path:
             with open(dict_path, "r", encoding="utf-8") as f:
                 for line in f:
                     parts = line.strip().split()
                     if len(parts) >= 2:
                         word = parts[0].lower()
                         self.dict_map[word] = parts[1:]
+            print(f"[ONNXEngine] 📖 Loaded {len(self.dict_map)} dictionary entries from {os.path.basename(dict_path)}")
         
         # Load speaker embeddings
         self.spk_embeds = {}
