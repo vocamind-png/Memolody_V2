@@ -1,0 +1,10 @@
+#!/usr/bin/expect -f
+set timeout 60
+spawn ssh -o StrictHostKeyChecking=no tmeso71z3ki3m7-64410d4a@ssh.runpod.io -i ~/.ssh/id_ed25519
+expect "# "
+send "tail -n 100 /workspace/Memolody_V2/vocalido_server/server_8000.log > /workspace/Memolody_V2/vocalido_server/server_8000_tail.log\r"
+expect "# "
+send "cat /workspace/Memolody_V2/vocalido_server/server_8000_tail.log\r"
+expect "# "
+send "exit\r"
+expect eof

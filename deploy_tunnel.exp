@@ -1,0 +1,18 @@
+#!/usr/bin/expect -f
+set timeout 60
+spawn ssh -R 8080:127.0.0.1:8080 -o StrictHostKeyChecking=no tmeso71z3ki3m7-64410d4a@ssh.runpod.io -i ~/.ssh/id_ed25519
+expect "# "
+send "rm -f /workspace/update.zip\r"
+expect "# "
+send "wget http://127.0.0.1:8080/update.zip -O /workspace/update.zip\r"
+expect "# "
+send "cd /workspace/vocalido_server && unzip -o /workspace/update.zip\r"
+expect "# "
+send "pkill -f 'python main.py'\r"
+expect "# "
+send "pkill -f 'uvicorn'\r"
+expect "# "
+send "cd /workspace/vocalido_server && nohup python main.py > server_8888.log 2>&1 &\r"
+expect "# "
+send "exit\r"
+expect eof

@@ -1,0 +1,14 @@
+#!/usr/bin/expect -f
+set timeout 60
+spawn ssh -o StrictHostKeyChecking=no tmeso71z3ki3m7-64410d4a@ssh.runpod.io -i ~/.ssh/id_ed25519
+expect "# "
+send "cd /workspace/Memolody_V2 && git pull\r"
+expect "# "
+send "pkill -f 'python main.py'\r"
+expect "# "
+send "pkill -f 'uvicorn'\r"
+expect "# "
+send "cd /workspace/Memolody_V2/vocalido_server && nohup /usr/bin/python /usr/local/bin/uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1 > server_8000.log 2>&1 &\r"
+expect "# "
+send "exit\r"
+expect eof

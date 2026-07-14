@@ -2226,20 +2226,23 @@ const PlayerPage: React.FC<{
             setSvsEngine(savedSvsEngine as 'vocalido' | 'browser-ai');
           }
 
-          // Auto-select lotte_v_ai_dol or first non-default voice as default if not already set or if set to 'default'
+          // Auto-select Nico as primary voice, fallback to lotte_v_ai_dol, then first non-default
           const storedEngine = localStorage.getItem('vocalido_active_engine');
+          const hasNico = uniqueVoices.some((v: any) => v.id === 'nico');
           const hasLotte = uniqueVoices.some((v: any) => v.id === 'lotte_v_ai_dol');
-          const defaultVoiceId = hasLotte ? 'lotte_v_ai_dol' : (uniqueVoices.find((v: any) => v.id !== 'default')?.id || 'default');
+          const defaultVoiceId = hasNico ? 'nico' : (hasLotte ? 'lotte_v_ai_dol' : (uniqueVoices.find((v: any) => v.id !== 'default')?.id || 'default'));
           
           const currentActive = storedEngine || activeEngineId;
-          const targetActiveId = (currentActive === 'default' && hasLotte) ? 'lotte_v_ai_dol' : (currentActive || defaultVoiceId);
+          // Auto-upgrade from 'default' or 'lotte_v_ai_dol' to 'nico' when Nico is available
+          const shouldUpgradeToNico = hasNico && (currentActive === 'default' || currentActive === 'lotte_v_ai_dol');
+          const targetActiveId = shouldUpgradeToNico ? 'nico' : (currentActive || defaultVoiceId);
           
           setActiveEngineId(targetActiveId);
           localStorage.setItem('vocalido_active_engine', targetActiveId);
 
           setTracks((prev: any) => prev.map((t: any) => {
-            if (t.mode === 'vocal' && (t.engineId === 'default' || !t.engineId) && hasLotte) {
-              return { ...t, engineId: 'lotte_v_ai_dol' };
+            if (t.mode === 'vocal' && (t.engineId === 'default' || !t.engineId || t.engineId === 'lotte_v_ai_dol') && hasNico) {
+              return { ...t, engineId: 'nico' };
             }
             if (t.mode === 'vocal' && !t.engineId) {
               return { ...t, engineId: defaultVoiceId };

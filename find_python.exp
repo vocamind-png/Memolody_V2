@@ -1,0 +1,10 @@
+#!/usr/bin/expect -f
+set timeout 60
+spawn ssh -o StrictHostKeyChecking=no tmeso71z3ki3m7-64410d4a@ssh.runpod.io -i ~/.ssh/id_ed25519
+expect "# "
+send "ps -ef | grep python\r"
+expect "# "
+send "pwdx \$(pgrep -f python)\r"
+expect "# "
+send "exit\r"
+expect eof
