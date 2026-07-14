@@ -216,39 +216,22 @@ const App: React.FC = () => {
 
   // Global BGM Player Logic (Autoplay and stop on interaction)
   const bgmRef = React.useRef<HTMLAudioElement>(null);
+  const bgmStoppedRef = React.useRef(false);
   
   useEffect(() => {
     // Attempt autoplay
-    if (bgmRef.current) {
-      bgmRef.current.volume = 0.5;
+    if (bgmRef.current && !bgmStoppedRef.current) {
+      bgmRef.current.volume = 1.0;
       bgmRef.current.play().catch(e => console.log('BGM autoplay blocked by browser:', e));
     }
   }, [bgmUrl]); // Retry if bgmUrl changes
 
   useEffect(() => {
-    let fadeOutInterval: NodeJS.Timeout | null = null;
-    
     const stopBgm = () => {
+      bgmStoppedRef.current = true;
       if (bgmRef.current && !bgmRef.current.paused) {
-        if (fadeOutInterval) return; // already fading out
-        
-        let vol = bgmRef.current.volume;
-        fadeOutInterval = setInterval(() => {
-          if (bgmRef.current) {
-            vol -= 0.05;
-            if (vol <= 0) {
-              clearInterval(fadeOutInterval!);
-              fadeOutInterval = null;
-              bgmRef.current.pause();
-              bgmRef.current.volume = 0.5;
-            } else {
-              bgmRef.current.volume = vol;
-            }
-          } else {
-            if (fadeOutInterval) clearInterval(fadeOutInterval);
-            fadeOutInterval = null;
-          }
-        }, 50);
+        bgmRef.current.pause();
+        bgmRef.current.currentTime = 0;
       }
     };
     
@@ -261,7 +244,6 @@ const App: React.FC = () => {
       document.removeEventListener('click', stopBgm, { capture: true });
       document.removeEventListener('touchstart', stopBgm, { capture: true });
       document.removeEventListener('keydown', stopBgm, { capture: true });
-      if (fadeOutInterval) clearInterval(fadeOutInterval);
     };
   }, []);
 
