@@ -1,5 +1,6 @@
 #!/bin/bash
 # This script sets up the environment and starts the Vocalido server on RunPod.
+# It includes auto-restore from GCS backup to prevent data loss on restart.
 
 cd /workspace/Memolody_V2/vocalido_server
 
@@ -10,13 +11,34 @@ pkill -f "python main.py" 2>/dev/null
 sleep 2
 
 echo "📦 Installing CUDA 11.8 libraries required by ONNXRuntime..."
-apt-get update
-apt-get install -y libcufft-11-8 libcurand-11-8 libcusolver-11-8 libcusparse-11-8 libcublas-11-8 cuda-cudart-11-8
+apt-get update -qq
+apt-get install -y -qq libcufft-11-8 libcurand-11-8 libcusolver-11-8 libcusparse-11-8 libcublas-11-8 cuda-cudart-11-8
 echo "/usr/local/cuda-11.8/targets/x86_64-linux/lib" > /etc/ld.so.conf.d/cuda-11-8.conf
 ldconfig
 
 # Force LD_LIBRARY_PATH to include PyTorch's bundled CUDA libraries
 export LD_LIBRARY_PATH=$(python -c 'import os, site; print(":".join([os.path.join(p, "nvidia", d, "lib") for p in site.getsitepackages() for d in os.listdir(os.path.join(p, "nvidia")) if os.path.isdir(os.path.join(p, "nvidia", d))]) if os.path.exists(os.path.join(site.getsitepackages()[0], "nvidia")) else "")'):$LD_LIBRARY_PATH
+
+# ──────────────────────────────────────────────────────
+# 🛡️ AUTO-RESTORE: Check for missing model files and restore from GCS
+# ──────────────────────────────────────────────────────
+echo "🛡️ Checking model files..."
+if [ -f "/workspace/gcs-key.json" ] && [ -f "model_backup.py" ]; then
+    pip install -q google-cloud-storage 2>/dev/null
+    python3 model_backup.py check
+    
+    # If any files missing, auto-restore from GCS
+    if ! python3 model_backup.py check 2>&1 | grep -q "All files are present"; then
+        echo "⚠️  Some model files missing! Auto-restoring from GCS backup..."
+        python3 model_backup.py restore
+        echo "✅ Auto-restore complete!"
+    else
+        echo "✅ All model files present."
+    fi
+else
+    echo "⚠️  GCS key or backup script not found. Skipping auto-restore."
+    echo "   To enable: ensure /workspace/gcs-key.json and model_backup.py exist."
+fi
 
 echo "🌟 Starting Vocalido Server..."
 nohup python main.py > /workspace/server.log 2>&1 &
