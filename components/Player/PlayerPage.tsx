@@ -2197,7 +2197,7 @@ const PlayerPage: React.FC<{
     const fetchEngines = async (manualCheck = false) => {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout — Proxies/Tunnels need more time
+        const timeoutId = setTimeout(() => controller.abort(), 90000); // 90s timeout — RunPod proxy can be very slow on first connect
         const res = await svsFetch(getFetchUrl('/vocalido/studio/voices'), {
           signal: controller.signal
         });
@@ -2206,7 +2206,14 @@ const PlayerPage: React.FC<{
         const data = await res.json();
         if (active && data && data.voices) {
           setIsServerOnline(true);
-          setVoiceEngines(data.voices);
+          // Deduplicate voices by id — keep first non-⏳ entry for each id
+          const seen = new Set<string>();
+          const uniqueVoices = data.voices.filter((v: any) => {
+            if (seen.has(v.id)) return false;
+            seen.add(v.id);
+            return true;
+          });
+          setVoiceEngines(uniqueVoices);
           
           // Auto-select SVS rendering mode: prioritize server-side vocalido when local server is online
           const isMobileOrLowEnd = typeof window !== 'undefined' && (/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) || (navigator.hardwareConcurrency || 4) <= 4 || ((navigator as any).deviceMemory || 8) <= 4);
@@ -2221,8 +2228,8 @@ const PlayerPage: React.FC<{
 
           // Auto-select lotte_v_ai_dol or first non-default voice as default if not already set or if set to 'default'
           const storedEngine = localStorage.getItem('vocalido_active_engine');
-          const hasLotte = data.voices.some((v: any) => v.id === 'lotte_v_ai_dol');
-          const defaultVoiceId = hasLotte ? 'lotte_v_ai_dol' : (data.voices.find((v: any) => v.id !== 'default')?.id || 'default');
+          const hasLotte = uniqueVoices.some((v: any) => v.id === 'lotte_v_ai_dol');
+          const defaultVoiceId = hasLotte ? 'lotte_v_ai_dol' : (uniqueVoices.find((v: any) => v.id !== 'default')?.id || 'default');
           
           const currentActive = storedEngine || activeEngineId;
           const targetActiveId = (currentActive === 'default' && hasLotte) ? 'lotte_v_ai_dol' : (currentActive || defaultVoiceId);
@@ -2253,28 +2260,47 @@ const PlayerPage: React.FC<{
           }
           // Otherwise keep current mode (vocalido) so user is aware server is down
           
-          // Fallback: hardcode default Lotte V voice when server unreachable
-          setVoiceEngines([{ 
-            id: 'lotte_v_ai_dol', 
-            name: 'Lotte V', 
-            type: 'diffsinger', 
-            lang: 'en',
-            model_files: {
-              acoustic: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dsmain/acoustic.onnx',
-              vocoder: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dsvocoder/aidolgan.onnx',
-              dictionary: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dsmain/dictionary.txt',
-              phonemes: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dsmain/phonemes.txt',
-              embeds: {
-                root: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dsmain/embeds/acoustic/Root.emb',
-                fragrance: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dsmain/embeds/acoustic/Fragrance.emb',
-                nectar: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dsmain/embeds/acoustic/Nectar.emb'
-              },
-              linguistic: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dsmain/linguistic.onnx',
-              dur: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dsdur/dur.onnx',
-              pitch: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dspitch/pitch.onnx',
-              pitchLinguistic: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dspitch/linguistic.onnx'
+          // Fallback: hardcode Nico + Lotte V voices when server unreachable
+          setVoiceEngines([
+            {
+              id: 'nico',
+              name: 'Nico',
+              type: 'DiffSinger',
+              lang: 'en',
+              model_files: {
+                acoustic: '/vocalido/voicebanks/../vocalido_server/voicebanks/nico/acoustic.onnx',
+                vocoder: '/vocalido/voicebanks/../vocalido_server/voicebanks/nico/vocoder.onnx',
+                dictionary: null,
+                phonemes: null,
+                embeds: {},
+                linguistic: '/vocalido/voicebanks/../vocalido_server/voicebanks/nico/linguistic.onnx',
+                dur: '/vocalido/voicebanks/../vocalido_server/voicebanks/nico/dur.onnx',
+                pitch: '/vocalido/voicebanks/../vocalido_server/voicebanks/nico/pitch.onnx',
+                pitchLinguistic: null
+              }
+            },
+            { 
+              id: 'lotte_v_ai_dol', 
+              name: 'Lotte V', 
+              type: 'DiffSinger', 
+              lang: 'en',
+              model_files: {
+                acoustic: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dsmain/acoustic.onnx',
+                vocoder: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dsvocoder/aidolgan.onnx',
+                dictionary: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dsmain/dictionary.txt',
+                phonemes: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dsmain/phonemes.txt',
+                embeds: {
+                  root: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dsmain/embeds/acoustic/Root.emb',
+                  fragrance: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dsmain/embeds/acoustic/Fragrance.emb',
+                  nectar: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dsmain/embeds/acoustic/Nectar.emb'
+                },
+                linguistic: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dsmain/linguistic.onnx',
+                dur: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dsdur/dur.onnx',
+                pitch: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dspitch/pitch.onnx',
+                pitchLinguistic: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dspitch/linguistic.onnx'
+              }
             }
-          }]);
+          ]);
           setActiveEngineId('lotte_v_ai_dol');
           setTracks((prev: any) => prev.map((t: any) => {
             if (t.mode === 'vocal' && (t.engineId === 'default' || !t.engineId)) {

@@ -1,7 +1,7 @@
 {
   "name": "memolody-v2-5",
   "private": true,
-  "version": "2.2.0",
+  "version": "2.5.0",
   "type": "module",
   "scripts": {
     "dev": "concurrently --kill-others-on-fail -n \"vite,omr\" -c \"cyan,yellow\" \"vite\" \"node scripts/omr-server.mjs\"",
