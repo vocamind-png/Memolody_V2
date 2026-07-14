@@ -3269,4 +3269,4 @@ if __name__ == "__main__":
     print(f"   🗑️  Render cleanup: TTL={RENDER_TTL_HOURS}h, "
           f"max={RENDER_MAX_DISK_MB}MB, quota={RENDER_MAX_PER_USER}/user")
     print("=" * 55)
-    uvicorn.run(app, host="0.0.0.0", port=8888)
+    uvicorn.run(app, host="0.0.0.0", port=8000)

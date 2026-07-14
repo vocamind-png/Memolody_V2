@@ -238,9 +238,11 @@ export const mapPartNameToInstrument = (partName: string): string => {
   if (name.includes('tuba')) return 'tuba';
   if (name.includes('sax') || name.includes('saxophone')) return 'alto_sax';
   if (name.includes('guitar')) return 'acoustic_guitar_nylon';
-  if (name.includes('harp')) return 'orchestral_harp';
+  if (name.includes('harpsichord')) return 'harpsichord';
+  if (name.match(/\bharp\b/)) return 'orchestral_harp';
   if (name.includes('choir') || name.includes('voice') || name.includes('vocal') || name.includes('soprano') || name.includes('alto') || name.includes('tenor')) return 'choir_aahs';
   if (name.includes('synth')) return 'synth_strings_1';
   if (name.includes('drum') || name.includes('percussion')) return 'synth_drum';
+  if (name.includes('piano')) return 'acoustic_grand_piano';
   return 'acoustic_grand_piano';
 };

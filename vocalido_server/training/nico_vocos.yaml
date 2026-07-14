@@ -4,7 +4,7 @@
 # ============================================================
 
 base_config:
-  - configs/base.yaml
+  - configs/acoustic.yaml
 
 # --- Model Identity ---
 exp_name: nico_vocos_v1
@@ -21,14 +21,29 @@ mel_fmax: 16000
 f0_min: 65.0
 f0_max: 1047.0
 
-# --- Vocoder: Vocos ---
+# --- Vocoder ---
 vocoder: vocos
 vocoder_ckpt: /workspace/diffsinger_training/vocos/checkpoints/vocos_44khz.ckpt
+val_with_vocoder: false
 
 # --- Dataset ---
-raw_data_dir: /workspace/diffsinger_training/dataset/nico/raw
-binary_data_dir: /workspace/diffsinger_training/dataset/nico/binary
-dictionary: /workspace/diffsinger_training/DiffSinger/dictionaries/opencpop-extension.txt
+binary_data_dir: /workspace/diffsinger_training/dataset/nico_sliced/binary
+test_prefixes:
+  - 17_British_Scale_Key_62
+  - 43_Tech_Legato
+  - 57_Dyn_Belting
+dictionaries:
+  en: dictionaries/english.txt
+datasets:
+  - raw_data_dir: /workspace/diffsinger_training/dataset/nico_sliced/raw
+    speaker: nico
+    language: en
+    test_prefixes: [
+      '17_British_Scale_Key_62',
+      '43_Tech_Legato',
+      '57_Dyn_Belting'
+    ]
+    spk_id: 0
 mfa_model: english_us_arpa
 
 # --- Architecture ---
@@ -41,9 +56,18 @@ timesteps: 1000
 K_step: 1000
 diff_decoder_type: wavenet
 
+# --- Finetuning from Base Model ---
+finetune_enabled: True
+finetune_ckpt_path: /workspace/diffsinger_training/DiffSinger/checkpoints/base_model/base_model.ckpt
+finetune_strict_shapes: False
+finetune_ignored_params:
+  - model.fs2.encoder.embed_tokens
+  - model.fs2.txt_embed
+  - model.fs2.spk_embed
+
 # --- Training (RTX 4000 Ada) ---
-max_batch_frames: 80000
-max_batch_size: 32
+max_batch_frames: 1500
+max_batch_size: 2
 max_updates: 160000
 val_check_interval: 2000
 optimizer: adamw
@@ -63,11 +87,20 @@ speakers:
   - nico
   - lotte_v
 num_spk: 2
+num_lang: 1
+
+# --- Features ---
+use_breathiness_embed: false
+use_energy_embed: false
+use_tension_embed: false
+use_voicing_embed: false
+use_key_shift_embed: true
+hnsep: world
 
 # --- Preprocessing ---
-use_mfa: true
-pe: rmvpe
-pe_ckpt: /workspace/diffsinger_training/rmvpe/model.pt
+use_mfa: false
+pe: parselmouth
+# pe_ckpt: /workspace/diffsinger_training/rmvpe/model.pt
 
 # --- Augmentation ---
 augmentation_args:
@@ -81,3 +114,5 @@ augmentation_args:
 # --- Checkpoints ---
 permanent_ckpt_start: 120000
 permanent_ckpt_interval: 20000
+binarizer_cls: preprocessing.acoustic_binarizer.AcousticBinarizer
+task_cls: training.acoustic_task.AcousticTask
