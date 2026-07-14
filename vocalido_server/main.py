@@ -1100,9 +1100,9 @@ for vdir in voice_dirs_to_check:
                 ckpt, cfg = find_diffsinger_model(voice_path)
                 if ckpt:
                     print(f"[DEBUG] 📂 Found {voice_name} model at: {ckpt}")
-                # Instead of eager loading, we defer it to save memory and avoid onnxruntime multi-session crashes
-                _lazy_voice_paths[lower_name] = (ckpt, cfg)
-                print(f"[DEBUG] ⏳ Added {voice_name} to lazy load list")
+                    # Instead of eager loading, we defer it to save memory and avoid onnxruntime multi-session crashes
+                    _lazy_voice_paths[lower_name] = (ckpt, cfg)
+                    print(f"[DEBUG] ⏳ Added {voice_name} to lazy load list")
 
 # Initialize Jianpu (Chinese) DiffSinger Engine
 DS_JIANPU_OK = False
