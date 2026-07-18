@@ -277,20 +277,59 @@ class DiffSingerONNXEngine:
         clean_word = re.sub(r'[.,?!:;\-\(\)\[\]"\']', '', word)
         
         thai_map = {
-            "โด": "do", "เร": "re", "มี": "mi", "ฟา": "fa", 
-            "ซอล": "sol", "โซล": "sol", "ลา": "la", "ที": "ti"
+            "โด": "do", "โดห์": "do",
+            "เร": "re", "เรย์": "re",
+            "มี": "mi", 
+            "ฟา": "fa", 
+            "ซอล": "sol", "โซล": "sol", "โซ": "so",
+            "ลา": "la", 
+            "ที": "ti", "ซิ": "si", "ทีย์": "ti"
         }
         if clean_word in thai_map:
             clean_word = thai_map[clean_word]
 
+        # Jianpu numeric systems (1-7, #1-7, b1-7) mapped to phonetic equivalents
+        JIANPU_MAP = {
+            "1": ["d", "uw"],       # duo (多)
+            "#1": ["d", "iy"],      # di (迪)
+            "b2": ["l", "ey"],      # ra / lai
+            "2": ["l", "ey"],       # lai (来)
+            "#2": ["r", "iy"],      # ri (瑞)
+            "b3": ["m", "iy"],      # ma / mi
+            "3": ["m", "iy"],       # mi (咪)
+            "4": ["f", "aa"],       # fa (发)
+            "#4": ["f", "ey"],      # fi (菲)
+            "b5": ["s", "uw"],      # se / suo
+            "5": ["s", "uw"],       # suo (梭/索)
+            "#5": ["s", "iy"],      # si (丝)
+            "b6": ["l", "aa"],      # le / la
+            "6": ["l", "aa"],       # la (拉)
+            "#6": ["l", "iy"],      # li (莉)
+            "b7": ["s", "iy"],      # te / xi
+            "7": ["s", "iy"],       # xi / ti
+        }
+        if clean_word in JIANPU_MAP:
+            return JIANPU_MAP[clean_word]
+
         if clean_word in self.dict_map:
             return self.dict_map[clean_word]
 
+        # Comprehensive Solfège, Kodaly, and Sargam mappings to ARPABET phonemes
         SOLFEGE_MAP = {
-            "doh": "d ow", "do": "d ow", "di": "d iy", "ra": "r aa",
-            "re": "r ey", "ray": "r ey", "ri": "r iy", "me": "m iy", "mi": "m iy",
-            "fa": "f aa", "fi": "f iy", "se": "s ey", "sol": "s ow l", "so": "s ow", "si": "s iy",
-            "le": "l ey", "la": "l aa", "li": "l iy", "te": "t ey", "ti": "t iy", "ta": "t aa"
+            "doh": "d ow", "do": "d ow",
+            "re": "r ey", "ray": "r ey",
+            "mi": "m iy",
+            "fa": "f aa", "fah": "f aa",
+            "sol": "s ow l", "soh": "s ow l", "so": "s ow",
+            "la": "l aa", "lah": "l aa",
+            "ti": "t iy", "si": "s iy", "tiy": "t iy",
+            "di": "d iy", "ri": "r iy", "fi": "f iy", "li": "l iy",
+            "ra": "r aa", "me": "m iy", "se": "s ey", "le": "l ey", "te": "t ey",
+            "raw": "r ao", "maw": "m ao", "saw": "s ao", "law": "l ao", "taw": "t ao",
+            "ru": "r uw", "mu": "m uw", "su": "s uw", "lu": "l uw", "tu": "t uw",
+            "ah": "aa", "oh": "ow", "ee": "iy",
+            "d": "d ow", "r": "r ey", "m": "m iy", "f": "f aa", "s": "s ow l", "l": "l aa", "t": "t iy",
+            "ma": "m aa", "sa": "s aa", "ta": "t aa", "ga": "g aa", "pa": "p aa", "dha": "dh aa", "ni": "n iy",
         }
         if clean_word in SOLFEGE_MAP:
             return SOLFEGE_MAP[clean_word].split()
@@ -793,8 +832,8 @@ class DiffSingerONNXEngine:
                                 if len(valid_pred) > 0:
                                     pred_mean = np.mean(valid_pred)
                                     offset = curr_midi - pred_mean
-                                    # Clamp offset to 18 semitones to avoid chipmunk/monster extreme sounds
-                                    offset = np.clip(offset, -18.0, 18.0)
+                                    # Clamp offset to 24 semitones to avoid chipmunk/monster extreme sounds
+                                    offset = np.clip(offset, -24.0, 24.0)
                                     offset_arr[seg_start:idx] = offset
                             seg_start = idx
                             curr_midi = f0_midi_arr[idx]
@@ -805,7 +844,7 @@ class DiffSingerONNXEngine:
                         if len(valid_pred) > 0:
                             pred_mean = np.mean(valid_pred)
                             offset = curr_midi - pred_mean
-                            offset = np.clip(offset, -18.0, 18.0)
+                            offset = np.clip(offset, -24.0, 24.0)
                             offset_arr[seg_start:r_end] = offset
                             
                     # Smooth the offset array ONLY within this voiced run to keep note transitions organic
