@@ -575,7 +575,7 @@ class DiffSingerONNXEngine:
             "u", "ua", "uai", "uan", "uang", "ui", "un", "uo",
             "v", "van", "ve", "vn",
         }
-        en_vowels = {"ah","ow","iy","ey","aa","ao","er","uh","uw","ae"}
+        en_vowels = {"aa", "ae", "ah", "ao", "aw", "ay", "eh", "er", "ey", "ih", "iy", "ow", "oy", "uh", "uw"}
         vowel_set = zh_vowels if self.language == 'zh' else en_vowels
 
         id_to_phoneme = {v: k for k, v in self.phoneme_to_id.items()}
@@ -597,7 +597,7 @@ class DiffSingerONNXEngine:
                 word_ph_names = ph_names[tok_idx : tok_idx + wdiv]
                 vowel_local_idx = next(
                     (i for i, p in enumerate(word_ph_names)
-                     if p in vowel_set or (p and p[0] in "aeiouAEIOU")),
+                     if (p and p.lower() in vowel_set) or (p and p[0].lower() in "aeiou")),
                     wdiv - 1
                 )
                 
