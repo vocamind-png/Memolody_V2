@@ -246,19 +246,17 @@ const App: React.FC = () => {
   }, [currentView, isInitializing]);
 
   useEffect(() => {
-    const unlockBgm = () => {
-      if (bgmRef.current && !bgmStoppedRef.current && bgmUrl && bgmRef.current.paused) {
-        bgmRef.current.volume = 0.8;
-        bgmRef.current.play().then(() => {
-          setBgmUnlocked(true);
-        }).catch(e => console.log('BGM unlock failed:', e));
+    const stopBgmOnClick = () => {
+      if (bgmRef.current && !bgmRef.current.paused) {
+        bgmRef.current.pause();
+        bgmStoppedRef.current = true;
+        console.log('[BGM] Stopped by screen interaction.');
       }
     };
     
-    // Listen for any user gesture to unlock audio
-    window.addEventListener('click', unlockBgm);
-    window.addEventListener('touchstart', unlockBgm);
-    window.addEventListener('keydown', unlockBgm);
+    // Clicking or touching the screen stops the background music
+    window.addEventListener('click', stopBgmOnClick);
+    window.addEventListener('touchstart', stopBgmOnClick);
     
     const stopBgmExplicit = () => {
       bgmStoppedRef.current = true;
@@ -269,9 +267,8 @@ const App: React.FC = () => {
     document.addEventListener('stop-global-bgm', stopBgmExplicit);
     
     return () => {
-      window.removeEventListener('click', unlockBgm);
-      window.removeEventListener('touchstart', unlockBgm);
-      window.removeEventListener('keydown', unlockBgm);
+      window.removeEventListener('click', stopBgmOnClick);
+      window.removeEventListener('touchstart', stopBgmOnClick);
       document.removeEventListener('stop-global-bgm', stopBgmExplicit);
     };
   }, [bgmUrl]);

@@ -277,20 +277,69 @@ class DiffSingerONNXEngine:
         clean_word = re.sub(r'[.,?!:;\-\(\)\[\]"\']', '', word)
         
         thai_map = {
-            "โด": "do", "เร": "re", "มี": "mi", "ฟา": "fa", 
-            "ซอล": "sol", "โซล": "sol", "ลา": "la", "ที": "ti"
+            "โด": "do", "โดห์": "do",
+            "เร": "re", "เรย์": "re",
+            "มี": "mi", 
+            "ฟา": "fa", 
+            "ซอล": "sol", "โซล": "sol", "โซ": "so",
+            "ลา": "la", 
+            "ที": "ti", "ซิ": "si", "ทีย์": "ti"
         }
         if clean_word in thai_map:
             clean_word = thai_map[clean_word]
 
+        # Jianpu numeric systems (1-7, #1-7, b1-7) mapped exactly to Nico's training scale phonemes
+        JIANPU_MAP = {
+            "1": ["d", "uw"],       # Do
+            "#1": ["d", "iy"],      # Di
+            "b2": ["r", "aa"],      # Ra
+            "2": ["r", "ey"],       # Re
+            "#2": ["r", "iy"],      # Ri
+            "b3": ["m", "iy"],      # Me
+            "3": ["m", "iy"],       # Mi
+            "4": ["f", "ah"],       # Fa
+            "#4": ["f", "iy"],      # Fi
+            "b5": ["s", "ey"],      # Se
+            "5": ["s", "aa", "l"],  # Sol
+            "#5": ["s", "iy"],      # Si
+            "b6": ["l", "ey"],      # Le
+            "6": ["l", "aa"],       # La
+            "#6": ["l", "iy"],      # Li
+            "b7": ["t", "ey"],      # Te
+            "7": ["t", "iy"],       # Ti
+        }
+        if clean_word in JIANPU_MAP:
+            return JIANPU_MAP[clean_word]
+
         if clean_word in self.dict_map:
             return self.dict_map[clean_word]
 
+        # Comprehensive Solfège, Kodaly, and Sargam mappings mapped exactly to Nico's training scale phonemes
         SOLFEGE_MAP = {
-            "doh": "d ow", "do": "d ow", "di": "d iy", "ra": "r aa",
-            "re": "r ey", "ray": "r ey", "ri": "r iy", "me": "m iy", "mi": "m iy",
-            "fa": "f aa", "fah": "f aa", "fi": "f iy", "se": "s ey", "sol": "s ow l", "so": "s ow", "soh": "s ow", "si": "s iy",
-            "le": "l ey", "la": "l aa", "lah": "l aa", "li": "l iy", "te": "t ey", "ti": "t iy", "ta": "t aa"
+            # Diatonic syllables
+            "do": "d uw", "doh": "d ow",
+            "di": "d iy",
+            "ra": "r aa", "raw": "r aa",
+            "re": "r ey", "ray": "r ey",
+            "ri": "r iy",
+            "me": "m iy", "maw": "m aa", "mu": "m uw",
+            "mi": "m iy",
+            "fa": "f ah", "fah": "f aa",
+            "fi": "f iy",
+            "se": "s ey", "saw": "s aa", "su": "s uw",
+            "sol": "s aa l", "soh": "s ow", "so": "s ow",
+            "si": "s iy",
+            "le": "l ey", "law": "l aa", "lu": "l uw",
+            "la": "l aa", "lah": "l aa",
+            "li": "l iy",
+            "te": "t ey", "ta": "t aa", "taw": "t aa", "tu": "t uw",
+            "ti": "t iy", "tiy": "t iy",
+            # Pure vowels
+            "ah": "aa", "oh": "ow", "ee": "iy",
+            # Kodaly single-letters
+            "d": "d uw", "r": "r ey", "m": "m iy", "f": "f ah", "s": "s aa l", "l": "l aa", "t": "t iy",
+            # Sargam
+            "sa": "s aa", "ga": "g aa", "pa": "p aa", "dha": "dh aa", "ni": "n iy",
         }
         if clean_word in SOLFEGE_MAP:
             return SOLFEGE_MAP[clean_word].split()

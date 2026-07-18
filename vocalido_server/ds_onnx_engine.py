@@ -288,25 +288,25 @@ class DiffSingerONNXEngine:
         if clean_word in thai_map:
             clean_word = thai_map[clean_word]
 
-        # Jianpu numeric systems (1-7, #1-7, b1-7) mapped to phonetic equivalents
+        # Jianpu numeric systems (1-7, #1-7, b1-7) mapped exactly to Nico's training scale phonemes
         JIANPU_MAP = {
-            "1": ["d", "uw"],       # duo (多)
-            "#1": ["d", "iy"],      # di (迪)
-            "b2": ["l", "ey"],      # ra / lai
-            "2": ["l", "ey"],       # lai (来)
-            "#2": ["r", "iy"],      # ri (瑞)
-            "b3": ["m", "iy"],      # ma / mi
-            "3": ["m", "iy"],       # mi (咪)
-            "4": ["f", "aa"],       # fa (发)
-            "#4": ["f", "ey"],      # fi (菲)
-            "b5": ["s", "uw"],      # se / suo
-            "5": ["s", "uw"],       # suo (梭/索)
-            "#5": ["s", "iy"],      # si (丝)
-            "b6": ["l", "aa"],      # le / la
-            "6": ["l", "aa"],       # la (拉)
-            "#6": ["l", "iy"],      # li (莉)
-            "b7": ["s", "iy"],      # te / xi
-            "7": ["s", "iy"],       # xi / ti
+            "1": ["d", "uw"],       # Do
+            "#1": ["d", "iy"],      # Di
+            "b2": ["r", "aa"],      # Ra
+            "2": ["r", "ey"],       # Re
+            "#2": ["r", "iy"],      # Ri
+            "b3": ["m", "iy"],      # Me
+            "3": ["m", "iy"],       # Mi
+            "4": ["f", "ah"],       # Fa
+            "#4": ["f", "iy"],      # Fi
+            "b5": ["s", "ey"],      # Se
+            "5": ["s", "aa", "l"],  # Sol
+            "#5": ["s", "iy"],      # Si
+            "b6": ["l", "ey"],      # Le
+            "6": ["l", "aa"],       # La
+            "#6": ["l", "iy"],      # Li
+            "b7": ["t", "ey"],      # Te
+            "7": ["t", "iy"],       # Ti
         }
         if clean_word in JIANPU_MAP:
             return JIANPU_MAP[clean_word]
@@ -314,22 +314,32 @@ class DiffSingerONNXEngine:
         if clean_word in self.dict_map:
             return self.dict_map[clean_word]
 
-        # Comprehensive Solfège, Kodaly, and Sargam mappings to ARPABET phonemes
+        # Comprehensive Solfège, Kodaly, and Sargam mappings mapped exactly to Nico's training scale phonemes
         SOLFEGE_MAP = {
-            "doh": "d ow", "do": "d ow",
+            # Diatonic syllables
+            "do": "d uw", "doh": "d ow",
+            "di": "d iy",
+            "ra": "r aa", "raw": "r aa",
             "re": "r ey", "ray": "r ey",
+            "ri": "r iy",
+            "me": "m iy", "maw": "m aa", "mu": "m uw",
             "mi": "m iy",
-            "fa": "f aa", "fah": "f aa",
-            "sol": "s ow l", "soh": "s ow l", "so": "s ow",
+            "fa": "f ah", "fah": "f aa",
+            "fi": "f iy",
+            "se": "s ey", "saw": "s aa", "su": "s uw",
+            "sol": "s aa l", "soh": "s ow", "so": "s ow",
+            "si": "s iy",
+            "le": "l ey", "law": "l aa", "lu": "l uw",
             "la": "l aa", "lah": "l aa",
-            "ti": "t iy", "si": "s iy", "tiy": "t iy",
-            "di": "d iy", "ri": "r iy", "fi": "f iy", "li": "l iy",
-            "ra": "r aa", "me": "m iy", "se": "s ey", "le": "l ey", "te": "t ey",
-            "raw": "r ao", "maw": "m ao", "saw": "s ao", "law": "l ao", "taw": "t ao",
-            "ru": "r uw", "mu": "m uw", "su": "s uw", "lu": "l uw", "tu": "t uw",
+            "li": "l iy",
+            "te": "t ey", "ta": "t aa", "taw": "t aa", "tu": "t uw",
+            "ti": "t iy", "tiy": "t iy",
+            # Pure vowels
             "ah": "aa", "oh": "ow", "ee": "iy",
-            "d": "d ow", "r": "r ey", "m": "m iy", "f": "f aa", "s": "s ow l", "l": "l aa", "t": "t iy",
-            "ma": "m aa", "sa": "s aa", "ta": "t aa", "ga": "g aa", "pa": "p aa", "dha": "dh aa", "ni": "n iy",
+            # Kodaly single-letters
+            "d": "d uw", "r": "r ey", "m": "m iy", "f": "f ah", "s": "s aa l", "l": "l aa", "t": "t iy",
+            # Sargam
+            "sa": "s aa", "ga": "g aa", "pa": "p aa", "dha": "dh aa", "ni": "n iy",
         }
         if clean_word in SOLFEGE_MAP:
             return SOLFEGE_MAP[clean_word].split()

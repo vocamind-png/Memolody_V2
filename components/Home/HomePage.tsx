@@ -781,15 +781,35 @@ const HomePage: React.FC<HomePageProps> = ({
     let debugCount = 0;
     userLibrary.forEach(s => {
       const m = s.metadata as any;
-      // Brute-force: scan ALL property values for grade info
-      for (const key of Object.keys(m)) {
-        const val = m[key];
-        if (typeof val !== 'string' || !val) continue;
-        const v = val.trim();
-        const gradeMatch = v.match(/^Grade\s*(\d+)$/i);
-        if (gradeMatch) { set.add(`Grade ${gradeMatch[1]}`); debugCount++; break; }
-        if (/^[1-8]$/.test(v)) { set.add(`Grade ${v}`); debugCount++; break; }
-        if (/^(Beginner|Intermediate|Advanced|Expert|Diploma)$/i.test(v)) { set.add(v); debugCount++; break; }
+      
+      let foundGrade = '';
+      const rawGrade = m.difficulty_grade || m.difficultyGrade || m.difficulty || m.grade;
+      if (rawGrade !== undefined && rawGrade !== null && rawGrade !== '') {
+        let v = String(rawGrade).trim();
+        if (/^[1-8]$/.test(v)) v = `Grade ${v}`;
+        if (v && v.toLowerCase() !== 'none') {
+          foundGrade = v;
+        }
+      }
+      
+      if (!foundGrade) {
+        // Brute-force: scan ALL property values for grade info
+        for (const key of Object.keys(m)) {
+          const val = m[key];
+          if (val === null || val === undefined || typeof val === 'object') continue;
+          const v = String(val).trim();
+          if (!v || v.toLowerCase() === 'none') continue;
+          const gradeMatch = v.match(/^Grade\s*(\d+)$/i);
+          if (gradeMatch) { foundGrade = `Grade ${gradeMatch[1]}`; break; }
+          if (/^[1-8]$/.test(v)) { foundGrade = `Grade ${v}`; break; }
+          if (/^(Beginner|Intermediate|Advanced|Expert|Diploma)$/i.test(v)) { foundGrade = v; break; }
+        }
+      }
+      
+      if (foundGrade) {
+        const normalized = foundGrade.charAt(0).toUpperCase() + foundGrade.slice(1);
+        set.add(normalized);
+        debugCount++;
       }
     });
     // TEMP DEBUG
@@ -963,19 +983,31 @@ const HomePage: React.FC<HomePageProps> = ({
       list = list.filter(i => {
         const m = i.metadata as any;
         
-        // Brute-force: scan ALL metadata values for grade info
         let foundGrade = '';
-        for (const key of Object.keys(m)) {
-          const val = m[key];
-          if (typeof val !== 'string' || !val) continue;
-          const v = val.trim();
-          // Match "Grade X" format
-          const gradeMatch = v.match(/^Grade\s*(\d+)$/i);
-          if (gradeMatch) { foundGrade = `Grade ${gradeMatch[1]}`; break; }
-          // Match plain number 1-8
-          if (/^[1-8]$/.test(v)) { foundGrade = `Grade ${v}`; break; }
-          // Match difficulty labels
-          if (/^(Beginner|Intermediate|Advanced|Expert|Diploma)$/i.test(v)) { foundGrade = v; break; }
+        const rawGrade = m.difficulty_grade || m.difficultyGrade || m.difficulty || m.grade;
+        if (rawGrade !== undefined && rawGrade !== null && rawGrade !== '') {
+          let v = String(rawGrade).trim();
+          if (/^[1-8]$/.test(v)) v = `Grade ${v}`;
+          if (v && v.toLowerCase() !== 'none') {
+            foundGrade = v;
+          }
+        }
+        
+        if (!foundGrade) {
+          // Brute-force: scan ALL metadata values for grade info
+          for (const key of Object.keys(m)) {
+            const val = m[key];
+            if (val === null || val === undefined || typeof val === 'object') continue;
+            const v = String(val).trim();
+            if (!v || v.toLowerCase() === 'none') continue;
+            // Match "Grade X" format
+            const gradeMatch = v.match(/^Grade\s*(\d+)$/i);
+            if (gradeMatch) { foundGrade = `Grade ${gradeMatch[1]}`; break; }
+            // Match plain number 1-8
+            if (/^[1-8]$/.test(v)) { foundGrade = `Grade ${v}`; break; }
+            // Match difficulty labels
+            if (/^(Beginner|Intermediate|Advanced|Expert|Diploma)$/i.test(v)) { foundGrade = v; break; }
+          }
         }
         
         // Also check title for grade info (e.g. "Minuet - Grade 3")
@@ -1287,40 +1319,49 @@ const HomePage: React.FC<HomePageProps> = ({
           onChange={handleImport}
         />
 
-        {/* Search */}
-        <div className="flex items-center gap-2">
+        {/* Search Form */}
+        <form
+          onSubmit={e => {
+            e.preventDefault();
+            setAiFilteredIds(null);
+            setSearchQuery(searchInput);
+          }}
+          className="flex items-center gap-2"
+        >
           <div className="relative group flex-1">
-          <button 
-            onClick={() => setSearchQuery(searchInput)}
-            className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-700 group-focus-within:text-cyan-400 transition-colors z-10 hover:text-cyan-300"
-          >
-            <Search size={16} />
-          </button>
-          <input
-            type="text"
-            placeholder="FIND YOUR MUSIC..."
-            value={searchInput}
-            onChange={e => {
-              setSearchInput(e.target.value);
-              setAiFilteredIds(null);
-              setSearchQuery(e.target.value);
-            }}
-            onKeyDown={e => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
+            <button 
+              type="submit"
+              className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-700 group-focus-within:text-cyan-400 transition-colors z-10 hover:text-cyan-300"
+              title="Search"
+            >
+              <Search size={16} />
+            </button>
+            <input
+              type="text"
+              placeholder="FIND YOUR MUSIC..."
+              value={searchInput}
+              onChange={e => {
+                setSearchInput(e.target.value);
                 setAiFilteredIds(null);
-                setSearchQuery(searchInput);
-              }
-            }}
-            className="w-full h-12 bg-white/[0.03] border border-white/5 rounded-2xl pl-12 pr-20 text-xs font-black text-white outline-none focus:border-cyan-500/30 placeholder:text-zinc-800 transition-all uppercase"
-          />
-          <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+                // Also update query instantly if cleared
+                if (!e.target.value) {
+                  setSearchQuery('');
+                }
+              }}
+              className="w-full h-12 bg-white/[0.03] border border-white/5 rounded-2xl pl-12 pr-20 text-xs font-black text-white outline-none focus:border-cyan-500/30 placeholder:text-zinc-800 transition-all uppercase"
+            />
+            <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
               {searchInput && (
-                <button onClick={() => { setSearchInput(''); setSearchQuery(''); setAiFilteredIds(null); }} className="text-zinc-600 hover:text-white transition-colors p-1.5">
+                <button 
+                  type="button"
+                  onClick={() => { setSearchInput(''); setSearchQuery(''); setAiFilteredIds(null); }} 
+                  className="text-zinc-600 hover:text-white transition-colors p-1.5"
+                >
                   <X size={14} />
                 </button>
               )}
               <button
+                type="button"
                 onClick={async () => {
                   if (!searchInput.trim()) return;
                   setIsAiSearching(true);
@@ -1372,6 +1413,7 @@ If a field is not relevant, leave the array empty. Translate concepts into Engli
               </button>
               
               <button 
+                type="button"
                 onClick={() => setShowFilters(!showFilters)}
                 className={`p-1.5 rounded-lg transition-colors ${showFilters || filterGenre || filterInstrument || filterEra || filterYear || filterComposer || filterGrade !== 'All' ? 'text-cyan-400' : 'text-zinc-500 hover:text-cyan-400'}`}
                 title="Styles & Filters"
@@ -1380,7 +1422,7 @@ If a field is not relevant, leave the array empty. Translate concepts into Engli
               </button>
             </div>
           </div>
-        </div>
+        </form>
 
         {/* ── ADVANCED FILTERS PANEL ── */}
         {showFilters && (
