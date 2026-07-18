@@ -33,9 +33,6 @@ CRITICAL_FILES = {
     "/workspace/Memolody_V2/vocalido_server/voicebanks/nico/phonemes.txt": "nico/phonemes.txt",
     "/workspace/Memolody_V2/vocalido_server/voicebanks/nico/dictionary.txt": "nico/dictionary.txt",
     "/workspace/Memolody_V2/vocalido_server/voicebanks/nico/dictionary-en.txt": "nico/dictionary-en.txt",
-    "/workspace/Memolody_V2/vocalido_server/voicebanks/nico/nico_vocos_v1.phonemes.json": "nico/nico_vocos_v1.phonemes.json",
-    "/workspace/Memolody_V2/vocalido_server/voicebanks/nico/nico_vocos_v1.languages.json": "nico/nico_vocos_v1.languages.json",
-    "/workspace/Memolody_V2/vocalido_server/voicebanks/nico/vocoder_vocos.onnx": "nico/vocoder_vocos.onnx",
 
     # ── Vocos vocoder checkpoint (for re-export) ──
     "/workspace/diffsinger_training/vocos/checkpoints/vocos_44khz.ckpt": "vocos_training/vocos_44khz.ckpt",

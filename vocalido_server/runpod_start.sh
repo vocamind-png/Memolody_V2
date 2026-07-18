@@ -6,8 +6,12 @@ cd /workspace/Memolody_V2/vocalido_server
 
 echo "🚀 Starting Vocalido Server script..."
 
-echo "🧹 Cleaning up old processes..."
+# 🧹 Cleaning up old processes...
+pkill -f "uvicorn main:app" 2>/dev/null
+pkill -f "python3 main.py" 2>/dev/null
 pkill -f "python main.py" 2>/dev/null
+fuser -k 8888/tcp 2>/dev/null
+fuser -k 8000/tcp 2>/dev/null
 sleep 2
 
 echo "📦 Installing CUDA 11.8 libraries required by ONNXRuntime..."
@@ -24,9 +28,6 @@ export LD_LIBRARY_PATH=$(python -c 'import os, site; print(":".join([os.path.joi
 # ──────────────────────────────────────────────────────
 echo "🛡️ Checking model files..."
 if [ -f "/workspace/gcs-key.json" ] && [ -f "model_backup.py" ]; then
-    pip install -q google-cloud-storage 2>/dev/null
-    python3 model_backup.py check
-    
     # If any files missing, auto-restore from GCS
     if ! python3 model_backup.py check 2>&1 | grep -q "All files are present"; then
         echo "⚠️  Some model files missing! Auto-restoring from GCS backup..."
@@ -40,8 +41,8 @@ else
     echo "   To enable: ensure /workspace/gcs-key.json and model_backup.py exist."
 fi
 
-echo "🌟 Starting Vocalido Server..."
-nohup python main.py > /workspace/server.log 2>&1 &
+echo "🌟 Starting Vocalido Server on port 8888..."
+nohup python3 -m uvicorn main:app --host 0.0.0.0 --port 8888 --workers 1 > /workspace/server.log 2>&1 &
 sleep 5
 
 echo "✅ Server started! You can now test it in the web app."

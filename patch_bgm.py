@@ -1,27 +1,28 @@
-with open("components/Home/HomePage.tsx", "r") as f:
+import re
+
+with open('/Users/paisan/vocamind-projects/Memolody_V2/App.tsx', 'r') as f:
     content = f.read()
 
-target = """  return (
-    <div className="absolute inset-0 flex flex-col bg-[#0A0A0B] overflow-y-auto overflow-x-hidden select-none" onScroll={handleScroll}>"""
+# Fix 1: ensure pause is called if currentView != 'home'
+old_code = '''      bgmRef.current.play().then(() => {
+        // If the user tapped the screen while we were waiting for the browser to allow autoplay,
+        // we must immediately pause it now that it started.
+        if (bgmStoppedRef.current && bgmRef.current) {
+          bgmRef.current.pause();
+        }
+      }).catch(e => console.log('BGM autoplay blocked by browser:', e));'''
 
-replacement = """  return (
-    <>
-      {isImporting && (
-        <audio 
-          src="/audio/minuet_in_g.ogg" 
-          autoPlay 
-          loop 
-          style={{ display: 'none' }}
-        />
-      )}
-    <div className="absolute inset-0 flex flex-col bg-[#0A0A0B] overflow-y-auto overflow-x-hidden select-none" onScroll={handleScroll}>"""
+new_code = '''      bgmRef.current.play().then(() => {
+        // If the user tapped the screen while we were waiting for the browser to allow autoplay,
+        // we must immediately pause it now that it started.
+        if ((bgmStoppedRef.current || currentView !== 'home') && bgmRef.current) {
+          bgmRef.current.pause();
+        }
+      }).catch(e => console.log('BGM autoplay blocked by browser:', e));'''
 
-if target in content:
-    content = content.replace(target, replacement)
-    # also we need to close the fragment at the end
-    content = content.replace("    </div>\n  );\n}", "    </div>\n    </>\n  );\n}")
-    with open("components/Home/HomePage.tsx", "w") as f:
-        f.write(content)
-    print("Patched BGM.")
-else:
-    print("Target not found, maybe already patched or syntax changed.")
+content = content.replace(old_code, new_code)
+
+with open('/Users/paisan/vocamind-projects/Memolody_V2/App.tsx', 'w') as f:
+    f.write(content)
+
+print("Patched App.tsx!")

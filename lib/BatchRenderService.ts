@@ -331,8 +331,8 @@ export class BatchRenderService {
     
     const stepMap: Record<string, number> = { 'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11 };
     
-    const activeVoiceName = localStorage.getItem('vocalido_active_voice') || 'Lotte';
-    const trackEngineId = localStorage.getItem('vocalido_active_engine') || 'lotte_v_ai_dol';
+    const activeVoiceName = localStorage.getItem('vocalido_active_voice') || 'Nico';
+    const trackEngineId = localStorage.getItem('vocalido_active_engine') || 'nico';
     const svsSteps = parseInt(localStorage.getItem('vocalido_svs_steps') || '10');
     const svsTimingFeel = parseInt(localStorage.getItem('vocalido_svs_timing_feel') || '50');
     const svsPortamento = parseInt(localStorage.getItem('vocalido_portamento') || '120');
@@ -575,8 +575,8 @@ export class BatchRenderService {
     this.statusText = '🚀 Starting server-side batch render...';
     this.notify();
 
-    const activeVoiceName = localStorage.getItem('vocalido_active_voice') || 'Lotte';
-    const trackEngineId = localStorage.getItem('vocalido_active_engine') || 'lotte_v_ai_dol';
+    const activeVoiceName = localStorage.getItem('vocalido_active_voice') || 'Nico';
+    const trackEngineId = localStorage.getItem('vocalido_active_engine') || 'nico';
     const lyricMode = localStorage.getItem('vocalido_lyric_mode') || 'Solfege';
     const svsSteps = parseInt(localStorage.getItem('vocalido_svs_steps') || '10');
     const svsTimingFeel = parseInt(localStorage.getItem('vocalido_svs_timing_feel') || '50');

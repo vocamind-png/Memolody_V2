@@ -1508,7 +1508,7 @@ const PlayerPage: React.FC<{
     const found = voiceEngines.find(v => v.id === trackEngineId);
     if (found) return found.name;
     if (storedSinger) return storedSinger;
-    return 'Lotte V';
+    return 'Nico';
   }, [vocalTrack, activeEngineId, voiceEngines, storedSinger]);
 
   const autoRestoredRef = useRef<string>('');
@@ -2304,10 +2304,10 @@ const PlayerPage: React.FC<{
               }
             }
           ]);
-          setActiveEngineId('lotte_v_ai_dol');
+          setActiveEngineId('nico');
           setTracks((prev: any) => prev.map((t: any) => {
             if (t.mode === 'vocal' && (t.engineId === 'default' || !t.engineId)) {
-              return { ...t, engineId: 'lotte_v_ai_dol' };
+              return { ...t, engineId: 'nico' };
             }
             return t;
           }));

@@ -1,200 +1,121 @@
-import re
+import os
 
-with open('lib/MusicEngine.ts', 'r') as f:
-    content = f.read()
+file_path = "/Users/paisan/vocamind-projects/Memolody_V2/vocalido_server/ds_onnx_engine.py"
+with open(file_path, "r") as f:
+    lines = f.readlines()
 
-# 1. Add import
-if "import { PitchShifter } from 'soundtouchjs';" not in content:
-    content = content.replace("import * as Tone from 'tone';", "import * as Tone from 'tone';\nimport { PitchShifter } from 'soundtouchjs';")
+# Find where synthesize_mel_fallback ends
+idx = 0
+for i, line in enumerate(lines):
+    if "def _apply_post_processing(self, audio, params):" in line:
+        idx = i
+        break
 
-# 2. Add class properties
-if "public vocalPitchShifters" not in content:
-    props = """
-  // Vocal pitch shifting states
-  public vocalPitchShifters: Map<string, PitchShifter[]> = new Map();
-  public vocalPitchStems: Map<string, PitchShifter[]> = new Map();
-  public vocalPitchShiftSemitones: Map<string, number> = new Map();
-"""
-    content = content.replace("public vocalAudioElements", props.strip() + "\n  public vocalAudioElements")
+# The lines before _apply_post_processing should be the synthesize_mel_fallback and _run_vocoder
+# Let's completely rewrite synthesize_mel_fallback and _run_vocoder
 
-# 3. Add to addVocalLayer (main mix)
-if "new PitchShifter" not in content:
-    main_mix_replace = """
-            if (myGeneration === this._vocalGenerations.get(trackId)) {
-              mainPlayer = player;
-              if (renderBpm) (mainPlayer as any).renderBpm = renderBpm;
-              // Initialize PitchShifter
-              if (!this.vocalPitchShifters.has(trackId)) this.vocalPitchShifters.set(trackId, []);
-              const shifter = new PitchShifter(Tone.getContext().rawContext, player.buffer.get(), 1024);
-              const dummy = Tone.getContext().rawContext.createBufferSource();
-              dummy.buffer = Tone.getContext().rawContext.createBuffer(1, 1, Tone.getContext().rawContext.sampleRate);
-              dummy.loop = true;
-              dummy.connect(shifter.node);
-              dummy.start();
-              (shifter as any)._dummySource = dummy;
-              this.vocalPitchShifters.get(trackId)!.push(shifter);
-            } else {
-"""
-    content = re.sub(
-        r"if \(myGeneration === this\._vocalGenerations\.get\(trackId\)\) \{\s*mainPlayer = player;\s*if \(renderBpm\) \(mainPlayer as any\)\.renderBpm = renderBpm;\s*\} else \{",
-        main_mix_replace.strip(),
-        content
-    )
+# We will just read up to "def synthesize_mel_fallback"
+idx_synth = 0
+for i, line in enumerate(lines):
+    if "def synthesize_mel_fallback" in line:
+        idx_synth = i
+        break
 
-    stems_replace = """
-              if (myGeneration === this._vocalGenerations.get(trackId)) {
-                loadedStems[index] = player;
-                if (renderBpm) (player as any).renderBpm = renderBpm;
-                // Initialize Stem PitchShifter
-                if (!this.vocalPitchStems.has(trackId)) this.vocalPitchStems.set(trackId, []);
-                const shifter = new PitchShifter(Tone.getContext().rawContext, player.buffer.get(), 1024);
-                const dummy2 = Tone.getContext().rawContext.createBufferSource();
-                dummy2.buffer = Tone.getContext().rawContext.createBuffer(1, 1, Tone.getContext().rawContext.sampleRate);
-                dummy2.loop = true;
-                dummy2.connect(shifter.node);
-                dummy2.start();
-                (shifter as any)._dummySource = dummy2;
-                this.vocalPitchStems.get(trackId)![index] = shifter;
-              } else {
-"""
-    content = re.sub(
-        r"if \(myGeneration === this\._vocalGenerations\.get\(trackId\)\) \{\s*loadedStems\[index\] = player;\s*if \(renderBpm\) \(player as any\)\.renderBpm = renderBpm;\s*\} else \{",
-        stems_replace.strip(),
-        content
-    )
-
-# 4. Add to clearVocalLayers
-if "vocalPitchShifters.delete" not in content:
-    clear_replace = """
-    this.trackActiveStem.set(trackId, null);
-
-    const shifters = this.vocalPitchShifters.get(trackId);
-    if (shifters) {
-      shifters.forEach(shifter => { try { shifter.disconnect(); } catch (e) {} });
-    }
-    const stemShifters = this.vocalPitchStems.get(trackId);
-    if (stemShifters) {
-      stemShifters.forEach(shifter => { try { shifter?.disconnect(); } catch (e) {} });
-    }
+with open(file_path, "w") as f:
+    f.writelines(lines[:idx_synth])
     
-    // Clear arrays
-    this.vocalPitchShifters.delete(trackId);
-    this.vocalPitchStems.delete(trackId);
-"""
-    content = content.replace("this.trackActiveStem.set(trackId, null);", clear_replace)
-
-# 5. Add setVocalTranspose & updateVocalPlaybackState overrides
-if "public setVocalTranspose" not in content:
-    update_func = """
-  public setVocalTranspose(trackId: string, diffSemitones: number) {
-    this.vocalPitchShiftSemitones.set(trackId, diffSemitones);
-    console.log(`[MusicEngine] setVocalTranspose: ${trackId} diff=${diffSemitones}`);
-    this.updateVocalPlaybackState();
-  }
-
-  public updateVocalPlaybackState(time?: number) {
-    const transportState = Tone.Transport.state;
-    const transportSeconds = Tone.Transport.seconds;
-    const countIn = this.countInDuration || 0;
-    const songTime = transportSeconds - countIn;
-    const triggerTime = time !== undefined ? time : Tone.now();
-
-    const currentBpm = Tone.Transport.bpm.value;
-
-    this.trackVocalLayers.forEach((players, trackId) => {
-      const shifters = this.vocalPitchShifters.get(trackId) || [];
-      const diffSemitones = this.vocalPitchShiftSemitones.get(trackId) || 0;
-
-      players.forEach((player, i) => {
-        if (!player || !player.buffer || !player.buffer.loaded) return;
-        const shifter = shifters[i];
-        
-        try { player.stop(triggerTime); } catch (e) {}
-        if (shifter) shifter.disconnect();
-
-        const renderBpm = (player as any).renderBpm || currentBpm;
-        const ratio = currentBpm / renderBpm;
-        const duration = player.buffer.duration;
-        const offsetInAudio = Math.max(0, songTime * ratio);
-
-        if (offsetInAudio >= duration) return;
-
-        if (diffSemitones !== 0 && shifter) {
-          shifter.tempo = ratio;
-          shifter.pitchSemitones = diffSemitones;
-          shifter.percentagePlayed = offsetInAudio / duration;
-          if (transportState === 'started') {
-            const channel = this.trackChannels.get(trackId);
-            if (channel) Tone.connect(shifter.node, channel);
-          }
-        } else {
-          if (typeof player.playbackRate === 'number') {
-            player.playbackRate = ratio;
-          } else if (player.playbackRate && (player.playbackRate as any).value !== undefined) {
-            (player.playbackRate as any).value = ratio;
-          }
-          if (transportState === 'started') {
-            if (songTime < 0) {
-              player.start(triggerTime + (-songTime), 0);
-            } else {
-              player.start(triggerTime, offsetInAudio);
+    f.write('''    def synthesize_mel_fallback(self, f0_list, phonemes, ph_durations, params=None):
+        try:
+            n_frames = sum(ph_durations)
+            inputs = {
+                "tokens": np.array([phonemes], dtype=np.int64),
+                "durations": np.array([ph_durations], dtype=np.int64),
             }
-          }
-        }
-      });
-    });
+            if self.has_f0:
+                f0_np = np.array(f0_list, dtype=np.float32).reshape(1, -1)
+                inputs["f0"] = f0_np
+            
+            input_names = [inp.name for inp in self.sess_acoustic.get_inputs()]
+            
+            if "spk_embed" in input_names:
+                spk_embed_data = None
+                if params and "spk_embed" in params:
+                    spk_embed_data = np.array(params["spk_embed"], dtype=np.float32)
+                
+                spk_embed_node = [inp for inp in self.sess_acoustic.get_inputs() if inp.name == "spk_embed"][0]
+                embed_dim = 256
+                if len(spk_embed_node.shape) == 2:
+                    embed_dim = spk_embed_node.shape[1]
+                elif len(spk_embed_node.shape) >= 3:
+                    if spk_embed_data is not None:
+                        embed_dim = len(spk_embed_data)
+                
+                actual_embed = np.zeros(embed_dim, dtype=np.float32)
+                if spk_embed_data is not None:
+                    if len(spk_embed_data) == embed_dim:
+                        actual_embed = spk_embed_data
+                    else:
+                        if len(spk_embed_data) < embed_dim:
+                            actual_embed[:len(spk_embed_data)] = spk_embed_data
+                        else:
+                            actual_embed = spk_embed_data[:embed_dim]
+                inputs["spk_embed"] = np.tile(actual_embed.reshape(1, 1, embed_dim), (1, n_frames, 1))
+                
+            if "depth" in input_names:
+                depth_val = float(params.get("depth", self.max_depth)) if params else self.max_depth
+                inputs["depth"] = np.array(depth_val, dtype=np.float32)
+            if "steps" in input_names:
+                steps_val = int(params.get("steps", 20)) if params else 20
+                inputs["steps"] = np.array(steps_val, dtype=np.int64)
 
-    this.trackVocalStems.forEach((players, trackId) => {
-      const shifters = this.vocalPitchStems.get(trackId) || [];
-      const diffSemitones = this.vocalPitchShiftSemitones.get(trackId) || 0;
+            mel = self.sess_acoustic.run(["mel"], inputs)[0]
+            audio = self._run_vocoder(mel, f0_list)
+            return self._apply_post_processing(audio, params)
+        except Exception as e:
+            print(f"[ONNXEngine] ❌ Fallback acoustic synthesis failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+        finally:
+            import gc
+            gc.collect()
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except ImportError:
+                pass
 
-      players.forEach((player, i) => {
-        if (!player) return;
-        if (!player.buffer || !player.buffer.loaded) return;
-        const shifter = shifters[i];
-        
-        try { player.stop(triggerTime); } catch (e) {}
-        if (shifter) shifter.disconnect();
+    def _run_vocoder(self, audio_mel, f0_midi_arr=None):
+        try:
+            if getattr(self, "vocos_pt", None) is not None:
+                import torch
+                with torch.no_grad():
+                    mel_tensor = torch.from_numpy(audio_mel).unsqueeze(0).to(self.vocos_pt.device)
+                    audio_out = self.vocos_pt(mel_tensor)
+                    return audio_out.cpu().numpy().flatten()
+            elif getattr(self, "sess_vocoder", None) is not None:
+                if self.vocoder_needs_f0 and f0_midi_arr is not None:
+                    f0_padded = np.zeros((1, audio_mel.shape[1]), dtype=np.float32)
+                    min_len = min(audio_mel.shape[1], len(f0_midi_arr))
+                    f0_padded[0, :min_len] = f0_midi_arr[:min_len]
+                    voc_inputs = {"mel": audio_mel, "f0": f0_padded}
+                else:
+                    voc_inputs = {"mel": audio_mel}
+                
+                audio_out = self.sess_vocoder.run([self.vocoder_output_name], voc_inputs)[0]
+                return audio_out.flatten()
+            else:
+                print("[ONNXEngine] No valid vocoder found!")
+                return None
+        except Exception as e:
+            print(f"[ONNXEngine] Vocoder inference failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
 
-        const renderBpm = (player as any).renderBpm || currentBpm;
-        const ratio = currentBpm / renderBpm;
-        const duration = player.buffer.duration;
-        const offsetInAudio = Math.max(0, songTime * ratio);
-
-        if (offsetInAudio >= duration) return;
-
-        if (diffSemitones !== 0 && shifter) {
-          shifter.tempo = ratio;
-          shifter.pitchSemitones = diffSemitones;
-          shifter.percentagePlayed = offsetInAudio / duration;
-          if (transportState === 'started') {
-            const channel = this.trackChannels.get(trackId);
-            if (channel) Tone.connect(shifter.node, channel);
-          }
-        } else {
-          if (typeof player.playbackRate === 'number') {
-            player.playbackRate = ratio;
-          } else if (player.playbackRate && (player.playbackRate as any).value !== undefined) {
-            (player.playbackRate as any).value = ratio;
-          }
-          if (transportState === 'started') {
-            if (songTime < 0) {
-              player.start(triggerTime + (-songTime), 0);
-            } else {
-              player.start(triggerTime, offsetInAudio);
-            }
-          }
-        }
-      });
-    });
-  }
-"""
-    content = re.sub(
-        r"  public updateVocalPlaybackState\(time\?: number\) \{[\s\S]*?getTrackLevel\(trackId: string\)",
-        update_func.strip() + "\n\n  getTrackLevel(trackId: string)",
-        content
-    )
-
-with open('lib/MusicEngine.ts', 'w') as f:
-    f.write(content)
-
+''')
+    
+    # Write the remaining lines from _apply_post_processing to the end
+    f.writelines(lines[idx:])
+    

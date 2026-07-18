@@ -1399,9 +1399,17 @@ export class MusicEngine {
         const sampler = this.trackSamplers.get(t.id);
         if (sampler && sampler.volume) {
           const audioEl = this.vocalAudioElements.get(t.id);
-          const hasValidHtmlAudio = audioEl && !audioEl.error && audioEl.readyState > 0;
+          // Only fallback to synth if there is no src or it errored. If it's still buffering (readyState === 0), keep synth muted.
+          const hasValidHtmlAudio = audioEl && !audioEl.error && audioEl.src && audioEl.src !== '';
           const hasVocalAudio = (this.trackVocalLayers.get(t.id)?.length || 0) > 0 || hasValidHtmlAudio;
-          sampler.volume.value = (t.mode === 'vocal' && hasVocalAudio) ? -100 : 4;
+          
+          // Polyphonic mixed render check: If this track is vocal, but P1 is playing the mixed stem_0, we mute this synth too.
+          const primaryTrackId = this.tracks.find(tr => tr.mode === 'vocal')?.id || this.tracks[0]?.id;
+          const isMixedInPrimary = t.id !== primaryTrackId && 
+                                  this.vocalAudioElements.has(primaryTrackId || '') && 
+                                  this.vocalStemAudioElements.get(primaryTrackId || '')?.length === 1;
+
+          sampler.volume.value = (t.mode === 'vocal' && (hasVocalAudio || isMixedInPrimary)) ? -100 : 4;
         }
       }
 

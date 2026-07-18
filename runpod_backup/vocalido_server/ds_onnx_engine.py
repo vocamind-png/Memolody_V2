@@ -36,7 +36,7 @@ except ImportError:
     # Fallback or stub if needed, but it should be available
     pass
 
-class DiffSingerONNXEngineCore:
+class DiffSingerONNXEngine:
     def __init__(self, model_dir, language='en'):
         self.model_dir = model_dir
         self.language = language
@@ -46,10 +46,12 @@ class DiffSingerONNXEngineCore:
         # Look for acoustic.onnx
         self.acoustic_path = None
         for root, dirs, files in os.walk(model_dir):
-            if "acoustic.onnx" in files:
-                self.acoustic_path = os.path.join(root, "acoustic.onnx")
+            for fname in ["acoustic.onnx", "nico_vocos_v1.nico.onnx", "lotte_v_ai_dol.onnx"]:
+                if fname in files:
+                    self.acoustic_path = os.path.join(root, fname)
+                    break
+            if self.acoustic_path:
                 break
-                
         # Look for vocoder (.onnx) — search dsvocoder/ for any .onnx file
         self.vocoder_path = None
         search_dirs = [model_dir, os.path.dirname(model_dir)]
@@ -65,11 +67,12 @@ class DiffSingerONNXEngineCore:
                     break
             if self.vocoder_path:
                 break
-        # Fallback: look for vocoder.onnx or aidolgan.onnx anywhere
+        # Fallback: look for vocoder_vocos.onnx, vocoder.onnx or aidolgan.onnx anywhere
+        # Prefer Vocos over NSF-HiFiGAN for better audio clarity
         if not self.vocoder_path:
             for sdir in search_dirs:
                 for root, dirs, files in os.walk(sdir):
-                    for fname in ['aidolgan.onnx', 'vocoder.onnx']:
+                    for fname in ['vocoder_vocos.onnx', 'aidolgan.onnx', 'vocoder.onnx']:
                         if fname in files:
                             self.vocoder_path = os.path.join(root, fname)
                             break
@@ -85,12 +88,40 @@ class DiffSingerONNXEngineCore:
         print(f"[ONNXEngine] Loading acoustic: {self.acoustic_path}")
         print(f"[ONNXEngine] Loading vocoder: {self.vocoder_path}")
         try:
-            # Prioritize CUDA Execution Provider for GPU acceleration (RunPod)
             providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+            import onnxruntime as ort
             sess_options = ort.SessionOptions()
-            sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
+            sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            # Add multithreading optimization in case of CPU fallback, but primarily for CPU ops
+            sess_options.intra_op_num_threads = 4
+            sess_options.inter_op_num_threads = 4
+            
             self.sess_acoustic = ort.InferenceSession(self.acoustic_path, sess_options=sess_options, providers=providers)
-            self.sess_vocoder = ort.InferenceSession(self.vocoder_path, sess_options=sess_options, providers=providers)
+            actual_providers = self.sess_acoustic.get_providers()
+            print(f"[ONNXEngine] Acoustic initialized with providers: {actual_providers}")
+            
+            self.vocos_pt = None
+            vocos_ckpt_path = os.path.join(model_dir, "vocos_44khz.ckpt")
+            if os.path.exists(vocos_ckpt_path):
+                try:
+                    import torch
+                    device = "cuda" if torch.cuda.is_available() else "cpu"
+                    from ds_vocos_pt import VocosPytorch
+                    self.vocos_pt = VocosPytorch(vocos_ckpt_path, device)
+                    print(f"[ONNXEngine] 🚀 Loaded native PyTorch Vocos from {vocos_ckpt_path} for optimal quality!")
+                    self.vocoder_needs_f0 = False
+                    vocoder_type = 'Native PyTorch Vocos'
+                except Exception as e:
+                    print(f"[ONNXEngine] Failed to load PyTorch Vocos: {e}")
+            
+            if self.vocos_pt is None:
+                self.sess_vocoder = ort.InferenceSession(self.vocoder_path, sess_options=sess_options, providers=providers)
+                voc_input_names = [inp.name for inp in self.sess_vocoder.get_inputs()]
+                voc_output_names = [out.name for out in self.sess_vocoder.get_outputs()]
+                self.vocoder_needs_f0 = 'f0' in voc_input_names
+                self.vocoder_output_name = voc_output_names[0] if voc_output_names else 'waveform'
+                vocoder_type = 'NSF-HiFiGAN (mel+f0)' if self.vocoder_needs_f0 else 'Vocos (mel-only)'
+                print(f"[ONNXEngine] Vocoder type: {vocoder_type}, inputs: {voc_input_names}, outputs: {voc_output_names}")
             
             # Look for other ONNX models (linguistic, dur, pitch)
             self.ling_path = None
@@ -122,10 +153,33 @@ class DiffSingerONNXEngineCore:
             print(f"[ONNXEngine] ❌ Failed to load ONNX session: {e}")
             return
             
-        # Load phonemes.txt (Token map)
+        # Load phoneme token map (supports both phonemes.txt and *.phonemes.json)
         self.phoneme_to_id = {}
-        ph_path = os.path.join(os.path.dirname(self.acoustic_path), "phonemes.txt")
-        if os.path.exists(ph_path):
+        acou_dir = os.path.dirname(self.acoustic_path)
+        ph_path = os.path.join(acou_dir, "phonemes.txt")
+        ph_json_path = None
+        # Search for *.phonemes.json in the model directory
+        for f in os.listdir(acou_dir):
+            if f.endswith('.phonemes.json'):
+                ph_json_path = os.path.join(acou_dir, f)
+                break
+        if not ph_json_path:
+            for f in os.listdir(model_dir):
+                if f.endswith('.phonemes.json'):
+                    ph_json_path = os.path.join(model_dir, f)
+                    break
+
+        if ph_json_path and os.path.exists(ph_json_path):
+            import json
+            with open(ph_json_path, "r", encoding="utf-8") as f:
+                ph_map = json.load(f)
+            for phoneme, idx in ph_map.items():
+                self.phoneme_to_id[phoneme] = int(idx)
+                # Also store lowercase and uppercase variants for case-insensitive lookup
+                self.phoneme_to_id[phoneme.lower()] = int(idx)
+                self.phoneme_to_id[phoneme.upper()] = int(idx)
+            print(f"[ONNXEngine] 📖 Loaded {len(ph_map)} phonemes from {os.path.basename(ph_json_path)}")
+        elif os.path.exists(ph_path):
             with open(ph_path, "r", encoding="utf-8") as f:
                 for i, line in enumerate(f):
                     parts = line.strip().split()
@@ -133,24 +187,37 @@ class DiffSingerONNXEngineCore:
                         continue
                     if len(parts) >= 2:
                         self.phoneme_to_id[parts[0]] = int(parts[1])
+                        self.phoneme_to_id[parts[0].lower()] = int(parts[1])
+                        self.phoneme_to_id[parts[0].upper()] = int(parts[1])
                     else:
                         self.phoneme_to_id[parts[0]] = i
+                        self.phoneme_to_id[parts[0].lower()] = i
+                        self.phoneme_to_id[parts[0].upper()] = i
+            print(f"[ONNXEngine] 📖 Loaded {len(self.phoneme_to_id)//3} phonemes from phonemes.txt")
         else:
-            print(f"[ONNXEngine] ⚠️ Warning: phonemes.txt not found in {os.path.dirname(self.acoustic_path)}")
-            # Fallback simple list? Hard to guess.
+            print(f"[ONNXEngine] ⚠️ Warning: No phoneme map found in {acou_dir}")
             
-        # Load dictionary.txt (Word to Phonemes)
+        # Load dictionary (Word to Phonemes) — supports dictionary.txt and dictionary-en.txt
         self.dict_map = {}
-        dict_path = os.path.join(os.path.dirname(self.acoustic_path), "dictionary.txt")
-        if not os.path.exists(dict_path):
-            dict_path = os.path.join(model_dir, "dictionary.txt")
-        if os.path.exists(dict_path):
+        dict_candidates = [
+            os.path.join(acou_dir, "dictionary.txt"),
+            os.path.join(model_dir, "dictionary.txt"),
+            os.path.join(acou_dir, "dictionary-en.txt"),
+            os.path.join(model_dir, "dictionary-en.txt"),
+        ]
+        dict_path = None
+        for dp in dict_candidates:
+            if os.path.exists(dp):
+                dict_path = dp
+                break
+        if dict_path:
             with open(dict_path, "r", encoding="utf-8") as f:
                 for line in f:
                     parts = line.strip().split()
                     if len(parts) >= 2:
                         word = parts[0].lower()
                         self.dict_map[word] = parts[1:]
+            print(f"[ONNXEngine] 📖 Loaded {len(self.dict_map)} dictionary entries from {os.path.basename(dict_path)}")
         
         # Load speaker embeddings
         self.spk_embeds = {}
@@ -219,6 +286,12 @@ class DiffSingerONNXEngineCore:
         if clean_word in self.dict_map:
             return self.dict_map[clean_word]
 
+        SOLFEGE_MAP = {
+            "doh": "d ow", "do": "d ow", "di": "d iy", "ra": "r aa",
+            "re": "r ey", "ray": "r ey", "ri": "r iy", "me": "m iy", "mi": "m iy",
+            "fa": "f aa", "fah": "f aa", "fi": "f iy", "se": "s ey", "sol": "s ow l", "so": "s ow", "soh": "s ow", "si": "s iy",
+            "le": "l ey", "la": "l aa", "lah": "l aa", "li": "l iy", "te": "t ey", "ti": "t iy", "ta": "t aa"
+        }
         if clean_word in SOLFEGE_MAP:
             return SOLFEGE_MAP[clean_word].split()
 
@@ -322,12 +395,70 @@ class DiffSingerONNXEngineCore:
         return spk_embed_data
 
     def _synthesize_track(self, track_notes, params):
+        params = params or {}
         if self.has_pitch_model:
             return self._synthesize_track_neural(track_notes, params)
         else:
             return self._synthesize_track_fallback(track_notes, params)
 
     def _synthesize_track_neural(self, track_notes, params):
+        if len(track_notes) > 10:
+            return self._synthesize_track_neural_chunked(track_notes, params)
+        else:
+            return self._synthesize_track_neural_single(track_notes, params)
+
+    def _synthesize_track_neural_chunked(self, track_notes, params):
+        # Group notes into phrases based on silence/gap > 0.8 seconds
+        phrases = []
+        current_phrase = []
+        prev_end = None
+        
+        for start, dur, note in track_notes:
+            if prev_end is not None and (start - prev_end) > 0.8:
+                phrases.append(current_phrase)
+                current_phrase = []
+            current_phrase.append((start, dur, note))
+            prev_end = start + dur
+        if current_phrase:
+            phrases.append(current_phrase)
+            
+        print(f"[ONNXEngine] 🧩 Chunked track into {len(phrases)} phrases. Rendering in parallel to speed up...")
+        
+        # Determine total duration and allocate track audio array
+        total_dur = track_notes[-1][0] + track_notes[-1][1] + 1.0
+        track_audio = np.zeros(int(total_dur * self.sr), dtype=np.float32)
+        
+        # Render each phrase in parallel using ThreadPoolExecutor
+        from concurrent.futures import ThreadPoolExecutor
+        
+        def render_single_phrase(phrase):
+            phrase_start = phrase[0][0]
+            offset_phrase = []
+            for start, dur, note in phrase:
+                offset_phrase.append((start - phrase_start, dur, note))
+            phrase_audio = self._synthesize_track_neural_single(offset_phrase, params)
+            return phrase_start, phrase_audio
+
+        import onnxruntime as ort
+        is_cpu = 'CUDAExecutionProvider' not in ort.get_available_providers()
+        max_workers = 1 if is_cpu else min(len(phrases), 4)
+        print(f"[ONNXEngine] Using {max_workers} threads for {len(phrases)} phrases (is_cpu={is_cpu})")
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            results = list(executor.map(render_single_phrase, phrases))
+            
+        # Stitch the results back together
+        for phrase_start, phrase_audio in results:
+            if phrase_audio is not None:
+                start_sample = int(max(0.0, phrase_start - 0.02) * self.sr)
+                end_sample = start_sample + len(phrase_audio)
+                if end_sample > len(track_audio):
+                    pad_len = end_sample - len(track_audio)
+                    track_audio = np.pad(track_audio, (0, pad_len))
+                track_audio[start_sample:end_sample] += phrase_audio
+                
+        return track_audio
+
+    def _synthesize_track_neural_single(self, track_notes, params):
         hop_size = 512
         frame_sec = hop_size / self.sr
         frame_hz = self.sr / hop_size
@@ -531,10 +662,14 @@ class DiffSingerONNXEngineCore:
                 ling_inputs["word_div"] = wd_t
                 ling_inputs["word_dur"] = wdur_t
                 
+            import time
+            t_start = time.time()
             if "languages" in ling_sess_inputs:
                 ling_inputs["languages"] = np.zeros_like(tok_t)
                 
             enc, masks = self.sess_ling.run(None, ling_inputs)
+            t_ling = time.time()
+            print(f"[ONNX_TIME] Linguistic model: {t_ling - t_start:.3f}s")
             
             # 4. Duration model
             sk_tok = np.tile(spk256[None, None, :], (1, n_tok, 1))
@@ -547,6 +682,8 @@ class DiffSingerONNXEngineCore:
             dur_sess_inputs = [i.name for i in self.sess_dur.get_inputs()]
             dur_inputs_filtered = {k: v for k, v in dur_inputs.items() if k in dur_sess_inputs}
             (dpred,) = self.sess_dur.run(None, dur_inputs_filtered)
+            t_dur = time.time()
+            print(f"[ONNX_TIME] Duration model: {t_dur - t_ling:.3f}s")
 
             # F0 guide (MIDI scale vs Hz guide)
             # Modern models expect MIDI semitones for the pitch guide input
@@ -590,6 +727,8 @@ class DiffSingerONNXEngineCore:
             pitch_sess_inputs = [i.name for i in self.sess_pitch.get_inputs()]
             pitch_inputs_filtered = {k: v for k, v in pitch_inputs.items() if k in pitch_sess_inputs}
             (pp,) = self.sess_pitch.run(None, pitch_inputs_filtered)
+            t_pitch = time.time()
+            print(f"[ONNX_TIME] Pitch model: {t_pitch - t_dur:.3f}s")
 
             # Convert predicted pitch (pp) to Hz for acoustic session and vocoder
             pp_final = pp.copy()
@@ -614,23 +753,80 @@ class DiffSingerONNXEngineCore:
             # ----- HUMANIZED INTONATION BLEND -----
             # Blend: 60% neural pitch (natural glides/intonation) + 40% MIDI ideal pitch
             # Higher neural = more expressive, more human-like singing
-            NEURAL_BLEND = 0.0   # ← 0.0 = robot, 1.0 = full neural AI
+            NEURAL_BLEND = float(params.get("pitch_blend", 1.0)) if params else 1.0
             
-            f0_hz_ideal = np.zeros_like(f0_midi_arr)
+            # ----- ADVANCED PITCH CORRECTOR & RANGE EXPANSION -----
+            # Shift the predicted pitch curve note-by-note to center around target MIDI notes.
+            # This preserves 100% of natural micro-intonation/vibrato while correcting pitch center,
+            # and dynamically scales range to Super Soprano or Bass.
             voicing_mask = f0_midi_arr > 0.0
-            f0_hz_ideal[voicing_mask] = 440.0 * (2.0 ** ((f0_midi_arr[voicing_mask] - 69.0) / 12.0))
-            
-            # Mix: where both are voiced, blend neural into ideal
             both_voiced = voicing_mask & (pp_final[0] > 0.0)
-            blended = f0_hz_ideal.copy()
-            blended[both_voiced] = (
-                (1.0 - NEURAL_BLEND) * f0_hz_ideal[both_voiced] +
-                NEURAL_BLEND * pp_final[0][both_voiced]
-            )
-            print(f"[DEBUG] f0_midi_arr unique: {np.unique(f0_midi_arr)}")
-            print(f"[DEBUG] f0_hz_ideal median: {np.median(f0_hz_ideal[f0_hz_ideal>0]):.2f}")
-            print(f"[DEBUG] blended median: {np.median(blended[blended>0]):.2f}")
-            pp_final[0] = blended
+            
+            if np.any(both_voiced):
+                # Convert predicted pitch to semitones
+                pp_midi = np.zeros_like(pp_final[0])
+                pp_midi[both_voiced] = 12.0 * np.log2(pp_final[0][both_voiced] / 440.0) + 69.0
+                
+                offset_arr = np.zeros_like(pp_final[0])
+                
+                # Find continuous voiced regions to prevent boundary leakage
+                voiced_runs = []
+                in_run = False
+                run_start = 0
+                for i in range(len(f0_midi_arr)):
+                    if voicing_mask[i] and not in_run:
+                        run_start = i
+                        in_run = True
+                    elif not voicing_mask[i] and in_run:
+                        voiced_runs.append((run_start, i))
+                        in_run = False
+                if in_run:
+                    voiced_runs.append((run_start, len(f0_midi_arr)))
+                
+                for r_start, r_end in voiced_runs:
+                    seg_start = r_start
+                    curr_midi = f0_midi_arr[r_start]
+                    for idx in range(r_start, r_end):
+                        if f0_midi_arr[idx] != curr_midi:
+                            if curr_midi > 0:
+                                pred_segment = pp_midi[seg_start:idx]
+                                valid_pred = pred_segment[pred_segment > 0]
+                                if len(valid_pred) > 0:
+                                    pred_mean = np.mean(valid_pred)
+                                    offset = curr_midi - pred_mean
+                                    # Clamp offset to 18 semitones to avoid chipmunk/monster extreme sounds
+                                    offset = np.clip(offset, -18.0, 18.0)
+                                    offset_arr[seg_start:idx] = offset
+                            seg_start = idx
+                            curr_midi = f0_midi_arr[idx]
+                    
+                    if curr_midi > 0:
+                        pred_segment = pp_midi[seg_start:r_end]
+                        valid_pred = pred_segment[pred_segment > 0]
+                        if len(valid_pred) > 0:
+                            pred_mean = np.mean(valid_pred)
+                            offset = curr_midi - pred_mean
+                            offset = np.clip(offset, -18.0, 18.0)
+                            offset_arr[seg_start:r_end] = offset
+                            
+                    # Smooth the offset array ONLY within this voiced run to keep note transitions organic
+                    run_len = r_end - r_start
+                    if run_len > 3:
+                        w_size = min(21, (run_len // 2) * 2 + 1)
+                        if w_size >= 3:
+                            window = np.ones(w_size) / w_size
+                            run_offset = offset_arr[r_start:r_end]
+                            padded = np.pad(run_offset, w_size // 2, mode='edge')
+                            smoothed = np.convolve(padded, window, mode='valid')
+                            offset_arr[r_start:r_end] = smoothed[:run_len]
+                
+                # Apply the smoothed offset to correct the pitch and expand range!
+                pp_midi_corrected = pp_midi.copy()
+                pp_midi_corrected[both_voiced] += offset_arr[both_voiced]
+                
+                # Convert back to Hz
+                pp_final[0][both_voiced] = 440.0 * (2.0 ** ((pp_midi_corrected[both_voiced] - 69.0) / 12.0))
+            # -----------------------------------------------------
             # -----------------------------------------------
 
 
@@ -669,14 +865,18 @@ class DiffSingerONNXEngineCore:
 
             acou_inputs_filtered = {k: v for k, v in acou_inputs.items() if k in acou_sess_inputs}
             mel = self.sess_acoustic.run(["mel"], acou_inputs_filtered)[0]
+            t_acou = time.time()
+            print(f"[ONNX_TIME] Acoustic model: {t_acou - t_pitch:.3f}s")
             print(f"[DEBUG] mel shape: {mel.shape}, acou frames: {mel.shape[1]}")
 
-            # 7. Vocoder
+            # 7. Vocoder (adaptive: Vocos=mel-only, NSF-HiFiGAN=mel+f0)
             print(f"[DEBUG] pp_final passed to vocoder: median={np.median(pp_final[pp_final>0]):.2f} Hz, max={np.max(pp_final):.2f} Hz")
-            voc_inputs = {"mel": mel, "f0": pp_final}
-            waveform = self.sess_vocoder.run(["waveform"], voc_inputs)[0]
-            print(f"[DEBUG] waveform shape: {waveform.shape}, vocoder SR equivalent (assuming hop 512): {waveform.shape[1]/mel.shape[1]*44100/512}")
-            audio = waveform[0].copy().astype(np.float32)
+            
+            audio = self._run_vocoder(mel, f0_midi_arr=pp_final[0])
+            t_voc = time.time()
+            print(f"[ONNX_TIME] Vocoder model: {t_voc - t_acou:.3f}s")
+            print(f"[ONNX_TIME] TOTAL INFERENCE: {t_voc - t_start:.3f}s")
+            print(f"[DEBUG] waveform shape: {audio.shape}, vocoder SR equivalent (assuming hop 512): {audio.shape[0]/mel.shape[1]*44100/512}")
 
             # Apply post-processing (EQ, Reverb, Norm)
             return self._apply_post_processing(audio, params)
@@ -872,9 +1072,9 @@ class DiffSingerONNXEngineCore:
 
         try:
             mel = self.sess_acoustic.run(["mel"], inputs)[0]
-            voc_inputs = { "mel": mel, "f0": f0_np }
-            waveform = self.sess_vocoder.run(["waveform"], voc_inputs)[0]
-            audio = waveform[0].copy().astype(np.float32)
+            audio = self._run_vocoder(mel, f0_list)
+            if audio is None:
+                raise Exception("Vocoder inference returned None")
             return self._apply_post_processing(audio, params)
         except Exception as e:
             print(f"[ONNXEngine] ❌ Fallback acoustic synthesis failed: {e}")
@@ -891,6 +1091,35 @@ class DiffSingerONNXEngineCore:
                     torch.cuda.empty_cache()
             except ImportError:
                 pass
+
+
+    def _run_vocoder(self, audio_mel, f0_midi_arr=None):
+        try:
+            if getattr(self, 'vocos_pt', None) is not None:
+                import torch
+                with torch.no_grad():
+                    # Ensure mel is exactly [1, frames, mel_bins]
+                    mel_tensor = torch.from_numpy(audio_mel).squeeze().unsqueeze(0).to(self.vocos_pt.device)
+                    audio_out = self.vocos_pt(mel_tensor)
+                    return audio_out.cpu().numpy().flatten()
+            elif getattr(self, 'sess_vocoder', None) is not None:
+                if self.vocoder_needs_f0 and f0_midi_arr is not None:
+                    f0_padded = np.zeros((1, audio_mel.shape[1]), dtype=np.float32)
+                    min_len = min(audio_mel.shape[1], len(f0_midi_arr))
+                    f0_padded[0, :min_len] = f0_midi_arr[:min_len]
+                    voc_inputs = {'mel': audio_mel, 'f0': f0_padded}
+                else:
+                    voc_inputs = {'mel': audio_mel}
+                
+                audio_out = self.sess_vocoder.run([self.vocoder_output_name], voc_inputs)[0]
+                return audio_out.flatten()
+            else:
+                return None
+        except Exception as e:
+            print(f"[ONNXEngine] Vocoder inference failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
 
     def _apply_post_processing(self, audio, params):
         # 1. Warmth (low shelf) & Brightness (high shelf)
@@ -926,63 +1155,4 @@ class DiffSingerONNXEngineCore:
             
         return audio
 
-# ── VRAM Isolation Wrapper ───────────────────────────────────────────────────
-import multiprocessing as mp
-import queue
 
-def _onnx_worker(model_dir, language, track_notes, params, result_queue):
-    """Worker function that runs in a fully isolated subprocess."""
-    try:
-        # Instantiate the actual engine, loading ONNX into VRAM
-        engine = DiffSingerONNXEngineCore(model_dir, language=language)
-        # Run inference
-        result = engine.synthesize_phrase(track_notes, params)
-        # Return success and data to parent
-        result_queue.put(("success", result))
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        result_queue.put(("error", str(e)))
-
-class DiffSingerONNXEngine:
-    """Proxy class that runs the ONNX engine in a separate process to prevent VRAM leaks.
-    When the subprocess exits, the OS reclaims 100% of the CUDA memory.
-    """
-    def __init__(self, model_dir, language='en'):
-        self.model_dir = model_dir
-        self.language = language
-        self.sr = 44100
-        # Pretend it's ready, actual loading happens per-request
-        self.is_ready = True
-        
-    def synthesize_phrase(self, track_notes, params=None):
-        print(f"[ONNX Subprocess] Spawning worker for model {self.model_dir}...")
-        ctx = mp.get_context('spawn')
-        q = ctx.Queue()
-        p = ctx.Process(target=_onnx_worker, args=(self.model_dir, self.language, track_notes, params, q))
-        p.start()
-        
-        # Safely poll the queue to avoid deadlocks and catch OOM crashes
-        res = None
-        while p.is_alive():
-            try:
-                res = q.get(timeout=1.0)
-                break
-            except queue.Empty:
-                continue
-                
-        # If the process exited but we haven't got the result yet, check one last time
-        if res is None:
-            try:
-                res = q.get(timeout=2.0)
-            except queue.Empty:
-                p.join()
-                raise Exception("Synthesis worker process crashed (likely GPU Out of Memory or Segfault).")
-                
-        p.join()
-        
-        status, data = res
-        if status == "success":
-            return data
-        else:
-            raise Exception(f"Synthesis failed in worker: {data}")

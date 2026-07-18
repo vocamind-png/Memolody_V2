@@ -161,10 +161,35 @@ def apply_timbre(audio, sr, params):
     if reverb > 0.01:
         audio = _apply_reverb(audio, sr, reverb)
 
+    # 8. Dynamic Range Compressor (for a full-bodied, thick human singing voice)
+    try:
+        from scipy.signal import lfilter
+        # Fast vectorized envelope follower
+        b, a = [0.002], [1.0, -0.998]
+        envelope = lfilter(b, a, np.abs(audio))
+        
+        threshold_db = -18.0
+        ratio = 3.2
+        makeup_db = 5.5
+        
+        threshold = 10 ** (threshold_db / 20.0)
+        makeup = 10 ** (makeup_db / 20.0)
+        
+        gain = np.ones_like(audio)
+        mask = envelope > threshold
+        if np.any(mask):
+            env_db = 20 * np.log10(envelope[mask] + 1e-8)
+            gain_db = (threshold_db - env_db) * (1.0 - 1.0 / ratio)
+            gain[mask] = 10 ** (gain_db / 20.0)
+            
+        audio = audio * gain * makeup
+    except Exception as comp_err:
+        print(f"[DSP Post-Process] ⚠️ Compressor failed: {comp_err}")
+
     # Normalize
     peak = np.max(np.abs(audio))
     if peak > 0.001:
-        audio = audio / peak * 0.85
+        audio = audio / peak * 0.92
 
     return audio.astype(np.float32)
 

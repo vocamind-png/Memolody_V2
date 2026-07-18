@@ -154,7 +154,14 @@ const App: React.FC = () => {
   const [onlineStatus, setOnlineStatus] = useState<'online' | 'offline'>('online');
   const [globalSearchQuery, setGlobalSearchQuery] = useState('');
 
+  const currentViewRef = React.useRef(currentView);
+  useEffect(() => { currentViewRef.current = currentView; }, [currentView]);
+
   const { bgmUrl, bgmTitle, bgmCover } = React.useMemo(() => {
+    // Play BGM on the home page or during app initialization
+    if (currentView !== 'home' && !isInitializing) {
+      return { bgmUrl: '', bgmTitle: '', bgmCover: '' };
+    }
     try {
       const title = selectedSong ? selectedSong.title.toLowerCase() : '';
       if (title.includes('minuet')) return { bgmUrl: '/audio/minuet_in_g.mp3', bgmTitle: 'Minuet in G (Ambient)', bgmCover: '/images/memolody_hero.png' };
@@ -162,7 +169,7 @@ const App: React.FC = () => {
       if (title.includes('forest')) return { bgmUrl: '/audio/forest_bgm.mp3', bgmTitle: 'Forest (Ambient)', bgmCover: '/images/memolody_hero.png' };
     } catch(e) {}
     return { bgmUrl: '/audio/Where_Dreams_Align.mp3', bgmTitle: 'Where Dreams Align', bgmCover: '/images/memolody_hero.png' };
-  }, [selectedSong]);
+  }, [selectedSong, currentView, isInitializing]);
   const [performanceMode, setPerformanceMode] = useState(() => localStorage.getItem('nimo_perf_mode') === 'true');
   const [uiTheme, setUiTheme] = useState<'v1' | 'v2'>(() => (localStorage.getItem('memo_ui_theme') as 'v1' | 'v2') || 'v2');
   const [nimoPosition, setNimoPosition] = useState<'left' | 'right'>(() => (localStorage.getItem('nimo_position') as 'left' | 'right') || 'left');
@@ -214,38 +221,60 @@ const App: React.FC = () => {
     return () => window.removeEventListener('nimo_voice_changed', handleVoiceChange);
   }, []);
 
-  // Global BGM Player Logic (Autoplay and stop on interaction)
+  // Global BGM Player Logic (Plays on splash screen and home page, unlocks on first gesture if blocked)
   const bgmRef = React.useRef<HTMLAudioElement>(null);
   const bgmStoppedRef = React.useRef(false);
+  const [bgmUnlocked, setBgmUnlocked] = React.useState(false);
   
   useEffect(() => {
-    // Attempt autoplay
-    if (bgmRef.current && !bgmStoppedRef.current) {
-      bgmRef.current.volume = 1.0;
-      bgmRef.current.play().catch(e => console.log('BGM autoplay blocked by browser:', e));
+    // Attempt autoplay when BGM url changes
+    if (bgmRef.current && !bgmStoppedRef.current && bgmUrl) {
+      bgmRef.current.volume = 0.8;
+      bgmRef.current.play().then(() => {
+        setBgmUnlocked(true);
+      }).catch(e => {
+        console.log('BGM autoplay blocked by browser, waiting for user gesture:', e);
+      });
     }
-  }, [bgmUrl]); // Retry if bgmUrl changes
+  }, [bgmUrl]);
 
   useEffect(() => {
-    const stopBgm = () => {
-      bgmStoppedRef.current = true;
-      if (bgmRef.current && !bgmRef.current.paused) {
-        bgmRef.current.pause();
-        bgmRef.current.currentTime = 0;
+    // Pause BGM if navigating away from home/loading view
+    if (currentView !== 'home' && !isInitializing && bgmRef.current) {
+      bgmRef.current.pause();
+    }
+  }, [currentView, isInitializing]);
+
+  useEffect(() => {
+    const unlockBgm = () => {
+      if (bgmRef.current && !bgmStoppedRef.current && bgmUrl && bgmRef.current.paused) {
+        bgmRef.current.volume = 0.8;
+        bgmRef.current.play().then(() => {
+          setBgmUnlocked(true);
+        }).catch(e => console.log('BGM unlock failed:', e));
       }
     };
     
-    // Listen for interactions. Do NOT use once: true because the user might tap before the audio starts playing
-    document.addEventListener('click', stopBgm, { capture: true });
-    document.addEventListener('touchstart', stopBgm, { capture: true, passive: true });
-    document.addEventListener('keydown', stopBgm, { capture: true });
+    // Listen for any user gesture to unlock audio
+    window.addEventListener('click', unlockBgm);
+    window.addEventListener('touchstart', unlockBgm);
+    window.addEventListener('keydown', unlockBgm);
+    
+    const stopBgmExplicit = () => {
+      bgmStoppedRef.current = true;
+      if (bgmRef.current) {
+        bgmRef.current.pause();
+      }
+    };
+    document.addEventListener('stop-global-bgm', stopBgmExplicit);
     
     return () => {
-      document.removeEventListener('click', stopBgm, { capture: true });
-      document.removeEventListener('touchstart', stopBgm, { capture: true });
-      document.removeEventListener('keydown', stopBgm, { capture: true });
+      window.removeEventListener('click', unlockBgm);
+      window.removeEventListener('touchstart', unlockBgm);
+      window.removeEventListener('keydown', unlockBgm);
+      document.removeEventListener('stop-global-bgm', stopBgmExplicit);
     };
-  }, []);
+  }, [bgmUrl]);
 
   // Apply UI Theme class to body
   useEffect(() => {
@@ -1493,9 +1522,10 @@ const App: React.FC = () => {
         {/* Global Background Music (stops on interaction) */}
         <audio 
           ref={bgmRef} 
-          src={bgmUrl || "/audio/Where_Dreams_Align.mp3"} 
+          src={bgmUrl || undefined} 
           loop 
           preload="auto" 
+          style={{ display: 'none' }}
         />
       </div>
     </div>

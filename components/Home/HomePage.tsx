@@ -1263,11 +1263,9 @@ const HomePage: React.FC<HomePageProps> = ({
 
           {/* Now Playing Widget */}
           <div className="flex items-center gap-3 bg-black/30 backdrop-blur-md px-3 py-2 rounded-full border border-white/5 cursor-pointer hover:bg-black/50 transition-colors" onClick={() => {
-            const bgm = bgmRef.current;
-            if (bgm) {
-              if (bgm.paused) bgm.play().catch(()=>{});
-              else bgm.pause();
-            }
+            // The global App.tsx click listener will handle pausing the BGM.
+            // We just dispatch a custom event to notify App.tsx to pause if needed.
+            document.dispatchEvent(new Event('stop-global-bgm'));
           }}>
             <div className="w-8 h-8 rounded-full overflow-hidden shrink-0 animate-[spin_10s_linear_infinite]">
               <img src={bgmCover || '/images/memolody_hero.png'} alt="Cover" className="w-full h-full object-cover" />
