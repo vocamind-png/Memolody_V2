@@ -34,11 +34,11 @@ const sendWorkerDebug = (msg: string) => {
 
 // Solfège Syllable to Phoneme Map
 const SOLFEGE_MAP: Record<string, string> = {
-  "do":  "d ow",   "doh": "d ow",
+  "do":  "d uw",   "doh": "d ow",
   "re":  "r ey",   "ray": "r ey",
   "mi":  "m iy",   "me":  "m iy",
-  "fa":  "f aa",   "fah": "f aa",
-  "sol": "s ow l", "soh": "s ow",
+  "fa":  "f ah",   "fah": "f aa",
+  "sol": "s aa l", "soh": "s ow",  "so": "s ow",
   "la":  "l aa",   "lah": "l aa",
   "ti":  "t iy",   "si":  "s iy",
   "di":  "d iy",
@@ -49,36 +49,36 @@ const SOLFEGE_MAP: Record<string, string> = {
   "se":  "s ey",
   "le":  "l ey",
   "te":  "t ey",
-  "raw": "r ao",   "maw": "m ao",
-  "saw": "s ao",   "law": "l ao",
-  "taw": "t ao",
+  "raw": "r aa",   "maw": "m aa",
+  "saw": "s aa",   "law": "l aa",
+  "taw": "t aa",
   "ru":  "r uw",   "mu":  "m uw",
   "su":  "s uw",   "lu":  "l uw",
   "tu":  "t uw",
   "ah":  "aa",     "oh":  "ow",    "ee":  "iy",
-  "d": "d ow", "r": "r ey", "m": "m iy",
-  "f": "f aa", "s": "s ow l", "l": "l aa", "t": "t iy",
+  "d": "d uw", "r": "r ey", "m": "m iy",
+  "f": "f ah", "s": "s aa l", "l": "l aa", "t": "t iy",
   "ma": "m aa", "sa": "s aa", "ta": "t aa",
   "ga": "g aa", "pa": "p aa", "dha": "dh aa", "ni": "n iy",
 
-  // Jianpu
-  "1":   "iy",
-  "2":   "er",
-  "3":   "s ae n",
-  "4":   "s iy",
-  "5":   "w uw",
-  "6":   "l iy uw",
-  "7":   "ch iy",
-  "#1":  "sh ae n g iy",
-  "#2":  "sh ae n g er",
-  "#4":  "sh ae n g s iy",
-  "#5":  "sh ae n g w uw",
-  "#6":  "sh ae n g l iy",
-  "b2":  "j y ae n er",
-  "b3":  "j y ae n s ae n",
-  "b5":  "j y ae n w uw",
-  "b6":  "j y ae n l iy",
-  "b7":  "j y ae n ch iy",
+  // Jianpu — solfège ARPABET for Nico English model (matches server ds_onnx_engine.py)
+  "1":   "d uw",       // Do
+  "#1":  "d iy",       // Di
+  "b2":  "r aa",       // Ra
+  "2":   "r ey",       // Re
+  "#2":  "r iy",       // Ri
+  "b3":  "m iy",       // Me
+  "3":   "m iy",       // Mi
+  "4":   "f ah",       // Fa
+  "#4":  "f iy",       // Fi
+  "b5":  "s ey",       // Se
+  "5":   "s aa l",     // Sol
+  "#5":  "s iy",       // Si
+  "b6":  "l ey",       // Le
+  "6":   "l aa",       // La
+  "#6":  "l iy",       // Li
+  "b7":  "t ey",       // Te
+  "7":   "t iy",       // Ti
 };
 
 // Compact Pinyin map for basic Chinese support
@@ -1368,7 +1368,7 @@ export class ClientSvsEngine {
     // ----- HUMANIZED INTONATION BLEND (AUTOTUNE) -----
     // Blend: neural pitch (natural glides) + MIDI ideal pitch
     // 0.0 = perfect MIDI pitch (robot), 1.0 = full neural AI (expressive but might be off-pitch)
-    const NEURAL_BLEND = params?.pitch_blend ?? 1.0; // Default to 1.0 (Neural Pitch) for natural singing
+    const NEURAL_BLEND = params?.pitch_blend ?? 0.85; // Default 0.85: 85% neural + 15% MIDI for pitch stability on high notes
     console.log(`[ClientSvsEngine] Applying pitch blend: ${NEURAL_BLEND}`);
     
     for (let i = 0; i < ppFinal.length; i++) {
@@ -1755,13 +1755,50 @@ export class ClientSvsEngine {
       audio = reverbAudio;
     }
 
-    // Avoid clipping, but do not boost soft audio to avoid noise floors
+    // ----- RMS-based Gain Boost -----
+    // Boost quiet audio so vocals are not whisper-level.
+    // Target RMS ~0.12 (comfortable singing loudness). Only boost, never attenuate.
+    let rmsSum = 0;
+    let rmsSamples = 0;
+    for (let i = 0; i < audio.length; i++) {
+      if (Math.abs(audio[i]) > 0.001) {
+        rmsSum += audio[i] * audio[i];
+        rmsSamples++;
+      }
+    }
+    const rms = rmsSamples > 0 ? Math.sqrt(rmsSum / rmsSamples) : 0;
+    const TARGET_RMS = 0.12;
+    if (rms > 0.001 && rms < TARGET_RMS) {
+      // Cap gain at 4x to prevent noise amplification
+      const gain = Math.min(4.0, TARGET_RMS / rms);
+      for (let i = 0; i < audio.length; i++) {
+        audio[i] *= gain;
+      }
+      console.log(`[ClientSvsEngine] 🔊 RMS gain boost: ${gain.toFixed(2)}x (rms was ${rms.toFixed(4)})`);
+    }
+
+    // ----- Presence / Clarity Boost -----
+    // Subtle high-shelf boost around 3kHz to add vocal clarity and presence.
+    const presenceBand = this.applyBiquadFilter(audio, this.sr, 3000, 'highpass');
+    for (let i = 0; i < audio.length; i++) {
+      audio[i] += presenceBand[i] * 0.15;
+    }
+
+    // ----- Soft-clip Compression (tanh) -----
+    // Use tanh saturation instead of hard clipping for smoother limiting.
     let peak = 0;
     for (let i = 0; i < audio.length; i++) {
       const absVal = Math.abs(audio[i]);
       if (absVal > peak) peak = absVal;
     }
-    if (peak > 1.0) {
+    if (peak > 0.85) {
+      // Apply tanh soft-clipping scaled so that 0.85 maps to ~0.83
+      const drive = 1.0 / 0.85; // Normalize so peak ≈ 1.0 before tanh
+      for (let i = 0; i < audio.length; i++) {
+        audio[i] = Math.tanh(audio[i] * drive) * 0.95;
+      }
+    } else if (peak > 1.0) {
+      // Safety: normalize down if somehow still > 1.0
       for (let i = 0; i < audio.length; i++) {
         audio[i] = (audio[i] / peak) * 0.95;
       }

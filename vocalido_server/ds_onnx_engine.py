@@ -196,6 +196,25 @@ class DiffSingerONNXEngine:
             print(f"[ONNXEngine] 📖 Loaded {len(self.phoneme_to_id)//3} phonemes from phonemes.txt")
         else:
             print(f"[ONNXEngine] ⚠️ Warning: No phoneme map found in {acou_dir}")
+
+        self.ling_phoneme_to_id = None
+        ling_ph_path = os.path.join(model_dir, "dsdur", "files", "phonemes.txt")
+        if os.path.exists(ling_ph_path):
+            self.ling_phoneme_to_id = {}
+            with open(ling_ph_path, "r", encoding="utf-8") as f:
+                for i, line in enumerate(f):
+                    parts = line.strip().split()
+                    if not parts:
+                        continue
+                    if len(parts) >= 2:
+                        self.ling_phoneme_to_id[parts[0]] = int(parts[1])
+                        self.ling_phoneme_to_id[parts[0].lower()] = int(parts[1])
+                        self.ling_phoneme_to_id[parts[0].upper()] = int(parts[1])
+                    else:
+                        self.ling_phoneme_to_id[parts[0]] = i
+                        self.ling_phoneme_to_id[parts[0].lower()] = i
+                        self.ling_phoneme_to_id[parts[0].upper()] = i
+            print(f"[ONNXEngine] 📖 Loaded {len(self.ling_phoneme_to_id)//3} phonemes for Linguistic model from dsdur/files/phonemes.txt")
             
         # Load dictionary (Word to Phonemes) — supports dictionary.txt and dictionary-en.txt
         self.dict_map = {}
@@ -297,7 +316,7 @@ class DiffSingerONNXEngine:
             "#2": ["r", "iy"],      # Ri
             "b3": ["m", "iy"],      # Me
             "3": ["m", "iy"],       # Mi
-            "4": ["f", "ah"],       # Fa
+            "4": ["f", "aa"],       # Fa
             "#4": ["f", "iy"],      # Fi
             "b5": ["s", "ey"],      # Se
             "5": ["s", "aa", "l"],  # Sol
@@ -324,7 +343,7 @@ class DiffSingerONNXEngine:
             "ri": "r iy",
             "me": "m iy", "maw": "m aa", "mu": "m uw",
             "mi": "m iy",
-            "fa": "f ah", "fah": "f aa",
+            "fa": "f aa", "fah": "f aa",
             "fi": "f iy",
             "se": "s ey", "saw": "s aa", "su": "s uw",
             "sol": "s aa l", "soh": "s ow", "so": "s ow",
@@ -337,7 +356,7 @@ class DiffSingerONNXEngine:
             # Pure vowels
             "ah": "aa", "oh": "ow", "ee": "iy",
             # Kodaly single-letters
-            "d": "d uw", "r": "r ey", "m": "m iy", "f": "f ah", "s": "s aa l", "l": "l aa", "t": "t iy",
+            "d": "d uw", "r": "r ey", "m": "m iy", "f": "f aa", "s": "s aa l", "l": "l aa", "t": "t iy",
             # Sargam
             "sa": "s aa", "ga": "g aa", "pa": "p aa", "dha": "dh aa", "ni": "n iy",
         }
@@ -534,7 +553,7 @@ class DiffSingerONNXEngine:
                     spk256 = spk_embed_data[:embed_dim]
 
         # 2. Build timing sequences
-        all_tok = []
+        all_ph_names = []
         all_ph_midi = []
         word_div = []
         word_dur_fr = []
@@ -545,7 +564,7 @@ class DiffSingerONNXEngine:
         initial_ap_sec = 0.02
         initial_ap_fr = max(1, round(initial_ap_sec * frame_hz))
         
-        all_tok.append(SP_ID)
+        all_ph_names.append("SP")
         all_ph_midi.append(0)
         word_div.append(1)
         word_dur_fr.append(initial_ap_fr)
@@ -559,7 +578,7 @@ class DiffSingerONNXEngine:
             gap = start - prev_end
             if gap > 0.02:
                 gap_fr = max(2, round(gap * frame_hz))
-                all_tok.append(SP_ID)
+                all_ph_names.append("SP")
                 all_ph_midi.append(0)
                 word_div.append(1)
                 word_dur_fr.append(gap_fr)
@@ -577,13 +596,12 @@ class DiffSingerONNXEngine:
             else:
                 phonemes = self.lyric_to_phonemes_en(lyric)
                 
-            ids = [self.phoneme_to_id.get(p, SP_ID) for p in phonemes]
-            if not ids:
-                ids = [SP_ID]
+            if not phonemes:
+                phonemes = ["SP"]
                 
-            all_tok.extend(ids)
-            all_ph_midi.extend([midi] * len(ids))
-            word_div.append(len(ids))
+            all_ph_names.extend(phonemes)
+            all_ph_midi.extend([midi] * len(phonemes))
+            word_div.append(len(phonemes))
             word_dur_fr.append(dur_fr)
             note_midi.append(float(midi))
             note_rest.append(is_rest)
@@ -592,7 +610,7 @@ class DiffSingerONNXEngine:
             prev_end = start + dur
             
         final_sp_fr = max(2, round(0.4 * frame_hz))
-        all_tok.append(SP_ID)
+        all_ph_names.append("SP")
         all_ph_midi.append(0)
         word_div.append(1)
         word_dur_fr.append(final_sp_fr)
@@ -600,9 +618,20 @@ class DiffSingerONNXEngine:
         note_rest.append(True)
         note_dur_fr.append(final_sp_fr)
 
-        n_tok = len(all_tok)
+        n_tok = len(all_ph_names)
         n_notes = len(note_midi)
-        tok_t = np.array([all_tok], dtype=np.int64)
+
+        SP_ID_ACOU = self.phoneme_to_id.get("SP", 2)
+        tok_acou = [self.phoneme_to_id.get(p, SP_ID_ACOU) for p in all_ph_names]
+        tok_t_acou = np.array([tok_acou], dtype=np.int64)
+
+        if getattr(self, 'ling_phoneme_to_id', None):
+            SP_ID_LING = self.ling_phoneme_to_id.get("SP", 2)
+            tok_ling = [self.ling_phoneme_to_id.get(p, SP_ID_LING) for p in all_ph_names]
+            tok_t_ling = np.array([tok_ling], dtype=np.int64)
+        else:
+            tok_t_ling = tok_t_acou
+
         ph_midi_t = np.array([all_ph_midi], dtype=np.int64)
         wd_t = np.array([word_div], dtype=np.int64)
         wdur_t = np.array([word_dur_fr], dtype=np.int64)
@@ -626,8 +655,7 @@ class DiffSingerONNXEngine:
         en_vowels = {"aa", "ae", "ah", "ao", "aw", "ay", "eh", "er", "ey", "ih", "iy", "ow", "oy", "uh", "uw"}
         vowel_set = zh_vowels if self.language == 'zh' else en_vowels
 
-        id_to_phoneme = {v: k for k, v in self.phoneme_to_id.items()}
-        ph_names = [id_to_phoneme.get(t, f"ID_{t}") for t in all_tok]
+        ph_names = all_ph_names
         
         timing_feel = float(params.get("timing_feel", 50.0)) if params else 50.0
         base_cons_sec = 0.015 + 0.020 * (timing_feel / 100.0)
@@ -697,13 +725,12 @@ class DiffSingerONNXEngine:
                 tok_idx += wdiv
         ph_dur = np.array(upd, dtype=np.int64)
         n_frames = int(ph_dur.sum())
-        print(f"[DEBUG] word_dur_fr={word_dur_fr}, sum={sum(word_dur_fr)}")
         pdt = ph_dur[None, :]
 
         try:
             # 3. Linguistic model - Handle newer DiffSinger models needing ph_dur vs older ones needing word_div
             ling_sess_inputs = [i.name for i in self.sess_ling.get_inputs()]
-            ling_inputs = {"tokens": tok_t}
+            ling_inputs = {"tokens": tok_t_ling}
             if "ph_dur" in ling_sess_inputs:
                 ling_inputs["ph_dur"] = pdt
             else:
@@ -713,7 +740,7 @@ class DiffSingerONNXEngine:
             import time
             t_start = time.time()
             if "languages" in ling_sess_inputs:
-                ling_inputs["languages"] = np.zeros_like(tok_t)
+                ling_inputs["languages"] = np.zeros_like(tok_t_ling)
                 
             enc, masks = self.sess_ling.run(None, ling_inputs)
             t_ling = time.time()
@@ -770,7 +797,7 @@ class DiffSingerONNXEngine:
                 "retake": rt,
                 "spk_embed": sk_fr,
                 "steps": st,
-                "languages": np.zeros((1, tok_t.shape[1]), dtype=np.int64)
+                "languages": np.zeros((1, tok_t_ling.shape[1]), dtype=np.int64)
             }
             pitch_sess_inputs = [i.name for i in self.sess_pitch.get_inputs()]
             pitch_inputs_filtered = {k: v for k, v in pitch_inputs.items() if k in pitch_sess_inputs}
@@ -782,7 +809,6 @@ class DiffSingerONNXEngine:
             pp_final = pp.copy()
             voiced_frames = pp_final[pp_final > 2.0]
             v_mean = np.mean(voiced_frames) if len(voiced_frames) > 0 else 0.0
-            print(f"[DEBUG] v_mean: {v_mean:.2f}, raw pp median: {np.median(voiced_frames):.2f}, raw pp max: {np.max(voiced_frames):.2f}")
             
             if 0.1 < v_mean < 10.0:
                 # Log F0 -> convert to Hz
@@ -799,25 +825,17 @@ class DiffSingerONNXEngine:
             # If v_mean >= 100.0, it is already in Hz.
 
             # ----- HUMANIZED INTONATION BLEND -----
-            # Blend: 60% neural pitch (natural glides/intonation) + 40% MIDI ideal pitch
-            # Higher neural = more expressive, more human-like singing
-            NEURAL_BLEND = float(params.get("pitch_blend", 1.0)) if params else 1.0
+            NEURAL_BLEND = float(params.get("pitch_blend", 0.3)) if params else 0.3
             
-            # ----- ADVANCED PITCH CORRECTOR & RANGE EXPANSION -----
-            # Shift the predicted pitch curve note-by-note to center around target MIDI notes.
-            # This preserves 100% of natural micro-intonation/vibrato while correcting pitch center,
-            # and dynamically scales range to Super Soprano or Bass.
             voicing_mask = f0_midi_arr > 0.0
             both_voiced = voicing_mask & (pp_final[0] > 0.0)
             
             if np.any(both_voiced):
-                # Convert predicted pitch to semitones
                 pp_midi = np.zeros_like(pp_final[0])
                 pp_midi[both_voiced] = 12.0 * np.log2(pp_final[0][both_voiced] / 440.0) + 69.0
                 
                 offset_arr = np.zeros_like(pp_final[0])
                 
-                # Find continuous voiced regions to prevent boundary leakage
                 voiced_runs = []
                 in_run = False
                 run_start = 0
@@ -842,7 +860,6 @@ class DiffSingerONNXEngine:
                                 if len(valid_pred) > 0:
                                     pred_mean = np.mean(valid_pred)
                                     offset = curr_midi - pred_mean
-                                    # Clamp offset to 24 semitones to avoid chipmunk/monster extreme sounds
                                     offset = np.clip(offset, -24.0, 24.0)
                                     offset_arr[seg_start:idx] = offset
                             seg_start = idx
@@ -857,7 +874,6 @@ class DiffSingerONNXEngine:
                             offset = np.clip(offset, -24.0, 24.0)
                             offset_arr[seg_start:r_end] = offset
                             
-                    # Smooth the offset array ONLY within this voiced run to keep note transitions organic
                     run_len = r_end - r_start
                     if run_len > 3:
                         w_size = min(21, (run_len // 2) * 2 + 1)
@@ -868,15 +884,11 @@ class DiffSingerONNXEngine:
                             smoothed = np.convolve(padded, window, mode='valid')
                             offset_arr[r_start:r_end] = smoothed[:run_len]
                 
-                # Apply the smoothed offset to correct the pitch and expand range!
                 pp_midi_corrected = pp_midi.copy()
                 pp_midi_corrected[both_voiced] += offset_arr[both_voiced]
+                pp_midi_final = (pp_midi_corrected * NEURAL_BLEND) + (f0_midi_arr * (1.0 - NEURAL_BLEND))
                 
-                # Convert back to Hz
-                pp_final[0][both_voiced] = 440.0 * (2.0 ** ((pp_midi_corrected[both_voiced] - 69.0) / 12.0))
-            # -----------------------------------------------------
-            # -----------------------------------------------
-
+                pp_final[0][both_voiced] = 440.0 * (2.0 ** ((pp_midi_final[both_voiced] - 69.0) / 12.0))
 
             # 6. Acoustic model
             no = pp_final.shape[1]
@@ -890,13 +902,12 @@ class DiffSingerONNXEngine:
             dp = np.array(depth_val, dtype=np.float32)
 
             acou_inputs = {
-                "tokens": tok_t,
+                "tokens": tok_t_acou,
                 "durations": pdt,
                 "f0": pp_final,
                 "gender": ga,
                 "velocity": va,
                 "spk_embed": sk_o,
-                "languages": np.zeros((1, tok_t.shape[1]), dtype=np.int64),
                 "depth": dp,
                 "steps": st
             }
@@ -909,7 +920,7 @@ class DiffSingerONNXEngine:
             if "tension" in acou_sess_inputs:
                 acou_inputs["tension"] = np.zeros((1, no), dtype=np.float32)
             if "languages" in acou_sess_inputs:
-                acou_inputs["languages"] = np.zeros_like(tok_t)
+                acou_inputs["languages"] = np.zeros_like(tok_t_acou)
 
             acou_inputs_filtered = {k: v for k, v in acou_inputs.items() if k in acou_sess_inputs}
             mel = self.sess_acoustic.run(["mel"], acou_inputs_filtered)[0]

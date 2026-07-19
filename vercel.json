@@ -4,6 +4,7 @@
   "framework": "vite",
   "rewrites": [
     { "source": "/vocalido/voicebanks/:path*", "destination": "https://storage.googleapis.com/memolody-vault/voicebanks/:path*" },
+    { "source": "/vocalido/renders/:path*", "destination": "https://storage.googleapis.com/memolody-vault/renders/:path*" },
     { "source": "/vocalido/api/ai/extract-stems-midi", "destination": "https://tmeso71z3ki3m7-8000.proxy.runpod.net/api/ai/extract-stems-midi" },
     { "source": "/vocalido/api/ai/extract-chords", "destination": "https://tmeso71z3ki3m7-8000.proxy.runpod.net/api/ai/extract-chords" },
     { "source": "/vocalido/api/ai/transcribe-audio", "destination": "https://tmeso71z3ki3m7-8000.proxy.runpod.net/api/ai/transcribe-audio" },

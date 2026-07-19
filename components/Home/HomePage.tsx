@@ -1598,70 +1598,21 @@ If a field is not relevant, leave the array empty. Translate concepts into Engli
         )}
       </div>
 
-      {/* Recent Matrix (Horizontal Scroll) */}
+      {/* Recent (Compact Name-Only) */}
         {recentSongs.length > 0 && (
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             <div className="flex items-center justify-between px-1">
               <span className="text-[8px] font-black text-zinc-600 uppercase tracking-widest italic">Recent</span>
               <span className="text-[8px] font-mono text-zinc-700">{totalCount} songs</span>
             </div>
-            <div className="flex gap-2 overflow-x-auto no-scrollbar px-1">
+            <div className="flex gap-1.5 overflow-x-auto no-scrollbar px-1">
               {recentSongs.map(item => (
-                <div key={item.id} onClick={() => onSongSelect(item, undefined, 'listen')}
-                  className="shrink-0 w-[calc(33.33%-6px)] flex flex-col gap-1.5 group/card cursor-pointer">
-                  {/* Cover Image Area */}
-                  <div className="w-full aspect-video rounded-xl overflow-hidden relative shadow-md group-hover/card:shadow-lg group-hover/card:shadow-cyan-500/10 border border-white/10 transition-all group-hover/card:-translate-y-1">
-                    <AbstractCover seed={item.title || item.id} size={200} />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-50" />
-                    
-                    {/* Play Button Overlay */}
-                    {(() => {
-                      try {
-                        const histStr = localStorage.getItem(`memo_render_history_${item.id}`);
-                        const hasRendered = histStr ? (JSON.parse(histStr) || []).length > 0 : false;
-                        if (hasRendered) {
-                          return (
-                            <div className="absolute inset-0 bg-black/20 flex items-center justify-center pointer-events-none group-hover/card:bg-black/40 transition-all">
-                              <div 
-                                className="w-8 h-8 rounded-full bg-cyan-500/90 backdrop-blur-sm flex items-center justify-center shadow-[0_0_15px_rgba(0,229,255,0.5)] pointer-events-auto cursor-pointer hover:scale-110 active:scale-95 transition-transform"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onSongSelect(item, undefined, 'play');
-                                }}
-                              >
-                                <Play size={16} className="text-black fill-black ml-0.5" />
-                              </div>
-                            </div>
-                          );
-                        }
-                      } catch (e) {}
-                      
-                      // Default small play button if not rendered
-                      return (
-                        <div className="absolute bottom-1.5 left-1.5 flex items-center justify-center pointer-events-none">
-                          <div 
-                            className="w-6 h-6 rounded-full bg-black/40 backdrop-blur-sm flex items-center justify-center text-white/80 group-hover/card:text-cyan-400 group-hover/card:bg-cyan-500/20 transition-colors pointer-events-auto cursor-pointer"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onSongSelect(item, undefined, 'play');
-                            }}
-                          >
-                            <Play size={10} fill="currentColor" className="ml-0.5" />
-                          </div>
-                        </div>
-                      );
-                    })()}
-                    
-                    {/* Favorite Icon */}
-                    {item.isFavorite && <Heart size={10} className="text-rose-500 fill-rose-500 absolute top-1.5 right-1.5" />}
-                  </div>
-                  
-                  {/* Title Area (Outside the cover) */}
-                  <div className="px-0.5">
-                    <p className="text-[10px] leading-tight font-black text-white uppercase italic truncate">{item.title || 'Untitled Song'}</p>
-                    <p className="text-[8px] leading-tight text-zinc-500 uppercase tracking-wider truncate mt-0.5">{item.artist || 'Unknown Artist'}</p>
-                  </div>
-                </div>
+                <button key={item.id} onClick={() => onSongSelect(item, undefined, 'listen')}
+                  className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06] hover:bg-white/[0.08] hover:border-cyan-500/20 transition-all group/recent cursor-pointer"
+                >
+                  <Play size={8} className="text-zinc-600 group-hover/recent:text-cyan-400 fill-current transition-colors shrink-0" />
+                  <span className="text-[9px] font-bold text-zinc-400 group-hover/recent:text-white truncate max-w-[160px] transition-colors">{item.title || 'Untitled'}</span>
+                </button>
               ))}
             </div>
           </div>

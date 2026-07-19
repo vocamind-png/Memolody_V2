@@ -1587,10 +1587,15 @@ def _studio_preview_impl(req: StudioPreviewReq):
             from voice_studio import apply_timbre
             dsp_params = req.params.copy() if req.params else {}
             
-            # If it's a DiffSinger engine, formant_shift is already processed inside the acoustic model,
-            # so we set it to 0.0 for apply_timbre to prevent double-processing.
+            # If it's a DiffSinger engine, formant, vibrato, speed, and pitch are already processed inside the acoustic model natively.
+            # We set them to 0.0 (or 1.0 for speed) for apply_timbre to prevent robotic double-processing.
             if engine_name.startswith("diffsinger_"):
                 dsp_params['formant_shift'] = 0.0
+                dsp_params['vibrato_depth'] = 0.0
+                dsp_params['vibrato_speed'] = 0.0
+                dsp_params['vibrato_rate'] = 0.0
+                dsp_params['pitch_shift'] = 0.0
+                dsp_params['speed'] = 1.0
             
             # Read engine sample rate
             engine_sr = SR

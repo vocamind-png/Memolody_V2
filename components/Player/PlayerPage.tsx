@@ -256,6 +256,11 @@ const fixAudioUrl = (u: string) => {
   
   // If it's an absolute URL, convert it to a relative path
   if (url.startsWith('http://') || url.startsWith('https://')) {
+    // DO NOT strip domain if it is a Supabase or Google Cloud Storage URL
+    if (url.includes('supabase.co') || url.includes('googleapis.com')) {
+      return url;
+    }
+
     try {
       const parsed = new URL(url);
       url = parsed.pathname + parsed.search;
@@ -2233,19 +2238,17 @@ const PlayerPage: React.FC<{
           const defaultVoiceId = hasNico ? 'nico' : (hasLotte ? 'lotte_v_ai_dol' : (uniqueVoices.find((v: any) => v.id !== 'default')?.id || 'default'));
           
           const currentActive = storedEngine || activeEngineId;
-          // Auto-upgrade from 'default' or 'lotte_v_ai_dol' to 'nico' when Nico is available
-          const shouldUpgradeToNico = hasNico && (currentActive === 'default' || currentActive === 'lotte_v_ai_dol');
+          // Only auto-upgrade from 'default' placeholder to Nico — respect explicit user choices (e.g. lotte_v_ai_dol)
+          const shouldUpgradeToNico = hasNico && currentActive === 'default';
           const targetActiveId = shouldUpgradeToNico ? 'nico' : (currentActive || defaultVoiceId);
           
           setActiveEngineId(targetActiveId);
           localStorage.setItem('vocalido_active_engine', targetActiveId);
 
           setTracks((prev: any) => prev.map((t: any) => {
-            if (t.mode === 'vocal' && (t.engineId === 'default' || !t.engineId || t.engineId === 'lotte_v_ai_dol') && hasNico) {
-              return { ...t, engineId: 'nico' };
-            }
-            if (t.mode === 'vocal' && !t.engineId) {
-              return { ...t, engineId: defaultVoiceId };
+            // Only auto-assign engineId for tracks with no engineId or placeholder 'default'
+            if (t.mode === 'vocal' && (t.engineId === 'default' || !t.engineId)) {
+              return { ...t, engineId: targetActiveId };
             }
             return t;
           }));
@@ -2885,6 +2888,80 @@ const PlayerPage: React.FC<{
     }
   }, [currentTime, song?.previewLimit, isPlaying, beatsPerMeasure, originalBpm]);
 
+  const restoreRenderHistory = async (h: any) => {
+    const hKey = getRenderKey(h);
+    const wasPlaying = isPlaying || musicEngine.transportState === 'started';
+    const currentPos = musicEngine.transportSeconds;
+    if (wasPlaying) musicEngine.pause();
+    setIsAudioLoading(true);
+    try {
+      await musicEngine.ensureInitialized();
+      const origBpm = (parsedData?.metadata as any)?.bpm || song?.bpm || 120;
+      const targetBpm = Math.round(((origBpm * h.bpmPercent) / 100) * 10) / 10;
+      musicEngine.setBpm(targetBpm);
+      setCurrentBpm(targetBpm);
+      const origKey = parsedData.metadata.key || localSong.key || 'C';
+      const targetKey = h.songKey;
+      const tVal = getTransposeDiff(origKey, targetKey);
+      setTranspose(tVal);
+      const cacheBusted = (url: string) => url.startsWith('blob:') ? url : (url.includes('?t=') ? url.replace(/\?t=\d+/, `?t=${Date.now()}`) : `${url}?t=${Date.now()}`);
+      const stemsWithBust = (h.savedStemUrls || []).map(cacheBusted);
+      const primaryTrackId = tracks.find(t => t.mode === 'vocal')?.id || tracks[0]?.id || 'P1';
+      const vocalTracksArr = h.vocalTracks ? h.vocalTracks.split(',') : [primaryTrackId];
+      await Promise.all(vocalTracksArr.map(async (tid: string) => {
+        let trackAudioUrl = "";
+        let stemsToPass: string[] = [];
+        const hasSpecificStems = h.stemsByTrack && h.stemsByTrack[tid] && h.stemsByTrack[tid].length > 0;
+        if (hasSpecificStems) {
+          trackAudioUrl = cacheBusted(h.stemsByTrack[tid][0]);
+          stemsToPass = h.stemsByTrack[tid].map(cacheBusted);
+        } else if (tid === primaryTrackId) {
+          trackAudioUrl = cacheBusted(fixAudioUrl(h.audioUrl));
+          stemsToPass = stemsWithBust;
+        } else {
+          const sidx = vocalTracksArr.indexOf(tid);
+          if (sidx > 0 && sidx < stemsWithBust.length) {
+            trackAudioUrl = stemsWithBust[sidx];
+            stemsToPass = [stemsWithBust[sidx]];
+          }
+        }
+        if (trackAudioUrl) await musicEngine.addVocalLayer(tid, trackAudioUrl, stemsToPass, targetBpm);
+      }));
+      // ── Restore Full Project Snapshot ──
+      let restoredTracks: TrackState[];
+      if (h.tracksSnapshot && Array.isArray(h.tracksSnapshot)) {
+        restoredTracks = h.tracksSnapshot.map((snap: any) => {
+          const current = tracks.find(t => t.id === snap.id);
+          return current ? { ...current, ...snap } : { ...snap } as TrackState;
+        });
+        restoredTracks = restoredTracks.map((t: any) => vocalTracksArr.includes(t.id) ? { ...t, mode: 'vocal' } as TrackState : t);
+      } else {
+        restoredTracks = tracks.map((t: any) => vocalTracksArr.includes(t.id) ? { ...t, mode: 'vocal' } as TrackState : t);
+      }
+      setTracks(restoredTracks);
+      setAvailableStems(musicEngine.getAvailableStems(primaryTrackId) > 0 ? { [primaryTrackId]: musicEngine.getAvailableStems(primaryTrackId) } : {});
+      setSoloedStems({});
+      setActiveRenderKey(hKey);
+      setMemoInfoOpenKey(null);
+      if (h.engineId) setActiveEngineId(h.engineId);
+      setStoredSinger(h.voiceName && h.voiceName !== 'Auto' ? h.voiceName : null);
+      if (h.lyricMode) { try { localStorage.setItem('memo_lyric_mode', h.lyricMode); } catch {} }
+      if (typeof h.timingFeel === 'number') handleSvsTimingFeelChange(h.timingFeel);
+      if (h.svsEngine) handleSvsEngineChange(h.svsEngine);
+      if (typeof h.svsSteps === 'number') handleSvsStepsChange(h.svsSteps);
+      if (typeof h.collapseChords === 'boolean') setCollapseChords(h.collapseChords);
+      if (typeof h.isMetronomeOn === 'boolean') setIsMetronomeOn(h.isMetronomeOn);
+      await musicEngine.loadSong(allPlayableNotes, restoredTracks, tVal, parsedData.timeSignature, h.isMetronomeOn ?? isMetronomeOn, true);
+      musicEngine.setTransportSeconds(currentPos);
+      if (wasPlaying) { await musicEngine.start(); setIsPlaying(true); }
+    } catch (err) {
+      console.error('Failed to load render history stem:', err);
+      alert("❌ ไม่สามารถโหลดไฟล์ร้องประสานเสียงนี้ได้");
+    } finally {
+      setIsAudioLoading(false);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full w-full bg-[#050507] relative overflow-hidden unselectable">
       {/* ── TOP CONTROL BAR ROW ── */}
@@ -3008,7 +3085,22 @@ const PlayerPage: React.FC<{
                           onClick={() => {
                             setActiveEngineId(voice.id);
                             localStorage.setItem('vocalido_active_engine', voice.id);
+                            setStoredSinger(voice.name);
+                            // Sync vocal tracks to the new voice engine
+                            // If no vocal track exists, sync the first track (which acts as the fallback vocalTrack)
+                            setTracks((prev: any) => {
+                              const hasVocal = prev.some((t: any) => t.mode === 'vocal');
+                              return prev.map((t: any, i: number) => 
+                                (t.mode === 'vocal' || (!hasVocal && i === 0)) ? { ...t, engineId: voice.id } : t
+                              );
+                            });
                             setIsVoiceMenuVisible(false);
+
+                            // AUTO-SWITCH: If we have a cached render for this voice engine, switch to it!
+                            const matchedHistory = renderHistory.find(h => h.engineId === voice.id);
+                            if (matchedHistory) {
+                              restoreRenderHistory(matchedHistory);
+                            }
                           }}
                           className={`px-3 py-2 rounded-xl text-[9px] font-black tracking-wide transition-all text-left flex items-center justify-between border
                             ${isActive ? 'bg-indigo-500 border-indigo-400 text-white shadow-lg' : 'bg-white/5 border-white/5 text-zinc-400 hover:text-white hover:bg-white/10'}`}
@@ -3179,78 +3271,7 @@ const PlayerPage: React.FC<{
                     <div key={hKey} className="relative group">
                       {/* Main render button */}
                       <button
-                        onClick={async () => {
-                          const wasPlaying = isPlaying || musicEngine.transportState === 'started';
-                          const currentPos = musicEngine.transportSeconds;
-                          if (wasPlaying) musicEngine.pause();
-                          setIsAudioLoading(true);
-                          try {
-                            await musicEngine.ensureInitialized();
-                            const origBpm = (parsedData?.metadata as any)?.bpm || song?.bpm || 120;
-                            const targetBpm = Math.round(((origBpm * h.bpmPercent) / 100) * 10) / 10;
-                            musicEngine.setBpm(targetBpm);
-                            setCurrentBpm(targetBpm);
-                            const origKey = parsedData.metadata.key || localSong.key || 'C';
-                            const targetKey = h.songKey;
-                            const tVal = getTransposeDiff(origKey, targetKey);
-                            setTranspose(tVal);
-                            const cacheBusted = (url: string) => url.startsWith('blob:') ? url : (url.includes('?t=') ? url.replace(/\?t=\d+/, `?t=${Date.now()}`) : `${url}?t=${Date.now()}`);
-                            const stemsWithBust = (h.savedStemUrls || []).map(cacheBusted);
-                            const primaryTrackId = tracks.find(t => t.mode === 'vocal')?.id || tracks[0]?.id || 'P1';
-                            const vocalTracksArr = h.vocalTracks ? h.vocalTracks.split(',') : [primaryTrackId];
-                            await Promise.all(vocalTracksArr.map(async (tid: string) => {
-                              let trackAudioUrl = "";
-                              let stemsToPass: string[] = [];
-                              const hasSpecificStems = h.stemsByTrack && h.stemsByTrack[tid] && h.stemsByTrack[tid].length > 0;
-                              if (hasSpecificStems) {
-                                trackAudioUrl = cacheBusted(h.stemsByTrack[tid][0]);
-                                stemsToPass = h.stemsByTrack[tid].map(cacheBusted);
-                              } else if (tid === primaryTrackId) {
-                                trackAudioUrl = cacheBusted(fixAudioUrl(h.audioUrl));
-                                stemsToPass = stemsWithBust;
-                              } else {
-                                const sidx = vocalTracksArr.indexOf(tid);
-                                if (sidx > 0 && sidx < stemsWithBust.length) {
-                                  trackAudioUrl = stemsWithBust[sidx];
-                                  stemsToPass = [stemsWithBust[sidx]];
-                                }
-                              }
-                              if (trackAudioUrl) await musicEngine.addVocalLayer(tid, trackAudioUrl, stemsToPass, targetBpm);
-                            }));
-                            // ── Restore Full Project Snapshot ──
-                            let restoredTracks: TrackState[];
-                            if (h.tracksSnapshot && Array.isArray(h.tracksSnapshot)) {
-                              restoredTracks = h.tracksSnapshot.map((snap: any) => {
-                                const current = tracks.find(t => t.id === snap.id);
-                                return current ? { ...current, ...snap } : { ...snap } as TrackState;
-                              });
-                              restoredTracks = restoredTracks.map((t: any) => vocalTracksArr.includes(t.id) ? { ...t, mode: 'vocal' } as TrackState : t);
-                            } else {
-                              restoredTracks = tracks.map((t: any) => vocalTracksArr.includes(t.id) ? { ...t, mode: 'vocal' } as TrackState : t);
-                            }
-                            setTracks(restoredTracks);
-                            setAvailableStems(musicEngine.getAvailableStems(primaryTrackId) > 0 ? { [primaryTrackId]: musicEngine.getAvailableStems(primaryTrackId) } : {});
-                            setSoloedStems({});
-                            setActiveRenderKey(hKey);
-                            setMemoInfoOpenKey(null);
-                            if (h.engineId) setActiveEngineId(h.engineId);
-                            setStoredSinger(h.voiceName && h.voiceName !== 'Auto' ? h.voiceName : null);
-                            if (h.lyricMode) { try { localStorage.setItem('memo_lyric_mode', h.lyricMode); } catch {} }
-                            if (typeof h.timingFeel === 'number') handleSvsTimingFeelChange(h.timingFeel);
-                            if (h.svsEngine) handleSvsEngineChange(h.svsEngine);
-                            if (typeof h.svsSteps === 'number') handleSvsStepsChange(h.svsSteps);
-                            if (typeof h.collapseChords === 'boolean') setCollapseChords(h.collapseChords);
-                            if (typeof h.isMetronomeOn === 'boolean') setIsMetronomeOn(h.isMetronomeOn);
-                            await musicEngine.loadSong(allPlayableNotes, restoredTracks, tVal, parsedData.timeSignature, h.isMetronomeOn ?? isMetronomeOn, true);
-                            musicEngine.setTransportSeconds(currentPos);
-                            if (wasPlaying) { await musicEngine.start(); setIsPlaying(true); }
-                          } catch (err) {
-                            console.error('Failed to load render history stem:', err);
-                            alert("❌ ไม่สามารถโหลดไฟล์ร้องประสานเสียงนี้ได้");
-                          } finally {
-                            setIsAudioLoading(false);
-                          }
-                        }}
+                        onClick={() => restoreRenderHistory(h)}
                         className={`w-[20px] h-[20px] rounded-md flex flex-col items-center justify-center border font-bold uppercase transition-all shadow-sm relative leading-none select-none
                           ${isActive ? 'bg-gradient-to-br from-cyan-400 to-indigo-600 text-black border-transparent shadow-[0_0_6px_rgba(0,229,255,0.4)]' : 'bg-zinc-900/80 border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700'}`}
                         title={`เล่นประสานเสียง (${h.voiceName || 'Auto'} • ${h.lyricMode || 'SYS'} • Key ${h.songKey} • BPM ${h.bpmPercent}%)`}
