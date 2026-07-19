@@ -262,12 +262,22 @@ const serverFetchWithAsyncPolling = async (
   throw new Error('[AsyncJob] Timeout waiting for render job');
 };
 
-const fixAudioUrl = (u: string) => {
-  if (typeof u !== 'string') return u;
-  if (u.startsWith('blob:') || u.startsWith('data:')) return u;
-  let url = u;
+function fixAudioUrl(url: string) {
+  if (!url) return '';
+  if (url.startsWith('blob:')) return url;
   
   if (url.startsWith('http://') || url.startsWith('https://')) {
+    // Route GCS renders through Vercel proxy to avoid CORS issues
+    if (url.includes('storage.googleapis.com/memolody-vault/renders/')) {
+      const filename = url.split('/').pop() || '';
+      return `/vocalido/renders/${filename}`;
+    }
+    
+    // DO NOT strip domain if it is a Supabase or other Google Cloud Storage URL
+    if (url.includes('supabase.co') || url.includes('googleapis.com')) {
+      return url;
+    }
+    
     try {
       const parsed = new URL(url);
       url = parsed.pathname + parsed.search;
@@ -291,6 +301,12 @@ const fixAudioUrl = (u: string) => {
     }
   }
   
+  // Hardcode Runpod proxy for production to bypass Vercel HTTP2 proxy errors
+  if (typeof window !== 'undefined' && window.location.hostname.includes('vercel.app')) {
+    const filename = url.split('/').pop() || '';
+    return `https://tmeso71z3ki3m7-8000.proxy.runpod.net/studio/audio/${filename}`;
+  }
+
   const customBackend = getCustomBackendUrl();
   if (customBackend) {
     return `${customBackend}${url}`;
@@ -1346,7 +1362,7 @@ class VocalidoRenderService {
 
           // Include a note-content hash in song_id to prevent stale server cache
           const noteHash = notesToSynthesize.slice(0, 8).map((n: any) => n.midi).join('-');
-          const cacheKey = `${song.id}_bpm${Math.round(actualBpm)}_${noteHash}_${activeLyricMode}`;
+          const cacheKey = `${song.id}_bpm${Math.round(actualBpm)}_${noteHash}_${activeLyricMode}_${trackEngineId}`;
 
           const payload = {
             notes: notesToSynthesize,
