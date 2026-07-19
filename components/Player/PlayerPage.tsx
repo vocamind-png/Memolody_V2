@@ -3272,11 +3272,11 @@ const PlayerPage: React.FC<{
                       {/* Main render button */}
                       <button
                         onClick={() => restoreRenderHistory(h)}
-                        className={`w-[20px] h-[20px] rounded-md flex flex-col items-center justify-center border font-bold uppercase transition-all shadow-sm relative leading-none select-none
+                        className={`h-[20px] w-auto px-2 rounded-md flex flex-col items-center justify-center border font-bold uppercase transition-all shadow-sm relative leading-none select-none
                           ${isActive ? 'bg-gradient-to-br from-cyan-400 to-indigo-600 text-black border-transparent shadow-[0_0_6px_rgba(0,229,255,0.4)]' : 'bg-zinc-900/80 border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700'}`}
                         title={`เล่นประสานเสียง (${h.voiceName || 'Auto'} • ${h.lyricMode || 'SYS'} • Key ${h.songKey} • BPM ${h.bpmPercent}%)`}
                       >
-                        <span className="text-[8px] font-black leading-none">{`R${renderHistory.length - idx}`}</span>
+                        <span className="text-[9px] font-black leading-none">{h.voiceName || 'Auto'}</span>
                       </button>
     
                       <button
