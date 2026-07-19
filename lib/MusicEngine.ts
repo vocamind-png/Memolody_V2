@@ -1234,8 +1234,12 @@ export class MusicEngine {
       return;
     }
 
-    const requestedInstrument = pluginSettings?.instrument || 'HD Grand Piano';
-    const currentInstrument = (this.trackSamplers.get(trackId) as any)?._instrumentName || 'HD Grand Piano';
+    let requestedInstrument = pluginSettings?.instrument || 'acoustic_grand_piano';
+    // Prevent crashes if UI mistakenly assigned an AI Voice name to the instrument field
+    if (requestedInstrument.includes('Model') || requestedInstrument.includes('Ai') || requestedInstrument.includes(' ') || requestedInstrument === 'Alto Female') {
+      requestedInstrument = 'acoustic_grand_piano';
+    }
+    const currentInstrument = (this.trackSamplers.get(trackId) as any)?._instrumentName || 'acoustic_grand_piano';
 
     // Skip if already initialized for the SAME mode AND the SAME instrument
     if (this.trackSamplers.has(trackId) && currentMode === requestedMode && currentInstrument === requestedInstrument) {
@@ -1255,7 +1259,7 @@ export class MusicEngine {
       await SoundBankEngine.createInstrumentChannel(
         trackId,
         trackName,
-        pluginSettings,
+        { ...pluginSettings, instrument: requestedInstrument },
         this.masterBus,
         this.trackSamplers,
         this.trackChannels,
