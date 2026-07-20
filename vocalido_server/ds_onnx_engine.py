@@ -658,8 +658,9 @@ class DiffSingerONNXEngine:
         ph_names = all_ph_names
         
         timing_feel = float(params.get("timing_feel", 50.0)) if params else 50.0
-        base_cons_sec = 0.015 + 0.020 * (timing_feel / 100.0)
-        base_cons_fr = max(1, round(base_cons_sec * frame_hz))
+        # Increased base consonant time for clearer lyric intelligibility
+        base_cons_sec = 0.025 + 0.025 * (timing_feel / 100.0)
+        base_cons_fr = max(2, round(base_cons_sec * frame_hz))
 
         last_vowel_upd_idx = -1
         
@@ -684,13 +685,13 @@ class DiffSingerONNXEngine:
                         continue
                     p = word_ph_names[i]
                     if p in ["s", "sh", "f", "h", "z", "v", "th", "dh"]:
-                        c_fr = max(3, int(base_cons_fr * 2.0)) # Fricatives
+                        c_fr = max(4, int(base_cons_fr * 2.5)) # Fricatives — most important for clarity
                     elif p in ["ch", "t", "k", "p", "ts", "th"]:
-                        c_fr = max(2, int(base_cons_fr * 2.0)) # Aspirated stops & affricates
+                        c_fr = max(3, int(base_cons_fr * 2.2)) # Aspirated stops & affricates
                     elif p in ["m", "n", "l", "r", "w", "y", "ng"]:
-                        c_fr = max(2, int(base_cons_fr * 1.5)) # Liquids/Nasals
+                        c_fr = max(3, int(base_cons_fr * 1.8)) # Liquids/Nasals — carry melody  
                     else:
-                        c_fr = max(1, int(base_cons_fr * 1.2)) # Voiced Plosives (b, d, g)
+                        c_fr = max(2, int(base_cons_fr * 1.5)) # Voiced Plosives (b, d, g)
                     cons_fr_list.append(c_fr)
                 
                 total_cons_fr = sum(cons_fr_list)
@@ -1181,11 +1182,16 @@ class DiffSingerONNXEngine:
             return None
 
     def _apply_post_processing(self, audio, params):
-        # 1. Warmth (low shelf) & Brightness (high shelf)
+        from scipy import signal
+        
+        # 0. High-pass filter to remove sub-bass rumble (below 60Hz) that muddies vocals
+        sos_hp = signal.butter(2, 60 / (self.sr/2), btype='high', output='sos')
+        audio = signal.sosfilt(sos_hp, audio).astype(np.float32)
+        
+        # 1. Warmth (low shelf) & Brightness (high shelf) — from user params
         warmth = float(params.get('warmth', 0.0)) if params else 0.0
         brightness = float(params.get('brightness', 0.0)) if params else 0.0
         
-        from scipy import signal
         if abs(warmth) > 0.05:
             sos = signal.butter(2, 300 / (self.sr/2), btype='low', output='sos')
             low_band = signal.sosfilt(sos, audio)
@@ -1195,8 +1201,16 @@ class DiffSingerONNXEngine:
             sos = signal.butter(2, 4000 / (self.sr/2), btype='high', output='sos')
             hi_band = signal.sosfilt(sos, audio)
             audio = audio + hi_band * brightness * 0.5
+        
+        # 2. Gentle presence boost (2-5kHz) to improve lyric clarity
+        try:
+            sos_pres = signal.butter(2, [2000 / (self.sr/2), 5000 / (self.sr/2)], btype='band', output='sos')
+            presence = signal.sosfilt(sos_pres, audio)
+            audio = audio + presence * 0.15  # subtle boost
+        except Exception:
+            pass
             
-        # 2. Reverb
+        # 3. Reverb — from user params
         reverb = float(params.get('reverb', 0.0)) if params else 0.0
         if reverb > 0.01:
             delays = [int(self.sr * d) for d in [0.030, 0.037, 0.041, 0.043]]
@@ -1206,11 +1220,35 @@ class DiffSingerONNXEngine:
                     padded = np.pad(audio, (d, 0))[:len(audio)]
                     out = out + padded * reverb * 0.3
             audio = out
+
+        # 4. Gentle compression to even out dynamics without crushing them
+        try:
+            from scipy.signal import lfilter
+            b, a = [0.001], [1.0, -0.999]  # slower envelope follower for gentler response
+            envelope = lfilter(b, a, np.abs(audio))
             
-        # Normalize
+            threshold_db = -12.0   # higher threshold = less compression (was -18)
+            ratio = 2.0            # lower ratio = more natural (was 3.2)
+            makeup_db = 3.0        # less makeup gain (was 5.5)
+            
+            threshold = 10 ** (threshold_db / 20.0)
+            makeup = 10 ** (makeup_db / 20.0)
+            
+            gain = np.ones_like(audio)
+            mask = envelope > threshold
+            if np.any(mask):
+                env_db = 20 * np.log10(envelope[mask] + 1e-8)
+                gain_db = (threshold_db - env_db) * (1.0 - 1.0 / ratio)
+                gain[mask] = 10 ** (gain_db / 20.0)
+                
+            audio = audio * gain * makeup
+        except Exception:
+            pass
+            
+        # 5. Normalize
         peak = np.max(np.abs(audio))
         if peak > 0.001:
-            audio = audio / peak * 0.90
+            audio = audio / peak * 0.92
             
         return audio
 

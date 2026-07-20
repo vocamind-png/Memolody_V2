@@ -1363,9 +1363,9 @@ def _studio_preview_impl(req: StudioPreviewReq):
         
         if _is_private:
             _safe_owner = _re_cache.sub(r'[^a-zA-Z0-9_-]', '_', req.owner_id)[:40]
-            _cached_name = f"song_{_safe_owner}_{_safe_id}_{_safe_key}_{req.bpm_pct}_{_safe_lm}_{_safe_vc}_tf{_timing_feel}_{_notes_hash}_v3.mp3"
+            _cached_name = f"song_{_safe_owner}_{_safe_id}_{_safe_key}_{req.bpm_pct}_{_safe_lm}_{_safe_vc}_tf{_timing_feel}_{_notes_hash}_v4.mp3"
         else:
-            _cached_name = f"song_{_safe_id}_{_safe_key}_{req.bpm_pct}_{_safe_lm}_{_safe_vc}_tf{_timing_feel}_{_notes_hash}_v3.mp3"
+            _cached_name = f"song_{_safe_id}_{_safe_key}_{req.bpm_pct}_{_safe_lm}_{_safe_vc}_tf{_timing_feel}_{_notes_hash}_v4.mp3"
         _cached_path = os.path.join("renders", _cached_name)
         if os.path.isfile(_cached_path) and os.path.getsize(_cached_path) > 1000:
             print(f"[Cache] ✅ Found existing render on disk: {_cached_name} — skipping GPU synthesis")
@@ -1581,25 +1581,17 @@ def _studio_preview_impl(req: StudioPreviewReq):
             engine_name = "simple_fallback"
 
     # Apply post-processing DSP effects (reverb, warmth, brightness, vibrato, breathiness, speed, pitch_shift)
-    # to all engines except 'studio_sampler' (which already ran apply_timbre per-note)
-    if audio is not None and engine_name != "studio_sampler":
+    # to NON-DiffSinger engines only.
+    # DiffSinger engines have their own high-quality post-processing built into ds_onnx_engine._apply_post_processing()
+    # Running apply_timbre on top of DiffSinger output causes harsh robotic artifacts from double compression/EQ/normalization.
+    if audio is not None and engine_name != "studio_sampler" and not engine_name.startswith("diffsinger_"):
         try:
             from voice_studio import apply_timbre
             dsp_params = req.params.copy() if req.params else {}
             
-            # If it's a DiffSinger engine, formant, vibrato, speed, and pitch are already processed inside the acoustic model natively.
-            # We set them to 0.0 (or 1.0 for speed) for apply_timbre to prevent robotic double-processing.
-            if engine_name.startswith("diffsinger_"):
-                dsp_params['formant_shift'] = 0.0
-                dsp_params['vibrato_depth'] = 0.0
-                dsp_params['vibrato_speed'] = 0.0
-                dsp_params['vibrato_rate'] = 0.0
-                dsp_params['pitch_shift'] = 0.0
-                dsp_params['speed'] = 1.0
-            
             # Read engine sample rate
             engine_sr = SR
-            if engine_name.startswith("diffsinger_") and _target_engine:
+            if _target_engine:
                 engine_sr = getattr(_target_engine, 'sr', SR)
             
             print(f"[DSP Post-Process] 🎛️ Applying timbre effects to {engine_name} output at {engine_sr}Hz...")
@@ -1609,6 +1601,9 @@ def _studio_preview_impl(req: StudioPreviewReq):
                 stems_audio = [apply_timbre(sa, engine_sr, dsp_params) for sa in stems_audio]
         except Exception as dsp_err:
             print(f"[DSP Post-Process] ⚠️ Failed: {dsp_err}")
+    elif engine_name.startswith("diffsinger_"):
+        print(f"[DSP Post-Process] ✅ Skipping apply_timbre for {engine_name} — using built-in post-processing only")
+
 
     # ── Persist render to disk FIRST (fast) then return URL ──────────────────
     # Skip expensive base64 encoding — client uses saved_url for playback
