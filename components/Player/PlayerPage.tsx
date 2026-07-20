@@ -1306,8 +1306,8 @@ const PlayerPage: React.FC<{
 
   // Sync favorite/folder from props
   useEffect(() => {
-    setIsFavorite(song?.isFavorite || false);
-    setCurrentFolderId(song?.folderId);
+    setIsFavorite(song?.metadata?.isFavorite || song?.isFavorite || false);
+    setCurrentFolderId(song?.folderId || song?.metadata?.folderId);
   }, [song]);
 
   // Load folders on mount
