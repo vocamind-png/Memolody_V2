@@ -2265,12 +2265,15 @@ def get_voices():
     if _ds_engine and _ds_engine.is_ready:
         voices.append({"id": "default", "name": "Native English (Default)", "type": "DiffSinger", "lang": "en", "vocal_modes": []})
         
-    # 2. Dynamic Downloaded Voices (Lotte V, Opencpop, etc.)
+    # 2. Dynamic Downloaded Voices — currently loaded in VRAM
+    listed_ids = set()
     for v_id, engine in _ds_engines.items():
         if v_id != "default" and engine.is_ready:
             name_label = v_id.replace("_", " ").title()
             if "lotte" in v_id.lower() or "ai_dol" in v_id.lower():
                 name_label = f"Lotte V Model ({name_label})"
+            elif "nico" in v_id.lower():
+                name_label = f"Nico"
             
             # Find vocal modes
             model_dir = getattr(engine, 'model_dir', None)
@@ -2280,14 +2283,32 @@ def get_voices():
                 
             model_files = get_model_files(v_id)
             voices.append({"id": v_id, "name": name_label, "type": "DiffSinger", "lang": "en", "vocal_modes": vocal_modes, "model_files": model_files})
+            listed_ids.add(v_id)
     
-    # 3. Lazy-loadable voices (not yet loaded into memory)
+    # 2b. Registered voices NOT currently loaded in VRAM (swap-loadable)
+    # These must still appear in the dropdown so user can select and render them
+    for v_id, (model_root, lang) in _voice_model_paths.items():
+        if v_id not in listed_ids and v_id != "default":
+            name_label = v_id.replace("_", " ").title()
+            if "lotte" in v_id.lower() or "ai_dol" in v_id.lower():
+                name_label = f"Lotte V Model ({name_label})"
+            elif "nico" in v_id.lower():
+                name_label = f"Nico"
+            
+            model_files = get_model_files(v_id)
+            vocal_modes = get_vocal_modes(os.path.join(english_voicebanks_dir, v_id))
+            voices.append({"id": v_id, "name": name_label, "type": "DiffSinger", "lang": lang, "vocal_modes": vocal_modes, "model_files": model_files})
+            listed_ids.add(v_id)
+    
+    # 3. Lazy-loadable voices (legacy path — not yet loaded into memory)
     for v_id in _lazy_voice_paths:
-        name_label = v_id.replace("_", " ").title()
-        ckpt, cfg = _lazy_voice_paths[v_id]
-        vocal_modes = get_vocal_modes(os.path.dirname(ckpt))
-        model_files = get_model_files(v_id)
-        voices.append({"id": v_id, "name": f"{name_label} ⏳", "type": "DiffSinger", "lang": "en", "vocal_modes": vocal_modes, "model_files": model_files})
+        if v_id not in listed_ids:
+            name_label = v_id.replace("_", " ").title()
+            ckpt, cfg = _lazy_voice_paths[v_id]
+            vocal_modes = get_vocal_modes(os.path.dirname(ckpt))
+            model_files = get_model_files(v_id)
+            voices.append({"id": v_id, "name": f"{name_label}", "type": "DiffSinger", "lang": "en", "vocal_modes": vocal_modes, "model_files": model_files})
+            listed_ids.add(v_id)
             
     # 4. Jianpu Chinese engine
     if DS_JIANPU_OK and _ds_jianpu_engine:
