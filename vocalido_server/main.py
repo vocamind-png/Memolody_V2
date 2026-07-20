@@ -178,47 +178,131 @@ RENDER_CLEANUP_INTERVAL = 3600 # Cleanup runs every 1 hour (seconds)
 RENDER_CLEANUP_INTERVAL = 3600 # Cleanup runs every 1 hour (seconds)
 
 engine_cache = {}
+# Track which voice is currently loaded to enable single-voice-at-a-time strategy
+_current_loaded_voice = None  # 'nico' or 'lotte_v_ai_dol'
+
+# Voice model paths for lazy-swap loading
+_voice_model_paths = {}
+
+def _unload_engine(voice_id):
+    """Unload a voice engine from GPU VRAM to free memory for another voice."""
+    global _ds_engines, engine_cache, _current_loaded_voice
+    if voice_id in _ds_engines:
+        engine = _ds_engines[voice_id]
+        print(f"[VRAM] 🔄 Unloading '{voice_id}' from GPU VRAM...")
+        # Release ONNX sessions
+        for attr in ['sess_acoustic', 'sess_vocoder', 'sess_dur', 'sess_pitch', 'sess_linguistic', 'sess_pitch_linguistic']:
+            sess = getattr(engine, attr, None)
+            if sess is not None:
+                try:
+                    del sess
+                except Exception:
+                    pass
+                setattr(engine, attr, None)
+        # Release PyTorch vocoder
+        if getattr(engine, 'vocos_pt', None) is not None:
+            try:
+                del engine.vocos_pt
+            except Exception:
+                pass
+            engine.vocos_pt = None
+        # Remove from registries
+        del _ds_engines[voice_id]
+        # Remove from engine_cache too
+        keys_to_remove = [k for k, v in engine_cache.items() if v is engine]
+        for k in keys_to_remove:
+            del engine_cache[k]
+        del engine
+        # Force garbage collection and CUDA flush
+        import gc
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+        except ImportError:
+            pass
+        if _current_loaded_voice == voice_id:
+            _current_loaded_voice = None
+        print(f"[VRAM] ✅ '{voice_id}' unloaded from GPU VRAM")
+
+def _swap_to_voice(target_voice_id):
+    """Swap GPU VRAM to load the target voice, unloading others first."""
+    global _ds_engines, engine_cache, _current_loaded_voice
+    
+    # Already loaded?
+    if target_voice_id in _ds_engines and _ds_engines[target_voice_id].is_ready:
+        _current_loaded_voice = target_voice_id
+        return _ds_engines[target_voice_id]
+    
+    # Need to load — first unload ALL other voices to free VRAM
+    voices_to_unload = [v for v in list(_ds_engines.keys()) if v != target_voice_id]
+    for v in voices_to_unload:
+        _unload_engine(v)
+    
+    # Now load the target voice
+    if target_voice_id not in _voice_model_paths:
+        print(f"[VRAM] ❌ No model path registered for '{target_voice_id}'")
+        return None
+    
+    model_root, language = _voice_model_paths[target_voice_id]
+    print(f"[VRAM] 🔄 Loading '{target_voice_id}' into GPU VRAM from {model_root}...")
+    try:
+        from ds_onnx_engine import DiffSingerONNXEngine
+        engine = DiffSingerONNXEngine(model_root, language=language)
+        if engine.is_ready:
+            engine_cache[model_root] = engine
+            _ds_engines[target_voice_id] = engine
+            _current_loaded_voice = target_voice_id
+            print(f"[VRAM] ✅ '{target_voice_id}' loaded into GPU VRAM!")
+            return engine
+        else:
+            print(f"[VRAM] ❌ Engine not ready for '{target_voice_id}'")
+            return None
+    except Exception as e:
+        print(f"[VRAM] ❌ Failed to load '{target_voice_id}': {e}")
+        import traceback
+        traceback.print_exc()
+        return None
 
 app = FastAPI(title="Vocalido SVS Engine", version="5.1.0")
 
 @app.on_event("startup")
 async def startup_event():
+    global _current_loaded_voice
     print("[Startup] Starting Vocalido Server...")
-    print("[Startup] Preloading models into GPU VRAM to ensure 24/7 instant rendering...")
+    print("[Startup] 💡 Single-voice VRAM strategy: load ONE voice at a time to prevent OOM")
     try:
         from ds_onnx_engine import DiffSingerONNXEngine
         
-        # Preload Lotte_V
+        # Register Lotte_V path for lazy-swap loading (do NOT preload — save VRAM)
         lotte_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'english_voicebanks', 'Lotte_V_AI_dol', 'Hoshino Hanami ~AIdol~ for DiffSinger v1.0', 'dsmain')
         if os.path.exists(lotte_root):
-            print(f"[Startup] Preloading {lotte_root}...")
-            engine = DiffSingerONNXEngine(lotte_root, language='en')
-            if getattr(engine, "is_ready", False):
-                engine_cache[lotte_root] = engine
-                _ds_engines['lotte_v_ai_dol'] = engine
-                print("[Startup] ✅ Lotte V model successfully preloaded into GPU VRAM!")
+            _voice_model_paths['lotte_v_ai_dol'] = (lotte_root, 'en')
+            print(f"[Startup] 📋 Registered Lotte V for lazy-swap loading: {lotte_root}")
 
-        # Preload Nico as Primary
+        # Preload ONLY Nico as Primary (saves ~10GB VRAM by not loading Lotte V simultaneously)
         nico_root = os.path.join(os.path.dirname(__file__), 'voicebanks', 'nico')
         if os.path.exists(nico_root):
-            print(f"[Startup] Preloading {nico_root}...")
+            _voice_model_paths['nico'] = (nico_root, 'en')
+            print(f"[Startup] Preloading Nico (primary voice)...")
             engine = DiffSingerONNXEngine(nico_root)
             if getattr(engine, "is_ready", False):
                 engine_cache[nico_root] = engine
                 _ds_engines['nico'] = engine
-                global _target_engine
-                _target_engine = engine
-                print("[Startup] ✅ Nico model successfully preloaded into GPU VRAM as PRIMARY!")
+                _current_loaded_voice = 'nico'
+                print("[Startup] ✅ Nico model preloaded into GPU VRAM as PRIMARY!")
                 
                 # WARMUP
-                print("[Startup] 🔥 Warming up GPU with a dummy render to lock VRAM...")
+                print("[Startup] 🔥 Warming up GPU with a dummy render...")
                 try:
                     engine.synthesize_phrase([{'midi': 60, 'duration': 1.0, 'startTime': 0.0, 'lyric': 'la'}])
                     print("[Startup] 🔥 Warmup complete! Instant render is now active.")
                 except Exception as e:
                     print(f"[Startup] ⚠️ Warmup failed: {e}")
         
-        print("[Startup] ✅ All available models successfully preloaded. Ready for instant rendering!")
+        print(f"[Startup] ✅ Ready! Loaded: {list(_ds_engines.keys())}. Lazy-swap available: {list(_voice_model_paths.keys())}")
     except Exception as e:
         print(f"[Startup] ❌ Preloading models failed: {e}")
         import traceback
@@ -1467,16 +1551,18 @@ def _studio_preview_impl(req: StudioPreviewReq):
         print(f"[DEBUG] Synthesis request: DS_ENGINE_OK={DS_ENGINE_OK}, voice={requested_voice}")
         
         _target_engine = _ds_engine
-        if target_voice in _ds_engines:
-            _target_engine = _ds_engines[target_voice]
+        # ── Single-voice VRAM strategy: swap to the requested voice ──
+        # This unloads any other voice from GPU before loading the requested one
+        if target_voice in _voice_model_paths or target_voice in _ds_engines:
+            swapped = _swap_to_voice(target_voice)
+            if swapped:
+                _target_engine = swapped
         elif target_voice in _lazy_voice_paths:
-            # Lazy load this voice on first use
+            # Legacy lazy load path (for non-registered voices)
             ckpt, cfg = _lazy_voice_paths[target_voice]
             print(f"[LazyLoad] 🔄 Loading voice '{target_voice}' on demand...")
             try:
                 from ds_onnx_engine import DiffSingerONNXEngine
-                # For ONNX models, ckpt is .../dsmain/acoustic.onnx
-                # The engine needs the model root (parent of dsmain/)
                 model_root = os.path.dirname(os.path.dirname(ckpt))
                 global engine_cache
                 if model_root in engine_cache:
@@ -1510,6 +1596,15 @@ def _studio_preview_impl(req: StudioPreviewReq):
                 
                 if audio is not None:
                     engine_name = f"diffsinger_{target_voice}"
+                    # Free fragmented VRAM after render to prevent OOM on next voice line
+                    import gc
+                    gc.collect()
+                    try:
+                        import torch
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                    except ImportError:
+                        pass
                 else:
                     debug_errors.append(f"DiffSinger returned None audio for {target_voice}")
             except Exception as e:

@@ -3149,7 +3149,8 @@ const PlayerPage: React.FC<{
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                setModalSelectedTracks(tracks.map(t => t.id));
+                // Default to first track only (melody) — user can select "All Tracks" manually
+                setModalSelectedTracks([tracks[0]?.id].filter(Boolean));
                 setShowRenderPrompt(true);
               }}
               className={`relative h-[18px] px-2 rounded-full flex items-center text-[7px] font-black uppercase tracking-widest transition-all border-none shadow-[0_0_10px_rgba(0,229,255,0.3)] group overflow-hidden ${

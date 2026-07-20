@@ -1124,10 +1124,10 @@ class VocalidoRenderService {
           const audioBlobs: Blob[] = [];
           const renderedPan: number[] = [];
 
-          // ── CONCURRENCY MANAGER (Future-proof for Multi-GPU) ──
-          // Adjust this value when upgrading server hardware to multiple GPUs
-          // or larger VRAM capacity that supports parallel DiffSinger inference.
-          const MAX_CONCURRENT_VOICES = 2;
+          // ── SEQUENTIAL RENDER (Single-GPU VRAM constraint) ──
+          // With 20GB VRAM, only one model fits at a time. Render voices sequentially
+          // to allow VRAM swap between different voice models if needed.
+          const MAX_CONCURRENT_VOICES = 1;
 
           console.log(`[VocalidoRenderService] 🎶 Server render: ${voiceLines.length} voices (Concurrency limit: ${MAX_CONCURRENT_VOICES})`);
 
