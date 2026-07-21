@@ -223,69 +223,75 @@ const App: React.FC = () => {
 
   // Global BGM Player Logic (Plays on splash screen and home page, unlocks on first gesture if blocked)
   const bgmRef = React.useRef<HTMLAudioElement>(null);
-  const bgmStoppedRef = React.useRef(false);
+  const bgmStoppedByUser = React.useRef(false); // true only after user explicitly clicks to stop
   const [bgmUnlocked, setBgmUnlocked] = React.useState(false);
   
+  // Attempt autoplay whenever bgmUrl is set
   useEffect(() => {
-    // Attempt autoplay when BGM url changes
-    if (bgmRef.current && !bgmStoppedRef.current && bgmUrl) {
+    if (bgmRef.current && bgmUrl && !bgmStoppedByUser.current) {
       bgmRef.current.volume = 0.8;
       bgmRef.current.play().then(() => {
         setBgmUnlocked(true);
-      }).catch(e => {
-        console.log('BGM autoplay blocked by browser, waiting for user gesture:', e);
+        console.log('[BGM] Autoplay succeeded.');
+      }).catch(() => {
+        console.log('[BGM] Autoplay blocked, will unlock on first gesture.');
       });
     }
   }, [bgmUrl]);
 
+  // Unlock audio on the very first user gesture (pointerdown fires before click)
   useEffect(() => {
-    // Pause BGM if navigating away from home/loading view
-    if (currentView !== 'home' && !isInitializing && bgmRef.current) {
-      bgmRef.current.pause();
-      bgmStoppedRef.current = true;
-    }
-  }, [currentView, isInitializing]);
-
-  useEffect(() => {
-    let hasUnlocked = false;
-    
-    const handleInteraction = () => {
-      if (bgmStoppedRef.current) return;
-      
-      // If BGM is already playing, stop it on click
-      if (bgmRef.current && !bgmRef.current.paused) {
-        bgmRef.current.pause();
-        bgmStoppedRef.current = true;
-        console.log('[BGM] Stopped by screen interaction.');
-        return;
-      }
-      
-      // First interaction: unlock autoplay and start BGM
-      if (!hasUnlocked && bgmRef.current && bgmUrl) {
+    let unlocked = false;
+    const unlockAudio = () => {
+      if (unlocked || bgmStoppedByUser.current) return;
+      if (bgmRef.current && bgmUrl) {
         bgmRef.current.volume = 0.8;
         bgmRef.current.play().then(() => {
-          hasUnlocked = true;
+          unlocked = true;
           setBgmUnlocked(true);
           console.log('[BGM] Unlocked and playing after user gesture.');
         }).catch(() => {});
       }
     };
-    
-    // Clicking or touching the screen: first time plays, second time stops
-    window.addEventListener('click', handleInteraction);
-    window.addEventListener('touchstart', handleInteraction);
-    
-    const stopBgmExplicit = () => {
-      bgmStoppedRef.current = true;
-      if (bgmRef.current) {
+    // pointerdown fires before click handlers — ensures BGM starts before navigation
+    window.addEventListener('pointerdown', unlockAudio, { once: true });
+    window.addEventListener('touchstart', unlockAudio, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', unlockAudio);
+      window.removeEventListener('touchstart', unlockAudio);
+    };
+  }, [bgmUrl]);
+
+  // Pause BGM when navigating away from home (but don't permanently stop — user can come back)
+  useEffect(() => {
+    if (currentView !== 'home' && !isInitializing && bgmRef.current && !bgmRef.current.paused) {
+      bgmRef.current.pause();
+      bgmStoppedByUser.current = true; // treat navigation as intentional stop
+      console.log('[BGM] Paused — navigated away from home.');
+    }
+  }, [currentView, isInitializing]);
+
+  // Click-to-stop: only fires after BGM has been unlocked and is actively playing
+  useEffect(() => {
+    const stopOnClick = () => {
+      if (bgmRef.current && !bgmRef.current.paused) {
         bgmRef.current.pause();
+        bgmStoppedByUser.current = true;
+        console.log('[BGM] Stopped by user click.');
       }
+    };
+    // Use a slight delay so the unlock pointerdown fires first
+    const handler = (e: MouseEvent) => { setTimeout(stopOnClick, 50); };
+    window.addEventListener('click', handler);
+
+    const stopBgmExplicit = () => {
+      bgmStoppedByUser.current = true;
+      if (bgmRef.current) bgmRef.current.pause();
     };
     document.addEventListener('stop-global-bgm', stopBgmExplicit);
     
     return () => {
-      window.removeEventListener('click', handleInteraction);
-      window.removeEventListener('touchstart', handleInteraction);
+      window.removeEventListener('click', handler);
       document.removeEventListener('stop-global-bgm', stopBgmExplicit);
     };
   }, [bgmUrl]);
