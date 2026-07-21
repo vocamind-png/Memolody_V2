@@ -222,67 +222,76 @@ const App: React.FC = () => {
   }, []);
 
   // ═══ BGM: Play "Where Dreams Align" on Title/Home screen ═══
-  const bgmRef = React.useRef<HTMLAudioElement>(null);
-  const bgmPlayingRef = React.useRef(false);
+  const bgmAudioRef = React.useRef<HTMLAudioElement | null>(null);
   const [bgmUnlocked, setBgmUnlocked] = React.useState(false);
 
-  // Helper: try to play BGM
-  const tryPlayBgm = React.useCallback(() => {
-    const audio = bgmRef.current;
-    if (!audio || !bgmUrl || bgmPlayingRef.current) return;
-    audio.volume = 0.8;
-    audio.play().then(() => {
-      bgmPlayingRef.current = true;
-      setBgmUnlocked(true);
-      console.log('[BGM] ▶ Playing:', bgmUrl);
-    }).catch(() => {
-      console.log('[BGM] Autoplay blocked — waiting for gesture.');
-    });
-  }, [bgmUrl]);
-
-  // 1. Try autoplay when bgmUrl becomes available
-  useEffect(() => {
-    if (bgmUrl) tryPlayBgm();
-  }, [bgmUrl, tryPlayBgm]);
-
-  // 2. Unlock on first user gesture (pointerdown fires earliest)
   useEffect(() => {
     if (!bgmUrl) return;
-    const unlock = () => {
-      tryPlayBgm();
-      // Remove listeners after first successful play
-      window.removeEventListener('pointerdown', unlock);
-      window.removeEventListener('touchstart', unlock);
-      window.removeEventListener('keydown', unlock);
-    };
-    window.addEventListener('pointerdown', unlock, { capture: true });
-    window.addEventListener('touchstart', unlock, { capture: true });
-    window.addEventListener('keydown', unlock, { capture: true });
-    return () => {
-      window.removeEventListener('pointerdown', unlock);
-      window.removeEventListener('touchstart', unlock);
-      window.removeEventListener('keydown', unlock);
-    };
-  }, [bgmUrl, tryPlayBgm]);
 
-  // 3. Stop BGM when navigating away from home (clicking any menu)
+    // Create standalone Audio object (not dependent on React DOM)
+    const audio = new Audio(bgmUrl);
+    audio.loop = true;
+    audio.volume = 0.8;
+    audio.preload = 'auto';
+    bgmAudioRef.current = audio;
+
+    // Try autoplay immediately
+    audio.play().then(() => {
+      setBgmUnlocked(true);
+      console.log('[BGM] ▶ Autoplay succeeded:', bgmUrl);
+    }).catch(() => {
+      console.log('[BGM] Autoplay blocked — will unlock on first gesture.');
+    });
+
+    // Unlock on ANY user gesture
+    const unlock = () => {
+      if (audio.paused && bgmUrl) {
+        audio.play().then(() => {
+          setBgmUnlocked(true);
+          console.log('[BGM] ▶ Unlocked after gesture:', bgmUrl);
+        }).catch((e) => {
+          console.warn('[BGM] Play failed even after gesture:', e);
+        });
+      }
+      // Remove all unlock listeners
+      window.removeEventListener('click', unlock, true);
+      window.removeEventListener('touchstart', unlock, true);
+      window.removeEventListener('pointerdown', unlock, true);
+      window.removeEventListener('keydown', unlock, true);
+    };
+    window.addEventListener('click', unlock, true);
+    window.addEventListener('touchstart', unlock, true);
+    window.addEventListener('pointerdown', unlock, true);
+    window.addEventListener('keydown', unlock, true);
+
+    return () => {
+      audio.pause();
+      audio.src = '';
+      bgmAudioRef.current = null;
+      window.removeEventListener('click', unlock, true);
+      window.removeEventListener('touchstart', unlock, true);
+      window.removeEventListener('pointerdown', unlock, true);
+      window.removeEventListener('keydown', unlock, true);
+    };
+  }, [bgmUrl]);
+
+  // Stop BGM when navigating away from home
   useEffect(() => {
     if (currentView !== 'home' && !isInitializing) {
-      const audio = bgmRef.current;
+      const audio = bgmAudioRef.current;
       if (audio && !audio.paused) {
         audio.pause();
         audio.currentTime = 0;
-        bgmPlayingRef.current = false;
         console.log('[BGM] ⏹ Stopped — left home screen.');
       }
     }
   }, [currentView, isInitializing]);
 
-  // 4. Explicit stop event (from other components)
+  // Explicit stop event (from other components)
   useEffect(() => {
     const stopBgm = () => {
-      const audio = bgmRef.current;
-      if (audio) { audio.pause(); audio.currentTime = 0; bgmPlayingRef.current = false; }
+      const audio = bgmAudioRef.current;
+      if (audio) { audio.pause(); audio.currentTime = 0; }
     };
     document.addEventListener('stop-global-bgm', stopBgm);
     return () => document.removeEventListener('stop-global-bgm', stopBgm);
@@ -1539,15 +1548,7 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {/* Global Background Music (stops on interaction) */}
-        <audio 
-          ref={bgmRef} 
-          src={bgmUrl || undefined} 
-          loop 
-          preload="auto" 
-          autoPlay
-          style={{ display: 'none' }}
-        />
+        {/* BGM is now handled via new Audio() in useEffect — no JSX element needed */}
       </div>
     </div>
   );
