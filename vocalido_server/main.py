@@ -2278,8 +2278,10 @@ def get_voices():
             name_label = v_id.replace("_", " ").title()
             if "lotte" in v_id.lower() or "ai_dol" in v_id.lower():
                 name_label = f"Lotte V Model ({name_label})"
+            elif v_id == 'nico_highpitch':
+                name_label = "Nico (High Pitch)"
             elif "nico" in v_id.lower():
-                name_label = f"Nico"
+                name_label = "Nico"
             
             # Find vocal modes
             model_dir = getattr(engine, 'model_dir', None)
@@ -2298,8 +2300,10 @@ def get_voices():
             name_label = v_id.replace("_", " ").title()
             if "lotte" in v_id.lower() or "ai_dol" in v_id.lower():
                 name_label = f"Lotte V Model ({name_label})"
+            elif v_id == 'nico_highpitch':
+                name_label = "Nico (High Pitch)"
             elif "nico" in v_id.lower():
-                name_label = f"Nico"
+                name_label = "Nico"
             
             model_files = get_model_files(v_id)
             vocal_modes = get_vocal_modes(os.path.join(english_voicebanks_dir, v_id))
