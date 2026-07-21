@@ -287,6 +287,12 @@ async def startup_event():
         if os.path.exists(nico_root):
             _voice_model_paths['nico'] = (nico_root, 'en')
             print(f"[Startup] Preloading Nico (primary voice)...")
+
+        # Register Nico High Pitch
+        nico_hp_root = os.path.join(os.path.dirname(__file__), 'voicebanks', 'nico_highpitch')
+        if os.path.exists(nico_hp_root):
+            _voice_model_paths['nico_highpitch'] = (nico_hp_root, 'en')
+            print(f"[Startup] 📋 Registered Nico High Pitch for lazy-swap loading: {nico_hp_root}")
             engine = DiffSingerONNXEngine(nico_root)
             if getattr(engine, "is_ready", False):
                 engine_cache[nico_root] = engine

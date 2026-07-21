@@ -1656,10 +1656,18 @@ const PlayerPage: React.FC<{
         console.log('[PlayerPage] 🎹 Restored tracks from localStorage:', restoredTracks);
         const hasLotte = voiceEngines.some(v => v.id === 'lotte_v_ai_dol') || 
                           (localStorage.getItem('vocalido_active_engine') === 'lotte_v_ai_dol');
+        const hasNicoHP = voiceEngines.some(v => v.id === 'nico_highpitch') || 
+                          (localStorage.getItem('vocalido_active_engine') === 'nico_highpitch');
         if (hasLotte) {
           restoredTracks = restoredTracks.map((t: any) => 
             (t.mode === 'vocal' && (t.engineId === 'default' || !t.engineId))
               ? { ...t, engineId: 'lotte_v_ai_dol' }
+              : t
+          );
+        } else if (hasNicoHP) {
+          restoredTracks = restoredTracks.map((t: any) => 
+            (t.mode === 'vocal' && (t.engineId === 'default' || !t.engineId))
+              ? { ...t, engineId: 'nico_highpitch' }
               : t
           );
         }
@@ -2232,11 +2240,12 @@ const PlayerPage: React.FC<{
           }
 
           // Auto-select Nico as primary voice, fallback to lotte_v_ai_dol, then first non-default
-          const storedEngine = localStorage.getItem('vocalido_active_engine');
           const hasNico = uniqueVoices.some((v: any) => v.id === 'nico');
+          const hasNicoHP = uniqueVoices.some((v: any) => v.id === 'nico_highpitch');
           const hasLotte = uniqueVoices.some((v: any) => v.id === 'lotte_v_ai_dol');
-          const defaultVoiceId = hasNico ? 'nico' : (hasLotte ? 'lotte_v_ai_dol' : (uniqueVoices.find((v: any) => v.id !== 'default')?.id || 'default'));
+          const defaultVoiceId = hasNico ? 'nico' : (hasNicoHP ? 'nico_highpitch' : (hasLotte ? 'lotte_v_ai_dol' : (uniqueVoices.find((v: any) => v.id !== 'default')?.id || 'default')));
           
+          const storedEngine = localStorage.getItem('vocalido_active_engine');
           const currentActive = storedEngine || activeEngineId;
           // Only auto-upgrade from 'default' placeholder to Nico — respect explicit user choices (e.g. lotte_v_ai_dol)
           const shouldUpgradeToNico = hasNico && currentActive === 'default';
@@ -2305,6 +2314,14 @@ const PlayerPage: React.FC<{
                 pitch: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dspitch/pitch.onnx',
                 pitchLinguistic: '/vocalido/voicebanks/Lotte_V_AI_dol/Hoshino Hanami ~AIdol~ for DiffSinger v1.0/dspitch/linguistic.onnx'
               }
+            },
+            { 
+              id: 'nico_highpitch', 
+              name: 'Nico (High Pitch)', 
+              type: 'DiffSinger', 
+              lang: 'en', 
+              vocal_modes: [], 
+              model_files: {} 
             }
           ]);
           setActiveEngineId('nico');
@@ -3874,7 +3891,18 @@ const PlayerPage: React.FC<{
                     }`}
                   >
                     <span className="text-xl">👦🏻</span>
-                    <span className="text-[10px] font-black uppercase tracking-wider">Nico</span>
+                    <span className="text-[10px] font-black uppercase tracking-wider text-center">Nico<br/>(Normal)</span>
+                  </button>
+                  <button
+                    onClick={() => setActiveEngineId('nico_highpitch')}
+                    className={`flex-1 py-2 px-3 rounded-xl border flex flex-col items-center gap-1 transition-all ${
+                      activeEngineId === 'nico_highpitch'
+                        ? 'bg-amber-500/20 border-amber-400 text-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.3)]'
+                        : 'bg-zinc-900/50 border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:bg-zinc-800'
+                    }`}
+                  >
+                    <span className="text-xl">👦🏼</span>
+                    <span className="text-[10px] font-black uppercase tracking-wider text-center">Nico<br/>(High)</span>
                   </button>
                   <button
                     onClick={() => setActiveEngineId('lotte_v_ai_dol')}
@@ -3885,7 +3913,7 @@ const PlayerPage: React.FC<{
                     }`}
                   >
                     <span className="text-xl">👩🏻</span>
-                    <span className="text-[10px] font-black uppercase tracking-wider">Lotte V</span>
+                    <span className="text-[10px] font-black uppercase tracking-wider text-center">Lotte V<br/>(Ai Dol)</span>
                   </button>
                 </div>
               </div>
