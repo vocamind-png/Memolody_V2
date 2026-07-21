@@ -158,10 +158,7 @@ const App: React.FC = () => {
   useEffect(() => { currentViewRef.current = currentView; }, [currentView]);
 
   const { bgmUrl, bgmTitle, bgmCover } = React.useMemo(() => {
-    // Play BGM on the home page or during app initialization
-    if (currentView !== 'home' && !isInitializing) {
-      return { bgmUrl: '', bgmTitle: '', bgmCover: '' };
-    }
+    // Always compute the BGM URL (play/pause controlled separately)
     try {
       const title = selectedSong ? selectedSong.title.toLowerCase() : '';
       if (title.includes('minuet')) return { bgmUrl: '/audio/minuet_in_g.mp3', bgmTitle: 'Minuet in G (Ambient)', bgmCover: '/images/memolody_hero.png' };
@@ -169,7 +166,7 @@ const App: React.FC = () => {
       if (title.includes('forest')) return { bgmUrl: '/audio/forest_bgm.mp3', bgmTitle: 'Forest (Ambient)', bgmCover: '/images/memolody_hero.png' };
     } catch(e) {}
     return { bgmUrl: '/audio/Where_Dreams_Align.mp3', bgmTitle: 'Where Dreams Align', bgmCover: '/images/memolody_hero.png' };
-  }, [selectedSong, currentView, isInitializing]);
+  }, [selectedSong]);
   const [performanceMode, setPerformanceMode] = useState(() => localStorage.getItem('nimo_perf_mode') === 'true');
   const [uiTheme, setUiTheme] = useState<'v1' | 'v2'>(() => (localStorage.getItem('memo_ui_theme') as 'v1' | 'v2') || 'v2');
   const [nimoPosition, setNimoPosition] = useState<'left' | 'right'>(() => (localStorage.getItem('nimo_position') as 'left' | 'right') || 'left');
@@ -223,37 +220,45 @@ const App: React.FC = () => {
 
   // ═══ BGM: Play "Where Dreams Align" on Title/Home screen ═══
   const bgmAudioRef = React.useRef<HTMLAudioElement | null>(null);
+  const bgmUnlockedRef = React.useRef(false);
   const [bgmUnlocked, setBgmUnlocked] = React.useState(false);
 
+  // Create Audio object once when bgmUrl is available
   useEffect(() => {
     if (!bgmUrl) return;
 
-    // Create standalone Audio object (not dependent on React DOM)
     const audio = new Audio(bgmUrl);
     audio.loop = true;
     audio.volume = 0.8;
     audio.preload = 'auto';
     bgmAudioRef.current = audio;
+    console.log('[BGM] Audio created:', bgmUrl);
 
-    // Try autoplay immediately
-    audio.play().then(() => {
-      setBgmUnlocked(true);
-      console.log('[BGM] ▶ Autoplay succeeded:', bgmUrl);
-    }).catch(() => {
-      console.log('[BGM] Autoplay blocked — will unlock on first gesture.');
-    });
+    // Try autoplay (only on home/init)
+    if (currentViewRef.current === 'home') {
+      audio.play().then(() => {
+        bgmUnlockedRef.current = true;
+        setBgmUnlocked(true);
+        console.log('[BGM] ▶ Autoplay succeeded');
+      }).catch(() => {
+        console.log('[BGM] Autoplay blocked — waiting for gesture');
+      });
+    }
 
-    // Unlock on ANY user gesture
+    // Unlock on first gesture (only play if still on home)
     const unlock = () => {
-      if (audio.paused && bgmUrl) {
+      if (bgmUnlockedRef.current) return;
+      const view = currentViewRef.current;
+      if (audio.paused && (view === 'home')) {
         audio.play().then(() => {
+          bgmUnlockedRef.current = true;
           setBgmUnlocked(true);
-          console.log('[BGM] ▶ Unlocked after gesture:', bgmUrl);
+          console.log('[BGM] ▶ Unlocked after gesture on home screen');
         }).catch((e) => {
-          console.warn('[BGM] Play failed even after gesture:', e);
+          console.warn('[BGM] Play failed:', e);
         });
       }
-      // Remove all unlock listeners
+      // Remove listeners after first attempt
       window.removeEventListener('click', unlock, true);
       window.removeEventListener('touchstart', unlock, true);
       window.removeEventListener('pointerdown', unlock, true);
@@ -268,21 +273,22 @@ const App: React.FC = () => {
       audio.pause();
       audio.src = '';
       bgmAudioRef.current = null;
+      bgmUnlockedRef.current = false;
       window.removeEventListener('click', unlock, true);
       window.removeEventListener('touchstart', unlock, true);
       window.removeEventListener('pointerdown', unlock, true);
       window.removeEventListener('keydown', unlock, true);
     };
-  }, [bgmUrl]);
+  }, [bgmUrl]); // Only recreate if song changes
 
-  // Stop BGM when navigating away from home
+  // Pause BGM when navigating away from home
   useEffect(() => {
+    const audio = bgmAudioRef.current;
+    if (!audio) return;
     if (currentView !== 'home' && !isInitializing) {
-      const audio = bgmAudioRef.current;
-      if (audio && !audio.paused) {
+      if (!audio.paused) {
         audio.pause();
-        audio.currentTime = 0;
-        console.log('[BGM] ⏹ Stopped — left home screen.');
+        console.log('[BGM] ⏹ Paused — left home screen');
       }
     }
   }, [currentView, isInitializing]);
