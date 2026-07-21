@@ -2272,7 +2272,7 @@ def get_voices():
             name_label = v_id.replace("_", " ").title()
             if "lotte" in v_id.lower() or "ai_dol" in v_id.lower():
                 name_label = f"Lotte V Model ({name_label})"
-            elif \"nico\" in v_id.lower():
+            elif "nico" in v_id.lower():
                 name_label = "Nico"
             
             # Find vocal modes
