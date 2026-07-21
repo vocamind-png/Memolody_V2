@@ -242,21 +242,38 @@ const App: React.FC = () => {
     // Pause BGM if navigating away from home/loading view
     if (currentView !== 'home' && !isInitializing && bgmRef.current) {
       bgmRef.current.pause();
+      bgmStoppedRef.current = true;
     }
   }, [currentView, isInitializing]);
 
   useEffect(() => {
-    const stopBgmOnClick = () => {
+    let hasUnlocked = false;
+    
+    const handleInteraction = () => {
+      if (bgmStoppedRef.current) return;
+      
+      // If BGM is already playing, stop it on click
       if (bgmRef.current && !bgmRef.current.paused) {
         bgmRef.current.pause();
         bgmStoppedRef.current = true;
         console.log('[BGM] Stopped by screen interaction.');
+        return;
+      }
+      
+      // First interaction: unlock autoplay and start BGM
+      if (!hasUnlocked && bgmRef.current && bgmUrl) {
+        bgmRef.current.volume = 0.8;
+        bgmRef.current.play().then(() => {
+          hasUnlocked = true;
+          setBgmUnlocked(true);
+          console.log('[BGM] Unlocked and playing after user gesture.');
+        }).catch(() => {});
       }
     };
     
-    // Clicking or touching the screen stops the background music
-    window.addEventListener('click', stopBgmOnClick);
-    window.addEventListener('touchstart', stopBgmOnClick);
+    // Clicking or touching the screen: first time plays, second time stops
+    window.addEventListener('click', handleInteraction);
+    window.addEventListener('touchstart', handleInteraction);
     
     const stopBgmExplicit = () => {
       bgmStoppedRef.current = true;
@@ -267,8 +284,8 @@ const App: React.FC = () => {
     document.addEventListener('stop-global-bgm', stopBgmExplicit);
     
     return () => {
-      window.removeEventListener('click', stopBgmOnClick);
-      window.removeEventListener('touchstart', stopBgmOnClick);
+      window.removeEventListener('click', handleInteraction);
+      window.removeEventListener('touchstart', handleInteraction);
       document.removeEventListener('stop-global-bgm', stopBgmExplicit);
     };
   }, [bgmUrl]);
