@@ -3839,17 +3839,17 @@ const PlayerPage: React.FC<{
         {/* ── [SVS READY RENDER PROMPT] ── */}
         {showRenderPrompt && (
 
-          <div className="fixed inset-0 z-[6000] flex items-center justify-center bg-black/70 backdrop-blur-md pointer-events-auto">
-            <div className="relative flex flex-col items-center p-8 bg-zinc-950/95 border border-zinc-800 rounded-3xl w-[320px] shadow-[0_20px_50px_rgba(0,0,0,0.8)] animate-in zoom-in-95 duration-300">
-              <div className="relative w-28 h-28 flex items-center justify-center mb-6">
+          <div className="fixed inset-0 z-[6000] flex items-center justify-center bg-black/70 backdrop-blur-md pointer-events-auto py-4">
+            <div className="relative flex flex-col items-center p-8 bg-zinc-950/95 border border-zinc-800 rounded-3xl w-[320px] max-h-[90vh] overflow-y-auto no-scrollbar shadow-[0_20px_50px_rgba(0,0,0,0.8)] animate-in zoom-in-95 duration-300">
+              <div className="relative w-28 h-28 flex items-center justify-center mb-6 shrink-0">
                 <div className="absolute inset-0 rounded-full bg-cyan-500/20 animate-ping" style={{ animationDuration: '3s' }} />
                 <div className="absolute -inset-2 rounded-full bg-gradient-to-tr from-cyan-400 to-indigo-500 opacity-20 blur-xl animate-pulse" />
-                <div className="relative w-24 h-24 rounded-full bg-gradient-to-br from-cyan-500 to-indigo-600 shadow-[0_0_30px_rgba(6,182,212,0.4)] flex items-center justify-center border border-white/10">
-                  <Sparkles size={36} className="text-black animate-pulse" />
+                <div className="relative w-24 h-24 rounded-full bg-gradient-to-br from-cyan-500 to-indigo-600 shadow-[0_0_30px_rgba(6,182,212,0.4)] flex items-center justify-center border border-white/10 shrink-0">
+                  <Sparkles size={36} className="text-black animate-pulse shrink-0" />
                 </div>
               </div>
-              <h3 className="text-base font-black text-white text-center mb-2 uppercase tracking-widest">Render AI Vocals?</h3>
-              <p className="text-[10px] text-zinc-400 text-center mb-4 px-1 leading-relaxed">
+              <h3 className="text-base font-black text-white text-center mb-2 uppercase tracking-widest shrink-0">Render AI Vocals?</h3>
+              <p className="text-[10px] text-zinc-400 text-center mb-4 px-1 leading-relaxed shrink-0">
                 {svsEngine === 'vocalido' ? (
                   <>
                     Would you like to render the AI vocals now using the <span className="text-cyan-400 font-bold">Local SVS Server (Vocalido)</span>?
@@ -3860,6 +3860,35 @@ const PlayerPage: React.FC<{
                   </>
                 )}
               </p>
+
+              {/* Voice Selection UI */}
+              <div className="w-full flex flex-col gap-2 mb-6 shrink-0">
+                <span className="text-[9px] font-black text-cyan-400 uppercase tracking-widest mb-1 border-b border-white/10 pb-1">Select Voice</span>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setActiveEngineId('nico')}
+                    className={`flex-1 py-2 px-3 rounded-xl border flex flex-col items-center gap-1 transition-all ${
+                      activeEngineId === 'nico'
+                        ? 'bg-cyan-500/20 border-cyan-400 text-cyan-400 shadow-[0_0_10px_rgba(6,182,212,0.3)]'
+                        : 'bg-zinc-900/50 border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:bg-zinc-800'
+                    }`}
+                  >
+                    <span className="text-xl">👦🏻</span>
+                    <span className="text-[10px] font-black uppercase tracking-wider">Nico</span>
+                  </button>
+                  <button
+                    onClick={() => setActiveEngineId('lotte_v_ai_dol')}
+                    className={`flex-1 py-2 px-3 rounded-xl border flex flex-col items-center gap-1 transition-all ${
+                      activeEngineId === 'lotte_v_ai_dol'
+                        ? 'bg-indigo-500/20 border-indigo-400 text-indigo-400 shadow-[0_0_10px_rgba(129,140,248,0.3)]'
+                        : 'bg-zinc-900/50 border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:bg-zinc-800'
+                    }`}
+                  >
+                    <span className="text-xl">👩🏻</span>
+                    <span className="text-[10px] font-black uppercase tracking-wider">Lotte V</span>
+                  </button>
+                </div>
+              </div>
 
               {/* Track Selection UI */}
               {tracks.length > 1 && (

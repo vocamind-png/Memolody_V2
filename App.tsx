@@ -1530,6 +1530,7 @@ const App: React.FC = () => {
           src={bgmUrl || undefined} 
           loop 
           preload="auto" 
+          autoPlay
           style={{ display: 'none' }}
         />
       </div>
