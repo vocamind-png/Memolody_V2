@@ -808,22 +808,59 @@ class DiffSingerONNXEngine:
 
             # Convert predicted pitch (pp) to Hz for acoustic session and vocoder
             pp_final = pp.copy()
-            voiced_frames = pp_final[pp_final > 2.0]
+            voiced_mask_pred = pp_final > 2.0
+            voiced_frames = pp_final[voiced_mask_pred]
             v_mean = np.mean(voiced_frames) if len(voiced_frames) > 0 else 0.0
+            v_max = np.max(voiced_frames) if len(voiced_frames) > 0 else 0.0
             
-            if 0.1 < v_mean < 10.0:
-                # Log F0 -> convert to Hz
-                voicing_mask = pp_final > 0
-                pp_hz = np.zeros_like(pp_final)
-                pp_hz[voicing_mask] = np.exp(pp_final[voicing_mask])
-                pp_final = pp_hz
-            elif 10.0 <= v_mean < 100.0:
-                # MIDI semitones -> convert to Hz
+            # Use the known input MIDI guide to disambiguate pitch output format.
+            # DiffSinger pitch models typically output MIDI semitones (range ~36-84 for normal singing).
+            guide_voiced = f0_midi_arr[f0_midi_arr > 0]
+            guide_mean = np.mean(guide_voiced) if len(guide_voiced) > 0 else 60.0
+            
+            print(f"[DEBUG] Pitch prediction stats: v_mean={v_mean:.2f}, v_max={v_max:.2f}, guide_mean={guide_mean:.2f}")
+            
+            if v_mean >= 100.0:
+                # Already in Hz (e.g., values like 220, 440, 880)
+                print(f"[DEBUG] Pitch format: Hz (v_mean={v_mean:.1f})")
+            elif v_mean >= 20.0:
+                # MIDI semitones → convert to Hz
+                # Typical singing range: MIDI 36 (C2) to 84 (C6)
+                print(f"[DEBUG] Pitch format: MIDI semitones (v_mean={v_mean:.1f})")
                 voicing_mask = pp_final > 0
                 pp_hz = np.zeros_like(pp_final)
                 pp_hz[voicing_mask] = 440.0 * (2.0 ** ((pp_final[voicing_mask] - 69.0) / 12.0))
                 pp_final = pp_hz
-            # If v_mean >= 100.0, it is already in Hz.
+            elif 0.1 < v_mean < 20.0:
+                # Could be log-f0 OR low MIDI values (residual/delta from guide).
+                # If the guide expects MIDI ~60 but prediction is ~5-8, it's likely a
+                # residual/delta that needs to be added to the guide, OR it's log-f0.
+                # Test: if exp(v_mean) gives reasonable Hz (80-2000), treat as log-f0.
+                # Otherwise treat as MIDI delta from guide.
+                exp_test = np.exp(v_mean) if v_mean < 10.0 else 0.0
+                if 50.0 < exp_test < 2000.0 and abs(v_mean - guide_mean) > 30:
+                    # log-f0 → convert via exp()
+                    print(f"[DEBUG] Pitch format: log-f0 (v_mean={v_mean:.2f}, exp={exp_test:.1f}Hz)")
+                    voicing_mask = pp_final > 0
+                    pp_hz = np.zeros_like(pp_final)
+                    pp_hz[voicing_mask] = np.exp(pp_final[voicing_mask])
+                    pp_final = pp_hz
+                else:
+                    # Treat as MIDI semitone delta from guide — add to guide MIDI
+                    # This happens with variance-adapter pitch models that predict
+                    # offsets from the note_midi guide rather than absolute values.
+                    print(f"[DEBUG] Pitch format: MIDI delta/residual (v_mean={v_mean:.2f}, adding to guide MIDI)")
+                    voicing_mask_guide = f0_midi_arr > 0
+                    pp_corrected = np.zeros_like(pp_final)
+                    min_len = min(pp_final.shape[-1], len(f0_midi_arr))
+                    for idx in range(min_len):
+                        if pp_final.flat[idx] != 0 and f0_midi_arr[idx] > 0:
+                            midi_val = f0_midi_arr[idx] + pp_final.flat[idx]
+                            pp_corrected.flat[idx] = 440.0 * (2.0 ** ((midi_val - 69.0) / 12.0))
+                        elif f0_midi_arr[idx] > 0:
+                            pp_corrected.flat[idx] = 440.0 * (2.0 ** ((f0_midi_arr[idx] - 69.0) / 12.0))
+                    pp_final = pp_corrected.reshape(pp_final.shape)
+            # If v_mean <= 0.1, all frames are essentially silent — keep as zeros
 
             # ----- HUMANIZED INTONATION BLEND -----
             NEURAL_BLEND = float(params.get("pitch_blend", 0.3)) if params else 0.3

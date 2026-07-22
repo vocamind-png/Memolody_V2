@@ -1619,25 +1619,9 @@ class VocalidoRenderService {
                 console.log(`[VocalidoRenderService] ✅ Vocal layer added for ${tid}`);
               }
             }
-            
-            for (const tid of vocalTrackIds) {
-              // For polyphonic mode: assign its individual stem url so we get proper separation.
-              // Fall back to cacheBustedUrl only if individual stems are not available.
-              const tAudioUrl = ((stemsByTrack[tid] || []).length > 0)
-                ? (stemsByTrack[tid] || [])[0]
-                : (tid === primaryVocalTrackId ? cacheBustedUrl : "");
-              if (tAudioUrl) {
-                let audioEl = musicEngine.vocalAudioElements.get(tid);
-                if (!audioEl) {
-                  audioEl = new Audio();
-                  audioEl.crossOrigin = 'anonymous';
-                  audioEl.preservesPitch = true;
-                  musicEngine.vocalAudioElements.set(tid, audioEl);
-                }
-                audioEl.src = tAudioUrl;
-                audioEl.load();
-              }
-            }
+            // NOTE: Removed redundant second loop that was overwriting audio.src with raw server URLs.
+            // addVocalLayer() above already handles: svsFetch → blob URL → audio.src = blob:... → audio.load()
+            // The old loop was destroying those blob URLs by overwriting with raw server paths.
 
             musicEngine.setTransportSeconds(livePos);
             console.log('[VocalidoRenderService] ▶ Auto-starting playback after render completion...');
