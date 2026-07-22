@@ -845,16 +845,8 @@ const HomePage: React.FC<HomePageProps> = ({
     let list: typeof userLibrary = [];
     switch (activeTab) {
       case 'home':
-        // Show only non-deleted songs from Baroque, Classical, and Romantic eras on the home tab
-        list = userLibrary.filter(item => {
-          if (item.metadata.isDeleted) return false;
-          const m = item.metadata as any;
-          let era = (m.era || '').toLowerCase().trim();
-          if (!era) {
-            era = detectEraFromName(m.composer || m.artist || '').toLowerCase();
-          }
-          return era === 'baroque' || era === 'classical' || era === 'romantic' || era === 'classic';
-        });
+        // Show ALL non-deleted songs on the main Home tab so user songs are never hidden
+        list = userLibrary.filter(item => !item.metadata.isDeleted);
         break;
       case 'favorites':
         list = userLibrary.filter(item => !item.metadata.isDeleted && item.metadata.isFavorite);

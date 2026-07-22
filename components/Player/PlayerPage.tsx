@@ -4401,12 +4401,13 @@ const PlayerPage: React.FC<{
           {/* Floating Translucent Eye - Shows ONLY when transport is completely hidden */}
           <button
             onClick={() => {
+              setIsTransportHidden(false);
               const el = document.getElementById('transport-container');
               if (el) {
                 el.style.transform = 'translateY(0)';
               }
             }}
-            className={`absolute bottom-4 left-1/2 -translate-x-1/2 z-[5000] w-12 h-8 bg-white/10 backdrop-blur-md rounded-full border border-white/20 shadow-[0_0_20px_rgba(255,255,255,0.1)] flex items-center justify-center text-white/50 hover:text-white hover:bg-white/20 transition-all duration-300 md:hidden no-print ${!isTransportHidden ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
+            className={`absolute bottom-4 left-1/2 -translate-x-1/2 z-[5000] w-12 h-8 bg-white/10 backdrop-blur-md rounded-full border border-white/20 shadow-[0_0_20px_rgba(255,255,255,0.1)] flex items-center justify-center text-white/50 hover:text-white hover:bg-white/20 transition-all duration-300 pointer-events-auto no-print ${!isTransportHidden ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
             title="Show Controls"
           >
             <Eye size={20} />
