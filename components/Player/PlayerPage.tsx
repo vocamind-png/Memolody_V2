@@ -896,7 +896,7 @@ const PlayerPage: React.FC<{
       const stored = localStorage.getItem('vocalido_active_engine');
       if (stored) return stored;
     } catch (e) {}
-    return 'lotte_v_ai_dol';
+    return 'nico';
   });
 
   // Auto-load voice model in the background when active voice or engine changes
@@ -1654,15 +1654,12 @@ const PlayerPage: React.FC<{
                             restoredTracks.every(t => partIds.includes(t.id));
       if (matchesParsed) {
         console.log('[PlayerPage] 🎹 Restored tracks from localStorage:', restoredTracks);
-        const hasLotte = voiceEngines.some(v => v.id === 'lotte_v_ai_dol') || 
-                          (localStorage.getItem('vocalido_active_engine') === 'lotte_v_ai_dol');
-        if (hasLotte) {
-          restoredTracks = restoredTracks.map((t: any) => 
-            (t.mode === 'vocal' && (t.engineId === 'default' || !t.engineId))
-              ? { ...t, engineId: 'lotte_v_ai_dol' }
-              : t
-          );
-        }
+        const currentSavedEngine = (() => { try { return localStorage.getItem('vocalido_active_engine') || activeEngineId || 'nico'; } catch { return 'nico'; } })();
+        restoredTracks = restoredTracks.map((t: any) => 
+          (t.mode === 'vocal' && (t.engineId === 'default' || !t.engineId))
+            ? { ...t, engineId: currentSavedEngine }
+            : t
+        );
         
         // Ensure lyricMode uses the global persistent mode
         const savedLyricMode = (() => { try { return localStorage.getItem('memo_lyric_mode') || ''; } catch { return ''; } })();
@@ -2733,9 +2730,11 @@ const PlayerPage: React.FC<{
     // Removed: Do not clear history on track changes, history supports multiple track sets
 
     const primaryTrackId = renderTracks.find(t => t.mode === 'vocal')?.id || renderTracks[0]?.id || 'P1';
-    let trackEngineId = renderTracks.find(t => t.id === primaryTrackId)?.engineId || activeEngineId;
-    if (trackEngineId === 'default' || !voiceEngines.some(v => v.id === trackEngineId)) {
-      trackEngineId = activeEngineId;
+    // Prioritize activeEngineId currently chosen by user
+    let trackEngineId = activeEngineId;
+    const vocalTrackEngine = renderTracks.find(t => t.id === primaryTrackId)?.engineId;
+    if (vocalTrackEngine && vocalTrackEngine !== 'default' && voiceEngines.some(v => v.id === vocalTrackEngine)) {
+      trackEngineId = vocalTrackEngine;
     }
     if (!voiceEngines.some(v => v.id === trackEngineId) && voiceEngines.length > 0) {
       trackEngineId = voiceEngines[0].id;
@@ -3866,7 +3865,18 @@ const PlayerPage: React.FC<{
                 <span className="text-[9px] font-black text-cyan-400 uppercase tracking-widest mb-1 border-b border-white/10 pb-1">Select Voice</span>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => setActiveEngineId('nico')}
+                    onClick={() => {
+                      const voiceId = 'nico';
+                      setActiveEngineId(voiceId);
+                      try { localStorage.setItem('vocalido_active_engine', voiceId); } catch (e) {}
+                      setStoredSinger('Nico');
+                      setTracks((prev: any) => {
+                        const hasVocal = prev.some((t: any) => t.mode === 'vocal');
+                        return prev.map((t: any, i: number) => 
+                          (t.mode === 'vocal' || (!hasVocal && i === 0)) ? { ...t, engineId: voiceId } : t
+                        );
+                      });
+                    }}
                     className={`flex-1 py-2 px-3 rounded-xl border flex flex-col items-center gap-1 transition-all ${
                       activeEngineId === 'nico'
                         ? 'bg-cyan-500/20 border-cyan-400 text-cyan-400 shadow-[0_0_10px_rgba(6,182,212,0.3)]'
@@ -3877,7 +3887,18 @@ const PlayerPage: React.FC<{
                     <span className="text-[10px] font-black uppercase tracking-wider">Nico</span>
                   </button>
                   <button
-                    onClick={() => setActiveEngineId('lotte_v_ai_dol')}
+                    onClick={() => {
+                      const voiceId = 'lotte_v_ai_dol';
+                      setActiveEngineId(voiceId);
+                      try { localStorage.setItem('vocalido_active_engine', voiceId); } catch (e) {}
+                      setStoredSinger('Lotte V Model (Lotte V Ai Dol)');
+                      setTracks((prev: any) => {
+                        const hasVocal = prev.some((t: any) => t.mode === 'vocal');
+                        return prev.map((t: any, i: number) => 
+                          (t.mode === 'vocal' || (!hasVocal && i === 0)) ? { ...t, engineId: voiceId } : t
+                        );
+                      });
+                    }}
                     className={`flex-1 py-2 px-3 rounded-xl border flex flex-col items-center gap-1 transition-all ${
                       activeEngineId === 'lotte_v_ai_dol'
                         ? 'bg-indigo-500/20 border-indigo-400 text-indigo-400 shadow-[0_0_10px_rgba(129,140,248,0.3)]'
