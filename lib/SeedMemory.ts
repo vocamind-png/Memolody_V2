@@ -69,6 +69,31 @@ const generateBlankTemplateXml = (title: string, composer: string, bpm: number, 
 };
 
 export const seedMemory = {
+  async seedMasterpiecesIfEmpty() {
+    try {
+      const existing = await songStorage.getAllSongs();
+      if (existing.length > 0) return existing;
+      for (let i = 0; i < MASTER_SEED_LIST.length; i++) {
+        const item = MASTER_SEED_LIST[i];
+        const targetId = `masterpiece-${i}`;
+        const xml = generateBlankTemplateXml(item.name, item.composer, item.bpm, item.key);
+        const { metadata, xmlData } = await parseMusicXMLMetadata(xml, false);
+        metadata.id = targetId;
+        metadata.title = item.name;
+        metadata.artist = item.composer;
+        metadata.bpm = item.bpm;
+        metadata.key = item.key;
+        metadata.category = item.era;
+        metadata.duration = 60;
+        await songStorage.saveSong(metadata, xmlData);
+      }
+      return await songStorage.getAllSongs();
+    } catch (e) {
+      console.warn('[seedMemory] Failed to seed masterpieces:', e);
+      return [];
+    }
+  },
+
   async syncMasterSeed(onProgress?: (count: number) => void) {
     // Clear existing
     await songStorage.deleteAllSongs();

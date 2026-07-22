@@ -21,6 +21,7 @@ import { songStorage } from './lib/SongStorage';
 import { DEMO_SONGS } from './data/demo_songs';
 import { SplashLoader } from './components/Home/SplashLoader';
 import { CloudSyncService } from './lib/CloudSyncService';
+import { seedMemory } from './lib/SeedMemory';
 import { Song, TrackState, LyricMode } from './types';
 import { LoopPreset } from './components/Player/LoopMatrixModal';
 import { useAuth, hasAccess } from './lib/useAuth';
@@ -423,6 +424,12 @@ const App: React.FC = () => {
               console.warn('[App] Initial cloud sync failed:', syncErr?.message || syncErr);
             } finally {
               setIsSyncing(false);
+            }
+
+            // Fallback: If cloud sync failed or returned 0 songs, seed masterpieces so UI is never empty
+            if (songs.length === 0) {
+              console.log('[App] Cloud sync returned 0 songs, seeding masterpiece fallback songs...');
+              songs = await seedMemory.seedMasterpiecesIfEmpty();
             }
           } else {
             // Already have some songs, let's load UI fast and sync in background

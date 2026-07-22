@@ -426,6 +426,10 @@ export class GeminiLiveClient {
     
     const source = this.audioContext.createBufferSource();
     source.buffer = buffer;
+    
+    // Lower pitch slightly (92% of original speed/pitch) to make Nimo sound softer and less high-pitched
+    source.playbackRate.value = 0.92;
+    
     source.connect(this.speakerAnalyser!);
     this.speakerAnalyser!.connect(this.audioContext.destination);
     this.currentSource = source;

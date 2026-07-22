@@ -1,0 +1,201 @@
+K_step: 1000
+K_step_infer: 400
+T_start: 0.4
+T_start_infer: 0.4
+accumulate_grad_batches: 1
+audio_num_mel_bins: 128
+audio_sample_rate: 44100
+augmentation_args:
+  fixed_pitch_shifting:
+    enabled: false
+    scale: 0.5
+    targets:
+    - -5.0
+    - 5.0
+  random_pitch_shifting:
+    enabled: true
+    range:
+    - -2
+    - 2
+    scale: 0.75
+  random_time_stretching:
+    enabled: false
+    range:
+    - 0.5
+    - 2.0
+    scale: 0.75
+backbone_args:
+  dropout_rate: 0.0
+  glu_type: atanglu
+  kernel_size: 31
+  num_channels: 1024
+  num_layers: 6
+  use_conditioner_cache: true
+backbone_type: lynxnet2
+base_config: []
+binarization_args:
+  num_workers: 0
+  shuffle: true
+binarizer_cls: preprocessing.acoustic_binarizer.AcousticBinarizer
+binary_data_dir: /workspace/diffsinger_training/dataset/nico_sliced/binary
+breathiness_smooth_width: 0.06
+clip_grad_norm: 1
+dataloader_prefetch_factor: 2
+dataset_size_key: lengths
+datasets:
+- language: en
+  raw_data_dir: /workspace/diffsinger_training/dataset/nico_sliced/raw
+  speaker: nico
+  spk_id: 0
+  test_prefixes:
+  - 17_British_Scale_Key_62
+  - 43_Tech_Legato
+  - 57_Dyn_Belting
+dec_layers: 4
+dictionaries:
+  en: dictionaries/english.txt
+diff_accelerator: ddim
+diff_decoder_type: wavenet
+diff_speedup: 10
+diffusion_type: reflow
+dropout: 0.1
+ds_workers: 4
+enc_ffn_kernel_size: 3
+enc_layers: 4
+energy_smooth_width: 0.06
+exp_name: nico_highpitch
+extra_phonemes: []
+f0_max: 1600.0
+f0_min: 65.0
+ffn_act: gelu
+fft_size: 2048
+finetune_ckpt_path: /workspace/diffsinger_training/DiffSinger/checkpoints/base_model/base_model.ckpt
+finetune_enabled: true
+finetune_ignored_params:
+- model.fs2.encoder.embed_tokens
+- model.fs2.txt_embed
+- model.fs2.spk_embed
+finetune_strict_shapes: false
+fmax: 16000
+fmin: 40
+freezing_enabled: false
+frozen_params: []
+hidden_size: 384
+hnsep: world
+hnsep_ckpt: checkpoints/vr/model.pt
+hop_size: 512
+lambda_aux_mel_loss: 0.2
+log_interval: 100
+lr: 0.0004
+lr_scheduler_args:
+  gamma: 0.8
+  scheduler_cls: torch.optim.lr_scheduler.StepLR
+  step_size: 5000
+main_loss_log_norm: false
+main_loss_type: l2
+max_batch_frames: 1500
+max_batch_size: 2
+max_beta: 0.02
+max_updates: 200000
+max_val_batch_frames: 60000
+max_val_batch_size: 1
+mel_base: e
+mel_fmax: 16000
+mel_fmin: 40
+mel_vmax: 4.0
+mel_vmin: -14.0
+merged_phoneme_groups: []
+mfa_model: english_us_arpa
+mix_ln_layer:
+- 0
+- 2
+nccl_p2p: true
+num_ckpt_keep: 8
+num_heads: 2
+num_lang: 1
+num_mels: 128
+num_sanity_val_steps: 1
+num_spk: 2
+num_valid_plots: 10
+optimizer: adamw
+optimizer_args:
+  adamw_args:
+    weight_decay: 0.0
+  beta1: 0.9
+  beta2: 0.98
+  lr: 0.0006
+  muon_args:
+    weight_decay: 0.1
+  optimizer_cls: modules.optimizer.muon.Muon_AdamW
+  weight_decay: 0
+pe: parselmouth
+pe_ckpt: checkpoints/rmvpe/model.pt
+permanent_ckpt_interval: 20000
+permanent_ckpt_start: 120000
+pl_trainer_accelerator: gpu
+pl_trainer_devices: 1
+pl_trainer_num_nodes: 1
+pl_trainer_precision: 16-mixed
+pl_trainer_strategy:
+  find_unused_parameters: false
+  name: auto
+  process_group_backend: nccl
+rel_pos: true
+rope_interleaved: false
+sampler_frame_count_grid: 6
+sampling_algorithm: euler
+sampling_steps: 20
+schedule_type: linear
+scheduler: cosine
+shallow_diffusion_args:
+  aux_decoder_arch: convnext
+  aux_decoder_args:
+    dropout_rate: 0.1
+    kernel_size: 7
+    num_channels: 512
+    num_layers: 6
+  aux_decoder_grad: 0.1
+  train_aux_decoder: true
+  train_diffusion: true
+  val_gt_start: false
+sort_by_len: true
+speaker_id: nico
+speakers:
+- nico
+- lotte_v
+spec_max:
+- 0
+spec_min:
+- -12
+task_cls: training.acoustic_task.AcousticTask
+tension_smooth_width: 0.06
+test_prefixes:
+- 17_British_Scale_Key_62
+- 43_Tech_Legato
+- 57_Dyn_Belting
+time_scale_factor: 1000
+timesteps: 1000
+use_breathiness_embed: false
+use_energy_embed: false
+use_key_shift_embed: true
+use_lang_id: false
+use_mfa: false
+use_mix_ln: false
+use_pos_embed: true
+use_rope: true
+use_shallow_diffusion: true
+use_speed_embed: false
+use_spk_id: true
+use_stretch_embed: true
+use_tension_embed: false
+use_variance_scaling: true
+use_voicing_embed: false
+val_check_interval: 2000
+val_with_vocoder: false
+vocoder: vocos
+vocoder_ckpt: /workspace/diffsinger_training/vocos/checkpoints/vocos_44khz.ckpt
+voicing_smooth_width: 0.06
+warmup_updates: 2000
+weight_decay: 0.01
+win_size: 2048
+work_dir: checkpoints/nico_highpitch
