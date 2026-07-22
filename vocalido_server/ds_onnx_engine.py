@@ -264,13 +264,13 @@ class DiffSingerONNXEngine:
 
         # Inject comprehensive Solfège / Fixed-Doh / Movable-Doh dictionary overrides
         SOLFEGE_DICT_ENTRIES = {
-            "do": ["d", "uw"], "doh": ["d", "ow"], "di": ["d", "iy"],
-            "re": ["r", "ey"], "ray": ["r", "ey"], "ra": ["r", "aa"], "ri": ["r", "iy"],
-            "mi": ["m", "iy"], "me": ["m", "iy"], "ma": ["m", "aa"],
-            "fa": ["f", "aa"], "fah": ["f", "aa"], "fi": ["f", "iy"],
-            "sol": ["s", "aa", "l"], "so": ["s", "ow"], "soh": ["s", "ow"], "se": ["s", "ey"], "si": ["s", "iy"],
-            "la": ["l", "aa"], "lah": ["l", "aa"], "le": ["l", "ey"], "li": ["l", "iy"],
-            "ti": ["t", "iy"], "te": ["t", "ey"], "ta": ["t", "aa"], "taw": ["t", "aa"],
+            "do": ["d", "uw"], "doh": ["d", "ow"], "di": ["d", "iy"], "deh": ["d", "eh"],
+            "re": ["r", "ey"], "ray": ["r", "ey"], "ra": ["r", "aa"], "ri": ["r", "iy"], "reh": ["r", "eh"],
+            "mi": ["m", "iy"], "me": ["m", "iy"], "ma": ["m", "aa"], "meh": ["m", "eh"],
+            "fa": ["f", "aa"], "fah": ["f", "aa"], "fi": ["f", "iy"], "feh": ["f", "eh"],
+            "sol": ["s", "aa", "l"], "so": ["s", "ow"], "soh": ["s", "ow"], "se": ["s", "ey"], "seh": ["s", "eh"], "si": ["s", "iy"],
+            "la": ["l", "aa"], "lah": ["l", "aa"], "le": ["l", "ey"], "li": ["l", "iy"], "leh": ["l", "eh"],
+            "ti": ["t", "iy"], "te": ["t", "ey"], "ta": ["t", "aa"], "taw": ["t", "aa"], "teh": ["t", "eh"],
             "ah": ["aa"], "oh": ["ow"], "ee": ["iy"], "oo": ["uw"], "a": ["aa"], "o": ["ow"],
         }
         for word_key, ph_list in SOLFEGE_DICT_ENTRIES.items():

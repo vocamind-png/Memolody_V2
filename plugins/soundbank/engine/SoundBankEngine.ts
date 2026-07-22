@@ -286,13 +286,14 @@ export class SoundBankEngine {
                     return;
                 }
 
-                // 3. Acoustic Violin (Tone.Sampler with ADSR Release — zero hanging notes)
+                // 3. Acoustic Violin (Tone.Sampler with fast articulation & tight ADSR release — zero note dragging)
                 if (instrumentName === 'violin' || instrumentName === 'Solo Violin') {
                     console.log(`[SoundBankEngine] Preloading Tone.Sampler Violin for trackId=${trackId}...`);
                     const baseUrl = "https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/violin-mp3/";
                     
-                    const stringFilter = new Tone.Filter({ frequency: 5800, type: 'lowpass', rolloff: -12 });
-                    const stringReverb = new Tone.Freeverb({ roomSize: 0.45, dampening: 3000, wet: 0.18 });
+                    // High-end brilliance filter + subtle hall ambience
+                    const stringFilter = new Tone.Filter({ frequency: 14000, type: 'lowpass', rolloff: -12 });
+                    const stringReverb = new Tone.Freeverb({ roomSize: 0.35, dampening: 4200, wet: 0.10 });
 
                     const sampler = new Tone.Sampler({
                         urls: {
@@ -307,7 +308,8 @@ export class SoundBankEngine {
                             A6: "A6.mp3",
                         },
                         baseUrl: baseUrl,
-                        release: 0.35, // ADSR release guarantees every note stops cleanly on time
+                        attack: 0.005,  // Immediate acoustic bow strike for fast 16th-note passages
+                        release: 0.12,  // Tight release prevents notes from blurring into each other
                         onload: () => {
                             if (resolved) return;
                             resolved = true;

@@ -897,20 +897,21 @@ export class MusicEngine {
             .then(b => URL.createObjectURL(b))
             .catch(() => url);
 
-          // Always create a fresh Audio() instance for new vocal renders.
-          // Reusing an existing Audio instance after it was connected to MediaElementSourceNode
-          // causes browsers to throw InvalidStateError, breaking audio graph routing and producing silence.
-          const existingAudio = this.vocalAudioElements.get(trackId);
-          if (existingAudio) {
+          // Reuse pre-unlocked Audio instance to preserve browser autoplay permissions
+          let audio = this.vocalAudioElements.get(trackId);
+          if (!audio) {
+            audio = new Audio();
+            this.vocalAudioElements.set(trackId, audio);
+          } else {
             try {
-              existingAudio.pause();
-              existingAudio.src = '';
+              audio.pause();
             } catch (e) {}
           }
-          const audio = new Audio();
           if (!finalUrl.startsWith('blob:')) audio.crossOrigin = 'anonymous';
           audio.preservesPitch = true; // Pitch is controlled by PitchShift node, not playbackRate
           audio.preload = 'auto';
+          audio.volume = 1.0;
+          audio.muted = false;
           audio.src = finalUrl;
           if (renderBpm) (audio as any).renderBpm = renderBpm;
 
@@ -974,24 +975,44 @@ export class MusicEngine {
     // Route audio elements through Web Audio PitchShift for artifact-free pitch shifting
     const connectToPitchShift = (audio: HTMLAudioElement, trackIdKey: string) => {
       try {
-        // Skip if already connected
-        if (this.vocalAudioSources.has(trackIdKey)) return;
-
         const rawCtx = Tone.context.rawContext;
-        const source = rawCtx.createMediaElementSource(audio);
+        if (rawCtx && rawCtx.state === 'suspended') {
+          rawCtx.resume().catch(() => {});
+        }
+
+        // Reuse existing MediaElementSourceNode if previously created for this Audio instance
+        let source = (audio as any)._mediaSourceNode || this.vocalAudioSources.get(trackIdKey);
+        if (!source) {
+          source = rawCtx.createMediaElementSource(audio);
+          (audio as any)._mediaSourceNode = source;
+        }
+
         const channel = this.trackChannels.get(trackId) || this.masterBus!;
+        const destNode = (channel as any).input || channel;
         const pitchShift = new Tone.PitchShift(0);
 
-        // Connect: source → pitchShift → channel
-        toneConnect(source, pitchShift);
-        pitchShift.connect(channel);
+        // Connect: source → pitchShift → destNode
+        try {
+          source.connect((pitchShift as any).input || pitchShift);
+          pitchShift.connect(destNode);
+        } catch (connErr) {
+          // Direct fallback connection: source → destNode
+          try { source.connect(destNode); } catch (e) {}
+        }
 
         this.vocalAudioSources.set(trackIdKey, source);
         this.vocalPitchShifts.set(trackIdKey, pitchShift);
 
+        // Ensure audio element is set to full volume and unmuted
+        audio.volume = 1.0;
+        audio.muted = false;
+
         console.log(`[MusicEngine] ✅ PitchShift connected for ${trackIdKey}`);
       } catch (e) {
         console.warn(`[MusicEngine] ⚠️ PitchShift connection failed for ${trackIdKey}:`, e);
+        // Fallback: Ensure HTMLAudio plays at 100% volume directly
+        audio.volume = 1.0;
+        audio.muted = false;
       }
     };
 
