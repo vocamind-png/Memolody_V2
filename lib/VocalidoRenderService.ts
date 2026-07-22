@@ -1640,9 +1640,8 @@ class VocalidoRenderService {
             }
 
             musicEngine.setTransportSeconds(livePos);
-            if (livePlaying) {
-              await musicEngine.start();
-            }
+            console.log('[VocalidoRenderService] ▶ Auto-starting playback after render completion...');
+            await musicEngine.start();
           } else {
             console.log(`[VocalidoRenderService] 🎵 Render for ${song.id} finished, but user is currently on ${activeSongId}. Skipping musicEngine load.`);
           }

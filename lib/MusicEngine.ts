@@ -841,26 +841,18 @@ export class MusicEngine {
       this.vocalAudioElements.set(trackId, audio);
     }
     
-    // If it has a real source, do not run the dummy unlock sequence to prevent the async pause() race condition!
-    // Since start() or resume() will play it synchronously inside the click handler anyway.
-    const hasRealSource = audio.src && !audio.src.startsWith('data:');
-    if (hasRealSource) {
-      console.log(`[MusicEngine] 🔓 Skipping dummy unlock for ${trackId} because it has a real source URL.`);
-      return;
-    }
-    
-    if (!audio.src) {
+    if (!audio.src || audio.src === '') {
       audio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==';
     }
     
-    console.log(`[MusicEngine] 🔓 Synchronously unlocking vocal HTMLAudio for ${trackId} (hasRealSource=false)`);
+    console.log(`[MusicEngine] 🔓 Synchronously unlocking vocal HTMLAudio for ${trackId}`);
     const playPromise = audio.play();
     if (playPromise !== undefined) {
       playPromise.then(() => {
         audio.pause();
         console.log(`[MusicEngine] 🔓 HTMLAudio unlocked successfully for ${trackId}`);
       }).catch(e => {
-        console.warn(`[MusicEngine] ⚠️ HTMLAudio unlock failed/deferred for ${trackId}:`, e);
+        console.warn(`[MusicEngine] ⚠️ HTMLAudio unlock deferred for ${trackId}:`, e);
       });
     }
   }
@@ -905,7 +897,8 @@ export class MusicEngine {
             .then(b => URL.createObjectURL(b))
             .catch(() => url);
 
-          const audio = new Audio();
+          const existingAudio = this.vocalAudioElements.get(trackId);
+          const audio = existingAudio || new Audio();
           if (!finalUrl.startsWith('blob:')) audio.crossOrigin = 'anonymous';
           audio.preservesPitch = true; // Pitch is controlled by PitchShift node, not playbackRate
           audio.preload = 'auto';
