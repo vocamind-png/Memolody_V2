@@ -910,13 +910,13 @@ export class MusicEngine {
             this.vocalBlobUrls.set(`${trackId}:${Date.now()}`, finalUrl);
           }
 
-          audio.onloadedmetadata = () => done(audio);
-          audio.onloadeddata = () => done(audio);
+          audio.onloadedmetadata = () => { console.log(`[MusicEngine] 📦 onloadedmetadata for ${trackId}`); done(audio); };
+          audio.onloadeddata = () => { console.log(`[MusicEngine] 📦 onloadeddata for ${trackId}, duration=${audio.duration?.toFixed(2)}s`); done(audio); };
           audio.oncanplay = () => done(audio);
           audio.oncanplaythrough = () => done(audio);
-          audio.onerror = () => done(audio);
+          audio.onerror = (e) => { console.error(`[MusicEngine] ❌ Audio load error for ${trackId}:`, audio.error?.message || e); done(audio); };
           audio.load();
-          setTimeout(() => done(audio), 15000);
+          setTimeout(() => { console.warn(`[MusicEngine] ⏰ Audio load timeout for ${trackId}, readyState=${audio.readyState}`); done(audio); }, 15000);
         } catch (e) {
           console.error('[MusicEngine] ❌ loadAsHtmlAudio failed:', e);
           done(new Audio()); // resolve with empty audio to not block
@@ -1086,11 +1086,13 @@ export class MusicEngine {
     }
     this.trackVocalRenderBpm.delete(trackId);
 
-    // Reset/clear any active HTMLAudioElement for this track to prevent phantom playing after deletion
+    // Pause the HTMLAudioElement but keep it in the map so the gesture-unlocked
+    // instance can be reused by the next addVocalLayer call (prevents autoplay block).
     const oldAudio = this.vocalAudioElements.get(trackId);
     if (oldAudio) {
       oldAudio.pause();
-      oldAudio.src = '';
+      // DO NOT set src='' — that invalidates the gesture unlock on Safari/Chrome.
+      // The next addVocalLayer will set a new src on this same element.
     }
   }
 
@@ -1448,7 +1450,9 @@ export class MusicEngine {
           }
 
           // Android User Gesture Fix: Call play() on ALL tracks, relying purely on mute/volume to hide inactive ones.
-          const playPromise = audio.play().catch(e => console.warn('[MusicEngine] main mix play failed:', e));
+          const playPromise = audio.play().catch(e => {
+            console.warn(`[MusicEngine] ⚠️ main mix play failed for ${t.id}: ${e.name}: ${e.message}, readyState=${audio.readyState}, src=${audio.src?.substring(0, 60)}`);
+          });
         }
         // We removed the 'else if' that pauses the audio when not active.
         // It must keep playing silently so it stays synced and doesn't require a new user gesture to unmute.

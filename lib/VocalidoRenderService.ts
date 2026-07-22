@@ -1587,7 +1587,7 @@ class VocalidoRenderService {
 
             console.log('[VocalidoRenderService] 🎵 Loading song into musicEngine...');
             // loadSong FIRST — creates Part/Sampler channels
-            await musicEngine.loadSong(parsedData.notes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn);
+            await musicEngine.loadSong(parsedData.notes, updatedTracks, transpose, parsedData.timeSignature, isMetronomeOn, true /* preserveVocals — we add new vocals right after */);
             console.log('[VocalidoRenderService] ✅ musicEngine.loadSong done');
             
             // addVocalLayer AFTER — so initSampler doesn't overwrite the vocal layer
