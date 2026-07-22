@@ -10,26 +10,36 @@ class SmplrWrapper {
     }
 
     triggerAttackRelease(note: string | number, duration: number, time: number, velocity?: number) {
-        // MusicEngine passes frequencies (Hz) as numbers, e.g., 493.883
-        // Tone.Frequency(note) converts both strings ("C4") and Hz (440) to frequency objects.
         let midiNote = Math.round(Tone.Frequency(note).toMidi());
-        // console.log(`[SmplrWrapper] PLAYING NOTE: ${note}Hz -> MIDI: ${midiNote}`);
-        this.sf.start({
-            note: midiNote,
-            velocity: velocity ? velocity * 127 : 100,
-            time: time,
-            duration: duration
-        });
+        const durSec = Math.max(0.05, typeof duration === 'number' ? duration : Tone.Time(duration).toSeconds());
+
+        try {
+            this.sf.start({
+                note: midiNote,
+                velocity: velocity ? Math.min(127, Math.max(1, velocity * 127)) : 90,
+                time: time,
+                duration: durSec
+            });
+        } catch (e) {}
+
+        // Schedule explicit stop at time + durSec so notes NEVER hang or overlap infinitely
+        try {
+            this.sf.stop({ note: midiNote, time: time + durSec });
+        } catch (e) {}
     }
 
     connect(destination: any) {
-        // smplr's output is connected at initialization to the Tone.js context
         return this;
     }
 
     dispose() {
-        if (this.sf && typeof this.sf.dispose === 'function') {
-            this.sf.dispose();
+        if (this.sf) {
+            try {
+                this.sf.stop();
+            } catch (e) {}
+            if (typeof this.sf.dispose === 'function') {
+                this.sf.dispose();
+            }
         }
     }
 }
@@ -271,7 +281,51 @@ export class SoundBankEngine {
                         },
                         onerror: (e) => {
                             console.error(`[SoundBankEngine] Salamander piano failed to load:`, e);
-                            // We don't resolve here, we let the timeout fallback handle it
+                        }
+                    });
+                    return;
+                }
+
+                // 3. Acoustic Violin (Tone.Sampler with ADSR Release — zero hanging notes)
+                if (instrumentName === 'violin' || instrumentName === 'Solo Violin') {
+                    console.log(`[SoundBankEngine] Preloading Tone.Sampler Violin for trackId=${trackId}...`);
+                    const baseUrl = "https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/violin-mp3/";
+                    
+                    const stringFilter = new Tone.Filter({ frequency: 5800, type: 'lowpass', rolloff: -12 });
+                    const stringReverb = new Tone.Freeverb({ roomSize: 0.45, dampening: 3000, wet: 0.18 });
+
+                    const sampler = new Tone.Sampler({
+                        urls: {
+                            G3: "G3.mp3",
+                            C4: "C4.mp3",
+                            E4: "E4.mp3",
+                            G4: "G4.mp3",
+                            C5: "C5.mp3",
+                            E5: "E5.mp3",
+                            G5: "G5.mp3",
+                            C6: "C6.mp3",
+                            A6: "A6.mp3",
+                        },
+                        baseUrl: baseUrl,
+                        release: 0.35, // ADSR release guarantees every note stops cleanly on time
+                        onload: () => {
+                            if (resolved) return;
+                            resolved = true;
+                            clearTimeout(timeoutId);
+
+                            sampler.connect(stringFilter);
+                            stringFilter.connect(stringReverb);
+                            stringReverb.connect(channel);
+
+                            trackSamplers.set(trackId, sampler);
+                            trackChannels.set(trackId, channel);
+                            trackMeters.set(trackId, meter);
+
+                            console.log(`[SoundBankEngine] Successfully loaded Tone.Sampler Violin for trackId=${trackId}`);
+                            resolve();
+                        },
+                        onerror: (e) => {
+                            console.error(`[SoundBankEngine] Tone.Sampler Violin failed to load:`, e);
                         }
                     });
                     return;

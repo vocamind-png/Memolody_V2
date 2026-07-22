@@ -13,6 +13,51 @@ interface SplashLoaderProps {
 export const SplashLoader: React.FC<SplashLoaderProps> = ({ progress, statusText = 'Loading Memolody V2...', onStart, bgmUrl, bgmTitle, bgmCover }) => {
   const [dots, setDots] = useState('');
   const [showRecovery, setShowRecovery] = useState(false);
+  const [isPlayingBgm, setIsPlayingBgm] = useState(false);
+  const bgmAudioRef = React.useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    const targetUrl = bgmUrl || '/audio/Where_Dreams_Align.mp3';
+    const audio = new Audio(targetUrl);
+    audio.loop = true;
+    audio.volume = 0.5;
+    bgmAudioRef.current = audio;
+
+    const tryPlay = () => {
+      audio.play().then(() => {
+        setIsPlayingBgm(true);
+      }).catch(() => {
+        setIsPlayingBgm(false);
+      });
+    };
+
+    tryPlay();
+    const handleUserGesture = () => {
+      if (audio.paused) {
+        tryPlay();
+      }
+    };
+    window.addEventListener('click', handleUserGesture, { once: true });
+    window.addEventListener('keydown', handleUserGesture, { once: true });
+
+    return () => {
+      window.removeEventListener('click', handleUserGesture);
+      window.removeEventListener('keydown', handleUserGesture);
+      audio.pause();
+      audio.src = '';
+    };
+  }, [bgmUrl]);
+
+  const toggleBgm = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!bgmAudioRef.current) return;
+    if (isPlayingBgm) {
+      bgmAudioRef.current.pause();
+      setIsPlayingBgm(false);
+    } else {
+      bgmAudioRef.current.play().then(() => setIsPlayingBgm(true)).catch(() => {});
+    }
+  };
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -65,12 +110,18 @@ export const SplashLoader: React.FC<SplashLoaderProps> = ({ progress, statusText
         
           {/* Now Playing Widget */}
           {(
-            <div className="absolute top-6 right-6 flex items-center gap-3 bg-black/40 backdrop-blur-md px-3 py-2 rounded-full border border-white/5 animate-fade-in shadow-xl">
-              <div className="w-8 h-8 rounded-full overflow-hidden shrink-0 animate-[spin_10s_linear_infinite]">
+            <div 
+              onClick={toggleBgm}
+              className="absolute top-6 right-6 flex items-center gap-3 bg-black/60 backdrop-blur-md px-3 py-2 rounded-full border border-cyan-500/30 animate-fade-in shadow-xl cursor-pointer hover:border-cyan-400 transition-all active:scale-95"
+              title={isPlayingBgm ? "Pause BGM" : "Play BGM"}
+            >
+              <div className={`w-8 h-8 rounded-full overflow-hidden shrink-0 ${isPlayingBgm ? 'animate-[spin_10s_linear_infinite]' : ''}`}>
                 <img src={bgmCover || '/images/memolody_hero.png'} alt="Cover" className="w-full h-full object-cover" />
               </div>
               <div className="flex flex-col pr-2">
-                <span className="text-[7px] text-cyan-400 font-black tracking-widest uppercase">NOW PLAYING</span>
+                <span className="text-[7px] text-cyan-400 font-black tracking-widest uppercase flex items-center gap-1">
+                  {isPlayingBgm ? '🎵 NOW PLAYING' : '⏸ PAUSED'}
+                </span>
                 <span className="text-[10px] text-white font-medium truncate max-w-[120px]">{bgmTitle || 'Where Dreams Align'}</span>
               </div>
             </div>

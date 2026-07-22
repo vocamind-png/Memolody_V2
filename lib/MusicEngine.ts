@@ -897,8 +897,17 @@ export class MusicEngine {
             .then(b => URL.createObjectURL(b))
             .catch(() => url);
 
+          // Always create a fresh Audio() instance for new vocal renders.
+          // Reusing an existing Audio instance after it was connected to MediaElementSourceNode
+          // causes browsers to throw InvalidStateError, breaking audio graph routing and producing silence.
           const existingAudio = this.vocalAudioElements.get(trackId);
-          const audio = existingAudio || new Audio();
+          if (existingAudio) {
+            try {
+              existingAudio.pause();
+              existingAudio.src = '';
+            } catch (e) {}
+          }
+          const audio = new Audio();
           if (!finalUrl.startsWith('blob:')) audio.crossOrigin = 'anonymous';
           audio.preservesPitch = true; // Pitch is controlled by PitchShift node, not playbackRate
           audio.preload = 'auto';
