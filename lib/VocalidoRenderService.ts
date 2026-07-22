@@ -472,7 +472,8 @@ class VocalidoRenderService {
       localStorage.setItem('vocalido_rendering_active_song', song.id);
     } catch (e) {}
 
-    // Pre-unlock vocal audio element inside the click gesture
+    // Backup unlock (the primary unlock is done in PlayerPage.tsx BEFORE the setTimeout,
+    // within the user gesture. This call may not work if startRender is called from setTimeout.)
     const primaryTrackId = tracks.find(t => t.mode === 'vocal')?.id || tracks[0]?.id || 'P1';
     musicEngine.unlockVocalAudio(primaryTrackId);
 

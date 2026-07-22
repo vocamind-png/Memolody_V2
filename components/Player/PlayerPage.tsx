@@ -2775,6 +2775,19 @@ const PlayerPage: React.FC<{
       setQueueJobId(jobId);
     }
 
+    // CRITICAL: Unlock HTMLAudioElements SYNCHRONOUSLY within the user gesture
+    // (before setTimeout). Browsers block audio.play() calls outside of user gesture.
+    const vocalTrackIdsToUnlock = effectiveTrackIds;
+    for (const tid of vocalTrackIdsToUnlock) {
+      musicEngine.unlockVocalAudio(tid);
+    }
+    // Also unlock Tone.js AudioContext within the gesture
+    try {
+      if (typeof Tone !== 'undefined' && Tone.getContext().state !== 'running') {
+        Tone.start();
+      }
+    } catch (e) {}
+
     setTimeout(() => {
       try {
         vocalidoRenderService.startRender({
