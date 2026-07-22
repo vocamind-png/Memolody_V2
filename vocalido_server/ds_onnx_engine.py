@@ -224,19 +224,59 @@ class DiffSingerONNXEngine:
             os.path.join(acou_dir, "dictionary-en.txt"),
             os.path.join(model_dir, "dictionary-en.txt"),
         ]
-        dict_path = None
         for dp in dict_candidates:
             if os.path.exists(dp):
-                dict_path = dp
-                break
-        if dict_path:
-            with open(dict_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    parts = line.strip().split()
-                    if len(parts) >= 2:
-                        word = parts[0].lower()
-                        self.dict_map[word] = parts[1:]
-            print(f"[ONNXEngine] 📖 Loaded {len(self.dict_map)} dictionary entries from {os.path.basename(dict_path)}")
+                with open(dp, "r", encoding="utf-8") as f:
+                    for line in f:
+                        parts = line.strip().split()
+                        if len(parts) >= 2:
+                            word = parts[0].lower()
+                            if word not in self.dict_map:
+                                self.dict_map[word] = parts[1:]
+
+        # Load OpenUtau / DiffSinger YAML dictionaries (dsdict-en.yaml, dsdict.yaml)
+        yaml_candidates = [
+            os.path.join(model_dir, "dsdur", "dsdict-en.yaml"),
+            os.path.join(model_dir, "dsdur", "dsdict.yaml"),
+            os.path.join(model_dir, "dspitch", "dsdict-en.yaml"),
+            os.path.join(model_dir, "dspitch", "dsdict.yaml"),
+            os.path.join(acou_dir, "dsdict-en.yaml"),
+            os.path.join(acou_dir, "dsdict.yaml"),
+        ]
+        if yaml is not None:
+            for yp in yaml_candidates:
+                if os.path.exists(yp):
+                    try:
+                        with open(yp, "r", encoding="utf-8") as f:
+                            yd = yaml.safe_load(f)
+                        entries = yd.get("entries", [])
+                        count = 0
+                        for entry in entries:
+                            if isinstance(entry, dict) and "grapheme" in entry and "phonemes" in entry:
+                                g = str(entry["grapheme"]).lower()
+                                phs = [str(p) for p in entry["phonemes"]]
+                                if g and phs and g not in self.dict_map:
+                                    self.dict_map[g] = phs
+                                    count += 1
+                        print(f"[ONNXEngine] 📖 Loaded {count} entries from {os.path.basename(yp)}")
+                    except Exception as ye:
+                        print(f"[ONNXEngine] Failed parsing {yp}: {ye}")
+
+        # Inject comprehensive Solfège / Fixed-Doh / Movable-Doh dictionary overrides
+        SOLFEGE_DICT_ENTRIES = {
+            "do": ["d", "uw"], "doh": ["d", "ow"], "di": ["d", "iy"],
+            "re": ["r", "ey"], "ray": ["r", "ey"], "ra": ["r", "aa"], "ri": ["r", "iy"],
+            "mi": ["m", "iy"], "me": ["m", "iy"], "ma": ["m", "aa"],
+            "fa": ["f", "aa"], "fah": ["f", "aa"], "fi": ["f", "iy"],
+            "sol": ["s", "aa", "l"], "so": ["s", "ow"], "soh": ["s", "ow"], "se": ["s", "ey"], "si": ["s", "iy"],
+            "la": ["l", "aa"], "lah": ["l", "aa"], "le": ["l", "ey"], "li": ["l", "iy"],
+            "ti": ["t", "iy"], "te": ["t", "ey"], "ta": ["t", "aa"], "taw": ["t", "aa"],
+            "ah": ["aa"], "oh": ["ow"], "ee": ["iy"], "oo": ["uw"], "a": ["aa"], "o": ["ow"],
+        }
+        for word_key, ph_list in SOLFEGE_DICT_ENTRIES.items():
+            self.dict_map[word_key] = ph_list
+
+        print(f"[ONNXEngine] 📖 Total dictionary size: {len(self.dict_map)} entries")
         
         # Load speaker embeddings
         self.spk_embeds = {}

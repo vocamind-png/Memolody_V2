@@ -278,12 +278,26 @@ export class SoundBankEngine {
                 }
 
                 // --- SMPLR FALLBACK FOR ALL OTHER INSTRUMENTS ---
+                const isStringInst = ['violin', 'cello', 'viola', 'string_ensemble_1', 'string_ensemble_2', 'contrabass', 'orchestral_harp'].includes(instrumentName);
+                const sfKit = isStringInst ? 'FluidR3_GM' : 'MusyngKite';
+
                 // We use a native GainNode to bridge smplr's native AudioNode output into Tone.js's channel
                 const nativeGain = ctx.createGain();
-                Tone.connect(nativeGain, channel);
+                
+                if (isStringInst) {
+                    // String Instrument Enhancement: Warm body EQ filter + lush room reverb for realistic bowing resonance
+                    const stringFilter = new Tone.Filter({ frequency: 6200, type: 'lowpass', rolloff: -12 });
+                    const stringReverb = new Tone.Freeverb({ roomSize: 0.55, dampening: 2800, wet: 0.22 });
+                    Tone.connect(nativeGain, stringFilter);
+                    stringFilter.connect(stringReverb);
+                    stringReverb.connect(channel);
+                } else {
+                    Tone.connect(nativeGain, channel);
+                }
 
                 const sf = new Soundfont(ctx, { 
                     instrument: instrumentName as any,
+                    kit: sfKit as any,
                     destination: nativeGain
                 });
 
@@ -293,7 +307,7 @@ export class SoundBankEngine {
                     sf.ready,
                     new Promise<void>((_, reject) => setTimeout(() => reject(new Error('sf.ready timeout')), LOAD_TIMEOUT_MS + 500))
                 ]);
-                console.log(`[SoundBankEngine] ✅ sf.ready resolved in ${Math.round(performance.now() - loadStartTime)}ms for ${instrumentName}`);
+                console.log(`[SoundBankEngine] ✅ sf.ready resolved in ${Math.round(performance.now() - loadStartTime)}ms for ${instrumentName} (kit=${sfKit})`);
 
                 if (resolved) return;
                 clearTimeout(timeoutId);
