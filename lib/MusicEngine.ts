@@ -826,9 +826,14 @@ export class MusicEngine {
   private _vocalGeneration = 0;
 
   private setAudioVolume(audio: HTMLAudioElement, volume: number, muted: boolean) {
-    audio.volume = volume;
-    audio.muted = muted;
-    // We removed toneVolume since HTMLAudioElement is no longer routed through Tone.js Web Audio nodes.
+    // If volume > 0, NEVER leave audio.muted as true, as muted=true mutes MediaElementSourceNode completely
+    if (volume > 0) {
+      audio.muted = false;
+      audio.volume = Math.max(0.1, Math.min(1.0, volume));
+    } else {
+      audio.muted = muted;
+      audio.volume = 0;
+    }
   }
 
   unlockVocalAudio(trackId: string) {
@@ -1460,9 +1465,9 @@ export class MusicEngine {
         const hasTonePlayer = false; // HTMLAudioElement is always used for vocal playback
 
         const isMainLayerActive = isVocalPlaying && (activeStemIndices.size === 0) && !isAnyStemSoloedGlobally;
-        const vol = typeof t.volume === 'number' ? t.volume : 0.8;
-        const activeVol = isMainLayerActive && !hasTonePlayer ? vol : 0.0;
-        const activeMuted = !(isMainLayerActive && !hasTonePlayer);
+        const vol = typeof t.volume === 'number' && t.volume > 0 ? t.volume : 1.0;
+        const activeVol = isMainLayerActive ? Math.max(0.8, vol) : 0.0;
+        const activeMuted = !isMainLayerActive;
         this.setAudioVolume(audio, activeVol, activeMuted);
 
         // Sync playbackRate (BPM only — pitch is handled by PitchShift node)

@@ -2713,10 +2713,12 @@ const PlayerPage: React.FC<{
     if (tracks.length === 0) { console.warn('[Vocalido] ⛔ Render blocked: no tracks'); return; }
 
     let renderTracks = tracks;
-    // Always determine effective track IDs to render
+    // Single-track vs All-tracks scope: If selectedTrackIds is explicitly provided (e.g. from prompt or RENDER ALL),
+    // use it. Otherwise default to ONLY the active vocal track or the first melody track.
+    const activeVocalTrackId = tracks.find(t => t.mode === 'vocal')?.id;
     const effectiveTrackIds = (selectedTrackIds && selectedTrackIds.length > 0)
       ? selectedTrackIds
-      : tracks.map(t => t.id); // Default: ALL tracks become vocal
+      : (activeVocalTrackId ? [activeVocalTrackId] : [tracks[0]?.id || 'P1']);
 
     const prevVocalIds = tracks.filter(t => t.mode === 'vocal').map(t => t.id).sort().join(',');
     const newVocalIds = [...effectiveTrackIds].sort().join(',');
