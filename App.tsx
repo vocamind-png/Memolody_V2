@@ -628,7 +628,7 @@ const App: React.FC = () => {
 
   const handleSongSelect = useCallback(async (
     song: Song, xml?: string,
-    mode: 'listen' | 'studio' | 'edit' | 'play' = 'studio',
+    mode: 'listen' | 'studio' | 'edit' | 'play' = 'listen',
     fromMarket = false,
     desiredView?: { main: 'player' | 'tracks', player?: 'score' | 'pianoroll' }
   ) => {
@@ -767,11 +767,11 @@ const App: React.FC = () => {
       if (desiredView) {
         if (desiredView.player) setPlayerViewMode(desiredView.player);
         setCurrentView(desiredView.main as ViewId);
-      } else if (mode === 'studio' || mode === 'edit') {
+      } else if (mode === 'edit') {
         setCurrentView('forge');
       } else {
-        // 'listen' mode → go to Player and auto-play
-        setAutoPlayOnLoad(true);
+        // 'listen', 'studio', 'play' → Navigate directly to Player page
+        if (mode === 'play') setAutoPlayOnLoad(true);
         setCurrentView('player');
         setPlayerViewMode('score');
       }

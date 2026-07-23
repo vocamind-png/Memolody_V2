@@ -951,7 +951,7 @@ const PlayerPage: React.FC<{
                 const hasExistingRender = histStr ? (JSON.parse(histStr) || []).length > 0 : false;
                 const batchRendered = isSongFullyRendered(songIdForHist);
                 if (!hasExistingRender && !batchRendered) {
-                  setModalSelectedTracks(tracks.map(t => t.id));
+                  setModalSelectedTracks([tracks[0]?.id || 'P1']);
                   setShowRenderPrompt(true);
                 }
               }
@@ -989,7 +989,7 @@ const PlayerPage: React.FC<{
         const batchRendered = isSongFullyRendered(songId);
         if (!hasExistingRender && !batchRendered) {
           const timer = setTimeout(() => {
-            setModalSelectedTracks(tracks.map(t => t.id));
+            setModalSelectedTracks([tracks[0]?.id || 'P1']);
             setShowRenderPrompt(true);
           }, 1000);
           return () => clearTimeout(timer);
@@ -4171,7 +4171,7 @@ const PlayerPage: React.FC<{
               </div>
 
               <button
-                onClick={() => { setShowRenderPrompt(false); triggerVocalSynthesis(false, modalSelectedTracks.length > 0 ? modalSelectedTracks : tracks.map(t => t.id)); }}
+                onClick={() => { setShowRenderPrompt(false); triggerVocalSynthesis(false, modalSelectedTracks.length > 0 ? modalSelectedTracks : [tracks[0]?.id || 'P1']); }}
                 className="relative w-full py-3 px-4 rounded-xl overflow-hidden shadow-[0_0_15px_rgba(0,229,255,0.3)] active:scale-98 transition-all duration-200 mt-3 group"
               >
                 <div className="absolute inset-0 bg-black/60 z-0" />

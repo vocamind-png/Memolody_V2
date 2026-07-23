@@ -995,9 +995,11 @@ def health_diagnose():
                 test["error"] = "synthesize_phrase returned None"
             else:
                 import numpy as np
+                import math
                 test["success"] = True
                 test["audio_length"] = len(audio)
-                test["audio_max"] = float(np.max(np.abs(audio)))
+                max_val = float(np.max(np.abs(audio))) if len(audio) > 0 else 0.0
+                test["audio_max"] = max_val if math.isfinite(max_val) else 0.0
                 test["audio_dtype"] = str(audio.dtype)
         except Exception as e:
             test["error"] = str(e)
